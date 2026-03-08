@@ -1,36 +1,91 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Automated Report Website
 
-## Getting Started
+Multi-page reporting website for Meta Ads Manager + Google Ads Manager with a shared account/date filter flow.
 
-First, run the development server:
+## Pages
+
+- `/` Input Ad Account ID and jump to reports.
+- `/overall` Overall performance page:
+  - Meta metrics
+  - Google Ads metrics
+  - Google Ads YouTube overview metrics
+  - Collapsible campaign-type grouped table
+- `/campaign/[campaignType]` Campaign type page:
+  - Selected month vs previous month comparison
+  - Collapsible sections and totals
+
+## URL Parameters
+
+These can be passed directly in the URL and auto-fill the filter form:
+
+- `accountId` Generic account ID applied as fallback for both Meta and Google
+- `metaAccountId` Explicit Meta account ID (overrides fallback)
+- `googleAccountId` Explicit Google Ads customer ID (overrides fallback)
+- `startDate` Format: `YYYY-MM-DD`
+- `endDate` Format: `YYYY-MM-DD`
+- `platform` `meta | google | googleYoutube` (used on campaign page)
+
+Example:
+
+`/overall?accountId=697-252-8848&startDate=2026-02-01&endDate=2026-02-28`
+
+## Doppler / Environment
+
+Credentials are expected from environment variables (Doppler injects these at runtime):
+
+- `META_ACCESS_TOKEN`
+- `GOOGLE_ADS_DEVELOPER_TOKEN`
+- `GOOGLE_ADS_ACCESS_TOKEN` (optional if refresh flow is configured)
+- `GOOGLE_ADS_REFRESH_TOKEN` (optional, enables automatic token refresh)
+- `GOOGLE_ADS_CLIENT_ID` (required for refresh flow)
+- `GOOGLE_ADS_CLIENT_SECRET` (required for refresh flow)
+- `GOOGLE_ADS_LOGIN_CUSTOMER_ID` (optional but commonly needed for MCC flows)
+- `GOOGLE_ADS_API_VERSION` (optional, defaults to `v22`)
+- `REPORT_COMPANY_NAME` (optional display label)
+- `REPORT_COMPANY_NAME_MAP` (optional account ID to company mapping)
+  - JSON format example: `{"6972528848":"Soka International School"}`
+  - Comma format example: `6972528848:Soka International School,1234567890:Another Company`
+  - Example for this account: `{"283341217383189":"<Registered Company Name>"}`
+
+Company name resolution order:
+1. `REPORT_COMPANY_NAME_MAP` (if matched)
+2. Meta account registered name from Graph API (when a Meta account ID is available)
+3. `Account <ID>`
+4. `REPORT_COMPANY_NAME`
+
+Supported aliases (for existing Doppler naming) are also accepted:
+
+- `GOOGLE_OAUTH_ACCESS_TOKEN`
+- `GOOGLE_OAUTH_REFRESH_TOKEN`
+- `GOOGLE_OAUTH_CLIENT_ID`
+- `GOOGLE_OAUTH_CLIENT_SECRET`
+
+If credentials are missing or the provided account ID is not accessible, the API returns clear warnings/errors without requiring user login.
+
+Run commands through Doppler so all API secrets are available:
+
+```bash
+doppler run -- npm run dev
+```
+
+For production build:
+
+```bash
+doppler run -- npm run build
+```
+
+## Development
 
 ```bash
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open `http://localhost:3000`.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Build / Lint
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
-
-## Learn More
-
-To learn more about Next.js, take a look at the following resources:
-
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+```bash
+npm run lint
+npm run typecheck
+npm run build
+```

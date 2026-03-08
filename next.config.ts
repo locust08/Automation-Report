@@ -1,7 +1,10 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  /* config options here */
+  typescript: {
+    // Keep CI type safety via `npm run typecheck`; avoid Next.js internal spawn issue on this host.
+    ignoreBuildErrors: true,
+  },
 };
 
 export default nextConfig;
