@@ -62,7 +62,7 @@ export function ScreenshotModeToggle() {
   }
 
   return (
-    <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-white/20 bg-white/10 px-3 py-2 text-white">
+    <div className="flex flex-col items-start gap-2 rounded-xl border border-white/20 bg-white/10 px-3 py-2 text-white sm:flex-row sm:items-center sm:justify-between">
       <p className="text-xs md:text-sm">
         <CameraIcon className="mr-1 inline size-4 align-text-bottom" />
         Screenshot mode shows full table rows for one clear full-page capture.
@@ -70,7 +70,7 @@ export function ScreenshotModeToggle() {
       <Button
         type="button"
         variant="outline"
-        className="h-8 border-white/30 bg-white/10 text-white hover:bg-white/20 hover:text-white"
+        className="h-8 w-full border-white/30 bg-white/10 text-white hover:bg-white/20 hover:text-white sm:w-auto"
         onClick={toggleScreenshotMode}
         disabled={downloading || downloadPending}
       >
@@ -80,7 +80,7 @@ export function ScreenshotModeToggle() {
       <Button
         type="button"
         variant="outline"
-        className="h-8 border-white/30 bg-white/10 text-white hover:bg-white/20 hover:text-white"
+        className="h-8 w-full border-white/30 bg-white/10 text-white hover:bg-white/20 hover:text-white sm:w-auto"
         onClick={() => void handleDownloadPng()}
         disabled={downloading || downloadPending}
       >

@@ -23,7 +23,10 @@ export function MetricSection({ section }: { section: SummarySection }) {
         />
       </div>
 
-      <div className="grid gap-4" style={{ gridTemplateColumns: `repeat(${metricCount}, minmax(0, 1fr))` }}>
+      <div
+        className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:gap-4"
+        style={{ gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))" }}
+      >
         {section.metrics.map((metric) => {
           const deltaPositive = (metric.delta ?? 0) >= 0;
           const formattedValue = formatMetricValue(metric.value, metric.format);
@@ -33,18 +36,18 @@ export function MetricSection({ section }: { section: SummarySection }) {
 
           return (
             <div key={metric.key} className="flex h-full flex-col gap-2">
-              <p className="min-h-[2.4rem] text-center text-[1.2rem] leading-tight text-red-700 xl:text-[1.3rem]">
+              <p className="min-h-[2.1rem] text-center text-base leading-tight text-red-700 sm:min-h-[2.4rem] sm:text-[1.15rem] xl:text-[1.3rem]">
                 {metric.label}
               </p>
-              <div className="flex min-h-[120px] flex-1 flex-col justify-center rounded-xl border border-[#d0d0d0] bg-[#ded9e2] px-3 py-3 shadow-sm sm:min-h-[132px]">
+              <div className="flex min-h-[112px] flex-1 flex-col justify-center rounded-xl border border-[#d0d0d0] bg-[#ded9e2] px-3 py-3 shadow-sm sm:min-h-[132px]">
                 <p
                   className="w-full whitespace-nowrap text-center font-medium leading-none tabular-nums text-[#37363e]"
-                  style={{ fontSize: `${fittedValueSizeRem}rem` }}
+                  style={{ fontSize: `clamp(1.35rem, 4.5vw, ${fittedValueSizeRem}rem)` }}
                 >
                   {formattedValue}
                 </p>
                 <p
-                  className={`mt-2 flex items-center justify-center gap-1 text-lg ${
+                  className={`mt-2 flex items-center justify-center gap-1 text-base sm:text-lg ${
                     metric.delta === null
                       ? "text-[#555]"
                       : deltaPositive

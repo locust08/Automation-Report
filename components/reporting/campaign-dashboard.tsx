@@ -115,7 +115,7 @@ export function CampaignDashboard({ campaignType }: { campaignType: string }) {
             <ReportWarnings warnings={data.warnings} />
             <MetricSection section={section} />
             {hasComparisonSpend ? (
-              <section className="space-y-4 rounded-[2rem] bg-[#e7e7e7] p-6 shadow-sm">
+              <section className="space-y-4 rounded-[2rem] bg-[#e7e7e7] p-4 shadow-sm sm:p-6">
                 <CampaignComparisonTable
                   key={`selected-${filters.platform}-${filters.startDate}-${filters.endDate}-${campaignName}`}
                   heading={`${campaignName} (${data.dateRange.currentLabel})`}

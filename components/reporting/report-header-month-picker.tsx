@@ -111,13 +111,13 @@ export function ReportHeaderMonthPicker({
   return (
     <div
       ref={containerRef}
-      className="relative flex h-12 min-w-[340px] items-center gap-1 rounded-2xl bg-[#d9d9d9] p-1.5 text-[#5f5f5f] shadow-sm"
+      className="relative flex h-auto w-full max-w-full items-center gap-1 rounded-2xl bg-[#d9d9d9] p-1.5 text-[#5f5f5f] shadow-sm sm:h-12 sm:min-w-[340px] sm:w-auto"
     >
       <Button
         type="button"
         variant="ghost"
         size="icon-sm"
-        className="h-8 w-8 text-[#6f6f6f]"
+        className="h-8 w-8 shrink-0 text-[#6f6f6f]"
         onClick={() => shiftRange(-1)}
         aria-label="Previous date range"
       >
@@ -135,7 +135,7 @@ export function ReportHeaderMonthPicker({
         aria-expanded={open}
       >
         <CalendarDaysIcon className="size-4 text-[#7a7a7a]" />
-        <span className="truncate text-base font-semibold leading-none text-[#5f5f5f]">{dateLabel}</span>
+        <span className="truncate text-sm font-semibold leading-none text-[#5f5f5f] sm:text-base">{dateLabel}</span>
         <ChevronDownIcon className="ml-auto size-4 text-[#7a7a7a]" />
       </button>
 
@@ -143,7 +143,7 @@ export function ReportHeaderMonthPicker({
         type="button"
         variant="ghost"
         size="icon-sm"
-        className="h-8 w-8 text-[#6f6f6f]"
+        className="h-8 w-8 shrink-0 text-[#6f6f6f]"
         onClick={() => shiftRange(1)}
         aria-label="Next date range"
       >
@@ -151,14 +151,14 @@ export function ReportHeaderMonthPicker({
       </Button>
 
       {open ? (
-        <div className="absolute right-0 top-[calc(100%+8px)] z-50 w-[420px] overflow-hidden rounded-2xl bg-white shadow-[0_12px_32px_rgba(0,0,0,0.18)]">
+        <div className="absolute left-0 top-[calc(100%+8px)] z-50 w-[min(420px,calc(100vw-2rem))] max-w-full overflow-hidden rounded-2xl bg-white shadow-[0_12px_32px_rgba(0,0,0,0.18)] sm:left-auto sm:right-0 sm:w-[420px]">
           <div className="bg-[#4680de] p-4">
             <label className="flex items-center justify-end">
               <span className="sr-only">Quick date range</span>
               <select
                 value={preset}
                 onChange={(event) => handlePresetChange(event.target.value as DatePreset)}
-                className="h-9 rounded-md border border-white/40 bg-transparent px-3 text-sm font-semibold text-white outline-none"
+                className="h-9 w-full rounded-md border border-white/40 bg-transparent px-3 text-sm font-semibold text-white outline-none sm:w-auto"
                 aria-label="Quick date range"
               >
                 <option className="text-black" value="custom">
@@ -187,7 +187,7 @@ export function ReportHeaderMonthPicker({
           </div>
 
           <div className="space-y-4 p-4">
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
               <label className="space-y-1 text-sm">
                 <span className="font-medium text-[#4a4a4a]">Start Date</span>
                 <Input
@@ -218,11 +218,11 @@ export function ReportHeaderMonthPicker({
               </label>
             </div>
 
-            <div className="flex items-center justify-end gap-2">
+            <div className="flex flex-col-reverse gap-2 sm:flex-row sm:items-center sm:justify-end">
               <Button
                 type="button"
                 variant="ghost"
-                className="h-9 px-4 text-[#6f6f6f]"
+                className="h-9 w-full px-4 text-[#6f6f6f] sm:w-auto"
                 onClick={() => {
                   setDraftStartDate(normalizedCurrent.startDate);
                   setDraftEndDate(normalizedCurrent.endDate);
@@ -234,7 +234,7 @@ export function ReportHeaderMonthPicker({
               </Button>
               <Button
                 type="button"
-                className="h-9 bg-[#4680de] px-4 hover:bg-[#326bc7]"
+                className="h-9 w-full bg-[#4680de] px-4 hover:bg-[#326bc7] sm:w-auto"
                 onClick={applyDraftRange}
               >
                 Apply

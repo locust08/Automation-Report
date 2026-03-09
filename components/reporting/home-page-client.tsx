@@ -24,9 +24,9 @@ export function HomePageClient() {
   }
 
   return (
-    <main className="flex min-h-screen items-center justify-center bg-[url('/background.png'),url('/backround.png')] bg-cover bg-center bg-no-repeat px-4">
-      <div className="w-full max-w-2xl rounded-3xl border border-white/25 bg-black/40 p-8 text-white backdrop-blur-sm">
-        <h1 className="text-4xl font-semibold md:text-5xl">
+    <main className="flex min-h-screen items-center justify-center bg-[url('/background.png'),url('/backround.png')] bg-cover bg-center bg-no-repeat px-4 py-8">
+      <div className="w-full max-w-2xl rounded-3xl border border-white/25 bg-black/40 p-6 text-white backdrop-blur-sm sm:p-8">
+        <h1 className="text-3xl font-semibold sm:text-4xl md:text-5xl">
           META &amp; GOOGLE ADS
           <br />
           Automation Reporting
@@ -43,7 +43,7 @@ export function HomePageClient() {
             />
           </label>
 
-          <Button type="submit" className="h-11 bg-red-600 px-5 hover:bg-red-700">
+          <Button type="submit" className="h-11 w-full bg-red-600 px-5 hover:bg-red-700 sm:w-auto">
             Open Overall Performance
             <ArrowRightIcon data-icon="inline-end" />
           </Button>

@@ -130,20 +130,20 @@ export function ReportFiltersBar({
     <form
       onSubmit={handleSubmit}
       className={cn(
-        "flex flex-wrap items-center gap-3 rounded-2xl border border-border/40 bg-card/90 p-4 shadow-sm",
+        "flex flex-col gap-3 rounded-2xl border border-border/40 bg-card/90 p-4 shadow-sm sm:flex-row sm:flex-wrap sm:items-center",
         compact && "gap-2 border-white/20 bg-white/90 p-3 shadow-none"
       )}
     >
-      <div className="min-w-0 flex-1 space-y-2 md:min-w-[360px]">
+      <div className="w-full min-w-0 space-y-2 sm:flex-1 md:min-w-[360px]">
         {searchEntries.map((entry) => (
-          <div key={entry.key} className="flex min-w-0 items-center gap-2">
+          <div key={entry.key} className="flex min-w-0 flex-wrap items-center gap-2 sm:flex-nowrap">
             <Select
               value={entry.platform}
               onValueChange={(value) =>
                 updateSearchRow(entry.key, { platform: value as SearchPlatform })
               }
             >
-              <SelectTrigger className="h-10 w-[130px]">
+              <SelectTrigger className="h-10 w-full sm:w-[130px]">
                 <SelectValue placeholder="Platform" />
               </SelectTrigger>
               <SelectContent>
@@ -152,7 +152,7 @@ export function ReportFiltersBar({
               </SelectContent>
             </Select>
 
-            <label className="flex min-w-0 flex-1 items-center gap-2 rounded-md border border-input bg-background px-3">
+            <label className="flex w-full min-w-0 flex-1 items-center gap-2 rounded-md border border-input bg-background px-3 sm:w-auto">
               <IdCardIcon className="size-4 text-muted-foreground" />
               <Input
                 value={entry.accountId}
@@ -165,7 +165,7 @@ export function ReportFiltersBar({
             <Button
               type="button"
               variant="outline"
-              className="h-10 px-3"
+              className="h-10 shrink-0 px-3"
               onClick={() => removeSearchRow(entry.key)}
               aria-label="Remove account row"
               title="Remove"
@@ -175,14 +175,14 @@ export function ReportFiltersBar({
           </div>
         ))}
 
-        <Button type="button" variant="outline" className="h-9" onClick={addSearchRow}>
+        <Button type="button" variant="outline" className="h-9 w-full sm:w-auto" onClick={addSearchRow}>
           <PlusIcon data-icon="inline-start" />
           Add Account
         </Button>
       </div>
 
       {showDateFilters && dateMode === "month" ? (
-        <div className="flex min-w-0 items-center gap-2 rounded-md border border-input bg-background px-2 md:w-[260px]">
+        <div className="flex w-full min-w-0 items-center gap-2 rounded-md border border-input bg-background px-2 sm:w-auto md:w-[260px]">
           <CalendarDaysIcon className="ml-1 size-4 text-muted-foreground" />
           <Button
             type="button"
@@ -214,7 +214,7 @@ export function ReportFiltersBar({
         </div>
       ) : showDateFilters ? (
         <>
-          <label className="flex min-w-0 items-center gap-2 rounded-md border border-input bg-background px-3 md:w-[220px]">
+          <label className="flex w-full min-w-0 items-center gap-2 rounded-md border border-input bg-background px-3 sm:w-auto md:w-[220px]">
             <CalendarDaysIcon className="size-4 text-muted-foreground" />
             <Input
               type="date"
@@ -225,7 +225,7 @@ export function ReportFiltersBar({
             />
           </label>
 
-          <label className="flex min-w-0 items-center gap-2 rounded-md border border-input bg-background px-3 md:w-[220px]">
+          <label className="flex w-full min-w-0 items-center gap-2 rounded-md border border-input bg-background px-3 sm:w-auto md:w-[220px]">
             <CalendarDaysIcon className="size-4 text-muted-foreground" />
             <Input
               type="date"
@@ -240,7 +240,7 @@ export function ReportFiltersBar({
 
       {includePlatform ? (
         <Select value={platform} onValueChange={(value) => setPlatform(value as ReportFilters["platform"])}>
-          <SelectTrigger className="h-10 w-full md:w-[180px]">
+          <SelectTrigger className="h-10 w-full sm:w-auto md:w-[180px]">
             <SelectValue placeholder="Platform" />
           </SelectTrigger>
           <SelectContent>
@@ -253,13 +253,13 @@ export function ReportFiltersBar({
         <div className="hidden" />
       )}
 
-      <div className="ml-auto flex items-center gap-2">
-        <Button type="submit" className="h-10 bg-red-600 hover:bg-red-700">
+      <div className="flex w-full flex-col gap-2 sm:ml-auto sm:w-auto sm:flex-row sm:items-center">
+        <Button type="submit" className="h-10 w-full bg-red-600 hover:bg-red-700 sm:w-auto">
           <SearchIcon data-icon="inline-start" />
           {submitLabel}
         </Button>
         {showResetButton ? (
-          <Button type="button" variant="outline" className="h-10" onClick={onReset}>
+          <Button type="button" variant="outline" className="h-10 w-full sm:w-auto" onClick={onReset}>
             <RefreshCcwIcon data-icon="inline-start" />
             Reset
           </Button>
