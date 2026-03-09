@@ -6,15 +6,18 @@ import { CampaignComparisonTable } from "@/components/reporting/campaign-table";
 import { ReportHeaderMonthPicker } from "@/components/reporting/report-header-month-picker";
 import { MetricSection } from "@/components/reporting/metric-grid";
 import { ReportFiltersBar } from "@/components/reporting/report-filters-bar";
+import { ScreenshotModeToggle } from "@/components/reporting/screenshot-mode-toggle";
 import { ReportShell } from "@/components/reporting/report-shell";
 import { ReportErrorState, ReportLoadingState, ReportWarnings } from "@/components/reporting/report-state";
 import { useReportFilters } from "@/components/reporting/use-report-filters";
 import { useCampaignComparison } from "@/components/reporting/use-report-data";
+import { useScreenshotMode } from "@/components/reporting/use-screenshot-mode";
 import { computeDelta } from "@/lib/reporting/metrics";
 import { CampaignRow, Platform, SummarySection } from "@/lib/reporting/types";
 
 export function CampaignDashboard({ campaignType }: { campaignType: string }) {
   const { filters, hasAccountId, setFilters } = useReportFilters();
+  const { screenshotMode } = useScreenshotMode();
 
   const campaignName = useMemo(() => decodeURIComponent(campaignType), [campaignType]);
 
@@ -77,24 +80,26 @@ export function CampaignDashboard({ campaignType }: { campaignType: string }) {
         />
       }
       headerBottomControl={
-        <ReportFiltersBar
-          filters={filters}
-          includePlatform
-          dateMode="month"
-          showDateFilters={false}
-          showMetaGoogleFields={false}
-          showResetButton={false}
-          submitLabel="Reload"
-          compact
-          onApply={(next) => setFilters(next)}
-          onReset={() =>
-            setFilters({
-              accountId: "",
-              metaAccountId: "",
-              googleAccountId: "",
-            })
-          }
-        />
+        <div className="space-y-2">
+          <ScreenshotModeToggle />
+          <ReportFiltersBar
+            filters={filters}
+            includePlatform
+            dateMode="month"
+            showDateFilters={false}
+            showResetButton={false}
+            submitLabel="Reload"
+            compact
+            onApply={(next) => setFilters(next)}
+            onReset={() =>
+              setFilters({
+                accountId: "",
+                metaAccountId: "",
+                googleAccountId: "",
+              })
+            }
+          />
+        </div>
       }
     >
       <div className="space-y-5">
@@ -116,12 +121,14 @@ export function CampaignDashboard({ campaignType }: { campaignType: string }) {
                   heading={`${campaignName} (${data.dateRange.currentLabel})`}
                   rows={data.selectedMonthRows}
                   totals={data.selectedTotals}
+                  showAllRows={screenshotMode}
                 />
                 <CampaignComparisonTable
                   key={`previous-${filters.platform}-${filters.startDate}-${filters.endDate}-${campaignName}`}
                   heading={`${campaignName} (${data.dateRange.previousLabel})`}
                   rows={data.previousMonthRows}
                   totals={data.previousTotals}
+                  showAllRows={screenshotMode}
                 />
               </section>
             ) : null}

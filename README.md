@@ -74,6 +74,61 @@ For production build:
 doppler run -- npm run build
 ```
 
+## Hosting on Vercel with Doppler
+
+This project can be hosted on Vercel while keeping secrets in Doppler.
+
+Prerequisites:
+
+- Vercel CLI installed (`npm i -g vercel`)
+- Doppler CLI installed and authenticated
+- Project linked to Vercel (`vercel link`)
+
+1. Sync Doppler secrets to Vercel environment(s):
+
+```bash
+# production
+doppler run --config prd -- npm run vercel:env:sync -- production
+
+# preview
+doppler run --config stg -- npm run vercel:env:sync -- preview
+
+# development
+doppler run --config dev -- npm run vercel:env:sync -- development
+```
+
+You can sync multiple targets in one command:
+
+```bash
+doppler run --config prd -- npm run vercel:env:sync -- production,preview
+```
+
+2. Deploy:
+
+```bash
+# preview deployment
+npm run vercel:deploy:preview
+
+# production deployment
+npm run vercel:deploy:prod
+```
+
+Notes:
+
+- Required secrets for sync: `META_ACCESS_TOKEN`, `GOOGLE_ADS_DEVELOPER_TOKEN`
+- Optional secrets are synced when present (`GOOGLE_ADS_ACCESS_TOKEN`, refresh/client credentials, login customer ID, API version, report company fields)
+- Alias names are supported for OAuth values (`GOOGLE_OAUTH_*`, `GOOGLE_WORKSPACE_OAUTH_*`)
+
+### Troubleshooting `NOT_FOUND` on Vercel
+
+If deployment succeeds but `/`, `/overall`, or `/campaign/*` returns `NOT_FOUND`, verify Vercel project settings:
+
+- `Root Directory` must be the repository root (`.`), not `app`
+- `Framework Preset` should be `Next.js`
+- `Output Directory` should be empty/default for Next.js
+
+Why this happens: setting root to `app` makes Vercel treat that folder as project root. In this repository, route pages live at `app/page.tsx` relative to repo root, so Vercel only detects `api/*` route handlers and misses all page routes.
+
 ## Development
 
 ```bash

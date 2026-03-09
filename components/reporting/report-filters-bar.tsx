@@ -1,13 +1,15 @@
 "use client";
 
-import { FormEvent, useEffect, useState } from "react";
+import { FormEvent, MutableRefObject, useEffect, useRef, useState } from "react";
 import {
   CalendarDaysIcon,
   ChevronLeftIcon,
   ChevronRightIcon,
   IdCardIcon,
+  PlusIcon,
   RefreshCcwIcon,
   SearchIcon,
+  XIcon,
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -29,10 +31,17 @@ interface ReportFiltersBarProps {
   includePlatform?: boolean;
   dateMode?: "range" | "month";
   showDateFilters?: boolean;
-  showMetaGoogleFields?: boolean;
   showResetButton?: boolean;
   submitLabel?: string;
   compact?: boolean;
+}
+
+type SearchPlatform = "meta" | "google";
+
+interface SearchEntry {
+  key: string;
+  platform: SearchPlatform;
+  accountId: string;
 }
 
 export function ReportFiltersBar({
@@ -42,23 +51,26 @@ export function ReportFiltersBar({
   includePlatform = false,
   dateMode = "range",
   showDateFilters = true,
-  showMetaGoogleFields = true,
   showResetButton = true,
   submitLabel = "Load Report",
   compact = false,
 }: ReportFiltersBarProps) {
-  const [accountId, setAccountId] = useState(filters.accountId);
-  const [metaAccountId, setMetaAccountId] = useState(filters.metaAccountId);
-  const [googleAccountId, setGoogleAccountId] = useState(filters.googleAccountId);
+  const [searchEntries, setSearchEntries] = useState<SearchEntry[]>([]);
+  const nextSearchEntryId = useRef(0);
   const [startDate, setStartDate] = useState(filters.startDate);
   const [endDate, setEndDate] = useState(filters.endDate);
   const [selectedMonth, setSelectedMonth] = useState(toMonthValue(filters.startDate));
   const [platform, setPlatform] = useState(filters.platform);
 
   useEffect(() => {
-    setAccountId(filters.accountId);
-    setMetaAccountId(filters.metaAccountId);
-    setGoogleAccountId(filters.googleAccountId);
+    const parsedEntries = parseSearchEntries(filters);
+    nextSearchEntryId.current = 0;
+    setSearchEntries(
+      parsedEntries.map((entry) => ({
+        ...entry,
+        key: nextSearchEntryKey(nextSearchEntryId),
+      }))
+    );
     setStartDate(filters.startDate);
     setEndDate(filters.endDate);
     setSelectedMonth(toMonthValue(filters.startDate));
@@ -68,14 +80,49 @@ export function ReportFiltersBar({
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const monthDateRange = toMonthDateRange(selectedMonth);
+    const serialized = serializeSearchEntries(searchEntries);
 
     onApply({
-      accountId: accountId.trim(),
-      metaAccountId: metaAccountId.trim(),
-      googleAccountId: googleAccountId.trim(),
+      accountId: serialized.accountId,
+      metaAccountId: serialized.metaAccountId,
+      googleAccountId: serialized.googleAccountId,
       startDate: dateMode === "month" ? monthDateRange.startDate : startDate,
       endDate: dateMode === "month" ? monthDateRange.endDate : endDate,
       platform,
+    });
+  }
+
+  function addSearchRow() {
+    setSearchEntries((prev) => [
+      ...prev,
+      {
+        key: nextSearchEntryKey(nextSearchEntryId),
+        platform: "meta",
+        accountId: "",
+      },
+    ]);
+  }
+
+  function updateSearchRow(key: string, next: Partial<Omit<SearchEntry, "key">>) {
+    setSearchEntries((prev) =>
+      prev.map((entry) => (entry.key === key ? { ...entry, ...next } : entry))
+    );
+  }
+
+  function removeSearchRow(key: string) {
+    setSearchEntries((prev) => {
+      const filtered = prev.filter((entry) => entry.key !== key);
+      if (filtered.length > 0) {
+        return filtered;
+      }
+
+      return [
+        {
+          key: nextSearchEntryKey(nextSearchEntryId),
+          platform: "meta",
+          accountId: "",
+        },
+      ];
     });
   }
 
@@ -87,33 +134,52 @@ export function ReportFiltersBar({
         compact && "gap-2 border-white/20 bg-white/90 p-3 shadow-none"
       )}
     >
-      <label className="flex min-w-0 flex-1 items-center gap-2 rounded-md border border-input bg-background px-3 md:min-w-[280px]">
-        <IdCardIcon className="size-4 text-muted-foreground" />
-        <Input
-          value={accountId}
-          onChange={(event) => setAccountId(event.target.value)}
-          className="h-10 border-0 shadow-none focus-visible:ring-0"
-          placeholder={compact ? "Ad Account ID" : "Ad Account ID (auto-fill URL: ?accountId=...)"}
-        />
-      </label>
+      <div className="min-w-0 flex-1 space-y-2 md:min-w-[360px]">
+        {searchEntries.map((entry) => (
+          <div key={entry.key} className="flex min-w-0 items-center gap-2">
+            <Select
+              value={entry.platform}
+              onValueChange={(value) =>
+                updateSearchRow(entry.key, { platform: value as SearchPlatform })
+              }
+            >
+              <SelectTrigger className="h-10 w-[130px]">
+                <SelectValue placeholder="Platform" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="meta">Meta Ads</SelectItem>
+                <SelectItem value="google">Google Ads</SelectItem>
+              </SelectContent>
+            </Select>
 
-      {showMetaGoogleFields ? (
-        <Input
-          value={metaAccountId}
-          onChange={(event) => setMetaAccountId(event.target.value)}
-          className="h-10 md:w-[250px]"
-          placeholder="Meta Account ID (optional override)"
-        />
-      ) : null}
+            <label className="flex min-w-0 flex-1 items-center gap-2 rounded-md border border-input bg-background px-3">
+              <IdCardIcon className="size-4 text-muted-foreground" />
+              <Input
+                value={entry.accountId}
+                onChange={(event) => updateSearchRow(entry.key, { accountId: event.target.value })}
+                className="h-10 border-0 shadow-none focus-visible:ring-0"
+                placeholder="Account ID"
+              />
+            </label>
 
-      {showMetaGoogleFields ? (
-        <Input
-          value={googleAccountId}
-          onChange={(event) => setGoogleAccountId(event.target.value)}
-          className="h-10 md:w-[250px]"
-          placeholder="Google Ads ID (optional override)"
-        />
-      ) : null}
+            <Button
+              type="button"
+              variant="outline"
+              className="h-10 px-3"
+              onClick={() => removeSearchRow(entry.key)}
+              aria-label="Remove account row"
+              title="Remove"
+            >
+              <XIcon className="size-4" />
+            </Button>
+          </div>
+        ))}
+
+        <Button type="button" variant="outline" className="h-9" onClick={addSearchRow}>
+          <PlusIcon data-icon="inline-start" />
+          Add Account
+        </Button>
+      </div>
 
       {showDateFilters && dateMode === "month" ? (
         <div className="flex min-w-0 items-center gap-2 rounded-md border border-input bg-background px-2 md:w-[260px]">
@@ -235,4 +301,129 @@ function shiftMonth(monthValue: string, offset: number): string {
   const [yearText, monthText] = normalized.split("-");
   const monthDate = new Date(Date.UTC(Number(yearText), Number(monthText) - 1 + offset, 1));
   return `${monthDate.getUTCFullYear()}-${String(monthDate.getUTCMonth() + 1).padStart(2, "0")}`;
+}
+
+function parseSearchEntries(filters: Pick<ReportFilters, "accountId" | "metaAccountId" | "googleAccountId">): Array<{
+  platform: SearchPlatform;
+  accountId: string;
+}> {
+  const entries: Array<{ platform: SearchPlatform; accountId: string }> = [];
+
+  splitAccountIdList(filters.metaAccountId).forEach((value) => {
+    entries.push({ platform: "meta", accountId: value });
+  });
+
+  splitAccountIdList(filters.googleAccountId).forEach((value) => {
+    entries.push({ platform: "google", accountId: value });
+  });
+
+  splitAccountIdList(filters.accountId).forEach((token) => {
+    const classified = classifyAccountIdToken(token);
+    entries.push({ platform: classified.platform, accountId: classified.accountId });
+  });
+
+  const deduped = dedupeSearchEntries(entries);
+  return deduped.length > 0 ? deduped : [{ platform: "meta", accountId: "" }];
+}
+
+function serializeSearchEntries(entries: SearchEntry[]): {
+  accountId: string;
+  metaAccountId: string;
+  googleAccountId: string;
+} {
+  const metaIds: string[] = [];
+  const googleIds: string[] = [];
+
+  entries.forEach((entry) => {
+    const trimmed = entry.accountId.trim();
+    if (!trimmed) {
+      return;
+    }
+
+    if (entry.platform === "meta") {
+      metaIds.push(trimmed);
+      return;
+    }
+
+    googleIds.push(trimmed);
+  });
+
+  return {
+    accountId: "",
+    metaAccountId: metaIds.join(","),
+    googleAccountId: googleIds.join(","),
+  };
+}
+
+function splitAccountIdList(value: string): string[] {
+  return value
+    .split(/[\s,;|]+/)
+    .map((item) => item.trim())
+    .filter((item) => item.length > 0);
+}
+
+function classifyAccountIdToken(token: string): {
+  platform: SearchPlatform;
+  accountId: string;
+} {
+  const trimmed = token.trim();
+  const lowered = trimmed.toLowerCase();
+  const digitsOnly = trimmed.replace(/\D/g, "");
+
+  if (lowered.startsWith("meta:") || lowered.startsWith("m:")) {
+    return { platform: "meta", accountId: trimmed.split(":").slice(1).join(":").trim() };
+  }
+
+  if (lowered.startsWith("google:") || lowered.startsWith("g:")) {
+    return { platform: "google", accountId: trimmed.split(":").slice(1).join(":").trim() };
+  }
+
+  if (lowered.startsWith("act_")) {
+    return { platform: "meta", accountId: trimmed };
+  }
+
+  if (/^\d{3}-\d{3}-\d{4}$/.test(trimmed)) {
+    return { platform: "google", accountId: trimmed };
+  }
+
+  if (/^\d+$/.test(trimmed) && digitsOnly.length === 10) {
+    return { platform: "google", accountId: trimmed };
+  }
+
+  if (/^\d+$/.test(trimmed) && digitsOnly.length >= 12) {
+    return { platform: "meta", accountId: trimmed };
+  }
+
+  return { platform: "meta", accountId: trimmed };
+}
+
+function dedupeSearchEntries(
+  entries: Array<{ platform: SearchPlatform; accountId: string }>
+): Array<{ platform: SearchPlatform; accountId: string }> {
+  const seen = new Set<string>();
+  const deduped: Array<{ platform: SearchPlatform; accountId: string }> = [];
+
+  entries.forEach((entry) => {
+    const trimmed = entry.accountId.trim();
+    if (!trimmed) {
+      return;
+    }
+
+    const normalized = trimmed.replace(/\D/g, "");
+    const uniqueKey = `${entry.platform}:${normalized || trimmed.toLowerCase()}`;
+    if (seen.has(uniqueKey)) {
+      return;
+    }
+
+    seen.add(uniqueKey);
+    deduped.push({ platform: entry.platform, accountId: trimmed });
+  });
+
+  return deduped;
+}
+
+function nextSearchEntryKey(counter: MutableRefObject<number>): string {
+  const key = `search-entry-${counter.current}`;
+  counter.current += 1;
+  return key;
 }

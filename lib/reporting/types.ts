@@ -58,6 +58,8 @@ export interface OverallReportPayload {
   accountIds: {
     metaAccountId: string | null;
     googleAccountId: string | null;
+    metaAccountIds: string[];
+    googleAccountIds: string[];
   };
   summaries: SummarySection[];
   campaignGroups: CampaignGroup[];

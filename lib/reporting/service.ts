@@ -30,36 +30,44 @@ interface CampaignInput extends OverallInput {
   platform: Platform;
 }
 
+interface ResolvedAccountIds {
+  metaAccountIds: string[];
+  googleAccountIds: string[];
+}
+
 export async function getOverallReport(input: OverallInput): Promise<OverallReportPayload> {
   const credentials = getCredentials();
   const dateRange = buildDateRange(input.startDate, input.endDate);
 
-  const resolvedMetaId = resolveMetaAccountId(input.accountId, input.metaAccountId);
-  const resolvedGoogleId = resolveGoogleAccountId(input.accountId, input.googleAccountId);
+  const resolvedAccountIds = resolveAccountIds(
+    input.accountId,
+    input.metaAccountId,
+    input.googleAccountId
+  );
   const mappedCompanyName = resolveCompanyNameFromAccountId(
     {
       companyName: credentials.companyName,
       companyNameMap: credentials.companyNameMap,
       accountId: input.accountId,
-      metaAccountId: resolvedMetaId,
-      googleAccountId: resolvedGoogleId,
+      metaAccountId: resolvedAccountIds.metaAccountIds,
+      googleAccountId: resolvedAccountIds.googleAccountIds,
     },
     { fallback: false }
   );
   const [resolvedMetaAccountName, resolvedGoogleAccountName] = await Promise.all([
-    tryFetchMetaAccountName(resolvedMetaId, credentials.metaAccessToken),
-    tryFetchGoogleAccountName(resolvedGoogleId, credentials),
+    tryFetchMetaAccountNames(resolvedAccountIds.metaAccountIds, credentials.metaAccessToken),
+    tryFetchGoogleAccountNames(resolvedAccountIds.googleAccountIds, credentials),
   ]);
   const fallbackCompanyName =
     resolveCompanyNameFromAccountId({
       companyName: credentials.companyName,
       companyNameMap: credentials.companyNameMap,
       accountId: input.accountId,
-      metaAccountId: resolvedMetaId,
-      googleAccountId: resolvedGoogleId,
+      metaAccountId: resolvedAccountIds.metaAccountIds,
+      googleAccountId: resolvedAccountIds.googleAccountIds,
     }) ?? credentials.companyName;
   const preferredLiveCompanyName =
-    resolvedGoogleId && !resolvedMetaId
+    resolvedAccountIds.googleAccountIds.length > 0 && resolvedAccountIds.metaAccountIds.length === 0
       ? resolvedGoogleAccountName ?? resolvedMetaAccountName
       : resolvedMetaAccountName ?? resolvedGoogleAccountName;
   const companyName = mappedCompanyName ?? preferredLiveCompanyName ?? fallbackCompanyName;
@@ -67,9 +75,14 @@ export async function getOverallReport(input: OverallInput): Promise<OverallRepo
   const warnings: string[] = [];
 
   const [metaCurrentResult, metaPreviousResult] = await Promise.all([
-    tryFetchMeta(resolvedMetaId, credentials.metaAccessToken, dateRange.startDate, dateRange.endDate),
-    tryFetchMeta(
-      resolvedMetaId,
+    tryFetchMetaForAccounts(
+      resolvedAccountIds.metaAccountIds,
+      credentials.metaAccessToken,
+      dateRange.startDate,
+      dateRange.endDate
+    ),
+    tryFetchMetaForAccounts(
+      resolvedAccountIds.metaAccountIds,
       credentials.metaAccessToken,
       dateRange.previousStartDate,
       dateRange.previousEndDate
@@ -77,8 +90,8 @@ export async function getOverallReport(input: OverallInput): Promise<OverallRepo
   ]);
 
   // Google Ads is called sequentially to avoid burst-rate-limit (429) in shared environments.
-  const googleCurrentResult = await tryFetchGoogle(
-    resolvedGoogleId,
+  const googleCurrentResult = await tryFetchGoogleForAccounts(
+    resolvedAccountIds.googleAccountIds,
     credentials.googleAdsApiVersion,
     credentials.googleDeveloperToken,
     credentials.googleAccessToken,
@@ -89,8 +102,8 @@ export async function getOverallReport(input: OverallInput): Promise<OverallRepo
     dateRange.startDate,
     dateRange.endDate
   );
-  const googlePreviousResult = await tryFetchGoogle(
-    resolvedGoogleId,
+  const googlePreviousResult = await tryFetchGoogleForAccounts(
+    resolvedAccountIds.googleAccountIds,
     credentials.googleAdsApiVersion,
     credentials.googleDeveloperToken,
     credentials.googleAccessToken,
@@ -149,8 +162,10 @@ export async function getOverallReport(input: OverallInput): Promise<OverallRepo
     companyName,
     dateRange,
     accountIds: {
-      metaAccountId: resolvedMetaId,
-      googleAccountId: resolvedGoogleId,
+      metaAccountId: firstOrNull(resolvedAccountIds.metaAccountIds),
+      googleAccountId: firstOrNull(resolvedAccountIds.googleAccountIds),
+      metaAccountIds: resolvedAccountIds.metaAccountIds,
+      googleAccountIds: resolvedAccountIds.googleAccountIds,
     },
     summaries: sections,
     campaignGroups,
@@ -163,29 +178,32 @@ export async function getCampaignComparison(input: CampaignInput): Promise<Campa
   const dateRange = buildDateRange(input.startDate, input.endDate);
   const warnings: string[] = [];
 
-  const resolvedMetaId = resolveMetaAccountId(input.accountId, input.metaAccountId);
-  const resolvedGoogleId = resolveGoogleAccountId(input.accountId, input.googleAccountId);
+  const resolvedAccountIds = resolveAccountIds(
+    input.accountId,
+    input.metaAccountId,
+    input.googleAccountId
+  );
   const mappedCompanyName = resolveCompanyNameFromAccountId(
     {
       companyName: credentials.companyName,
       companyNameMap: credentials.companyNameMap,
       accountId: input.accountId,
-      metaAccountId: resolvedMetaId,
-      googleAccountId: resolvedGoogleId,
+      metaAccountId: resolvedAccountIds.metaAccountIds,
+      googleAccountId: resolvedAccountIds.googleAccountIds,
     },
     { fallback: false }
   );
   const [resolvedMetaAccountName, resolvedGoogleAccountName] = await Promise.all([
-    tryFetchMetaAccountName(resolvedMetaId, credentials.metaAccessToken),
-    tryFetchGoogleAccountName(resolvedGoogleId, credentials),
+    tryFetchMetaAccountNames(resolvedAccountIds.metaAccountIds, credentials.metaAccessToken),
+    tryFetchGoogleAccountNames(resolvedAccountIds.googleAccountIds, credentials),
   ]);
   const fallbackCompanyName =
     resolveCompanyNameFromAccountId({
       companyName: credentials.companyName,
       companyNameMap: credentials.companyNameMap,
       accountId: input.accountId,
-      metaAccountId: resolvedMetaId,
-      googleAccountId: resolvedGoogleId,
+      metaAccountId: resolvedAccountIds.metaAccountIds,
+      googleAccountId: resolvedAccountIds.googleAccountIds,
     }) ?? credentials.companyName;
   const preferredLiveCompanyName =
     input.platform === "meta"
@@ -195,8 +213,8 @@ export async function getCampaignComparison(input: CampaignInput): Promise<Campa
 
   const selectedRows = await fetchByPlatform({
     platform: input.platform,
-    metaAccountId: resolvedMetaId,
-    googleAccountId: resolvedGoogleId,
+    metaAccountIds: resolvedAccountIds.metaAccountIds,
+    googleAccountIds: resolvedAccountIds.googleAccountIds,
     startDate: dateRange.startDate,
     endDate: dateRange.endDate,
     credentials,
@@ -205,8 +223,8 @@ export async function getCampaignComparison(input: CampaignInput): Promise<Campa
 
   const previousRows = await fetchByPlatform({
     platform: input.platform,
-    metaAccountId: resolvedMetaId,
-    googleAccountId: resolvedGoogleId,
+    metaAccountIds: resolvedAccountIds.metaAccountIds,
+    googleAccountIds: resolvedAccountIds.googleAccountIds,
     startDate: dateRange.previousStartDate,
     endDate: dateRange.previousEndDate,
     credentials,
@@ -244,23 +262,28 @@ export async function getCampaignComparison(input: CampaignInput): Promise<Campa
 
 async function fetchByPlatform(args: {
   platform: Platform;
-  metaAccountId: string | null;
-  googleAccountId: string | null;
+  metaAccountIds: string[];
+  googleAccountIds: string[];
   startDate: string;
   endDate: string;
   credentials: ReturnType<typeof getCredentials>;
   warnings: string[];
 }): Promise<CampaignRow[]> {
-  const { platform, metaAccountId, googleAccountId, startDate, endDate, credentials, warnings } = args;
+  const { platform, metaAccountIds, googleAccountIds, startDate, endDate, credentials, warnings } = args;
 
   if (platform === "meta") {
-    const result = await tryFetchMeta(metaAccountId, credentials.metaAccessToken, startDate, endDate);
+    const result = await tryFetchMetaForAccounts(
+      metaAccountIds,
+      credentials.metaAccessToken,
+      startDate,
+      endDate
+    );
     warnings.push(...result.warnings);
     return result.rows;
   }
 
-  const result = await tryFetchGoogle(
-    googleAccountId,
+  const result = await tryFetchGoogleForAccounts(
+    googleAccountIds,
     credentials.googleAdsApiVersion,
     credentials.googleDeveloperToken,
     credentials.googleAccessToken,
@@ -358,12 +381,20 @@ function aggregateRows(rows: CampaignRow[], platform: Platform): CampaignRow {
 
 async function tryFetchMeta(
   accountId: string | null,
-  accessToken: string,
+  accessToken: string | null,
   startDate: string,
   endDate: string
 ): Promise<{ rows: CampaignRow[]; warnings: string[] }> {
   if (!accountId) {
     return { rows: [], warnings: [] };
+  }
+  if (!accessToken) {
+    return {
+      rows: [],
+      warnings: [
+        "Meta API: Missing META_ACCESS_TOKEN. Add this secret in Vercel Environment Variables or run locally with `doppler run -- npm run dev`.",
+      ],
+    };
   }
 
   try {
@@ -386,7 +417,7 @@ async function tryFetchMeta(
 async function tryFetchGoogle(
   customerId: string | null,
   apiVersion: string,
-  developerToken: string,
+  developerToken: string | null,
   accessToken: string | null,
   refreshToken: string | null,
   clientId: string | null,
@@ -397,6 +428,22 @@ async function tryFetchGoogle(
 ): Promise<{ rows: CampaignRow[]; warnings: string[] }> {
   if (!customerId) {
     return { rows: [], warnings: [] };
+  }
+  if (!developerToken) {
+    return {
+      rows: [],
+      warnings: [
+        "Google Ads API: Missing GOOGLE_ADS_DEVELOPER_TOKEN. Add this secret in Vercel Environment Variables or run locally with `doppler run -- npm run dev`.",
+      ],
+    };
+  }
+  if (!hasGoogleOAuthCredentials(accessToken, refreshToken, clientId, clientSecret)) {
+    return {
+      rows: [],
+      warnings: [
+        "Google Ads API: Missing OAuth credentials. Provide GOOGLE_ADS_ACCESS_TOKEN (or GOOGLE_OAUTH_ACCESS_TOKEN), or GOOGLE_ADS_REFRESH_TOKEN + GOOGLE_ADS_CLIENT_ID + GOOGLE_ADS_CLIENT_SECRET.",
+      ],
+    };
   }
 
   try {
@@ -426,36 +473,220 @@ async function tryFetchGoogle(
   }
 }
 
-function resolveMetaAccountId(accountId: string | null, metaAccountId: string | null): string | null {
-  if (metaAccountId) {
-    return normalizeMetaAccountId(metaAccountId);
+async function tryFetchMetaForAccounts(
+  accountIds: string[],
+  accessToken: string | null,
+  startDate: string,
+  endDate: string
+): Promise<{ rows: CampaignRow[]; warnings: string[] }> {
+  if (accountIds.length === 0) {
+    return { rows: [], warnings: [] };
   }
 
-  if (!accountId) {
-    return null;
+  const rows: CampaignRow[] = [];
+  const warnings: string[] = [];
+
+  for (const accountId of accountIds) {
+    const result = await tryFetchMeta(accountId, accessToken, startDate, endDate);
+    rows.push(...result.rows);
+    warnings.push(
+      ...result.warnings.map((warning) => annotateWarningWithAccount(warning, "meta", accountId))
+    );
   }
 
-  // `123-456-7890` is a Google Ads customer-id format; avoid sending it to Meta by default.
-  if (/^\d{3}-\d{3}-\d{4}$/.test(accountId.trim())) {
-    return null;
-  }
-
-  return normalizeMetaAccountId(accountId);
+  return { rows, warnings };
 }
 
-function resolveGoogleAccountId(
+async function tryFetchGoogleForAccounts(
+  accountIds: string[],
+  apiVersion: string,
+  developerToken: string | null,
+  accessToken: string | null,
+  refreshToken: string | null,
+  clientId: string | null,
+  clientSecret: string | null,
+  loginCustomerId: string | null,
+  startDate: string,
+  endDate: string
+): Promise<{ rows: CampaignRow[]; warnings: string[] }> {
+  if (accountIds.length === 0) {
+    return { rows: [], warnings: [] };
+  }
+
+  const rows: CampaignRow[] = [];
+  const warnings: string[] = [];
+
+  for (const accountId of accountIds) {
+    const result = await tryFetchGoogle(
+      accountId,
+      apiVersion,
+      developerToken,
+      accessToken,
+      refreshToken,
+      clientId,
+      clientSecret,
+      loginCustomerId,
+      startDate,
+      endDate
+    );
+    rows.push(...result.rows);
+    warnings.push(
+      ...result.warnings.map((warning) => annotateWarningWithAccount(warning, "google", accountId))
+    );
+  }
+
+  return { rows, warnings };
+}
+
+function resolveAccountIds(
   accountId: string | null,
+  metaAccountId: string | null,
   googleAccountId: string | null
-): string | null {
-  const rawValue = googleAccountId || accountId;
-  return rawValue ? normalizeGoogleAccountId(rawValue) : null;
+): ResolvedAccountIds {
+  const metaOverrides = normalizeAccountIdList(metaAccountId, normalizeMetaAccountId);
+  const googleOverrides = normalizeAccountIdList(googleAccountId, normalizeGoogleAccountId);
+  const hasMetaOverride = metaOverrides.length > 0;
+  const hasGoogleOverride = googleOverrides.length > 0;
+
+  const metaAccountIds = [...metaOverrides];
+  const googleAccountIds = [...googleOverrides];
+
+  for (const token of splitAccountIdList(accountId)) {
+    const classified = classifyAccountToken(token);
+
+    if (!hasMetaOverride && classified.kind !== "google") {
+      pushNormalizedUnique(metaAccountIds, classified.value, normalizeMetaAccountId);
+    }
+
+    if (!hasGoogleOverride && classified.kind !== "meta") {
+      pushNormalizedUnique(googleAccountIds, classified.value, normalizeGoogleAccountId);
+    }
+  }
+
+  return { metaAccountIds, googleAccountIds };
+}
+
+function splitAccountIdList(value: string | null): string[] {
+  if (!value) {
+    return [];
+  }
+
+  return value
+    .split(/[\s,;|]+/)
+    .map((item) => item.trim())
+    .filter((item) => item.length > 0);
+}
+
+function classifyAccountToken(
+  value: string
+): { kind: "meta" | "google" | "ambiguous"; value: string } {
+  const trimmed = value.trim();
+  const normalized = trimmed.toLowerCase();
+  const digitsOnly = trimmed.replace(/\D/g, "");
+
+  if (normalized.startsWith("meta:") || normalized.startsWith("m:")) {
+    return { kind: "meta", value: trimmed.split(":").slice(1).join(":") };
+  }
+
+  if (normalized.startsWith("google:") || normalized.startsWith("g:")) {
+    return { kind: "google", value: trimmed.split(":").slice(1).join(":") };
+  }
+
+  if (normalized.startsWith("act_")) {
+    return { kind: "meta", value: trimmed };
+  }
+
+  // `123-456-7890` is a Google Ads customer-id format.
+  if (/^\d{3}-\d{3}-\d{4}$/.test(trimmed)) {
+    return { kind: "google", value: trimmed };
+  }
+
+  if (/^\d+$/.test(trimmed)) {
+    if (digitsOnly.length === 10) {
+      return { kind: "google", value: trimmed };
+    }
+    if (digitsOnly.length >= 12) {
+      return { kind: "meta", value: trimmed };
+    }
+  }
+
+  return { kind: "ambiguous", value: trimmed };
+}
+
+function normalizeAccountIdList(
+  value: string | null,
+  normalizer: (value: string) => string
+): string[] {
+  const resolved: string[] = [];
+  splitAccountIdList(value).forEach((item) => pushNormalizedUnique(resolved, item, normalizer));
+  return resolved;
+}
+
+function pushNormalizedUnique(
+  target: string[],
+  value: string,
+  normalizer: (value: string) => string
+) {
+  const normalized = normalizer(value);
+  if (!normalized || target.includes(normalized)) {
+    return;
+  }
+  target.push(normalized);
+}
+
+function firstOrNull(values: string[]): string | null {
+  return values.length > 0 ? values[0] : null;
+}
+
+async function tryFetchMetaAccountNames(
+  metaAccountIds: string[],
+  accessToken: string | null
+): Promise<string | null> {
+  for (const metaAccountId of metaAccountIds) {
+    const accountName = await tryFetchMetaAccountName(metaAccountId, accessToken);
+    if (accountName) {
+      return accountName;
+    }
+  }
+  return null;
+}
+
+async function tryFetchGoogleAccountNames(
+  googleAccountIds: string[],
+  credentials: ReturnType<typeof getCredentials>
+): Promise<string | null> {
+  for (const googleAccountId of googleAccountIds) {
+    const accountName = await tryFetchGoogleAccountName(googleAccountId, credentials);
+    if (accountName) {
+      return accountName;
+    }
+  }
+  return null;
+}
+
+function annotateWarningWithAccount(
+  warning: string,
+  platform: "meta" | "google",
+  accountId: string
+): string {
+  if (
+    (platform === "meta" && warning.startsWith("Meta API: Missing META_ACCESS_TOKEN")) ||
+    (platform === "google" &&
+      (warning.startsWith("Google Ads API: Missing GOOGLE_ADS_DEVELOPER_TOKEN") ||
+        warning.startsWith("Google Ads API: Missing OAuth credentials")))
+  ) {
+    return warning;
+  }
+
+  const prefix = platform === "meta" ? "Meta" : "Google";
+  return `${prefix} account ${accountId}: ${warning}`;
 }
 
 async function tryFetchMetaAccountName(
   metaAccountId: string | null,
-  accessToken: string
+  accessToken: string | null
 ): Promise<string | null> {
-  if (!metaAccountId) {
+  if (!metaAccountId || !accessToken) {
     return null;
   }
 
@@ -470,7 +701,18 @@ async function tryFetchGoogleAccountName(
   googleAccountId: string | null,
   credentials: ReturnType<typeof getCredentials>
 ): Promise<string | null> {
-  if (!googleAccountId) {
+  if (!googleAccountId || !credentials.googleDeveloperToken) {
+    return null;
+  }
+
+  if (
+    !hasGoogleOAuthCredentials(
+      credentials.googleAccessToken,
+      credentials.googleRefreshToken,
+      credentials.googleClientId,
+      credentials.googleClientSecret
+    )
+  ) {
     return null;
   }
 
@@ -494,4 +736,17 @@ function dedupeWarnings(warnings: string[]): string[] {
   return Array.from(
     new Set(warnings.map((warning) => warning.trim()).filter((warning) => warning.length > 0))
   );
+}
+
+function hasGoogleOAuthCredentials(
+  accessToken: string | null,
+  refreshToken: string | null,
+  clientId: string | null,
+  clientSecret: string | null
+): boolean {
+  if (accessToken) {
+    return true;
+  }
+
+  return Boolean(refreshToken && clientId && clientSecret);
 }

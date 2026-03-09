@@ -1,6 +1,6 @@
 interface Credentials {
-  metaAccessToken: string;
-  googleDeveloperToken: string;
+  metaAccessToken: string | null;
+  googleDeveloperToken: string | null;
   googleAccessToken: string | null;
   googleRefreshToken: string | null;
   googleClientId: string | null;
@@ -90,12 +90,6 @@ export function getCredentials(): Credentials {
     false
   );
 
-  if (!googleAccessToken && !(googleRefreshToken && googleClientId && googleClientSecret)) {
-    throw new Error(
-      `Missing Google Ads OAuth credentials. Provide GOOGLE_ADS_ACCESS_TOKEN (or GOOGLE_OAUTH_ACCESS_TOKEN), or configure GOOGLE_OAUTH_REFRESH_TOKEN + GOOGLE_OAUTH_CLIENT_ID + GOOGLE_OAUTH_CLIENT_SECRET. ${getDopplerHint()}`
-    );
-  }
-
   const googleLoginCustomerIdRaw = readSecret(["GOOGLE_ADS_LOGIN_CUSTOMER_ID"], false);
   const googleLoginCustomerId = normalizeOptionalGoogleCustomerId(googleLoginCustomerIdRaw);
   const googleAdsApiVersion = normalizeGoogleAdsApiVersion(
@@ -103,8 +97,8 @@ export function getCredentials(): Credentials {
   );
 
   return {
-    metaAccessToken: readSecret(["META_ACCESS_TOKEN"])!,
-    googleDeveloperToken: readSecret(["GOOGLE_ADS_DEVELOPER_TOKEN"])!,
+    metaAccessToken: readSecret(["META_ACCESS_TOKEN"], false),
+    googleDeveloperToken: readSecret(["GOOGLE_ADS_DEVELOPER_TOKEN"], false),
     googleAccessToken,
     googleRefreshToken,
     googleClientId,
@@ -127,13 +121,15 @@ export function normalizeMetaAccountId(value: string): string {
 export function resolveCompanyNameFromAccountId(input: {
   companyName: string;
   companyNameMap: Record<string, string>;
-  accountId: string | null;
-  metaAccountId: string | null;
-  googleAccountId: string | null;
+  accountId: string | string[] | null;
+  metaAccountId: string | string[] | null;
+  googleAccountId: string | string[] | null;
 }, options?: { fallback?: boolean }): string | null {
-  const candidateIds = [input.metaAccountId, input.googleAccountId, input.accountId]
-    .map((value) => normalizeOptionalGoogleCustomerId(value))
-    .filter((value): value is string => Boolean(value));
+  const candidateIds = collectCandidateIds([
+    input.metaAccountId,
+    input.googleAccountId,
+    input.accountId,
+  ]);
 
   for (const accountId of candidateIds) {
     const mapped = input.companyNameMap[accountId];
@@ -152,6 +148,36 @@ export function resolveCompanyNameFromAccountId(input: {
   }
 
   return input.companyName;
+}
+
+function collectCandidateIds(values: Array<string | string[] | null>): string[] {
+  const seen = new Set<string>();
+  const results: string[] = [];
+
+  for (const value of values) {
+    const items = Array.isArray(value) ? value : splitAccountIdInput(value);
+    for (const item of items) {
+      const normalized = normalizeOptionalGoogleCustomerId(item);
+      if (!normalized || seen.has(normalized)) {
+        continue;
+      }
+      seen.add(normalized);
+      results.push(normalized);
+    }
+  }
+
+  return results;
+}
+
+function splitAccountIdInput(value: string | null): string[] {
+  if (!value) {
+    return [];
+  }
+
+  return value
+    .split(/[\s,;|]+/)
+    .map((item) => item.trim())
+    .filter((item) => item.length > 0);
 }
 
 function normalizeOptionalGoogleCustomerId(value: string | null): string | null {

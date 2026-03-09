@@ -112,18 +112,22 @@ export function CampaignComparisonTable({
   heading,
   rows,
   totals,
+  showAllRows = false,
 }: {
   heading: string;
   rows: CampaignRow[];
   totals: CampaignRow;
+  showAllRows?: boolean;
 }) {
   const [page, setPage] = useState(1);
   const rowsWithSpend = useMemo(() => withPositiveSpend(rows), [rows]);
   const totalsWithSpend = useMemo(() => buildTotalsFromRows(rowsWithSpend, totals), [rowsWithSpend, totals]);
-  const totalPages = Math.max(1, Math.ceil(rowsWithSpend.length / ROWS_PER_PAGE));
+  const totalPages = showAllRows ? 1 : Math.max(1, Math.ceil(rowsWithSpend.length / ROWS_PER_PAGE));
   const safePage = Math.min(page, totalPages);
-  const startIndex = (safePage - 1) * ROWS_PER_PAGE;
-  const visibleRows = rowsWithSpend.slice(startIndex, startIndex + ROWS_PER_PAGE);
+  const startIndex = showAllRows ? 0 : (safePage - 1) * ROWS_PER_PAGE;
+  const visibleRows = showAllRows
+    ? rowsWithSpend
+    : rowsWithSpend.slice(startIndex, startIndex + ROWS_PER_PAGE);
 
   const fromCount = rowsWithSpend.length === 0 ? 0 : startIndex + 1;
   const toCount =
@@ -178,33 +182,35 @@ export function CampaignComparisonTable({
           </tbody>
         </table>
       </div>
-      <div className="flex items-center justify-end gap-2 px-3 pb-3 text-xs text-muted-foreground">
-        <span>
-          {fromCount} - {toCount} / {rowsWithSpend.length || 0}
-        </span>
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon-xs"
-          className="h-6 w-6"
-          onClick={() => setPage((prev) => Math.max(1, prev - 1))}
-          disabled={safePage <= 1}
-          aria-label="Previous table page"
-        >
-          <ChevronLeftIcon className="size-3.5" />
-        </Button>
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon-xs"
-          className="h-6 w-6"
-          onClick={() => setPage((prev) => Math.min(totalPages, prev + 1))}
-          disabled={safePage >= totalPages}
-          aria-label="Next table page"
-        >
-          <ChevronRightIcon className="size-3.5" />
-        </Button>
-      </div>
+      {!showAllRows ? (
+        <div className="flex items-center justify-end gap-2 px-3 pb-3 text-xs text-muted-foreground">
+          <span>
+            {fromCount} - {toCount} / {rowsWithSpend.length || 0}
+          </span>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-xs"
+            className="h-6 w-6"
+            onClick={() => setPage((prev) => Math.max(1, prev - 1))}
+            disabled={safePage <= 1}
+            aria-label="Previous table page"
+          >
+            <ChevronLeftIcon className="size-3.5" />
+          </Button>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-xs"
+            className="h-6 w-6"
+            onClick={() => setPage((prev) => Math.min(totalPages, prev + 1))}
+            disabled={safePage >= totalPages}
+            aria-label="Next table page"
+          >
+            <ChevronRightIcon className="size-3.5" />
+          </Button>
+        </div>
+      ) : null}
     </details>
   );
 }

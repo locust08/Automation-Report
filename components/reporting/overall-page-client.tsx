@@ -6,13 +6,16 @@ import { OverallCampaignGroupsTable } from "@/components/reporting/campaign-tabl
 import { ReportHeaderMonthPicker } from "@/components/reporting/report-header-month-picker";
 import { MetricSection } from "@/components/reporting/metric-grid";
 import { ReportFiltersBar } from "@/components/reporting/report-filters-bar";
+import { ScreenshotModeToggle } from "@/components/reporting/screenshot-mode-toggle";
 import { ReportShell } from "@/components/reporting/report-shell";
 import { ReportErrorState, ReportLoadingState, ReportWarnings } from "@/components/reporting/report-state";
 import { useReportFilters } from "@/components/reporting/use-report-filters";
 import { useOverallReport } from "@/components/reporting/use-report-data";
+import { useScreenshotMode } from "@/components/reporting/use-screenshot-mode";
 
 export function OverallPageClient() {
   const { filters, hasAccountId, setFilters } = useReportFilters();
+  const { screenshotMode } = useScreenshotMode();
 
   const queryString = useMemo(() => {
     const params = new URLSearchParams();
@@ -34,8 +37,11 @@ export function OverallPageClient() {
 
   const forwardQuery = useMemo(() => {
     const params = new URLSearchParams(queryString);
+    if (screenshotMode) {
+      params.set("screenshot", "1");
+    }
     return params.toString() ? `&${params.toString()}` : "";
-  }, [queryString]);
+  }, [queryString, screenshotMode]);
 
   const title = `${data?.companyName ?? "Company Name"} Monthly Performance`;
   const dateLabel = data?.dateRange.currentLabel ?? `${filters.startDate} - ${filters.endDate}`;
@@ -52,23 +58,25 @@ export function OverallPageClient() {
         />
       }
       headerBottomControl={
-        <ReportFiltersBar
-          filters={filters}
-          dateMode="month"
-          showDateFilters={false}
-          showMetaGoogleFields={false}
-          showResetButton={false}
-          submitLabel="Reload"
-          compact
-          onApply={(next) => setFilters(next)}
-          onReset={() =>
-            setFilters({
-              accountId: "",
-              metaAccountId: "",
-              googleAccountId: "",
-            })
-          }
-        />
+        <div className="space-y-2">
+          <ScreenshotModeToggle />
+          <ReportFiltersBar
+            filters={filters}
+            dateMode="month"
+            showDateFilters={false}
+            showResetButton={false}
+            submitLabel="Reload"
+            compact
+            onApply={(next) => setFilters(next)}
+            onReset={() =>
+              setFilters({
+                accountId: "",
+                metaAccountId: "",
+                googleAccountId: "",
+              })
+            }
+          />
+        </div>
       }
     >
       <div className="space-y-5">

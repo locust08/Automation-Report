@@ -18,7 +18,10 @@ export function ReportShell({
   children,
 }: ReportShellProps) {
   return (
-    <main className="min-h-screen bg-[#f0f0f0] text-[#111]">
+    <main
+      className="min-h-screen bg-[#f0f0f0] text-[#111]"
+      data-report-capture-root="true"
+    >
       <section className="relative overflow-visible bg-[url('/headerbackground.png')] bg-[length:100%_100%] bg-center bg-no-repeat">
         <div className="mx-auto max-w-[1280px] px-4 pb-5 pt-7 md:px-8 md:pb-6 md:pt-8">
           <div className="grid gap-4 text-white md:grid-cols-[minmax(0,1fr)_auto] md:items-start">
