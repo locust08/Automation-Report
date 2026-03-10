@@ -50,7 +50,17 @@ export function OverallCampaignGroupsTable({
               </span>
               <ChevronDownIcon className="size-5" />
             </summary>
-            <div className="overflow-x-auto px-2 pb-2">
+            <div className="space-y-2 px-2 pb-2 md:hidden">
+              {group.rows.map((row) => (
+                <CampaignMobileCard
+                  key={row.id}
+                  row={row}
+                  actionHref={`/campaign/${encodeURIComponent(group.campaignType)}?platform=${group.platform}${queryString}`}
+                />
+              ))}
+              <CampaignMobileCard row={group.totals} forceTitle="Grand Total" />
+            </div>
+            <div className="hidden overflow-x-auto px-2 pb-2 md:block">
               <table className="min-w-[920px] text-left text-xs sm:text-sm">
                 <thead>
                   <tr className="border-b border-border/60 text-[#454545]">
@@ -142,7 +152,13 @@ export function CampaignComparisonTable({
       <summary className="cursor-pointer rounded-xl bg-[#f0adad] px-4 py-3 text-lg font-semibold sm:text-xl">
         {heading}
       </summary>
-      <div className="overflow-x-auto px-2 pb-2">
+      <div className="space-y-2 px-2 pb-2 md:hidden">
+        {visibleRows.map((row) => (
+          <CampaignMobileCard key={row.id} row={row} />
+        ))}
+        <CampaignMobileCard row={totalsWithSpend} forceTitle="Grand Total" />
+      </div>
+      <div className="hidden overflow-x-auto px-2 pb-2 md:block">
         <table className="min-w-[920px] text-left text-xs sm:text-sm">
           <thead>
             <tr className="border-b border-border/60 text-[#454545]">
@@ -223,6 +239,50 @@ function platformLabel(platform: Platform): string {
     return "Google YouTube";
   }
   return "Google Ads";
+}
+
+const CAMPAIGN_MOBILE_METRICS: Array<{
+  key: string;
+  label: string;
+  value: (row: CampaignRow) => number;
+}> = [
+  { key: "impressions", label: "Impression", value: (row) => row.impressions },
+  { key: "clicks", label: "Clicks", value: (row) => row.clicks },
+  { key: "ctr", label: "CTR (%)", value: (row) => row.ctr },
+  { key: "cpm", label: "CPM (RM)", value: (row) => row.cpm },
+  { key: "results", label: "Results", value: (row) => row.results },
+  { key: "costPerResult", label: "Cost/Results", value: (row) => row.costPerResult },
+  { key: "spend", label: "Ads Spent (RM)", value: (row) => row.spend },
+];
+
+function CampaignMobileCard({
+  row,
+  forceTitle,
+  actionHref,
+}: {
+  row: CampaignRow;
+  forceTitle?: string;
+  actionHref?: string;
+}) {
+  return (
+    <article className="rounded-lg border border-border/50 bg-[#f9f9f9] p-3 shadow-sm">
+      <p className="text-sm font-semibold text-[#454545]">{forceTitle ?? row.campaignName}</p>
+      <dl className="mt-2 grid grid-cols-2 gap-x-3 gap-y-2 text-xs">
+        {CAMPAIGN_MOBILE_METRICS.map((metric) => (
+          <div key={`${row.id}-${metric.key}`} className="space-y-0.5">
+            <dt className="text-[#7a7a7a]">{metric.label}</dt>
+            <dd className="font-semibold text-[#37363e]">{formatCompactNumber(metric.value(row))}</dd>
+          </div>
+        ))}
+      </dl>
+      {actionHref ? (
+        <Link className="mt-3 inline-flex items-center gap-1 text-sm text-red-700 hover:underline" href={actionHref}>
+          View
+          <ExternalLinkIcon className="size-3.5" />
+        </Link>
+      ) : null}
+    </article>
+  );
 }
 
 function withPositiveSpend(rows: CampaignRow[]): CampaignRow[] {
