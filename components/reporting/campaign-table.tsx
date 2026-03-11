@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { ChevronDownIcon, ChevronLeftIcon, ChevronRightIcon, ExternalLinkIcon } from "lucide-react";
 
@@ -43,7 +43,7 @@ export function OverallCampaignGroupsTable({
       <h2 className="text-2xl font-semibold text-[#555] sm:text-3xl md:text-4xl">Campaign Breakdown</h2>
       <div className="space-y-4">
         {visibleGroups.map((group) => (
-          <details key={group.id} open className="rounded-xl bg-white shadow-sm">
+          <details key={group.id} open className="overflow-hidden rounded-xl border border-[#d7d7d7] bg-white shadow-sm">
             <summary className="flex cursor-pointer items-center justify-between rounded-xl bg-[#f0adad] px-4 py-3 text-base font-semibold sm:text-lg">
               <span>
                 {platformLabel(group.platform)} - {group.campaignType}
@@ -61,7 +61,7 @@ export function OverallCampaignGroupsTable({
               <CampaignMobileCard row={group.totals} forceTitle="Grand Total" />
             </div>
             <div className="hidden overflow-x-auto px-2 pb-2 md:block">
-              <table className="min-w-[920px] text-left text-xs sm:text-sm">
+              <table className="w-full min-w-[920px] text-left text-xs sm:text-sm">
                 <thead>
                   <tr className="border-b border-border/60 text-[#454545]">
                     <th className="px-2 py-3 font-semibold whitespace-nowrap">Campaign</th>
@@ -133,6 +133,7 @@ export function CampaignComparisonTable({
   const rowsWithSpend = useMemo(() => withPositiveSpend(rows), [rows]);
   const totalsWithSpend = useMemo(() => buildTotalsFromRows(rowsWithSpend, totals), [rowsWithSpend, totals]);
   const totalPages = showAllRows ? 1 : Math.max(1, Math.ceil(rowsWithSpend.length / ROWS_PER_PAGE));
+  const rowsSignature = useMemo(() => rowsWithSpend.map((row) => row.id).join("|"), [rowsWithSpend]);
   const safePage = Math.min(page, totalPages);
   const startIndex = showAllRows ? 0 : (safePage - 1) * ROWS_PER_PAGE;
   const visibleRows = showAllRows
@@ -143,12 +144,16 @@ export function CampaignComparisonTable({
   const toCount =
     rowsWithSpend.length === 0 ? 0 : Math.min(startIndex + visibleRows.length, rowsWithSpend.length);
 
+  useEffect(() => {
+    setPage(1);
+  }, [heading, rowsSignature]);
+
   if (rowsWithSpend.length === 0) {
     return null;
   }
 
   return (
-    <details open className="rounded-xl bg-white shadow-sm">
+    <details open className="overflow-hidden rounded-xl border border-[#d7d7d7] bg-white shadow-sm">
       <summary className="cursor-pointer rounded-xl bg-[#f0adad] px-4 py-3 text-lg font-semibold sm:text-xl">
         {heading}
       </summary>
@@ -159,7 +164,7 @@ export function CampaignComparisonTable({
         <CampaignMobileCard row={totalsWithSpend} forceTitle="Grand Total" />
       </div>
       <div className="hidden overflow-x-auto px-2 pb-2 md:block">
-        <table className="min-w-[920px] text-left text-xs sm:text-sm">
+        <table className="w-full min-w-[920px] text-left text-xs sm:text-sm">
           <thead>
             <tr className="border-b border-border/60 text-[#454545]">
               <th className="px-2 py-3 font-semibold whitespace-nowrap">Campaign</th>
@@ -199,7 +204,7 @@ export function CampaignComparisonTable({
         </table>
       </div>
       {!showAllRows ? (
-        <div className="flex items-center justify-between gap-2 px-3 pb-3 text-xs text-muted-foreground sm:justify-end">
+        <div className="flex items-center justify-between gap-2 border-t border-border/50 px-3 py-3 text-xs text-muted-foreground sm:justify-end">
           <span>
             {fromCount} - {toCount} / {rowsWithSpend.length || 0}
           </span>
