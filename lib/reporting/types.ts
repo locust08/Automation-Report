@@ -78,6 +78,93 @@ export interface CampaignComparisonPayload {
   warnings: string[];
 }
 
+export interface TopKeywordRow {
+  id: string;
+  keyword: string;
+  impressions: number;
+  clicks: number;
+  avgCpc: number;
+  ctr: number;
+  conversions: number;
+  conversionRate: number;
+  costPerConversion: number;
+  cost: number;
+}
+
+export interface TopKeywordsPayload {
+  companyName: string;
+  dateRange: DateRangeConfig;
+  accountIds: {
+    metaAccountId: string | null;
+    googleAccountId: string | null;
+    metaAccountIds: string[];
+    googleAccountIds: string[];
+  };
+  rows: TopKeywordRow[];
+  totals: TopKeywordRow;
+  warnings: string[];
+}
+
+export interface AuctionInsightRow {
+  id: string;
+  displayDomain: string;
+  impressionShare: number;
+  impressionShareLabel?: string;
+  overlapRate: number;
+  overlapRateLabel?: string;
+  positionAboveRate: number;
+  positionAboveRateLabel?: string;
+  topOfPageRate: number;
+  topOfPageRateLabel?: string;
+  absoluteTopOfPageRate: number;
+  absoluteTopOfPageRateLabel?: string;
+  outrankingShare: number;
+  outrankingShareLabel?: string;
+  observations: number;
+}
+
+export interface AuctionInsightsPayload {
+  companyName: string;
+  dateRange: DateRangeConfig;
+  accountIds: {
+    metaAccountId: string | null;
+    googleAccountId: string | null;
+    metaAccountIds: string[];
+    googleAccountIds: string[];
+  };
+  rows: AuctionInsightRow[];
+  averages: Omit<AuctionInsightRow, "id" | "displayDomain" | "observations">;
+  warnings: string[];
+}
+
+export interface InsightRow {
+  id: string;
+  priority: number;
+  whatToChange: string;
+  whyThisMatters: string;
+  successMetric: string;
+  decisionRule: string;
+}
+
+export interface PlatformInsightsSection {
+  platform: "meta" | "google";
+  title: string;
+  rows: InsightRow[];
+}
+
+export interface InsightsPayload {
+  companyName: string;
+  dateRange: DateRangeConfig;
+  accountIds: {
+    metaAccountId: string | null;
+    googleAccountId: string | null;
+    metaAccountIds: string[];
+    googleAccountIds: string[];
+  };
+  sections: PlatformInsightsSection[];
+  warnings: string[];
+}
+
 export interface RequestContext {
   accountId: string | null;
   metaAccountId: string | null;

@@ -1,6 +1,14 @@
-import Image from "next/image";
+"use client";
+
 import Link from "next/link";
-import { BarChart3Icon, LayoutGridIcon, LineChartIcon } from "lucide-react";
+import { useMemo } from "react";
+import { useSearchParams } from "next/navigation";
+import {
+  BarChart3Icon,
+  HouseIcon,
+  LightbulbIcon,
+  SearchIcon,
+} from "lucide-react";
 
 interface ReportShellProps {
   title: string;
@@ -17,6 +25,18 @@ export function ReportShell({
   headerBottomControl,
   children,
 }: ReportShellProps) {
+  const searchParams = useSearchParams();
+  const activeQuery = searchParams.toString();
+  const hrefs = useMemo(
+    () => ({
+      home: withQuery("/", activeQuery),
+      overall: withQuery("/overall", activeQuery),
+      keywords: withQuery("/keywords", activeQuery),
+      insights: withQuery("/insights", activeQuery),
+    }),
+    [activeQuery]
+  );
+
   return (
     <main
       className="min-h-screen bg-[#f0f0f0] text-[#111]"
@@ -29,27 +49,38 @@ export function ReportShell({
               <h1 className="max-w-[960px] text-2xl font-medium leading-tight tracking-tight sm:text-3xl md:text-5xl">
                 {title}
               </h1>
-              <nav className="flex flex-wrap items-center gap-2 text-xs sm:text-sm">
+              <nav className="flex flex-wrap items-center gap-2">
                 <Link
-                  href="/"
-                  className="inline-flex items-center gap-2 rounded-md bg-white/10 px-2.5 py-1.5 hover:bg-white/20 sm:px-3 sm:py-2"
+                  href={hrefs.home}
+                  title="Home"
+                  aria-label="Open Home page"
+                  className="inline-flex size-9 items-center justify-center rounded-md bg-white/10 hover:bg-white/20"
                 >
-                  <LayoutGridIcon className="size-4" />
-                  Home
+                  <HouseIcon className="size-4" />
                 </Link>
                 <Link
-                  href="/overall"
-                  className="inline-flex items-center gap-2 rounded-md bg-white/10 px-2.5 py-1.5 hover:bg-white/20 sm:px-3 sm:py-2"
+                  href={hrefs.overall}
+                  title="Overall"
+                  aria-label="Open Overall page"
+                  className="inline-flex size-9 items-center justify-center rounded-md bg-white/10 hover:bg-white/20"
                 >
                   <BarChart3Icon className="size-4" />
-                  Overall
                 </Link>
                 <Link
-                  href="/campaign/awareness"
-                  className="inline-flex items-center gap-2 rounded-md bg-white/10 px-2.5 py-1.5 hover:bg-white/20 sm:px-3 sm:py-2"
+                  href={hrefs.keywords}
+                  title="Top 10 Keywords"
+                  aria-label="Open Top 10 Keywords page"
+                  className="inline-flex size-9 items-center justify-center rounded-md bg-white/10 hover:bg-white/20"
                 >
-                  <LineChartIcon className="size-4" />
-                  Campaign Type
+                  <SearchIcon className="size-4" />
+                </Link>
+                <Link
+                  href={hrefs.insights}
+                  title="Insights"
+                  aria-label="Open Insights page"
+                  className="inline-flex size-9 items-center justify-center rounded-md bg-white/10 hover:bg-white/20"
+                >
+                  <LightbulbIcon className="size-4" />
                 </Link>
               </nav>
             </div>
@@ -70,9 +101,22 @@ export function ReportShell({
       </section>
 
       <footer className="mx-auto flex max-w-[1280px] flex-col items-center gap-3 border-t-4 border-red-600 px-4 py-5 text-center text-sm text-[#777] sm:flex-row sm:justify-between sm:px-6 sm:text-left">
-        <Image src="/logo.png" alt="Company logo" width={148} height={32} className="h-8 w-auto object-contain" />
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img
+          src="/logo.png"
+          alt="Company logo"
+          width={148}
+          height={32}
+          className="h-8 w-auto object-contain"
+          loading="eager"
+          decoding="sync"
+        />
         <span>LOCUS-T SDN BHD</span>
       </footer>
     </main>
   );
+}
+
+function withQuery(pathname: string, query: string): string {
+  return query ? `${pathname}?${query}` : pathname;
 }

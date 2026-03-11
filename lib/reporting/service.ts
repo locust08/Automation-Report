@@ -5,16 +5,27 @@ import {
   normalizeMetaAccountId,
   resolveCompanyNameFromAccountId,
 } from "@/lib/reporting/env";
-import { fetchGoogleAccountName, fetchGoogleCampaignRows } from "@/lib/reporting/google";
+import { buildPlatformInsights } from "@/lib/reporting/insights";
+import {
+  fetchGoogleAccountName,
+  fetchGoogleAuctionInsightRows,
+  fetchGoogleCampaignRows,
+  fetchGoogleTopKeywordRows,
+} from "@/lib/reporting/google";
 import { buildGroups, computeDelta, emptyCampaignRow, mergeCampaignRows } from "@/lib/reporting/metrics";
 import { fetchMetaAccountName, fetchMetaCampaignRows } from "@/lib/reporting/meta";
 import {
+  AuctionInsightRow,
+  AuctionInsightsPayload,
   CampaignComparisonPayload,
   CampaignRow,
+  InsightsPayload,
   OverallReportPayload,
   Platform,
   SummaryMetric,
   SummarySection,
+  TopKeywordRow,
+  TopKeywordsPayload,
 } from "@/lib/reporting/types";
 
 interface OverallInput {
@@ -34,6 +45,72 @@ interface ResolvedAccountIds {
   metaAccountIds: string[];
   googleAccountIds: string[];
 }
+
+const MANUAL_AUCTION_INSIGHT_ROWS_BY_ACCOUNT: Record<string, AuctionInsightRow[]> = {
+  "6261186490": [
+    {
+      id: "manual-6261186490-tenby.edu.my",
+      displayDomain: "tenby.edu.my",
+      impressionShare: 13.04,
+      overlapRate: 20.03,
+      positionAboveRate: 70.52,
+      topOfPageRate: 81.59,
+      absoluteTopOfPageRate: 43.43,
+      outrankingShare: 8.8,
+      observations: 1,
+    },
+    {
+      id: "manual-6261186490-you",
+      displayDomain: "You",
+      impressionShare: 10.25,
+      overlapRate: 0,
+      overlapRateLabel: "-",
+      positionAboveRate: 0,
+      positionAboveRateLabel: "-",
+      topOfPageRate: 74.92,
+      absoluteTopOfPageRate: 26.31,
+      outrankingShare: 0,
+      outrankingShareLabel: "-",
+      observations: 1,
+    },
+    {
+      id: "manual-6261186490-aism.edu.my",
+      displayDomain: "aism.edu.my",
+      impressionShare: 9.99,
+      impressionShareLabel: "< 10%",
+      overlapRate: 10.86,
+      positionAboveRate: 44.11,
+      topOfPageRate: 71.36,
+      absoluteTopOfPageRate: 26.66,
+      outrankingShare: 9.76,
+      observations: 1,
+    },
+    {
+      id: "manual-6261186490-apschools.edu.my",
+      displayDomain: "apschools.edu.my",
+      impressionShare: 9.99,
+      impressionShareLabel: "< 10%",
+      overlapRate: 6.82,
+      positionAboveRate: 80.16,
+      topOfPageRate: 79.43,
+      absoluteTopOfPageRate: 54.1,
+      outrankingShare: 9.69,
+      observations: 1,
+    },
+    {
+      id: "manual-6261186490-nordangliaeducation.com",
+      displayDomain: "nordangliaeducation.com",
+      impressionShare: 9.99,
+      impressionShareLabel: "< 10%",
+      overlapRate: 13.02,
+      positionAboveRate: 82.63,
+      topOfPageRate: 84.97,
+      absoluteTopOfPageRate: 55.53,
+      outrankingShare: 9.14,
+      observations: 1,
+    },
+  ],
+};
 
 export async function getOverallReport(input: OverallInput): Promise<OverallReportPayload> {
   const credentials = getCredentials();
@@ -260,6 +337,219 @@ export async function getCampaignComparison(input: CampaignInput): Promise<Campa
   };
 }
 
+export async function getTopKeywordsReport(input: OverallInput): Promise<TopKeywordsPayload> {
+  const credentials = getCredentials();
+  const dateRange = buildDateRange(input.startDate, input.endDate);
+  const resolvedAccountIds = resolveAccountIds(
+    input.accountId,
+    input.metaAccountId,
+    input.googleAccountId
+  );
+  const companyName = await resolveCompanyNameForReport({
+    credentials,
+    accountId: input.accountId,
+    resolvedAccountIds,
+  });
+
+  const keywordResult = await tryFetchGoogleKeywordsForAccounts(
+    resolvedAccountIds.googleAccountIds,
+    credentials.googleAdsApiVersion,
+    credentials.googleDeveloperToken,
+    credentials.googleAccessToken,
+    credentials.googleRefreshToken,
+    credentials.googleClientId,
+    credentials.googleClientSecret,
+    credentials.googleLoginCustomerId,
+    dateRange.startDate,
+    dateRange.endDate
+  );
+
+  const rows = keywordResult.rows.slice(0, 10);
+  const totals = buildTopKeywordTotals(rows);
+  const warnings = [...keywordResult.warnings];
+
+  if (rows.length === 0 && warnings.length === 0) {
+    warnings.push(
+      "No keyword rows were returned for the selected Google Ads account IDs and date range."
+    );
+  }
+
+  return {
+    companyName,
+    dateRange,
+    accountIds: {
+      metaAccountId: firstOrNull(resolvedAccountIds.metaAccountIds),
+      googleAccountId: firstOrNull(resolvedAccountIds.googleAccountIds),
+      metaAccountIds: resolvedAccountIds.metaAccountIds,
+      googleAccountIds: resolvedAccountIds.googleAccountIds,
+    },
+    rows,
+    totals,
+    warnings: dedupeWarnings(warnings),
+  };
+}
+
+export async function getAuctionInsightsReport(input: OverallInput): Promise<AuctionInsightsPayload> {
+  const credentials = getCredentials();
+  const dateRange = buildDateRange(input.startDate, input.endDate);
+  const resolvedAccountIds = resolveAccountIds(
+    input.accountId,
+    input.metaAccountId,
+    input.googleAccountId
+  );
+  const companyName = await resolveCompanyNameForReport({
+    credentials,
+    accountId: input.accountId,
+    resolvedAccountIds,
+  });
+
+  const auctionResult = await tryFetchGoogleAuctionInsightsForAccounts(
+    resolvedAccountIds.googleAccountIds,
+    credentials.googleAdsApiVersion,
+    credentials.googleDeveloperToken,
+    credentials.googleAccessToken,
+    credentials.googleRefreshToken,
+    credentials.googleClientId,
+    credentials.googleClientSecret,
+    credentials.googleLoginCustomerId,
+    dateRange.startDate,
+    dateRange.endDate
+  );
+
+  const manualRows = getManualAuctionInsightRowsForAccounts(resolvedAccountIds.googleAccountIds);
+  const rows = (auctionResult.rows.length > 0 ? auctionResult.rows : manualRows).slice(0, 20);
+  const averages = buildAuctionInsightAverages(rows);
+  const warnings =
+    rows.length > 0 && auctionResult.rows.length === 0 && manualRows.length > 0
+      ? [
+          "Showing manually keyed auction insights snapshot for Google account 626-118-6490 based on the provided source image.",
+        ]
+      : [...auctionResult.warnings];
+
+  if (rows.length === 0 && warnings.length === 0) {
+    warnings.push(
+      "No auction insight rows were returned for the selected Google Ads account IDs and date range."
+    );
+  }
+
+  return {
+    companyName,
+    dateRange,
+    accountIds: {
+      metaAccountId: firstOrNull(resolvedAccountIds.metaAccountIds),
+      googleAccountId: firstOrNull(resolvedAccountIds.googleAccountIds),
+      metaAccountIds: resolvedAccountIds.metaAccountIds,
+      googleAccountIds: resolvedAccountIds.googleAccountIds,
+    },
+    rows,
+    averages,
+    warnings: dedupeWarnings(warnings),
+  };
+}
+
+export async function getInsightsReport(input: OverallInput): Promise<InsightsPayload> {
+  const credentials = getCredentials();
+  const dateRange = buildDateRange(input.startDate, input.endDate);
+  const resolvedAccountIds = resolveAccountIds(
+    input.accountId,
+    input.metaAccountId,
+    input.googleAccountId
+  );
+  const companyName = await resolveCompanyNameForReport({
+    credentials,
+    accountId: input.accountId,
+    resolvedAccountIds,
+  });
+
+  const warnings: string[] = [];
+
+  const [metaCurrentResult, metaPreviousResult] = await Promise.all([
+    tryFetchMetaForAccounts(
+      resolvedAccountIds.metaAccountIds,
+      credentials.metaAccessToken,
+      dateRange.startDate,
+      dateRange.endDate
+    ),
+    tryFetchMetaForAccounts(
+      resolvedAccountIds.metaAccountIds,
+      credentials.metaAccessToken,
+      dateRange.previousStartDate,
+      dateRange.previousEndDate
+    ),
+  ]);
+
+  const googleCurrentResult = await tryFetchGoogleForAccounts(
+    resolvedAccountIds.googleAccountIds,
+    credentials.googleAdsApiVersion,
+    credentials.googleDeveloperToken,
+    credentials.googleAccessToken,
+    credentials.googleRefreshToken,
+    credentials.googleClientId,
+    credentials.googleClientSecret,
+    credentials.googleLoginCustomerId,
+    dateRange.startDate,
+    dateRange.endDate
+  );
+  const googlePreviousResult = await tryFetchGoogleForAccounts(
+    resolvedAccountIds.googleAccountIds,
+    credentials.googleAdsApiVersion,
+    credentials.googleDeveloperToken,
+    credentials.googleAccessToken,
+    credentials.googleRefreshToken,
+    credentials.googleClientId,
+    credentials.googleClientSecret,
+    credentials.googleLoginCustomerId,
+    dateRange.previousStartDate,
+    dateRange.previousEndDate
+  );
+
+  warnings.push(
+    ...metaCurrentResult.warnings,
+    ...metaPreviousResult.warnings,
+    ...googleCurrentResult.warnings,
+    ...googlePreviousResult.warnings
+  );
+
+  const metaCurrentRows = metaCurrentResult.rows.filter((row) => row.platform === "meta");
+  const metaPreviousRows = metaPreviousResult.rows.filter((row) => row.platform === "meta");
+  const googleCurrentRows = googleCurrentResult.rows.filter((row) => row.platform === "google");
+  const googlePreviousRows = googlePreviousResult.rows.filter((row) => row.platform === "google");
+
+  const sections = [
+    buildPlatformInsights({
+      platform: "meta",
+      currentRows: metaCurrentRows,
+      previousRows: metaPreviousRows,
+      dateRange,
+    }),
+    buildPlatformInsights({
+      platform: "google",
+      currentRows: googleCurrentRows,
+      previousRows: googlePreviousRows,
+      dateRange,
+    }),
+  ];
+
+  if (sections.every((section) => section.rows.length === 0) && warnings.length === 0) {
+    warnings.push(
+      "No campaign rows were returned for the selected accounts and date range. Verify account IDs and API access permissions."
+    );
+  }
+
+  return {
+    companyName,
+    dateRange,
+    accountIds: {
+      metaAccountId: firstOrNull(resolvedAccountIds.metaAccountIds),
+      googleAccountId: firstOrNull(resolvedAccountIds.googleAccountIds),
+      metaAccountIds: resolvedAccountIds.metaAccountIds,
+      googleAccountIds: resolvedAccountIds.googleAccountIds,
+    },
+    sections,
+    warnings: dedupeWarnings(warnings),
+  };
+}
+
 async function fetchByPlatform(args: {
   platform: Platform;
   metaAccountIds: string[];
@@ -462,14 +752,104 @@ async function tryFetchGoogle(
     return { rows, warnings: [] };
   } catch (error) {
     const message = error instanceof Error ? error.message : "Failed to load Google Ads data.";
-    const hint = message.includes("non-JSON response")
-      ? " This usually means the token/proxy returned an HTML page instead of Google Ads API JSON (wrong OAuth scope, expired/invalid token, or network proxy page)."
-      : /status 400/i.test(message)
-        ? " Verify Google Ads customer ID access and, for manager accounts, set GOOGLE_ADS_LOGIN_CUSTOMER_ID."
-      : /429|resource_exhausted|rate.?limit/i.test(message)
-        ? " Google Ads rate limit was hit. Automatic retries were attempted. Please wait a moment and retry."
-        : "";
-    return { rows: [], warnings: [`Google Ads API: ${message}${hint}`] };
+    return { rows: [], warnings: [`Google Ads API: ${message}${googleErrorHint(message)}`] };
+  }
+}
+
+async function tryFetchGoogleKeywords(
+  customerId: string | null,
+  apiVersion: string,
+  developerToken: string | null,
+  accessToken: string | null,
+  refreshToken: string | null,
+  clientId: string | null,
+  clientSecret: string | null,
+  loginCustomerId: string | null,
+  startDate: string,
+  endDate: string
+): Promise<{ rows: TopKeywordRow[]; warnings: string[] }> {
+  if (!customerId) {
+    return { rows: [], warnings: [] };
+  }
+
+  const credentialWarnings = getGoogleCredentialWarnings(
+    developerToken,
+    accessToken,
+    refreshToken,
+    clientId,
+    clientSecret
+  );
+  if (credentialWarnings.length > 0) {
+    return { rows: [], warnings: credentialWarnings };
+  }
+
+  try {
+    const rows = await fetchGoogleTopKeywordRows({
+      customerId,
+      apiVersion,
+      developerToken: developerToken!,
+      accessToken,
+      refreshToken,
+      clientId,
+      clientSecret,
+      loginCustomerId,
+      startDate,
+      endDate,
+    });
+
+    return { rows, warnings: [] };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Failed to load Google Ads keyword data.";
+    return { rows: [], warnings: [`Google Ads API: ${message}${googleErrorHint(message)}`] };
+  }
+}
+
+async function tryFetchGoogleAuctionInsights(
+  customerId: string | null,
+  apiVersion: string,
+  developerToken: string | null,
+  accessToken: string | null,
+  refreshToken: string | null,
+  clientId: string | null,
+  clientSecret: string | null,
+  loginCustomerId: string | null,
+  startDate: string,
+  endDate: string
+): Promise<{ rows: AuctionInsightRow[]; warnings: string[] }> {
+  if (!customerId) {
+    return { rows: [], warnings: [] };
+  }
+
+  const credentialWarnings = getGoogleCredentialWarnings(
+    developerToken,
+    accessToken,
+    refreshToken,
+    clientId,
+    clientSecret
+  );
+  if (credentialWarnings.length > 0) {
+    return { rows: [], warnings: credentialWarnings };
+  }
+
+  try {
+    const rows = await fetchGoogleAuctionInsightRows({
+      customerId,
+      apiVersion,
+      developerToken: developerToken!,
+      accessToken,
+      refreshToken,
+      clientId,
+      clientSecret,
+      loginCustomerId,
+      startDate,
+      endDate,
+    });
+
+    return { rows, warnings: [] };
+  } catch (error) {
+    const message =
+      error instanceof Error ? error.message : "Failed to load Google Ads auction insight data.";
+    return { rows: [], warnings: [`Google Ads API: ${message}${googleErrorHint(message)}`] };
   }
 }
 
@@ -530,12 +910,104 @@ async function tryFetchGoogleForAccounts(
       endDate
     );
     rows.push(...result.rows);
-    warnings.push(
-      ...result.warnings.map((warning) => annotateWarningWithAccount(warning, "google", accountId))
+    const accountWarnings = result.warnings.map((warning) =>
+      annotateWarningWithAccount(warning, "google", accountId)
     );
+    logGoogleWarningsForTerminal(accountWarnings);
+    warnings.push(...accountWarnings);
   }
 
   return { rows, warnings };
+}
+
+async function tryFetchGoogleKeywordsForAccounts(
+  accountIds: string[],
+  apiVersion: string,
+  developerToken: string | null,
+  accessToken: string | null,
+  refreshToken: string | null,
+  clientId: string | null,
+  clientSecret: string | null,
+  loginCustomerId: string | null,
+  startDate: string,
+  endDate: string
+): Promise<{ rows: TopKeywordRow[]; warnings: string[] }> {
+  if (accountIds.length === 0) {
+    return { rows: [], warnings: [] };
+  }
+
+  const rows: TopKeywordRow[] = [];
+  const warnings: string[] = [];
+
+  for (const accountId of accountIds) {
+    const result = await tryFetchGoogleKeywords(
+      accountId,
+      apiVersion,
+      developerToken,
+      accessToken,
+      refreshToken,
+      clientId,
+      clientSecret,
+      loginCustomerId,
+      startDate,
+      endDate
+    );
+
+    rows.push(...result.rows);
+    const accountWarnings = result.warnings.map((warning) =>
+      annotateWarningWithAccount(warning, "google", accountId)
+    );
+    logGoogleWarningsForTerminal(accountWarnings);
+    warnings.push(...accountWarnings);
+  }
+
+  const mergedRows = mergeTopKeywordRows(rows);
+  return { rows: mergedRows, warnings };
+}
+
+async function tryFetchGoogleAuctionInsightsForAccounts(
+  accountIds: string[],
+  apiVersion: string,
+  developerToken: string | null,
+  accessToken: string | null,
+  refreshToken: string | null,
+  clientId: string | null,
+  clientSecret: string | null,
+  loginCustomerId: string | null,
+  startDate: string,
+  endDate: string
+): Promise<{ rows: AuctionInsightRow[]; warnings: string[] }> {
+  if (accountIds.length === 0) {
+    return { rows: [], warnings: [] };
+  }
+
+  const rows: AuctionInsightRow[] = [];
+  const warnings: string[] = [];
+
+  for (const accountId of accountIds) {
+    const result = await tryFetchGoogleAuctionInsights(
+      accountId,
+      apiVersion,
+      developerToken,
+      accessToken,
+      refreshToken,
+      clientId,
+      clientSecret,
+      loginCustomerId,
+      startDate,
+      endDate
+    );
+
+    rows.push(...result.rows);
+    const accountWarnings = result.warnings.map((warning) =>
+      annotateWarningWithAccount(warning, "google", accountId)
+    );
+    logGoogleWarningsForTerminal(accountWarnings);
+    warnings.push(...accountWarnings);
+  }
+
+  const mergedRows = mergeAuctionInsightRows(rows);
+  return { rows: mergedRows, warnings };
 }
 
 function resolveAccountIds(
@@ -730,6 +1202,256 @@ async function tryFetchGoogleAccountName(
   } catch {
     return null;
   }
+}
+
+async function resolveCompanyNameForReport(input: {
+  credentials: ReturnType<typeof getCredentials>;
+  accountId: string | null;
+  resolvedAccountIds: ResolvedAccountIds;
+}): Promise<string> {
+  const { credentials, accountId, resolvedAccountIds } = input;
+
+  const mappedCompanyName = resolveCompanyNameFromAccountId(
+    {
+      companyName: credentials.companyName,
+      companyNameMap: credentials.companyNameMap,
+      accountId,
+      metaAccountId: resolvedAccountIds.metaAccountIds,
+      googleAccountId: resolvedAccountIds.googleAccountIds,
+    },
+    { fallback: false }
+  );
+
+  const [resolvedMetaAccountName, resolvedGoogleAccountName] = await Promise.all([
+    tryFetchMetaAccountNames(resolvedAccountIds.metaAccountIds, credentials.metaAccessToken),
+    tryFetchGoogleAccountNames(resolvedAccountIds.googleAccountIds, credentials),
+  ]);
+
+  const fallbackCompanyName =
+    resolveCompanyNameFromAccountId({
+      companyName: credentials.companyName,
+      companyNameMap: credentials.companyNameMap,
+      accountId,
+      metaAccountId: resolvedAccountIds.metaAccountIds,
+      googleAccountId: resolvedAccountIds.googleAccountIds,
+    }) ?? credentials.companyName;
+
+  const preferredLiveCompanyName =
+    resolvedAccountIds.googleAccountIds.length > 0 && resolvedAccountIds.metaAccountIds.length === 0
+      ? resolvedGoogleAccountName ?? resolvedMetaAccountName
+      : resolvedMetaAccountName ?? resolvedGoogleAccountName;
+
+  return mappedCompanyName ?? preferredLiveCompanyName ?? fallbackCompanyName;
+}
+
+function getGoogleCredentialWarnings(
+  developerToken: string | null,
+  accessToken: string | null,
+  refreshToken: string | null,
+  clientId: string | null,
+  clientSecret: string | null
+): string[] {
+  if (!developerToken) {
+    return [
+      "Google Ads API: Missing GOOGLE_ADS_DEVELOPER_TOKEN. Add this secret in Vercel Environment Variables or run locally with `doppler run -- npm run dev`.",
+    ];
+  }
+
+  if (!hasGoogleOAuthCredentials(accessToken, refreshToken, clientId, clientSecret)) {
+    return [
+      "Google Ads API: Missing OAuth credentials. Provide GOOGLE_ADS_ACCESS_TOKEN (or GOOGLE_OAUTH_ACCESS_TOKEN), or GOOGLE_ADS_REFRESH_TOKEN + GOOGLE_ADS_CLIENT_ID + GOOGLE_ADS_CLIENT_SECRET.",
+    ];
+  }
+
+  return [];
+}
+
+function googleErrorHint(message: string): string {
+  if (message.includes("non-JSON response")) {
+    return " This usually means the token/proxy returned an HTML page instead of Google Ads API JSON (wrong OAuth scope, expired/invalid token, or network proxy page).";
+  }
+
+  if (/status 400/i.test(message)) {
+    return " Verify Google Ads customer ID access and, for manager accounts, set GOOGLE_ADS_LOGIN_CUSTOMER_ID.";
+  }
+
+  if (/caller does not have permission|permission denied|authorization_error|forbidden/i.test(message)) {
+    return " The OAuth caller cannot access this Google Ads customer ID. Share this customer with the OAuth user/service account and, if using MCC, set GOOGLE_ADS_LOGIN_CUSTOMER_ID.";
+  }
+
+  if (/429|resource_exhausted|rate.?limit/i.test(message)) {
+    return " Google Ads rate limit was hit. Automatic retries were attempted. Please wait a moment and retry.";
+  }
+
+  return "";
+}
+
+function logGoogleWarningsForTerminal(warnings: string[]) {
+  warnings.forEach((warning) => {
+    console.warn(`[Google Ads Warning] ${warning}`);
+  });
+}
+
+function getManualAuctionInsightRowsForAccounts(accountIds: string[]): AuctionInsightRow[] {
+  for (const accountId of accountIds) {
+    const manualRows = MANUAL_AUCTION_INSIGHT_ROWS_BY_ACCOUNT[accountId];
+    if (manualRows && manualRows.length > 0) {
+      return manualRows.map((row) => ({ ...row }));
+    }
+  }
+  return [];
+}
+
+function mergeTopKeywordRows(rows: TopKeywordRow[]): TopKeywordRow[] {
+  const byKeyword = new Map<string, TopKeywordRow>();
+
+  rows.forEach((row) => {
+    const key = row.keyword.trim().toLowerCase();
+    const existing = byKeyword.get(key);
+    if (!existing) {
+      byKeyword.set(key, { ...row });
+      return;
+    }
+
+    existing.impressions += row.impressions;
+    existing.clicks += row.clicks;
+    existing.conversions += row.conversions;
+    existing.cost += row.cost;
+    existing.ctr = existing.impressions > 0 ? (existing.clicks * 100) / existing.impressions : 0;
+    existing.avgCpc = existing.clicks > 0 ? existing.cost / existing.clicks : 0;
+    existing.conversionRate =
+      existing.clicks > 0 ? (existing.conversions * 100) / existing.clicks : 0;
+    existing.costPerConversion =
+      existing.conversions > 0 ? existing.cost / existing.conversions : 0;
+  });
+
+  return Array.from(byKeyword.values()).sort((a, b) => {
+    if (b.conversions !== a.conversions) {
+      return b.conversions - a.conversions;
+    }
+    if (b.clicks !== a.clicks) {
+      return b.clicks - a.clicks;
+    }
+    return b.impressions - a.impressions;
+  });
+}
+
+function buildTopKeywordTotals(rows: TopKeywordRow[]): TopKeywordRow {
+  const totals = rows.reduce<TopKeywordRow>(
+    (acc, row) => ({
+      ...acc,
+      impressions: acc.impressions + row.impressions,
+      clicks: acc.clicks + row.clicks,
+      conversions: acc.conversions + row.conversions,
+      cost: acc.cost + row.cost,
+    }),
+    {
+      id: "keywords-grand-total",
+      keyword: "Grand total",
+      impressions: 0,
+      clicks: 0,
+      avgCpc: 0,
+      ctr: 0,
+      conversions: 0,
+      conversionRate: 0,
+      costPerConversion: 0,
+      cost: 0,
+    }
+  );
+
+  totals.ctr = totals.impressions > 0 ? (totals.clicks * 100) / totals.impressions : 0;
+  totals.avgCpc = totals.clicks > 0 ? totals.cost / totals.clicks : 0;
+  totals.conversionRate = totals.clicks > 0 ? (totals.conversions * 100) / totals.clicks : 0;
+  totals.costPerConversion = totals.conversions > 0 ? totals.cost / totals.conversions : 0;
+
+  return totals;
+}
+
+function mergeAuctionInsightRows(rows: AuctionInsightRow[]): AuctionInsightRow[] {
+  const byDomain = new Map<string, AuctionInsightRow>();
+
+  rows.forEach((row) => {
+    const key = row.displayDomain.trim().toLowerCase();
+    const existing = byDomain.get(key);
+    if (!existing) {
+      byDomain.set(key, {
+        ...row,
+        impressionShare: row.impressionShare * row.observations,
+        overlapRate: row.overlapRate * row.observations,
+        positionAboveRate: row.positionAboveRate * row.observations,
+        topOfPageRate: row.topOfPageRate * row.observations,
+        absoluteTopOfPageRate: row.absoluteTopOfPageRate * row.observations,
+        outrankingShare: row.outrankingShare * row.observations,
+      });
+      return;
+    }
+
+    existing.observations += row.observations;
+    existing.impressionShare += row.impressionShare * row.observations;
+    existing.overlapRate += row.overlapRate * row.observations;
+    existing.positionAboveRate += row.positionAboveRate * row.observations;
+    existing.topOfPageRate += row.topOfPageRate * row.observations;
+    existing.absoluteTopOfPageRate += row.absoluteTopOfPageRate * row.observations;
+    existing.outrankingShare += row.outrankingShare * row.observations;
+  });
+
+  return Array.from(byDomain.values())
+    .map((row) => {
+      const divisor = row.observations || 1;
+      return {
+        ...row,
+        impressionShare: row.impressionShare / divisor,
+        overlapRate: row.overlapRate / divisor,
+        positionAboveRate: row.positionAboveRate / divisor,
+        topOfPageRate: row.topOfPageRate / divisor,
+        absoluteTopOfPageRate: row.absoluteTopOfPageRate / divisor,
+        outrankingShare: row.outrankingShare / divisor,
+      };
+    })
+    .sort((a, b) => b.impressionShare - a.impressionShare);
+}
+
+function buildAuctionInsightAverages(
+  rows: AuctionInsightRow[]
+): Omit<AuctionInsightRow, "id" | "displayDomain" | "observations"> {
+  if (rows.length === 0) {
+    return {
+      impressionShare: 0,
+      overlapRate: 0,
+      positionAboveRate: 0,
+      topOfPageRate: 0,
+      absoluteTopOfPageRate: 0,
+      outrankingShare: 0,
+    };
+  }
+
+  const totals = rows.reduce(
+    (acc, row) => ({
+      impressionShare: acc.impressionShare + row.impressionShare,
+      overlapRate: acc.overlapRate + row.overlapRate,
+      positionAboveRate: acc.positionAboveRate + row.positionAboveRate,
+      topOfPageRate: acc.topOfPageRate + row.topOfPageRate,
+      absoluteTopOfPageRate: acc.absoluteTopOfPageRate + row.absoluteTopOfPageRate,
+      outrankingShare: acc.outrankingShare + row.outrankingShare,
+    }),
+    {
+      impressionShare: 0,
+      overlapRate: 0,
+      positionAboveRate: 0,
+      topOfPageRate: 0,
+      absoluteTopOfPageRate: 0,
+      outrankingShare: 0,
+    }
+  );
+
+  return {
+    impressionShare: totals.impressionShare / rows.length,
+    overlapRate: totals.overlapRate / rows.length,
+    positionAboveRate: totals.positionAboveRate / rows.length,
+    topOfPageRate: totals.topOfPageRate / rows.length,
+    absoluteTopOfPageRate: totals.absoluteTopOfPageRate / rows.length,
+    outrankingShare: totals.outrankingShare / rows.length,
+  };
 }
 
 function dedupeWarnings(warnings: string[]): string[] {

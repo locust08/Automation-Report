@@ -1,5 +1,5 @@
 import { emptyCampaignRow } from "@/lib/reporting/metrics";
-import { CampaignRow } from "@/lib/reporting/types";
+import { AuctionInsightRow, CampaignRow, TopKeywordRow } from "@/lib/reporting/types";
 
 interface GoogleFetchInput {
   customerId: string;
@@ -50,15 +50,31 @@ interface GoogleAdsResult {
     name?: string;
     advertisingChannelType?: string;
   };
+  segments?: {
+    auctionInsightDomain?: string;
+  };
+  adGroupCriterion?: {
+    criterionId?: string;
+    keyword?: {
+      text?: string;
+    };
+  };
   metrics?: {
-    impressions?: string;
-    clicks?: string;
-    ctr?: number;
-    averageCpc?: string;
-    conversions?: string;
-    costMicros?: string;
-    engagements?: string;
-    interactions?: string;
+    impressions?: string | number;
+    clicks?: string | number;
+    ctr?: number | string;
+    averageCpc?: string | number;
+    conversions?: string | number;
+    costMicros?: string | number;
+    engagements?: string | number;
+    interactions?: string | number;
+    conversionRate?: number | string;
+    auctionInsightSearchImpressionShare?: number | string;
+    auctionInsightSearchOverlapRate?: number | string;
+    auctionInsightSearchPositionAboveRate?: number | string;
+    auctionInsightSearchTopImpressionPercentage?: number | string;
+    auctionInsightSearchAbsoluteTopImpressionPercentage?: number | string;
+    auctionInsightSearchOutrankingShare?: number | string;
   };
 }
 
@@ -132,6 +148,17 @@ export async function fetchGoogleAccountName({
     parsed = await parseGoogleAdsSearchResponse(secondAttempt);
   }
 
+  if (!parsed.ok && loginCustomerId && isPermissionDeniedMessage(parsed.errorMessage)) {
+    const noLoginAttempt = await requestGoogleAdsSearch(
+      endpoint,
+      body,
+      developerToken,
+      activeAccessToken,
+      null
+    );
+    parsed = await parseGoogleAdsSearchResponse(noLoginAttempt);
+  }
+
   if (!parsed.ok) {
     throw new Error(parsed.errorMessage || `Google Ads API request failed with status ${parsed.status}.`);
   }
@@ -153,35 +180,312 @@ export async function fetchGoogleCampaignRows({
   startDate,
   endDate,
 }: GoogleFetchInput): Promise<CampaignRow[]> {
-  const body = {
-    query: `
-      SELECT
-        campaign.id,
-        campaign.name,
-        campaign.advertising_channel_type,
-        metrics.impressions,
-        metrics.clicks,
-        metrics.ctr,
-        metrics.average_cpc,
-        metrics.conversions,
-        metrics.cost_micros,
-        metrics.engagements,
-        metrics.interactions
-      FROM campaign
-      WHERE segments.date BETWEEN '${startDate}' AND '${endDate}'
-    `,
-  };
+  const baseSelect = `
+    SELECT
+      campaign.id,
+      campaign.name,
+      campaign.advertising_channel_type,
+      metrics.impressions,
+      metrics.clicks,
+      metrics.ctr,
+      metrics.average_cpc,
+      metrics.conversions,
+      metrics.cost_micros
+    FROM campaign
+    WHERE segments.date BETWEEN '${startDate}' AND '${endDate}'
+  `;
 
-  const endpoint = `https://googleads.googleapis.com/${apiVersion}/customers/${customerId}/googleAds:searchStream`;
-  const canRefresh = Boolean(refreshToken && clientId && clientSecret);
-  let activeAccessToken = accessToken;
+  const results = await fetchGoogleAdsResultsWithFallback({
+    customerId,
+    apiVersion,
+    developerToken,
+    accessToken,
+    refreshToken,
+    clientId,
+    clientSecret,
+    loginCustomerId,
+    queries: [
+      `
+        SELECT
+          campaign.id,
+          campaign.name,
+          campaign.advertising_channel_type,
+          metrics.impressions,
+          metrics.clicks,
+          metrics.ctr,
+          metrics.average_cpc,
+          metrics.conversions,
+          metrics.cost_micros,
+          metrics.engagements,
+          metrics.interactions
+        FROM campaign
+        WHERE segments.date BETWEEN '${startDate}' AND '${endDate}'
+      `,
+      baseSelect,
+    ],
+  });
 
-  // Prefer a fresh OAuth token when refresh credentials are available.
+  return results.map((result) => {
+    const campaignName = result.campaign?.name?.trim() || "Untitled Campaign";
+    const channelType = result.campaign?.advertisingChannelType || "UNKNOWN";
+    const platform = channelType === "VIDEO" ? "googleYoutube" : "google";
+    const campaignType = normalizeCampaignType(channelType);
+
+    const row = emptyCampaignRow(
+      result.campaign?.id ?? `${campaignType}-${campaignName}`,
+      platform,
+      campaignType,
+      campaignName
+    );
+
+    const impressions = toNumber(result.metrics?.impressions);
+    const clicks = toNumber(result.metrics?.clicks);
+    const spend = microsToCurrency(result.metrics?.costMicros);
+    const conversions = toNumber(result.metrics?.conversions);
+
+    row.impressions = impressions;
+    row.clicks = clicks;
+    row.spend = spend;
+    row.conversions = conversions;
+    row.results = conversions;
+    row.ctr = normalizeCtr(result.metrics?.ctr, impressions, clicks);
+    row.avgCpc = microsToCurrency(result.metrics?.averageCpc) || (clicks > 0 ? spend / clicks : 0);
+    row.cpm = impressions > 0 ? (spend * 1000) / impressions : 0;
+    row.costPerResult = conversions > 0 ? spend / conversions : 0;
+    row.youtubeEarnedLikes = toNumber(result.metrics?.engagements);
+    row.youtubeEarnedShares = toNumber(result.metrics?.interactions);
+
+    return row;
+  });
+}
+
+export async function fetchGoogleTopKeywordRows({
+  customerId,
+  apiVersion,
+  developerToken,
+  accessToken,
+  refreshToken,
+  clientId,
+  clientSecret,
+  loginCustomerId,
+  startDate,
+  endDate,
+}: GoogleFetchInput): Promise<TopKeywordRow[]> {
+  const results = await fetchGoogleAdsResultsWithFallback({
+    customerId,
+    apiVersion,
+    developerToken,
+    accessToken,
+    refreshToken,
+    clientId,
+    clientSecret,
+    loginCustomerId,
+    queries: [
+      `
+        SELECT
+          ad_group_criterion.criterion_id,
+          ad_group_criterion.keyword.text,
+          metrics.impressions,
+          metrics.clicks,
+          metrics.ctr,
+          metrics.average_cpc,
+          metrics.conversions,
+          metrics.conversion_rate,
+          metrics.cost_micros
+        FROM keyword_view
+        WHERE segments.date BETWEEN '${startDate}' AND '${endDate}'
+      `,
+      `
+        SELECT
+          ad_group_criterion.criterion_id,
+          ad_group_criterion.keyword.text,
+          metrics.impressions,
+          metrics.clicks,
+          metrics.ctr,
+          metrics.average_cpc,
+          metrics.conversions,
+          metrics.cost_micros
+        FROM keyword_view
+        WHERE segments.date BETWEEN '${startDate}' AND '${endDate}'
+      `,
+    ],
+  });
+
+  const byKeyword = new Map<string, TopKeywordRow>();
+
+  results.forEach((result, index) => {
+    const keyword =
+      result.adGroupCriterion?.keyword?.text?.trim() ||
+      result.campaign?.name?.trim() ||
+      "Unknown keyword";
+    const keywordKey = keyword.toLowerCase();
+    const keywordId = result.adGroupCriterion?.criterionId || `${customerId}-${keywordKey}-${index}`;
+    const impressions = toNumber(result.metrics?.impressions);
+    const clicks = toNumber(result.metrics?.clicks);
+    const conversions = toNumber(result.metrics?.conversions);
+    const cost = microsToCurrency(result.metrics?.costMicros);
+    const existing = byKeyword.get(keywordKey);
+
+    if (!existing) {
+      byKeyword.set(keywordKey, {
+        id: keywordId,
+        keyword,
+        impressions,
+        clicks,
+        avgCpc: microsToCurrency(result.metrics?.averageCpc),
+        ctr: normalizeCtr(result.metrics?.ctr, impressions, clicks),
+        conversions,
+        conversionRate: normalizePercent(result.metrics?.conversionRate, clicks, conversions),
+        costPerConversion: conversions > 0 ? cost / conversions : 0,
+        cost,
+      });
+      return;
+    }
+
+    existing.impressions += impressions;
+    existing.clicks += clicks;
+    existing.conversions += conversions;
+    existing.cost += cost;
+    existing.ctr = existing.impressions > 0 ? (existing.clicks * 100) / existing.impressions : 0;
+    existing.avgCpc = existing.clicks > 0 ? existing.cost / existing.clicks : 0;
+    existing.conversionRate =
+      existing.clicks > 0 ? (existing.conversions * 100) / existing.clicks : 0;
+    existing.costPerConversion =
+      existing.conversions > 0 ? existing.cost / existing.conversions : 0;
+  });
+
+  return Array.from(byKeyword.values()).sort((a, b) => {
+    if (b.conversions !== a.conversions) {
+      return b.conversions - a.conversions;
+    }
+    if (b.clicks !== a.clicks) {
+      return b.clicks - a.clicks;
+    }
+    return b.impressions - a.impressions;
+  });
+}
+
+export async function fetchGoogleAuctionInsightRows({
+  customerId,
+  apiVersion,
+  developerToken,
+  accessToken,
+  refreshToken,
+  clientId,
+  clientSecret,
+  loginCustomerId,
+  startDate,
+  endDate,
+}: GoogleFetchInput): Promise<AuctionInsightRow[]> {
+  const results = await fetchGoogleAdsResultsWithFallback({
+    customerId,
+    apiVersion,
+    developerToken,
+    accessToken,
+    refreshToken,
+    clientId,
+    clientSecret,
+    loginCustomerId,
+    queries: [
+      `
+        SELECT
+          segments.auction_insight_domain,
+          metrics.auction_insight_search_impression_share,
+          metrics.auction_insight_search_overlap_rate,
+          metrics.auction_insight_search_position_above_rate,
+          metrics.auction_insight_search_top_impression_percentage,
+          metrics.auction_insight_search_absolute_top_impression_percentage,
+          metrics.auction_insight_search_outranking_share
+        FROM campaign
+        WHERE segments.date BETWEEN '${startDate}' AND '${endDate}'
+      `,
+      `
+        SELECT
+          segments.auction_insight_domain,
+          metrics.auction_insight_search_impression_share,
+          metrics.auction_insight_search_overlap_rate,
+          metrics.auction_insight_search_position_above_rate,
+          metrics.auction_insight_search_outranking_share
+        FROM campaign
+        WHERE segments.date BETWEEN '${startDate}' AND '${endDate}'
+      `,
+    ],
+  });
+
+  const byDomain = new Map<string, AuctionInsightRow>();
+
+  results.forEach((result, index) => {
+    const displayDomain = result.segments?.auctionInsightDomain?.trim();
+    if (!displayDomain) {
+      return;
+    }
+
+    const domainKey = displayDomain.toLowerCase();
+    const existing = byDomain.get(domainKey);
+    const impressionShare = normalizePercent(result.metrics?.auctionInsightSearchImpressionShare);
+    const overlapRate = normalizePercent(result.metrics?.auctionInsightSearchOverlapRate);
+    const positionAboveRate = normalizePercent(result.metrics?.auctionInsightSearchPositionAboveRate);
+    const topOfPageRate = normalizePercent(
+      result.metrics?.auctionInsightSearchTopImpressionPercentage
+    );
+    const absoluteTopOfPageRate = normalizePercent(
+      result.metrics?.auctionInsightSearchAbsoluteTopImpressionPercentage
+    );
+    const outrankingShare = normalizePercent(result.metrics?.auctionInsightSearchOutrankingShare);
+
+    if (!existing) {
+      byDomain.set(domainKey, {
+        id: `${customerId}-${domainKey}-${index}`,
+        displayDomain,
+        impressionShare,
+        overlapRate,
+        positionAboveRate,
+        topOfPageRate,
+        absoluteTopOfPageRate,
+        outrankingShare,
+        observations: 1,
+      });
+      return;
+    }
+
+    existing.observations += 1;
+    existing.impressionShare += impressionShare;
+    existing.overlapRate += overlapRate;
+    existing.positionAboveRate += positionAboveRate;
+    existing.topOfPageRate += topOfPageRate;
+    existing.absoluteTopOfPageRate += absoluteTopOfPageRate;
+    existing.outrankingShare += outrankingShare;
+  });
+
+  return Array.from(byDomain.values())
+    .map((row) => {
+      const divisor = row.observations || 1;
+      return {
+        ...row,
+        impressionShare: row.impressionShare / divisor,
+        overlapRate: row.overlapRate / divisor,
+        positionAboveRate: row.positionAboveRate / divisor,
+        topOfPageRate: row.topOfPageRate / divisor,
+        absoluteTopOfPageRate: row.absoluteTopOfPageRate / divisor,
+        outrankingShare: row.outrankingShare / divisor,
+      };
+    })
+    .sort((a, b) => b.impressionShare - a.impressionShare);
+}
+
+async function fetchGoogleAdsResults(
+  input: Omit<GoogleFetchInput, "startDate" | "endDate"> & { query: string }
+): Promise<GoogleAdsResult[]> {
+  const body = { query: input.query };
+  const endpoint = `https://googleads.googleapis.com/${input.apiVersion}/customers/${input.customerId}/googleAds:searchStream`;
+  const canRefresh = Boolean(input.refreshToken && input.clientId && input.clientSecret);
+  let activeAccessToken = input.accessToken;
+
   if (canRefresh) {
     activeAccessToken = await refreshGoogleAccessToken({
-      refreshToken: refreshToken!,
-      clientId: clientId!,
-      clientSecret: clientSecret!,
+      refreshToken: input.refreshToken!,
+      clientId: input.clientId!,
+      clientSecret: input.clientSecret!,
     });
   }
 
@@ -191,55 +495,77 @@ export async function fetchGoogleCampaignRows({
     );
   }
 
-  const streamBatches = await executeGoogleAdsStreamRequest({
-    endpoint,
-    body,
-    developerToken,
-    accessToken: activeAccessToken,
-    loginCustomerId,
-    canRefresh,
-    refreshToken,
-    clientId,
-    clientSecret,
-  });
-
-  const rows: CampaignRow[] = [];
-  streamBatches.forEach((batch) => {
-    (batch.results ?? []).forEach((result) => {
-      const campaignName = result.campaign?.name?.trim() || "Untitled Campaign";
-      const channelType = result.campaign?.advertisingChannelType || "UNKNOWN";
-      const platform = channelType === "VIDEO" ? "googleYoutube" : "google";
-      const campaignType = normalizeCampaignType(channelType);
-
-      const row = emptyCampaignRow(
-        result.campaign?.id ?? `${campaignType}-${campaignName}`,
-        platform,
-        campaignType,
-        campaignName
-      );
-
-      const impressions = toNumber(result.metrics?.impressions);
-      const clicks = toNumber(result.metrics?.clicks);
-      const spend = microsToCurrency(result.metrics?.costMicros);
-      const conversions = toNumber(result.metrics?.conversions);
-
-      row.impressions = impressions;
-      row.clicks = clicks;
-      row.spend = spend;
-      row.conversions = conversions;
-      row.results = conversions;
-      row.ctr = normalizeCtr(result.metrics?.ctr, impressions, clicks);
-      row.avgCpc = microsToCurrency(result.metrics?.averageCpc) || (clicks > 0 ? spend / clicks : 0);
-      row.cpm = impressions > 0 ? (spend * 1000) / impressions : 0;
-      row.costPerResult = conversions > 0 ? spend / conversions : 0;
-      row.youtubeEarnedLikes = toNumber(result.metrics?.engagements);
-      row.youtubeEarnedShares = toNumber(result.metrics?.interactions);
-
-      rows.push(row);
+  let streamBatches: GoogleAdsStreamBatch[];
+  try {
+    streamBatches = await executeGoogleAdsStreamRequest({
+      endpoint,
+      body,
+      developerToken: input.developerToken,
+      accessToken: activeAccessToken,
+      loginCustomerId: input.loginCustomerId,
+      canRefresh,
+      refreshToken: input.refreshToken,
+      clientId: input.clientId,
+      clientSecret: input.clientSecret,
     });
+  } catch (error) {
+    if (input.loginCustomerId && isPermissionDeniedError(error)) {
+      streamBatches = await executeGoogleAdsStreamRequest({
+        endpoint,
+        body,
+        developerToken: input.developerToken,
+        accessToken: activeAccessToken,
+        loginCustomerId: null,
+        canRefresh,
+        refreshToken: input.refreshToken,
+        clientId: input.clientId,
+        clientSecret: input.clientSecret,
+      });
+    } else {
+      throw error;
+    }
+  }
+
+  const results: GoogleAdsResult[] = [];
+  streamBatches.forEach((batch) => {
+    results.push(...(batch.results ?? []));
   });
 
-  return rows;
+  return results;
+}
+
+async function fetchGoogleAdsResultsWithFallback(
+  input: Omit<GoogleFetchInput, "startDate" | "endDate"> & { queries: string[] }
+): Promise<GoogleAdsResult[]> {
+  let lastError: unknown = null;
+
+  for (let index = 0; index < input.queries.length; index += 1) {
+    const query = input.queries[index];
+    try {
+      return await fetchGoogleAdsResults({
+        customerId: input.customerId,
+        apiVersion: input.apiVersion,
+        developerToken: input.developerToken,
+        accessToken: input.accessToken,
+        refreshToken: input.refreshToken,
+        clientId: input.clientId,
+        clientSecret: input.clientSecret,
+        loginCustomerId: input.loginCustomerId,
+        query,
+      });
+    } catch (error) {
+      lastError = error;
+      if (!isInvalidArgumentError(error) || index === input.queries.length - 1) {
+        throw error;
+      }
+    }
+  }
+
+  if (lastError instanceof Error) {
+    throw lastError;
+  }
+
+  throw new Error("Google Ads API request failed for all fallback queries.");
 }
 
 async function executeGoogleAdsStreamRequest(input: {
@@ -464,6 +790,33 @@ function isRateLimitError(message: string | undefined): boolean {
   return /resource_exhausted|rate.?limit|too many requests|429/i.test(message);
 }
 
+function isInvalidArgumentError(error: unknown): boolean {
+  if (!(error instanceof Error)) {
+    return false;
+  }
+  return /invalid argument|field.*(cannot|not).*select|request contains an invalid argument/i.test(
+    error.message
+  );
+}
+
+function isPermissionDeniedMessage(message: string | null | undefined): boolean {
+  if (!message) {
+    return false;
+  }
+
+  return /caller does not have permission|permission denied|authorization_error|forbidden/i.test(
+    message
+  );
+}
+
+function isPermissionDeniedError(error: unknown): boolean {
+  if (!(error instanceof Error)) {
+    return false;
+  }
+
+  return isPermissionDeniedMessage(error.message);
+}
+
 function findStreamBatchError(streamBatches: GoogleAdsStreamBatch[]): string | undefined {
   return streamBatches.find((batch) => batch.error?.message)?.error?.message;
 }
@@ -612,20 +965,32 @@ function normalizeCampaignType(channelType: string): string {
     .replace(/\b\w/g, (segment) => segment.toUpperCase());
 }
 
-function normalizeCtr(ctr: number | undefined, impressions: number, clicks: number): number {
-  if (typeof ctr === "number" && Number.isFinite(ctr)) {
-    return ctr <= 1 ? ctr * 100 : ctr;
+function normalizeCtr(ctr: number | string | undefined, impressions: number, clicks: number): number {
+  const normalized = normalizePercent(ctr);
+  if (normalized > 0) {
+    return normalized;
   }
   return impressions > 0 ? (clicks * 100) / impressions : 0;
 }
 
-function microsToCurrency(value: string | undefined): number {
+function normalizePercent(value: number | string | undefined, fallbackBase = 0, fallbackCount = 0): number {
+  const numeric = toNumber(value);
+  if (numeric > 0) {
+    return numeric <= 1 ? numeric * 100 : numeric;
+  }
+  if (fallbackBase > 0) {
+    return (fallbackCount * 100) / fallbackBase;
+  }
+  return 0;
+}
+
+function microsToCurrency(value: string | number | undefined): number {
   const micros = toNumber(value);
   return micros / 1_000_000;
 }
 
-function toNumber(value: string | undefined): number {
-  if (!value) {
+function toNumber(value: string | number | undefined): number {
+  if (value === undefined || value === null || value === "") {
     return 0;
   }
   const parsed = Number(value);

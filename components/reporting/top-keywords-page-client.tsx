@@ -2,19 +2,22 @@
 
 import { useMemo } from "react";
 
-import { OverallCampaignGroupsTable } from "@/components/reporting/campaign-table";
+import { TopKeywordTable } from "@/components/reporting/google-insights-table";
 import { ReportHeaderMonthPicker } from "@/components/reporting/report-header-month-picker";
-import { MetricSection } from "@/components/reporting/metric-grid";
 import { ReportFiltersBar } from "@/components/reporting/report-filters-bar";
 import { ReportShell } from "@/components/reporting/report-shell";
-import { ReportErrorState, ReportLoadingState, ReportWarnings } from "@/components/reporting/report-state";
+import {
+  ReportEmptyState,
+  ReportErrorState,
+  ReportLoadingState,
+  ReportWarnings,
+} from "@/components/reporting/report-state";
 import { useReportFilters } from "@/components/reporting/use-report-filters";
-import { useOverallReport } from "@/components/reporting/use-report-data";
-import { useScreenshotMode } from "@/components/reporting/use-screenshot-mode";
+import { useTopKeywordsReport } from "@/components/reporting/use-report-data";
 
-export function OverallPageClient() {
-  const { filters, hasAccountId, setFilters } = useReportFilters();
-  const { screenshotMode } = useScreenshotMode();
+export function TopKeywordsPageClient() {
+  const { filters, setFilters } = useReportFilters();
+  const hasPotentialGoogleId = Boolean(filters.accountId || filters.googleAccountId);
 
   const queryString = useMemo(() => {
     const params = new URLSearchParams();
@@ -30,19 +33,10 @@ export function OverallPageClient() {
     params.set("startDate", filters.startDate);
     params.set("endDate", filters.endDate);
     return params.toString();
-  }, [filters.accountId, filters.endDate, filters.googleAccountId, filters.metaAccountId, filters.startDate]);
+  }, [filters]);
 
-  const { data, error, loading } = useOverallReport(queryString, hasAccountId);
-
-  const forwardQuery = useMemo(() => {
-    const params = new URLSearchParams(queryString);
-    if (screenshotMode) {
-      params.set("screenshot", "1");
-    }
-    return params.toString() ? `&${params.toString()}` : "";
-  }, [queryString, screenshotMode]);
-
-  const title = `${data?.companyName ?? "Company Name"} Monthly Performance`;
+  const { data, error, loading } = useTopKeywordsReport(queryString, hasPotentialGoogleId);
+  const title = `${data?.companyName ?? "Company Name"} Top 10 Keyword Table`;
   const dateLabel = data?.dateRange.currentLabel ?? `${filters.startDate} - ${filters.endDate}`;
 
   return (
@@ -76,21 +70,24 @@ export function OverallPageClient() {
       }
     >
       <div className="space-y-5">
-        {!hasAccountId ? (
-          <ReportErrorState message="Enter at least one account ID to request data from Meta Ads Manager and Google Ads Manager." />
+        {!hasPotentialGoogleId ? (
+          <ReportErrorState message="Enter Google account ID (or generic accountId) to load top keyword metrics from Google Ads Manager." />
         ) : null}
 
-        {loading ? <ReportLoadingState message="Loading overview data from Meta and Google APIs..." /> : null}
-
+        {loading ? <ReportLoadingState message="Loading top keyword metrics from Google Ads Manager..." /> : null}
         {error ? <ReportErrorState message={error} /> : null}
 
         {data ? (
           <>
             <ReportWarnings warnings={data.warnings} />
-            {data.summaries.map((section) => (
-              <MetricSection key={section.platform} section={section} />
-            ))}
-            <OverallCampaignGroupsTable groups={data.campaignGroups} queryString={forwardQuery} />
+            {data.rows.length > 0 ? (
+              <TopKeywordTable rows={data.rows} totals={data.totals} />
+            ) : (
+              <ReportEmptyState
+                title="No keyword rows found"
+                message="No Google Ads keyword data was returned for the selected account and month."
+              />
+            )}
           </>
         ) : null}
       </div>

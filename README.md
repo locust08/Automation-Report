@@ -13,6 +13,12 @@ Multi-page reporting website for Meta Ads Manager + Google Ads Manager with a sh
 - `/campaign/[campaignType]` Campaign type page:
   - Selected month vs previous month comparison
   - Collapsible sections and totals
+- `/keywords` Top 10 keyword page (Google Ads Manager extraction):
+  - Keyword-level performance table
+  - Grand total summary row
+- `/auction` Auction page (Google Ads Manager extraction):
+  - Auction insights domain metrics
+  - Average benchmark row
 
 ## URL Parameters
 

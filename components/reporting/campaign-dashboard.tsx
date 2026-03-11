@@ -6,7 +6,6 @@ import { CampaignComparisonTable } from "@/components/reporting/campaign-table";
 import { ReportHeaderMonthPicker } from "@/components/reporting/report-header-month-picker";
 import { MetricSection } from "@/components/reporting/metric-grid";
 import { ReportFiltersBar } from "@/components/reporting/report-filters-bar";
-import { ScreenshotModeToggle } from "@/components/reporting/screenshot-mode-toggle";
 import { ReportShell } from "@/components/reporting/report-shell";
 import { ReportErrorState, ReportLoadingState, ReportWarnings } from "@/components/reporting/report-state";
 import { useReportFilters } from "@/components/reporting/use-report-filters";
@@ -80,26 +79,23 @@ export function CampaignDashboard({ campaignType }: { campaignType: string }) {
         />
       }
       headerBottomControl={
-        <div className="space-y-2">
-          <ScreenshotModeToggle />
-          <ReportFiltersBar
-            filters={filters}
-            includePlatform
-            dateMode="month"
-            showDateFilters={false}
-            showResetButton={false}
-            submitLabel="Reload"
-            compact
-            onApply={(next) => setFilters(next)}
-            onReset={() =>
-              setFilters({
-                accountId: "",
-                metaAccountId: "",
-                googleAccountId: "",
-              })
-            }
-          />
-        </div>
+        <ReportFiltersBar
+          filters={filters}
+          includePlatform
+          dateMode="month"
+          showDateFilters={false}
+          showResetButton={false}
+          submitLabel="Reload"
+          compact
+          onApply={(next) => setFilters(next)}
+          onReset={() =>
+            setFilters({
+              accountId: "",
+              metaAccountId: "",
+              googleAccountId: "",
+            })
+          }
+        />
       }
     >
       <div className="space-y-5">

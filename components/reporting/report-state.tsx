@@ -41,3 +41,18 @@ export function ReportWarnings({ warnings }: { warnings: string[] }) {
     </div>
   );
 }
+
+export function ReportEmptyState({
+  title,
+  message,
+}: {
+  title: string;
+  message: string;
+}) {
+  return (
+    <div className="rounded-2xl border border-border/60 bg-white p-8 text-center shadow-sm">
+      <p className="text-base font-semibold text-[#444]">{title}</p>
+      <p className="mt-2 text-sm text-muted-foreground">{message}</p>
+    </div>
+  );
+}
