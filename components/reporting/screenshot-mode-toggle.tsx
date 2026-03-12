@@ -2,14 +2,11 @@
 
 import { useCallback, useEffect, useState } from "react";
 import {
-  CameraIcon,
   ChevronDownIcon,
   DownloadIcon,
   FileImageIcon,
   FileTextIcon,
   LoaderCircleIcon,
-  Maximize2Icon,
-  Minimize2Icon,
 } from "lucide-react";
 import { toPng } from "html-to-image";
 
@@ -24,10 +21,11 @@ import { useScreenshotMode } from "@/components/reporting/use-screenshot-mode";
 
 type DownloadFormat = "png" | "pdf";
 
-export function ScreenshotModeToggle() {
-  const { screenshotMode, setScreenshotMode, toggleScreenshotMode } = useScreenshotMode();
+export function ReportDownloadButton() {
+  const { screenshotMode, setScreenshotMode } = useScreenshotMode();
   const [queuedFormat, setQueuedFormat] = useState<DownloadFormat | null>(null);
   const [downloadingFormat, setDownloadingFormat] = useState<DownloadFormat | null>(null);
+  const [restoreModeAfterDownload, setRestoreModeAfterDownload] = useState(false);
 
   const runDownload = useCallback(async (format: DownloadFormat) => {
     const root = document.querySelector<HTMLElement>("[data-report-capture-root='true']");
@@ -61,11 +59,17 @@ export function ScreenshotModeToggle() {
 
     const format = queuedFormat;
     const timer = window.setTimeout(() => {
-      void runDownload(format).finally(() => setQueuedFormat(null));
+      void runDownload(format).finally(() => {
+        setQueuedFormat(null);
+        if (restoreModeAfterDownload) {
+          setRestoreModeAfterDownload(false);
+          setScreenshotMode(false);
+        }
+      });
     }, 220);
 
     return () => window.clearTimeout(timer);
-  }, [queuedFormat, runDownload, screenshotMode]);
+  }, [queuedFormat, restoreModeAfterDownload, runDownload, screenshotMode, setScreenshotMode]);
 
   async function handleDownload(format: DownloadFormat) {
     if (downloadingFormat || queuedFormat) {
@@ -73,6 +77,7 @@ export function ScreenshotModeToggle() {
     }
 
     if (!screenshotMode) {
+      setRestoreModeAfterDownload(true);
       setQueuedFormat(format);
       setScreenshotMode(true);
       return;
@@ -85,27 +90,13 @@ export function ScreenshotModeToggle() {
   const isBusy = currentFormat !== null;
 
   return (
-    <div className="flex flex-col items-start gap-2 rounded-xl border border-white/20 bg-white/10 px-3 py-2 text-white sm:flex-row sm:items-center sm:justify-between">
-      <p className="text-xs md:text-sm">
-        <CameraIcon className="mr-1 inline size-4 align-text-bottom" />
-        Screenshot mode shows full table rows for one clear full-page capture.
-      </p>
-      <Button
-        type="button"
-        variant="outline"
-        className="h-8 w-full border-white/30 bg-white/10 text-white hover:bg-white/20 hover:text-white sm:w-auto"
-        onClick={toggleScreenshotMode}
-        disabled={isBusy}
-      >
-        {screenshotMode ? <Minimize2Icon data-icon="inline-start" /> : <Maximize2Icon data-icon="inline-start" />}
-        {screenshotMode ? "Exit Screenshot Mode" : "Enable Screenshot Mode"}
-      </Button>
+    <div className="flex justify-end">
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
           <Button
             type="button"
             variant="outline"
-            className="h-8 w-full border-white/30 bg-white/10 text-white hover:bg-white/20 hover:text-white sm:w-auto"
+            className="h-9 w-full border-white/30 bg-white/10 text-white hover:bg-white/20 hover:text-white sm:w-auto"
             disabled={isBusy}
           >
             {isBusy ? (
@@ -113,7 +104,7 @@ export function ScreenshotModeToggle() {
             ) : (
               <DownloadIcon data-icon="inline-start" />
             )}
-            {currentFormat ? `Downloading ${currentFormat.toUpperCase()}` : "Download"}
+            {currentFormat ? `Downloading ${currentFormat.toUpperCase()}` : "Download Report"}
             <ChevronDownIcon data-icon="inline-end" />
           </Button>
         </DropdownMenuTrigger>

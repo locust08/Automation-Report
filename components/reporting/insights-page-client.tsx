@@ -12,6 +12,7 @@ import {
   ReportLoadingState,
   ReportWarnings,
 } from "@/components/reporting/report-state";
+import { ReportDownloadButton } from "@/components/reporting/screenshot-mode-toggle";
 import { useReportFilters } from "@/components/reporting/use-report-filters";
 import { useInsightsReport } from "@/components/reporting/use-report-data";
 import { PlatformInsightsSection } from "@/lib/reporting/types";
@@ -58,22 +59,25 @@ export function InsightsPageClient() {
         />
       }
       headerBottomControl={
-        <ReportFiltersBar
-          filters={filters}
-          dateMode="month"
-          showDateFilters={false}
-          showResetButton={false}
-          submitLabel="Reload"
-          compact
-          onApply={(next) => setFilters(next)}
-          onReset={() =>
-            setFilters({
-              accountId: "",
-              metaAccountId: "",
-              googleAccountId: "",
-            })
-          }
-        />
+        <div className="space-y-2">
+          <ReportDownloadButton />
+          <ReportFiltersBar
+            filters={filters}
+            dateMode="month"
+            showDateFilters={false}
+            showResetButton={false}
+            submitLabel="Reload"
+            compact
+            onApply={(next) => setFilters(next)}
+            onReset={() =>
+              setFilters({
+                accountId: "",
+                metaAccountId: "",
+                googleAccountId: "",
+              })
+            }
+          />
+        </div>
       }
     >
       <div className="space-y-5">
