@@ -49,6 +49,7 @@ interface GoogleAdsResult {
     id?: string;
     name?: string;
     advertisingChannelType?: string;
+    status?: string;
   };
   segments?: {
     auctionInsightDomain?: string;
@@ -185,6 +186,7 @@ export async function fetchGoogleCampaignRows({
       campaign.id,
       campaign.name,
       campaign.advertising_channel_type,
+      campaign.status,
       metrics.impressions,
       metrics.clicks,
       metrics.ctr,
@@ -192,7 +194,8 @@ export async function fetchGoogleCampaignRows({
       metrics.conversions,
       metrics.cost_micros
     FROM campaign
-    WHERE segments.date BETWEEN '${startDate}' AND '${endDate}'
+    WHERE campaign.status = 'ENABLED'
+      AND segments.date BETWEEN '${startDate}' AND '${endDate}'
   `;
 
   const results = await fetchGoogleAdsResultsWithFallback({
@@ -210,6 +213,7 @@ export async function fetchGoogleCampaignRows({
           campaign.id,
           campaign.name,
           campaign.advertising_channel_type,
+          campaign.status,
           metrics.impressions,
           metrics.clicks,
           metrics.ctr,
@@ -219,44 +223,47 @@ export async function fetchGoogleCampaignRows({
           metrics.engagements,
           metrics.interactions
         FROM campaign
-        WHERE segments.date BETWEEN '${startDate}' AND '${endDate}'
+        WHERE campaign.status = 'ENABLED'
+          AND segments.date BETWEEN '${startDate}' AND '${endDate}'
       `,
       baseSelect,
     ],
   });
 
-  return results.map((result) => {
-    const campaignName = result.campaign?.name?.trim() || "Untitled Campaign";
-    const channelType = result.campaign?.advertisingChannelType || "UNKNOWN";
-    const platform = channelType === "VIDEO" ? "googleYoutube" : "google";
-    const campaignType = normalizeCampaignType(channelType);
+  return results
+    .filter((result) => result.campaign?.status === "ENABLED")
+    .map((result) => {
+      const campaignName = result.campaign?.name?.trim() || "Untitled Campaign";
+      const channelType = result.campaign?.advertisingChannelType || "UNKNOWN";
+      const platform = channelType === "VIDEO" ? "googleYoutube" : "google";
+      const campaignType = normalizeCampaignType(channelType);
 
-    const row = emptyCampaignRow(
-      result.campaign?.id ?? `${campaignType}-${campaignName}`,
-      platform,
-      campaignType,
-      campaignName
-    );
+      const row = emptyCampaignRow(
+        result.campaign?.id ?? `${campaignType}-${campaignName}`,
+        platform,
+        campaignType,
+        campaignName
+      );
 
-    const impressions = toNumber(result.metrics?.impressions);
-    const clicks = toNumber(result.metrics?.clicks);
-    const spend = microsToCurrency(result.metrics?.costMicros);
-    const conversions = toNumber(result.metrics?.conversions);
+      const impressions = toNumber(result.metrics?.impressions);
+      const clicks = toNumber(result.metrics?.clicks);
+      const spend = microsToCurrency(result.metrics?.costMicros);
+      const conversions = toNumber(result.metrics?.conversions);
 
-    row.impressions = impressions;
-    row.clicks = clicks;
-    row.spend = spend;
-    row.conversions = conversions;
-    row.results = conversions;
-    row.ctr = normalizeCtr(result.metrics?.ctr, impressions, clicks);
-    row.avgCpc = microsToCurrency(result.metrics?.averageCpc) || (clicks > 0 ? spend / clicks : 0);
-    row.cpm = impressions > 0 ? (spend * 1000) / impressions : 0;
-    row.costPerResult = conversions > 0 ? spend / conversions : 0;
-    row.youtubeEarnedLikes = toNumber(result.metrics?.engagements);
-    row.youtubeEarnedShares = toNumber(result.metrics?.interactions);
+      row.impressions = impressions;
+      row.clicks = clicks;
+      row.spend = spend;
+      row.conversions = conversions;
+      row.results = conversions;
+      row.ctr = normalizeCtr(result.metrics?.ctr, impressions, clicks);
+      row.avgCpc = microsToCurrency(result.metrics?.averageCpc) || (clicks > 0 ? spend / clicks : 0);
+      row.cpm = impressions > 0 ? (spend * 1000) / impressions : 0;
+      row.costPerResult = conversions > 0 ? spend / conversions : 0;
+      row.youtubeEarnedLikes = toNumber(result.metrics?.engagements);
+      row.youtubeEarnedShares = toNumber(result.metrics?.interactions);
 
-    return row;
-  });
+      return row;
+    });
 }
 
 export async function fetchGoogleTopKeywordRows({
@@ -293,7 +300,8 @@ export async function fetchGoogleTopKeywordRows({
           metrics.conversion_rate,
           metrics.cost_micros
         FROM keyword_view
-        WHERE segments.date BETWEEN '${startDate}' AND '${endDate}'
+        WHERE campaign.status = 'ENABLED'
+          AND segments.date BETWEEN '${startDate}' AND '${endDate}'
       `,
       `
         SELECT
@@ -306,7 +314,8 @@ export async function fetchGoogleTopKeywordRows({
           metrics.conversions,
           metrics.cost_micros
         FROM keyword_view
-        WHERE segments.date BETWEEN '${startDate}' AND '${endDate}'
+        WHERE campaign.status = 'ENABLED'
+          AND segments.date BETWEEN '${startDate}' AND '${endDate}'
       `,
     ],
   });
@@ -397,7 +406,8 @@ export async function fetchGoogleAuctionInsightRows({
           metrics.auction_insight_search_absolute_top_impression_percentage,
           metrics.auction_insight_search_outranking_share
         FROM campaign
-        WHERE segments.date BETWEEN '${startDate}' AND '${endDate}'
+        WHERE campaign.status = 'ENABLED'
+          AND segments.date BETWEEN '${startDate}' AND '${endDate}'
       `,
       `
         SELECT
@@ -407,7 +417,8 @@ export async function fetchGoogleAuctionInsightRows({
           metrics.auction_insight_search_position_above_rate,
           metrics.auction_insight_search_outranking_share
         FROM campaign
-        WHERE segments.date BETWEEN '${startDate}' AND '${endDate}'
+        WHERE campaign.status = 'ENABLED'
+          AND segments.date BETWEEN '${startDate}' AND '${endDate}'
       `,
     ],
   });

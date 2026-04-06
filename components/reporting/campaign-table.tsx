@@ -60,33 +60,46 @@ export function OverallCampaignGroupsTable({
               ))}
               <CampaignMobileCard row={group.totals} forceTitle="Grand Total" />
             </div>
-            <div className="hidden overflow-x-auto px-2 pb-2 md:block">
-              <table className="w-full min-w-[920px] text-left text-xs sm:text-sm">
+            <div className="hidden px-2 pb-2 md:block">
+              <table className="w-full table-fixed text-left text-xs sm:text-sm">
+                <colgroup>
+                  <col className="w-[30%]" />
+                  <col className="w-[8%]" />
+                  <col className="w-[8%]" />
+                  <col className="w-[8%]" />
+                  <col className="w-[10%]" />
+                  <col className="w-[8%]" />
+                  <col className="w-[10%]" />
+                  <col className="w-[10%]" />
+                  <col className="w-[8%]" />
+                </colgroup>
                 <thead>
-                  <tr className="border-b border-border/60 text-[#454545]">
-                    <th className="px-2 py-3 font-semibold whitespace-nowrap">Campaign</th>
-                    <th className="px-2 py-3 font-semibold whitespace-nowrap">Impression</th>
-                    <th className="px-2 py-3 font-semibold whitespace-nowrap">Clicks</th>
-                    <th className="px-2 py-3 font-semibold whitespace-nowrap">CTR (%)</th>
-                    <th className="px-2 py-3 font-semibold whitespace-nowrap">CPM (RM)</th>
-                    <th className="px-2 py-3 font-semibold whitespace-nowrap">Results</th>
-                    <th className="px-2 py-3 font-semibold whitespace-nowrap">Cost/Results</th>
-                    <th className="px-2 py-3 font-semibold whitespace-nowrap">Ads Spent (RM)</th>
-                    <th className="px-2 py-3 font-semibold whitespace-nowrap">Actions</th>
+                  <tr className="border-b border-border/60 text-[11px] text-[#454545] sm:text-xs">
+                    <th className="px-1.5 py-2 font-semibold leading-tight whitespace-normal break-words">Campaign</th>
+                    <th className="px-1.5 py-2 text-center font-semibold leading-tight whitespace-normal break-words">Impression</th>
+                    <th className="px-1.5 py-2 text-center font-semibold leading-tight whitespace-normal break-words">Clicks</th>
+                    <th className="px-1.5 py-2 text-center font-semibold leading-tight whitespace-normal break-words">CTR (%)</th>
+                    <th className="px-1.5 py-2 text-center font-semibold leading-tight whitespace-normal break-words">CPM (RM)</th>
+                    <th className="px-1.5 py-2 text-center font-semibold leading-tight whitespace-normal break-words">Results</th>
+                    <th className="px-1.5 py-2 text-center font-semibold leading-tight whitespace-normal break-words">Cost/Results</th>
+                    <th className="px-1.5 py-2 text-center font-semibold leading-tight whitespace-normal break-words">Ads Spent (RM)</th>
+                    <th className="px-1.5 py-2 text-center font-semibold leading-tight whitespace-normal break-words">Actions</th>
                   </tr>
                 </thead>
                 <tbody>
                   {group.rows.map((row) => (
                     <tr key={row.id} className="border-b border-border/40 hover:bg-muted/20">
-                      <td className="px-2 py-2 whitespace-nowrap">{row.campaignName}</td>
-                      <td className="px-2 py-2 whitespace-nowrap">{formatCompactNumber(row.impressions)}</td>
-                      <td className="px-2 py-2 whitespace-nowrap">{formatCompactNumber(row.clicks)}</td>
-                      <td className="px-2 py-2 whitespace-nowrap">{formatCompactNumber(row.ctr)}</td>
-                      <td className="px-2 py-2 whitespace-nowrap">{formatCompactNumber(row.cpm)}</td>
-                      <td className="px-2 py-2 whitespace-nowrap">{formatCompactNumber(row.results)}</td>
-                      <td className="px-2 py-2 whitespace-nowrap">{formatCompactNumber(row.costPerResult)}</td>
-                      <td className="px-2 py-2 whitespace-nowrap">{formatCompactNumber(row.spend)}</td>
-                      <td className="px-2 py-2 whitespace-nowrap">
+                      <td className="px-1.5 py-2 align-top whitespace-normal break-words leading-5">
+                        {row.campaignName}
+                      </td>
+                      <td className="px-1.5 py-2 text-center tabular-nums whitespace-nowrap">{formatCompactNumber(row.impressions)}</td>
+                      <td className="px-1.5 py-2 text-center tabular-nums whitespace-nowrap">{formatCompactNumber(row.clicks)}</td>
+                      <td className="px-1.5 py-2 text-center tabular-nums whitespace-nowrap">{formatCompactNumber(row.ctr)}</td>
+                      <td className="px-1.5 py-2 text-center tabular-nums whitespace-nowrap">{formatCompactNumber(row.cpm)}</td>
+                      <td className="px-1.5 py-2 text-center tabular-nums whitespace-nowrap">{formatCompactNumber(row.results)}</td>
+                      <td className="px-1.5 py-2 text-center tabular-nums whitespace-nowrap">{formatCompactNumber(row.costPerResult)}</td>
+                      <td className="px-1.5 py-2 text-center tabular-nums whitespace-nowrap">{formatCompactNumber(row.spend)}</td>
+                      <td className="px-1.5 py-2 text-center whitespace-nowrap">
                         <Link
                           className="inline-flex items-center gap-1 text-red-700 hover:underline"
                           href={`/campaign/${encodeURIComponent(group.campaignType)}?platform=${group.platform}${queryString}`}
@@ -98,15 +111,15 @@ export function OverallCampaignGroupsTable({
                     </tr>
                   ))}
                   <tr className="bg-[#f9f9f9] font-semibold">
-                    <td className="px-2 py-2 whitespace-nowrap">Grand Total</td>
-                    <td className="px-2 py-2 whitespace-nowrap">{formatCompactNumber(group.totals.impressions)}</td>
-                    <td className="px-2 py-2 whitespace-nowrap">{formatCompactNumber(group.totals.clicks)}</td>
-                    <td className="px-2 py-2 whitespace-nowrap">{formatCompactNumber(group.totals.ctr)}</td>
-                    <td className="px-2 py-2 whitespace-nowrap">{formatCompactNumber(group.totals.cpm)}</td>
-                    <td className="px-2 py-2 whitespace-nowrap">{formatCompactNumber(group.totals.results)}</td>
-                    <td className="px-2 py-2 whitespace-nowrap">{formatCompactNumber(group.totals.costPerResult)}</td>
-                    <td className="px-2 py-2 whitespace-nowrap">{formatCompactNumber(group.totals.spend)}</td>
-                    <td className="px-2 py-2 whitespace-nowrap">-</td>
+                    <td className="px-1.5 py-2 align-top whitespace-normal break-words leading-5">Grand Total</td>
+                    <td className="px-1.5 py-2 text-center tabular-nums whitespace-nowrap">{formatCompactNumber(group.totals.impressions)}</td>
+                    <td className="px-1.5 py-2 text-center tabular-nums whitespace-nowrap">{formatCompactNumber(group.totals.clicks)}</td>
+                    <td className="px-1.5 py-2 text-center tabular-nums whitespace-nowrap">{formatCompactNumber(group.totals.ctr)}</td>
+                    <td className="px-1.5 py-2 text-center tabular-nums whitespace-nowrap">{formatCompactNumber(group.totals.cpm)}</td>
+                    <td className="px-1.5 py-2 text-center tabular-nums whitespace-nowrap">{formatCompactNumber(group.totals.results)}</td>
+                    <td className="px-1.5 py-2 text-center tabular-nums whitespace-nowrap">{formatCompactNumber(group.totals.costPerResult)}</td>
+                    <td className="px-1.5 py-2 text-center tabular-nums whitespace-nowrap">{formatCompactNumber(group.totals.spend)}</td>
+                    <td className="px-1.5 py-2 text-center whitespace-nowrap">-</td>
                   </tr>
                 </tbody>
               </table>
@@ -163,42 +176,54 @@ export function CampaignComparisonTable({
         ))}
         <CampaignMobileCard row={totalsWithSpend} forceTitle="Grand Total" />
       </div>
-      <div className="hidden overflow-x-auto px-2 pb-2 md:block">
-        <table className="w-full min-w-[920px] text-left text-xs sm:text-sm">
+      <div className="hidden px-2 pb-2 md:block">
+        <table className="w-full table-fixed text-left text-xs sm:text-sm">
+          <colgroup>
+            <col className="w-[38%]" />
+            <col className="w-[8%]" />
+            <col className="w-[8%]" />
+            <col className="w-[8%]" />
+            <col className="w-[10%]" />
+            <col className="w-[8%]" />
+            <col className="w-[10%]" />
+            <col className="w-[10%]" />
+          </colgroup>
           <thead>
-            <tr className="border-b border-border/60 text-[#454545]">
-              <th className="px-2 py-3 font-semibold whitespace-nowrap">Campaign</th>
-              <th className="px-2 py-3 font-semibold whitespace-nowrap">Impression</th>
-              <th className="px-2 py-3 font-semibold whitespace-nowrap">Clicks</th>
-              <th className="px-2 py-3 font-semibold whitespace-nowrap">CTR (%)</th>
-              <th className="px-2 py-3 font-semibold whitespace-nowrap">CPM (RM)</th>
-              <th className="px-2 py-3 font-semibold whitespace-nowrap">Results</th>
-              <th className="px-2 py-3 font-semibold whitespace-nowrap">Cost/Results</th>
-              <th className="px-2 py-3 font-semibold whitespace-nowrap">Ads Spent (RM)</th>
+            <tr className="border-b border-border/60 text-[11px] text-[#454545] sm:text-xs">
+              <th className="px-1.5 py-2 font-semibold leading-tight whitespace-normal break-words">Campaign</th>
+              <th className="px-1.5 py-2 text-center font-semibold leading-tight whitespace-normal break-words">Impression</th>
+              <th className="px-1.5 py-2 text-center font-semibold leading-tight whitespace-normal break-words">Clicks</th>
+              <th className="px-1.5 py-2 text-center font-semibold leading-tight whitespace-normal break-words">CTR (%)</th>
+              <th className="px-1.5 py-2 text-center font-semibold leading-tight whitespace-normal break-words">CPM (RM)</th>
+              <th className="px-1.5 py-2 text-center font-semibold leading-tight whitespace-normal break-words">Results</th>
+              <th className="px-1.5 py-2 text-center font-semibold leading-tight whitespace-normal break-words">Cost/Results</th>
+              <th className="px-1.5 py-2 text-center font-semibold leading-tight whitespace-normal break-words">Ads Spent (RM)</th>
             </tr>
           </thead>
           <tbody>
             {visibleRows.map((row) => (
               <tr key={row.id} className="border-b border-border/40 hover:bg-muted/20">
-                <td className="px-2 py-2 whitespace-nowrap">{row.campaignName}</td>
-                <td className="px-2 py-2 whitespace-nowrap">{formatCompactNumber(row.impressions)}</td>
-                <td className="px-2 py-2 whitespace-nowrap">{formatCompactNumber(row.clicks)}</td>
-                <td className="px-2 py-2 whitespace-nowrap">{formatCompactNumber(row.ctr)}</td>
-                <td className="px-2 py-2 whitespace-nowrap">{formatCompactNumber(row.cpm)}</td>
-                <td className="px-2 py-2 whitespace-nowrap">{formatCompactNumber(row.results)}</td>
-                <td className="px-2 py-2 whitespace-nowrap">{formatCompactNumber(row.costPerResult)}</td>
-                <td className="px-2 py-2 whitespace-nowrap">{formatCompactNumber(row.spend)}</td>
+                <td className="px-1.5 py-2 align-top whitespace-normal break-words leading-5">
+                  {row.campaignName}
+                </td>
+                <td className="px-1.5 py-2 text-center tabular-nums whitespace-nowrap">{formatCompactNumber(row.impressions)}</td>
+                <td className="px-1.5 py-2 text-center tabular-nums whitespace-nowrap">{formatCompactNumber(row.clicks)}</td>
+                <td className="px-1.5 py-2 text-center tabular-nums whitespace-nowrap">{formatCompactNumber(row.ctr)}</td>
+                <td className="px-1.5 py-2 text-center tabular-nums whitespace-nowrap">{formatCompactNumber(row.cpm)}</td>
+                <td className="px-1.5 py-2 text-center tabular-nums whitespace-nowrap">{formatCompactNumber(row.results)}</td>
+                <td className="px-1.5 py-2 text-center tabular-nums whitespace-nowrap">{formatCompactNumber(row.costPerResult)}</td>
+                <td className="px-1.5 py-2 text-center tabular-nums whitespace-nowrap">{formatCompactNumber(row.spend)}</td>
               </tr>
             ))}
             <tr className="bg-[#f9f9f9] font-semibold">
-              <td className="px-2 py-2 whitespace-nowrap">Grand Total</td>
-              <td className="px-2 py-2 whitespace-nowrap">{formatCompactNumber(totalsWithSpend.impressions)}</td>
-              <td className="px-2 py-2 whitespace-nowrap">{formatCompactNumber(totalsWithSpend.clicks)}</td>
-              <td className="px-2 py-2 whitespace-nowrap">{formatCompactNumber(totalsWithSpend.ctr)}</td>
-              <td className="px-2 py-2 whitespace-nowrap">{formatCompactNumber(totalsWithSpend.cpm)}</td>
-              <td className="px-2 py-2 whitespace-nowrap">{formatCompactNumber(totalsWithSpend.results)}</td>
-              <td className="px-2 py-2 whitespace-nowrap">{formatCompactNumber(totalsWithSpend.costPerResult)}</td>
-              <td className="px-2 py-2 whitespace-nowrap">{formatCompactNumber(totalsWithSpend.spend)}</td>
+              <td className="px-1.5 py-2 align-top whitespace-normal break-words leading-5">Grand Total</td>
+              <td className="px-1.5 py-2 text-center tabular-nums whitespace-nowrap">{formatCompactNumber(totalsWithSpend.impressions)}</td>
+              <td className="px-1.5 py-2 text-center tabular-nums whitespace-nowrap">{formatCompactNumber(totalsWithSpend.clicks)}</td>
+              <td className="px-1.5 py-2 text-center tabular-nums whitespace-nowrap">{formatCompactNumber(totalsWithSpend.ctr)}</td>
+              <td className="px-1.5 py-2 text-center tabular-nums whitespace-nowrap">{formatCompactNumber(totalsWithSpend.cpm)}</td>
+              <td className="px-1.5 py-2 text-center tabular-nums whitespace-nowrap">{formatCompactNumber(totalsWithSpend.results)}</td>
+              <td className="px-1.5 py-2 text-center tabular-nums whitespace-nowrap">{formatCompactNumber(totalsWithSpend.costPerResult)}</td>
+              <td className="px-1.5 py-2 text-center tabular-nums whitespace-nowrap">{formatCompactNumber(totalsWithSpend.spend)}</td>
             </tr>
           </tbody>
         </table>

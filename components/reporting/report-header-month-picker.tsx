@@ -101,6 +101,19 @@ export function ReportHeaderMonthPicker({
   }
 
   function shiftRange(direction: -1 | 1) {
+    if (isFullCalendarMonthRange(normalizedCurrent.startDate, normalizedCurrent.endDate)) {
+      const currentStart = parseIsoDate(normalizedCurrent.startDate);
+      const monthOffset = direction;
+      const shiftedStart = new Date(
+        Date.UTC(currentStart.getUTCFullYear(), currentStart.getUTCMonth() + monthOffset, 1)
+      );
+      const shiftedEnd = new Date(
+        Date.UTC(currentStart.getUTCFullYear(), currentStart.getUTCMonth() + monthOffset + 1, 0)
+      );
+      applyRange(toIsoDate(shiftedStart), toIsoDate(shiftedEnd));
+      return;
+    }
+
     const dayCount = getInclusiveDayCount(normalizedCurrent.startDate, normalizedCurrent.endDate);
     const offset = dayCount * direction;
     const shiftedStart = toIsoDate(addDays(parseIsoDate(normalizedCurrent.startDate), offset));
@@ -280,6 +293,17 @@ function getInclusiveDayCount(startDate: string, endDate: string): number {
   const start = parseIsoDate(startDate);
   const end = parseIsoDate(endDate);
   return Math.max(1, Math.floor((end.getTime() - start.getTime()) / 86_400_000) + 1);
+}
+
+function isFullCalendarMonthRange(startDate: string, endDate: string): boolean {
+  const start = parseIsoDate(startDate);
+  const end = parseIsoDate(endDate);
+  return (
+    start.getUTCDate() === 1 &&
+    start.getUTCFullYear() === end.getUTCFullYear() &&
+    start.getUTCMonth() === end.getUTCMonth() &&
+    end.getUTCDate() === new Date(Date.UTC(end.getUTCFullYear(), end.getUTCMonth() + 1, 0)).getUTCDate()
+  );
 }
 
 function getPresetRange(preset: Exclude<DatePreset, "custom">): { startDate: string; endDate: string } {

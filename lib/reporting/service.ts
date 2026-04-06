@@ -13,7 +13,11 @@ import {
   fetchGoogleTopKeywordRows,
 } from "@/lib/reporting/google";
 import { buildGroups, computeDelta, emptyCampaignRow, mergeCampaignRows } from "@/lib/reporting/metrics";
-import { fetchMetaAccountName, fetchMetaCampaignRows } from "@/lib/reporting/meta";
+import {
+  fetchMetaAccountName,
+  fetchMetaActiveCampaignIds,
+  fetchMetaCampaignRows,
+} from "@/lib/reporting/meta";
 import {
   AuctionInsightRow,
   AuctionInsightsPayload,
@@ -688,11 +692,16 @@ async function tryFetchMeta(
   }
 
   try {
+    const activeCampaignIds = await fetchMetaActiveCampaignIds({
+      accountId,
+      accessToken,
+    });
     const rows = await fetchMetaCampaignRows({
       accountId,
       accessToken,
       startDate,
       endDate,
+      activeCampaignIds,
     });
     return { rows, warnings: [] };
   } catch (error) {

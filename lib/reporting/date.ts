@@ -34,6 +34,26 @@ function formatHumanDate(date: Date): string {
   }).format(date);
 }
 
+function isFullCalendarMonthRange(startDate: Date, endDate: Date): boolean {
+  return (
+    startDate.getUTCDate() === 1 &&
+    endDate.getUTCDate() === new Date(
+      Date.UTC(endDate.getUTCFullYear(), endDate.getUTCMonth() + 1, 0)
+    ).getUTCDate() &&
+    startDate.getUTCFullYear() === endDate.getUTCFullYear() &&
+    startDate.getUTCMonth() === endDate.getUTCMonth()
+  );
+}
+
+function getPreviousCalendarMonthRange(startDate: Date): { previousStartDate: Date; previousEndDate: Date } {
+  const previousEndDate = new Date(Date.UTC(startDate.getUTCFullYear(), startDate.getUTCMonth(), 0));
+  const previousStartDate = new Date(
+    Date.UTC(previousEndDate.getUTCFullYear(), previousEndDate.getUTCMonth(), 1)
+  );
+
+  return { previousStartDate, previousEndDate };
+}
+
 export function buildDateRange(
   startDateParam: string | null,
   endDateParam: string | null
@@ -48,17 +68,26 @@ export function buildDateRange(
   const startDate = parsedStart <= parsedEnd ? parsedStart : parsedEnd;
   const endDate = parsedStart <= parsedEnd ? parsedEnd : parsedStart;
 
-  const dayCount =
-    Math.floor((endDate.getTime() - startDate.getTime()) / (24 * 60 * 60 * 1000)) + 1;
-  const previousEndDate = addDays(startDate, -1);
-  const previousStartDate = addDays(previousEndDate, -(dayCount - 1));
+  const isFullMonth = isFullCalendarMonthRange(startDate, endDate);
+
+  const previousRange = isFullMonth
+    ? getPreviousCalendarMonthRange(startDate)
+    : (() => {
+        const dayCount =
+          Math.floor((endDate.getTime() - startDate.getTime()) / (24 * 60 * 60 * 1000)) + 1;
+        const previousEndDate = addDays(startDate, -1);
+        const previousStartDate = addDays(previousEndDate, -(dayCount - 1));
+        return { previousStartDate, previousEndDate };
+      })();
 
   return {
     startDate: toIsoDate(startDate),
     endDate: toIsoDate(endDate),
-    previousStartDate: toIsoDate(previousStartDate),
-    previousEndDate: toIsoDate(previousEndDate),
+    previousStartDate: toIsoDate(previousRange.previousStartDate),
+    previousEndDate: toIsoDate(previousRange.previousEndDate),
     currentLabel: `${formatHumanDate(startDate)} - ${formatHumanDate(endDate)}`,
-    previousLabel: `${formatHumanDate(previousStartDate)} - ${formatHumanDate(previousEndDate)}`,
+    previousLabel: `${formatHumanDate(previousRange.previousStartDate)} - ${formatHumanDate(
+      previousRange.previousEndDate
+    )}`,
   };
 }

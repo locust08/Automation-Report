@@ -6,6 +6,7 @@ interface MetaFetchInput {
   accessToken: string;
   startDate: string;
   endDate: string;
+  activeCampaignIds?: Set<string>;
 }
 
 interface MetaAccountNameInput {
@@ -23,6 +24,25 @@ interface MetaInsightsResponse {
     code?: number;
     error_subcode?: number;
   };
+}
+
+interface MetaCampaignsResponse {
+  data?: MetaCampaignRow[];
+  paging?: {
+    next?: string;
+  };
+  error?: {
+    message?: string;
+    code?: number;
+    error_subcode?: number;
+  };
+}
+
+interface MetaCampaignRow {
+  id?: string;
+  name?: string;
+  status?: string;
+  effective_status?: string;
 }
 
 interface MetaInsightRow {
@@ -59,11 +79,61 @@ const RESULT_ACTION_PRIORITY = [
   "link_click",
 ] as const;
 
+export async function fetchMetaActiveCampaignIds({
+  accountId,
+  accessToken,
+}: MetaAccountNameInput): Promise<Set<string>> {
+  const params = new URLSearchParams({
+    access_token: accessToken,
+    limit: "200",
+    fields: ["id", "status", "effective_status"].join(","),
+  });
+
+  let nextUrl = `https://graph.facebook.com/v22.0/act_${accountId}/campaigns?${params.toString()}`;
+  const activeCampaignIds = new Set<string>();
+
+  while (nextUrl) {
+    const response = await fetch(nextUrl, { cache: "no-store" });
+    const parsed = await parseMetaResponse(response);
+
+    if (parsed.parseError) {
+      throw new Error(
+        `Meta API returned non-JSON response (status ${parsed.status}, content-type ${parsed.contentType || "unknown"}). ${parsed.parseError}. Response starts with: ${parsed.textSnippet}`
+      );
+    }
+
+    const json = parsed.json as MetaCampaignsResponse | null;
+
+    if (!parsed.ok || json?.error) {
+      const message =
+        json?.error?.message ??
+        `Meta API request failed with status ${parsed.status}. The ad account may not be accessible.`;
+      throw new Error(message);
+    }
+
+    const data = json?.data ?? [];
+    data.forEach((item) => {
+      if (!item.id) {
+        return;
+      }
+
+      if (isActiveMetaCampaign(item)) {
+        activeCampaignIds.add(item.id);
+      }
+    });
+
+    nextUrl = json?.paging?.next ?? "";
+  }
+
+  return activeCampaignIds;
+}
+
 export async function fetchMetaCampaignRows({
   accountId,
   accessToken,
   startDate,
   endDate,
+  activeCampaignIds,
 }: MetaFetchInput): Promise<CampaignRow[]> {
   const params = new URLSearchParams({
     access_token: accessToken,
@@ -85,6 +155,7 @@ export async function fetchMetaCampaignRows({
 
   let nextUrl = `https://graph.facebook.com/v22.0/act_${accountId}/insights?${params.toString()}`;
   const rows: CampaignRow[] = [];
+  const filterToActiveCampaigns = activeCampaignIds !== undefined;
 
   while (nextUrl) {
     const response = await fetch(nextUrl, { cache: "no-store" });
@@ -107,6 +178,11 @@ export async function fetchMetaCampaignRows({
 
     const data = json.data ?? [];
     data.forEach((item) => {
+      const campaignId = item.campaign_id?.trim();
+      if (filterToActiveCampaigns && (!campaignId || !activeCampaignIds?.has(campaignId))) {
+        return;
+      }
+
       const impressions = toNumber(item.impressions);
       const clicks = toNumber(item.clicks);
       const spend = toNumber(item.spend);
@@ -115,7 +191,7 @@ export async function fetchMetaCampaignRows({
       const campaignName = item.campaign_name?.trim() || "Untitled Campaign";
       const campaignType = normalizeCampaignType(item.objective, campaignName);
       const row = emptyCampaignRow(
-        item.campaign_id ?? `${campaignType}-${campaignName}`,
+        campaignId ?? `${campaignType}-${campaignName}`,
         "meta",
         campaignType,
         campaignName
@@ -179,6 +255,10 @@ function pickResultValue(
   }
 
   return toNumber(actions[0]?.value);
+}
+
+function isActiveMetaCampaign(item: MetaCampaignRow): boolean {
+  return item.status === "ACTIVE" || item.effective_status === "ACTIVE";
 }
 
 function normalizeCampaignType(objective: string | undefined, campaignName: string): string {
