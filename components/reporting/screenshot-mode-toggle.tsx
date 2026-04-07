@@ -20,6 +20,7 @@ import {
 import { useScreenshotMode } from "@/components/reporting/use-screenshot-mode";
 
 type DownloadFormat = "png" | "pdf";
+const PDF_CAPTURE_SCALE = 1.25;
 
 export function ReportDownloadButton() {
   const { screenshotMode, setScreenshotMode } = useScreenshotMode();
@@ -35,11 +36,8 @@ export function ReportDownloadButton() {
 
     setDownloadingFormat(format);
     try {
-      const dataUrl = await toPng(root, {
-        cacheBust: true,
-        backgroundColor: "#f0f0f0",
-        pixelRatio: Math.max(2, window.devicePixelRatio || 1),
-      });
+      const captureScale = format === "pdf" ? PDF_CAPTURE_SCALE : 1;
+      const dataUrl = await captureReportPng(root, captureScale);
 
       if (format === "pdf") {
         await downloadPdf(root, dataUrl);
@@ -126,8 +124,7 @@ export function ReportDownloadButton() {
 async function downloadPdf(root: HTMLElement, dataUrl: string): Promise<void> {
   const { jsPDF } = await import("jspdf");
   const orientation = root.scrollWidth > root.scrollHeight ? "landscape" : "portrait";
-  const measurementPdf = new jsPDF({ orientation, unit: "px", format: "a4" });
-  const image = measurementPdf.getImageProperties(dataUrl);
+  const image = new jsPDF({ orientation, unit: "px", format: "a4" }).getImageProperties(dataUrl);
   const pdf = new jsPDF({
     orientation,
     unit: "px",
@@ -137,6 +134,18 @@ async function downloadPdf(root: HTMLElement, dataUrl: string): Promise<void> {
   pdf.addImage(dataUrl, "PNG", 0, 0, image.width, image.height, undefined, "FAST");
 
   pdf.save(buildFileName("pdf"));
+}
+
+async function captureReportPng(root: HTMLElement, scale: number): Promise<string> {
+  await document.fonts.ready;
+
+  return toPng(root, {
+    cacheBust: true,
+    backgroundColor: "#f0f0f0",
+    pixelRatio: Math.max(2, window.devicePixelRatio || 1) * scale,
+    width: root.scrollWidth,
+    height: root.scrollHeight,
+  });
 }
 
 function downloadFile(dataUrl: string, fileName: string) {

@@ -46,7 +46,7 @@ export function ReportShell({
         <div className="mx-auto max-w-[1280px] px-4 pb-5 pt-6 md:px-8 md:pb-6 md:pt-8">
           <div className="grid gap-4 text-white md:grid-cols-[minmax(0,1fr)_auto] md:items-start">
             <div className="space-y-4">
-              <h1 className="max-w-[960px] text-2xl font-medium leading-tight tracking-tight sm:text-3xl md:text-5xl">
+              <h1 className="max-w-[960px] text-3xl font-semibold leading-tight tracking-tight sm:text-4xl md:text-6xl">
                 {title}
               </h1>
               <nav className="flex flex-wrap items-center gap-2">
@@ -54,40 +54,40 @@ export function ReportShell({
                   href={hrefs.home}
                   title="Home"
                   aria-label="Open Home page"
-                  className="inline-flex size-9 items-center justify-center rounded-md bg-white/10 hover:bg-white/20"
+                  className="inline-flex size-10 items-center justify-center rounded-md bg-white/10 hover:bg-white/20"
                 >
-                  <HouseIcon className="size-4" />
+                  <HouseIcon className="size-5" />
                 </Link>
                 <Link
                   href={hrefs.overall}
                   title="Overall"
                   aria-label="Open Overall page"
-                  className="inline-flex size-9 items-center justify-center rounded-md bg-white/10 hover:bg-white/20"
+                  className="inline-flex size-10 items-center justify-center rounded-md bg-white/10 hover:bg-white/20"
                 >
-                  <BarChart3Icon className="size-4" />
+                  <BarChart3Icon className="size-5" />
                 </Link>
                 <Link
                   href={hrefs.keywords}
                   title="Top 10 Keywords"
                   aria-label="Open Top 10 Keywords page"
-                  className="inline-flex size-9 items-center justify-center rounded-md bg-white/10 hover:bg-white/20"
+                  className="inline-flex size-10 items-center justify-center rounded-md bg-white/10 hover:bg-white/20"
                 >
-                  <SearchIcon className="size-4" />
+                  <SearchIcon className="size-5" />
                 </Link>
                 <Link
                   href={hrefs.insights}
                   title="Insights"
                   aria-label="Open Insights page"
-                  className="inline-flex size-9 items-center justify-center rounded-md bg-white/10 hover:bg-white/20"
+                  className="inline-flex size-10 items-center justify-center rounded-md bg-white/10 hover:bg-white/20"
                 >
-                  <LightbulbIcon className="size-4" />
+                  <LightbulbIcon className="size-5" />
                 </Link>
               </nav>
             </div>
             {headerDateControl ? (
               <div className="flex w-full items-start md:w-auto md:justify-self-end">{headerDateControl}</div>
             ) : (
-              <div className="w-full rounded-2xl bg-[#dfdfdf] px-4 py-3 text-center text-sm font-semibold text-[#5f5f5f] sm:w-auto sm:px-6 sm:text-base md:justify-self-end">
+              <div className="w-full rounded-2xl bg-[#dfdfdf] px-4 py-3 text-center text-base font-semibold text-[#5f5f5f] sm:w-auto sm:px-6 sm:text-lg md:justify-self-end">
                 {dateLabel}
               </div>
             )}
@@ -100,7 +100,7 @@ export function ReportShell({
         <div className="mx-auto max-w-[1280px] px-4 md:px-8">{children}</div>
       </section>
 
-      <footer className="mx-auto flex max-w-[1280px] flex-col items-center gap-3 border-t-4 border-red-600 px-4 py-5 text-center text-sm text-[#777] sm:flex-row sm:justify-between sm:px-6 sm:text-left">
+      <footer className="mx-auto flex max-w-[1280px] flex-col items-center gap-3 border-t-4 border-red-600 px-4 py-5 text-center text-base text-[#777] sm:flex-row sm:justify-between sm:px-6 sm:text-left">
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img
           src="/logo.png"

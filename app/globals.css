@@ -48,8 +48,8 @@
 }
 
 :root {
-  --font-sans: "Trebuchet MS", "Segoe UI", sans-serif;
-  --font-geist-mono: "Consolas", "Courier New", monospace;
+  --font-sans: var(--font-inter), "Segoe UI", sans-serif;
+  --font-geist-mono: var(--font-jetbrains-mono), "Consolas", monospace;
   --background: oklch(1 0 0);
   --foreground: oklch(0.145 0 0);
   --card: oklch(1 0 0);
@@ -119,12 +119,24 @@
 }
 
 @layer base {
+  html {
+    font-size: 112.5%;
+  }
+
   * {
     @apply border-border outline-ring/50;
   }
   body {
     @apply bg-background text-foreground;
-    font-family: var(--font-sans), "Segoe UI", sans-serif;
+    font-family: var(--font-sans);
+    line-height: 1.55;
+  }
+
+  button,
+  input,
+  select,
+  textarea {
+    font: inherit;
   }
 
   summary {
