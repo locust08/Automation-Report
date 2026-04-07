@@ -19,7 +19,15 @@ function formatPercentValue(value: number, label?: string): string {
   return formatPercent(value);
 }
 
-export function TopKeywordTable({ rows, totals }: { rows: TopKeywordRow[]; totals: TopKeywordRow }) {
+export function TopKeywordTable({
+  rows,
+  totals,
+  screenshotMode = false,
+}: {
+  rows: TopKeywordRow[];
+  totals: TopKeywordRow;
+  screenshotMode?: boolean;
+}) {
   if (rows.length === 0) {
     return null;
   }
@@ -27,35 +35,57 @@ export function TopKeywordTable({ rows, totals }: { rows: TopKeywordRow[]; total
   return (
     <section className="rounded-[2rem] bg-[#e7e7e7] p-4 shadow-sm sm:p-6">
       <h2 className="mb-4 text-2xl font-semibold text-[#555] sm:text-3xl">Top 10 Performing Keywords</h2>
-      <div className="overflow-x-auto rounded-2xl border border-[#d1d1d1] bg-white shadow-sm">
-        <table className="w-full min-w-[980px] text-left text-xs sm:text-sm">
+      <div
+        className={[
+          "rounded-2xl border border-[#d1d1d1] bg-white shadow-sm",
+          screenshotMode ? "overflow-visible" : "overflow-x-auto",
+        ].join(" ")}
+      >
+        <table
+          className={[
+            "w-full text-left",
+            screenshotMode ? "table-fixed text-[11px] sm:text-xs" : "min-w-[980px] text-xs sm:text-sm",
+          ].join(" ")}
+        >
+          <colgroup>
+            <col className="w-[4%]" />
+            <col className="w-[26%]" />
+            <col className="w-[8%]" />
+            <col className="w-[8%]" />
+            <col className="w-[8%]" />
+            <col className="w-[8%]" />
+            <col className="w-[8%]" />
+            <col className="w-[8%]" />
+            <col className="w-[11%]" />
+            <col className="w-[11%]" />
+          </colgroup>
           <thead>
             <tr className="bg-[#f1bba9] text-[#444]">
-              <th className="px-3 py-3 font-semibold">#</th>
-              <th className="px-3 py-3 font-semibold">Search keyword</th>
-              <th className="px-3 py-3 text-right font-semibold">Impressions</th>
-              <th className="px-3 py-3 text-right font-semibold">Clicks</th>
-              <th className="px-3 py-3 text-right font-semibold">Avg. CPC</th>
-              <th className="px-3 py-3 text-right font-semibold">CTR</th>
-              <th className="px-3 py-3 text-right font-semibold">Conversions</th>
-              <th className="px-3 py-3 text-right font-semibold">Conv. rate</th>
-              <th className="px-3 py-3 text-right font-semibold">Cost / conv.</th>
-              <th className="px-3 py-3 text-right font-semibold">Cost</th>
+              <th className="px-3 py-3 font-semibold leading-tight">#</th>
+              <th className="px-3 py-3 font-semibold leading-tight whitespace-normal break-words">Search keyword</th>
+              <th className="px-3 py-3 text-right font-semibold leading-tight whitespace-normal break-words">Impressions</th>
+              <th className="px-3 py-3 text-right font-semibold leading-tight whitespace-normal break-words">Clicks</th>
+              <th className="px-3 py-3 text-right font-semibold leading-tight whitespace-normal break-words">Avg. CPC</th>
+              <th className="px-3 py-3 text-right font-semibold leading-tight whitespace-normal break-words">CTR</th>
+              <th className="px-3 py-3 text-right font-semibold leading-tight whitespace-normal break-words">Conversions</th>
+              <th className="px-3 py-3 text-right font-semibold leading-tight whitespace-normal break-words">Conv. rate</th>
+              <th className="px-3 py-3 text-right font-semibold leading-tight whitespace-normal break-words">Cost / conv.</th>
+              <th className="px-3 py-3 text-right font-semibold leading-tight whitespace-normal break-words">Cost</th>
             </tr>
           </thead>
           <tbody>
             {rows.map((row, index) => (
               <tr key={row.id} className="border-b border-border/40 hover:bg-muted/20">
-                <td className="px-3 py-2">{index + 1}.</td>
-                <td className="px-3 py-2">{row.keyword}</td>
-                <td className="px-3 py-2 text-right">{formatNumber(row.impressions)}</td>
-                <td className="px-3 py-2 text-right">{formatNumber(row.clicks)}</td>
-                <td className="px-3 py-2 text-right">{formatNumber(row.avgCpc)}</td>
-                <td className="px-3 py-2 text-right">{formatPercent(row.ctr)}</td>
-                <td className="px-3 py-2 text-right">{formatNumber(row.conversions)}</td>
-                <td className="px-3 py-2 text-right">{formatPercent(row.conversionRate)}</td>
-                <td className="px-3 py-2 text-right">{formatNumber(row.costPerConversion)}</td>
-                <td className="px-3 py-2 text-right">{formatNumber(row.cost)}</td>
+                <td className="px-3 py-2 align-top tabular-nums whitespace-nowrap">{index + 1}.</td>
+                <td className="px-3 py-2 align-top whitespace-normal break-words leading-5">{row.keyword}</td>
+                <td className="px-3 py-2 text-right align-top tabular-nums whitespace-nowrap">{formatNumber(row.impressions)}</td>
+                <td className="px-3 py-2 text-right align-top tabular-nums whitespace-nowrap">{formatNumber(row.clicks)}</td>
+                <td className="px-3 py-2 text-right align-top tabular-nums whitespace-nowrap">{formatNumber(row.avgCpc)}</td>
+                <td className="px-3 py-2 text-right align-top tabular-nums whitespace-nowrap">{formatPercent(row.ctr)}</td>
+                <td className="px-3 py-2 text-right align-top tabular-nums whitespace-nowrap">{formatNumber(row.conversions)}</td>
+                <td className="px-3 py-2 text-right align-top tabular-nums whitespace-nowrap">{formatPercent(row.conversionRate)}</td>
+                <td className="px-3 py-2 text-right align-top tabular-nums whitespace-nowrap">{formatNumber(row.costPerConversion)}</td>
+                <td className="px-3 py-2 text-right align-top tabular-nums whitespace-nowrap">{formatNumber(row.cost)}</td>
               </tr>
             ))}
             <tr className="bg-[#f7f7f7] font-semibold">

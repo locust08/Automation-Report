@@ -13,11 +13,13 @@ import {
   ReportWarnings,
 } from "@/components/reporting/report-state";
 import { ReportDownloadButton } from "@/components/reporting/screenshot-mode-toggle";
+import { useScreenshotMode } from "@/components/reporting/use-screenshot-mode";
 import { useReportFilters } from "@/components/reporting/use-report-filters";
 import { useTopKeywordsReport } from "@/components/reporting/use-report-data";
 
 export function TopKeywordsPageClient() {
   const { filters, setFilters } = useReportFilters();
+  const { screenshotMode } = useScreenshotMode();
   const hasPotentialGoogleId = Boolean(filters.accountId || filters.googleAccountId);
 
   const queryString = useMemo(() => {
@@ -85,7 +87,7 @@ export function TopKeywordsPageClient() {
           <>
             <ReportWarnings warnings={data.warnings} />
             {data.rows.length > 0 ? (
-              <TopKeywordTable rows={data.rows} totals={data.totals} />
+              <TopKeywordTable rows={data.rows} totals={data.totals} screenshotMode={screenshotMode} />
             ) : (
               <ReportEmptyState
                 title="No keyword rows found"
