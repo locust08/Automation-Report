@@ -31,6 +31,7 @@ import {
   TopKeywordRow,
   TopKeywordsPayload,
 } from "@/lib/reporting/types";
+import { resolveGoogleAccountsFromNotion } from "@/lib/reporting/notion";
 
 interface OverallInput {
   accountId: string | null;
@@ -49,6 +50,8 @@ interface ResolvedAccountIds {
   metaAccountIds: string[];
   googleAccountIds: string[];
 }
+
+type GoogleLoginCustomerIdMap = Record<string, string | null>;
 
 const MANUAL_AUCTION_INSIGHT_ROWS_BY_ACCOUNT: Record<string, AuctionInsightRow[]> = {
   "6261186490": [
@@ -120,10 +123,9 @@ export async function getOverallReport(input: OverallInput): Promise<OverallRepo
   const credentials = getCredentials();
   const dateRange = buildDateRange(input.startDate, input.endDate);
 
-  const resolvedAccountIds = resolveAccountIds(
-    input.accountId,
-    input.metaAccountId,
-    input.googleAccountId
+  const { resolvedAccountIds, googleManagerContext } = await resolveReportAccountContext(
+    input,
+    credentials
   );
   const mappedCompanyName = resolveCompanyNameFromAccountId(
     {
@@ -137,7 +139,11 @@ export async function getOverallReport(input: OverallInput): Promise<OverallRepo
   );
   const [resolvedMetaAccountName, resolvedGoogleAccountName] = await Promise.all([
     tryFetchMetaAccountNames(resolvedAccountIds.metaAccountIds, credentials.metaAccessToken),
-    tryFetchGoogleAccountNames(resolvedAccountIds.googleAccountIds, credentials),
+    tryFetchGoogleAccountNames(
+      resolvedAccountIds.googleAccountIds,
+      credentials,
+      googleManagerContext.loginCustomerIdByAccount
+    ),
   ]);
   const fallbackCompanyName =
     resolveCompanyNameFromAccountId({
@@ -153,7 +159,7 @@ export async function getOverallReport(input: OverallInput): Promise<OverallRepo
       : resolvedMetaAccountName ?? resolvedGoogleAccountName;
   const companyName = mappedCompanyName ?? preferredLiveCompanyName ?? fallbackCompanyName;
 
-  const warnings: string[] = [];
+  const warnings: string[] = [...googleManagerContext.messages];
 
   const [metaCurrentResult, metaPreviousResult] = await Promise.all([
     tryFetchMetaForAccounts(
@@ -179,7 +185,7 @@ export async function getOverallReport(input: OverallInput): Promise<OverallRepo
     credentials.googleRefreshToken,
     credentials.googleClientId,
     credentials.googleClientSecret,
-    credentials.googleLoginCustomerId,
+    googleManagerContext.loginCustomerIdByAccount,
     dateRange.startDate,
     dateRange.endDate
   );
@@ -191,7 +197,7 @@ export async function getOverallReport(input: OverallInput): Promise<OverallRepo
     credentials.googleRefreshToken,
     credentials.googleClientId,
     credentials.googleClientSecret,
-    credentials.googleLoginCustomerId,
+    googleManagerContext.loginCustomerIdByAccount,
     dateRange.previousStartDate,
     dateRange.previousEndDate
   );
@@ -259,10 +265,9 @@ export async function getCampaignComparison(input: CampaignInput): Promise<Campa
   const dateRange = buildDateRange(input.startDate, input.endDate);
   const warnings: string[] = [];
 
-  const resolvedAccountIds = resolveAccountIds(
-    input.accountId,
-    input.metaAccountId,
-    input.googleAccountId
+  const { resolvedAccountIds, googleManagerContext } = await resolveReportAccountContext(
+    input,
+    credentials
   );
   const mappedCompanyName = resolveCompanyNameFromAccountId(
     {
@@ -274,9 +279,14 @@ export async function getCampaignComparison(input: CampaignInput): Promise<Campa
     },
     { fallback: false }
   );
+  warnings.push(...googleManagerContext.messages);
   const [resolvedMetaAccountName, resolvedGoogleAccountName] = await Promise.all([
     tryFetchMetaAccountNames(resolvedAccountIds.metaAccountIds, credentials.metaAccessToken),
-    tryFetchGoogleAccountNames(resolvedAccountIds.googleAccountIds, credentials),
+    tryFetchGoogleAccountNames(
+      resolvedAccountIds.googleAccountIds,
+      credentials,
+      googleManagerContext.loginCustomerIdByAccount
+    ),
   ]);
   const fallbackCompanyName =
     resolveCompanyNameFromAccountId({
@@ -299,6 +309,7 @@ export async function getCampaignComparison(input: CampaignInput): Promise<Campa
     startDate: dateRange.startDate,
     endDate: dateRange.endDate,
     credentials,
+    googleLoginCustomerIdByAccount: googleManagerContext.loginCustomerIdByAccount,
     warnings,
   });
 
@@ -309,6 +320,7 @@ export async function getCampaignComparison(input: CampaignInput): Promise<Campa
     startDate: dateRange.previousStartDate,
     endDate: dateRange.previousEndDate,
     credentials,
+    googleLoginCustomerIdByAccount: googleManagerContext.loginCustomerIdByAccount,
     warnings,
   });
 
@@ -344,15 +356,15 @@ export async function getCampaignComparison(input: CampaignInput): Promise<Campa
 export async function getTopKeywordsReport(input: OverallInput): Promise<TopKeywordsPayload> {
   const credentials = getCredentials();
   const dateRange = buildDateRange(input.startDate, input.endDate);
-  const resolvedAccountIds = resolveAccountIds(
-    input.accountId,
-    input.metaAccountId,
-    input.googleAccountId
+  const { resolvedAccountIds, googleManagerContext } = await resolveReportAccountContext(
+    input,
+    credentials
   );
   const companyName = await resolveCompanyNameForReport({
     credentials,
     accountId: input.accountId,
     resolvedAccountIds,
+    googleLoginCustomerIdByAccount: googleManagerContext.loginCustomerIdByAccount,
   });
 
   const keywordResult = await tryFetchGoogleKeywordsForAccounts(
@@ -363,14 +375,14 @@ export async function getTopKeywordsReport(input: OverallInput): Promise<TopKeyw
     credentials.googleRefreshToken,
     credentials.googleClientId,
     credentials.googleClientSecret,
-    credentials.googleLoginCustomerId,
+    googleManagerContext.loginCustomerIdByAccount,
     dateRange.startDate,
     dateRange.endDate
   );
 
   const rows = keywordResult.rows.slice(0, 10);
   const totals = buildTopKeywordTotals(rows);
-  const warnings = [...keywordResult.warnings];
+  const warnings = [...googleManagerContext.messages, ...keywordResult.warnings];
 
   if (rows.length === 0 && warnings.length === 0) {
     warnings.push(
@@ -396,15 +408,15 @@ export async function getTopKeywordsReport(input: OverallInput): Promise<TopKeyw
 export async function getAuctionInsightsReport(input: OverallInput): Promise<AuctionInsightsPayload> {
   const credentials = getCredentials();
   const dateRange = buildDateRange(input.startDate, input.endDate);
-  const resolvedAccountIds = resolveAccountIds(
-    input.accountId,
-    input.metaAccountId,
-    input.googleAccountId
+  const { resolvedAccountIds, googleManagerContext } = await resolveReportAccountContext(
+    input,
+    credentials
   );
   const companyName = await resolveCompanyNameForReport({
     credentials,
     accountId: input.accountId,
     resolvedAccountIds,
+    googleLoginCustomerIdByAccount: googleManagerContext.loginCustomerIdByAccount,
   });
 
   const auctionResult = await tryFetchGoogleAuctionInsightsForAccounts(
@@ -415,7 +427,7 @@ export async function getAuctionInsightsReport(input: OverallInput): Promise<Auc
     credentials.googleRefreshToken,
     credentials.googleClientId,
     credentials.googleClientSecret,
-    credentials.googleLoginCustomerId,
+    googleManagerContext.loginCustomerIdByAccount,
     dateRange.startDate,
     dateRange.endDate
   );
@@ -426,9 +438,10 @@ export async function getAuctionInsightsReport(input: OverallInput): Promise<Auc
   const warnings =
     rows.length > 0 && auctionResult.rows.length === 0 && manualRows.length > 0
       ? [
+          ...googleManagerContext.messages,
           "Showing manually keyed auction insights snapshot for Google account 626-118-6490 based on the provided source image.",
         ]
-      : [...auctionResult.warnings];
+      : [...googleManagerContext.messages, ...auctionResult.warnings];
 
   if (rows.length === 0 && warnings.length === 0) {
     warnings.push(
@@ -454,18 +467,18 @@ export async function getAuctionInsightsReport(input: OverallInput): Promise<Auc
 export async function getInsightsReport(input: OverallInput): Promise<InsightsPayload> {
   const credentials = getCredentials();
   const dateRange = buildDateRange(input.startDate, input.endDate);
-  const resolvedAccountIds = resolveAccountIds(
-    input.accountId,
-    input.metaAccountId,
-    input.googleAccountId
+  const { resolvedAccountIds, googleManagerContext } = await resolveReportAccountContext(
+    input,
+    credentials
   );
   const companyName = await resolveCompanyNameForReport({
     credentials,
     accountId: input.accountId,
     resolvedAccountIds,
+    googleLoginCustomerIdByAccount: googleManagerContext.loginCustomerIdByAccount,
   });
 
-  const warnings: string[] = [];
+  const warnings: string[] = [...googleManagerContext.messages];
 
   const [metaCurrentResult, metaPreviousResult] = await Promise.all([
     tryFetchMetaForAccounts(
@@ -490,7 +503,7 @@ export async function getInsightsReport(input: OverallInput): Promise<InsightsPa
     credentials.googleRefreshToken,
     credentials.googleClientId,
     credentials.googleClientSecret,
-    credentials.googleLoginCustomerId,
+    googleManagerContext.loginCustomerIdByAccount,
     dateRange.startDate,
     dateRange.endDate
   );
@@ -502,7 +515,7 @@ export async function getInsightsReport(input: OverallInput): Promise<InsightsPa
     credentials.googleRefreshToken,
     credentials.googleClientId,
     credentials.googleClientSecret,
-    credentials.googleLoginCustomerId,
+    googleManagerContext.loginCustomerIdByAccount,
     dateRange.previousStartDate,
     dateRange.previousEndDate
   );
@@ -561,9 +574,19 @@ async function fetchByPlatform(args: {
   startDate: string;
   endDate: string;
   credentials: ReturnType<typeof getCredentials>;
+  googleLoginCustomerIdByAccount: GoogleLoginCustomerIdMap;
   warnings: string[];
 }): Promise<CampaignRow[]> {
-  const { platform, metaAccountIds, googleAccountIds, startDate, endDate, credentials, warnings } = args;
+  const {
+    platform,
+    metaAccountIds,
+    googleAccountIds,
+    startDate,
+    endDate,
+    credentials,
+    googleLoginCustomerIdByAccount,
+    warnings,
+  } = args;
 
   if (platform === "meta") {
     const result = await tryFetchMetaForAccounts(
@@ -584,7 +607,7 @@ async function fetchByPlatform(args: {
     credentials.googleRefreshToken,
     credentials.googleClientId,
     credentials.googleClientSecret,
-    credentials.googleLoginCustomerId,
+    googleLoginCustomerIdByAccount,
     startDate,
     endDate
   );
@@ -894,7 +917,7 @@ async function tryFetchGoogleForAccounts(
   refreshToken: string | null,
   clientId: string | null,
   clientSecret: string | null,
-  loginCustomerId: string | null,
+  loginCustomerIdByAccount: GoogleLoginCustomerIdMap,
   startDate: string,
   endDate: string
 ): Promise<{ rows: CampaignRow[]; warnings: string[] }> {
@@ -914,7 +937,7 @@ async function tryFetchGoogleForAccounts(
       refreshToken,
       clientId,
       clientSecret,
-      loginCustomerId,
+      loginCustomerIdByAccount[accountId] ?? null,
       startDate,
       endDate
     );
@@ -937,7 +960,7 @@ async function tryFetchGoogleKeywordsForAccounts(
   refreshToken: string | null,
   clientId: string | null,
   clientSecret: string | null,
-  loginCustomerId: string | null,
+  loginCustomerIdByAccount: GoogleLoginCustomerIdMap,
   startDate: string,
   endDate: string
 ): Promise<{ rows: TopKeywordRow[]; warnings: string[] }> {
@@ -957,7 +980,7 @@ async function tryFetchGoogleKeywordsForAccounts(
       refreshToken,
       clientId,
       clientSecret,
-      loginCustomerId,
+      loginCustomerIdByAccount[accountId] ?? null,
       startDate,
       endDate
     );
@@ -982,7 +1005,7 @@ async function tryFetchGoogleAuctionInsightsForAccounts(
   refreshToken: string | null,
   clientId: string | null,
   clientSecret: string | null,
-  loginCustomerId: string | null,
+  loginCustomerIdByAccount: GoogleLoginCustomerIdMap,
   startDate: string,
   endDate: string
 ): Promise<{ rows: AuctionInsightRow[]; warnings: string[] }> {
@@ -1002,7 +1025,7 @@ async function tryFetchGoogleAuctionInsightsForAccounts(
       refreshToken,
       clientId,
       clientSecret,
-      loginCustomerId,
+      loginCustomerIdByAccount[accountId] ?? null,
       startDate,
       endDate
     );
@@ -1119,6 +1142,33 @@ function firstOrNull(values: string[]): string | null {
   return values.length > 0 ? values[0] : null;
 }
 
+async function resolveReportAccountContext(
+  input: Pick<OverallInput, "accountId" | "metaAccountId" | "googleAccountId">,
+  credentials: ReturnType<typeof getCredentials>
+): Promise<{
+  resolvedAccountIds: ResolvedAccountIds;
+  googleManagerContext: {
+    googleAccountIds: string[];
+    loginCustomerIdByAccount: GoogleLoginCustomerIdMap;
+    messages: string[];
+  };
+}> {
+  const resolvedAccountIds = resolveAccountIds(
+    input.accountId,
+    input.metaAccountId,
+    input.googleAccountId
+  );
+  const googleAccountContext = await resolveGoogleManagerContext(input, resolvedAccountIds, credentials);
+
+  return {
+    resolvedAccountIds: {
+      ...resolvedAccountIds,
+      googleAccountIds: googleAccountContext.googleAccountIds,
+    },
+    googleManagerContext: googleAccountContext,
+  };
+}
+
 async function tryFetchMetaAccountNames(
   metaAccountIds: string[],
   accessToken: string | null
@@ -1134,10 +1184,15 @@ async function tryFetchMetaAccountNames(
 
 async function tryFetchGoogleAccountNames(
   googleAccountIds: string[],
-  credentials: ReturnType<typeof getCredentials>
+  credentials: ReturnType<typeof getCredentials>,
+  googleLoginCustomerIdByAccount: GoogleLoginCustomerIdMap
 ): Promise<string | null> {
   for (const googleAccountId of googleAccountIds) {
-    const accountName = await tryFetchGoogleAccountName(googleAccountId, credentials);
+    const accountName = await tryFetchGoogleAccountName(
+      googleAccountId,
+      credentials,
+      resolveLoginCustomerIdForAccount(googleAccountId, googleLoginCustomerIdByAccount)
+    );
     if (accountName) {
       return accountName;
     }
@@ -1180,7 +1235,8 @@ async function tryFetchMetaAccountName(
 
 async function tryFetchGoogleAccountName(
   googleAccountId: string | null,
-  credentials: ReturnType<typeof getCredentials>
+  credentials: ReturnType<typeof getCredentials>,
+  loginCustomerId: string | null
 ): Promise<string | null> {
   if (!googleAccountId || !credentials.googleDeveloperToken) {
     return null;
@@ -1206,7 +1262,7 @@ async function tryFetchGoogleAccountName(
       refreshToken: credentials.googleRefreshToken,
       clientId: credentials.googleClientId,
       clientSecret: credentials.googleClientSecret,
-      loginCustomerId: credentials.googleLoginCustomerId,
+      loginCustomerId,
     });
   } catch {
     return null;
@@ -1217,8 +1273,9 @@ async function resolveCompanyNameForReport(input: {
   credentials: ReturnType<typeof getCredentials>;
   accountId: string | null;
   resolvedAccountIds: ResolvedAccountIds;
+  googleLoginCustomerIdByAccount: GoogleLoginCustomerIdMap;
 }): Promise<string> {
-  const { credentials, accountId, resolvedAccountIds } = input;
+  const { credentials, accountId, resolvedAccountIds, googleLoginCustomerIdByAccount } = input;
 
   const mappedCompanyName = resolveCompanyNameFromAccountId(
     {
@@ -1233,7 +1290,11 @@ async function resolveCompanyNameForReport(input: {
 
   const [resolvedMetaAccountName, resolvedGoogleAccountName] = await Promise.all([
     tryFetchMetaAccountNames(resolvedAccountIds.metaAccountIds, credentials.metaAccessToken),
-    tryFetchGoogleAccountNames(resolvedAccountIds.googleAccountIds, credentials),
+    tryFetchGoogleAccountNames(
+      resolvedAccountIds.googleAccountIds,
+      credentials,
+      googleLoginCustomerIdByAccount
+    ),
   ]);
 
   const fallbackCompanyName =
@@ -1251,6 +1312,58 @@ async function resolveCompanyNameForReport(input: {
       : resolvedMetaAccountName ?? resolvedGoogleAccountName;
 
   return mappedCompanyName ?? preferredLiveCompanyName ?? fallbackCompanyName;
+}
+
+async function resolveGoogleManagerContext(
+  input: Pick<OverallInput, "accountId" | "googleAccountId">,
+  resolvedAccountIds: ResolvedAccountIds,
+  credentials: ReturnType<typeof getCredentials>
+): Promise<{
+  googleAccountIds: string[];
+  loginCustomerIdByAccount: GoogleLoginCustomerIdMap;
+  messages: string[];
+}> {
+    return resolveGoogleAccountsFromNotion({
+      googleAccountIds: resolvedAccountIds.googleAccountIds,
+      googleLookupTerms: collectGoogleLookupTerms(input.accountId, input.googleAccountId),
+      notionAccessToken: credentials.notionAccessToken,
+      notionDatabaseId: credentials.notionDatabaseId,
+    });
+  }
+
+function collectGoogleLookupTerms(
+  accountId: string | null,
+  googleAccountId: string | null
+): string[] {
+  const lookupTerms: string[] = [];
+
+  splitAccountIdList(googleAccountId).forEach((token) => pushUniqueValue(lookupTerms, token));
+
+  splitAccountIdList(accountId).forEach((token) => {
+    const classified = classifyAccountToken(token);
+    if (classified.kind !== "meta") {
+      pushUniqueValue(lookupTerms, classified.value);
+    }
+  });
+
+  return lookupTerms;
+}
+
+function pushUniqueValue(target: string[], value: string) {
+  if (!target.includes(value)) {
+    target.push(value);
+  }
+}
+
+function resolveLoginCustomerIdForAccount(
+  googleAccountId: string,
+  googleLoginCustomerIdByAccount: GoogleLoginCustomerIdMap
+): string | null {
+  if (Object.prototype.hasOwnProperty.call(googleLoginCustomerIdByAccount, googleAccountId)) {
+    return googleLoginCustomerIdByAccount[googleAccountId];
+  }
+
+  return null;
 }
 
 function getGoogleCredentialWarnings(
@@ -1281,11 +1394,11 @@ function googleErrorHint(message: string): string {
   }
 
   if (/status 400/i.test(message)) {
-    return " Verify Google Ads customer ID access and, for manager accounts, set GOOGLE_ADS_LOGIN_CUSTOMER_ID.";
+    return " Verify Google Ads customer ID access and the Access Path configured for this account.";
   }
 
   if (/caller does not have permission|permission denied|authorization_error|forbidden/i.test(message)) {
-    return " The OAuth caller cannot access this Google Ads customer ID. Share this customer with the OAuth user/service account and, if using MCC, set GOOGLE_ADS_LOGIN_CUSTOMER_ID.";
+    return " The OAuth caller cannot access this Google Ads customer ID. Share the account with the OAuth user and confirm the configured Access Path manager has access.";
   }
 
   if (/429|resource_exhausted|rate.?limit/i.test(message)) {

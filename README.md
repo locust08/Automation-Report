@@ -45,7 +45,9 @@ Credentials are expected from environment variables (Doppler injects these at ru
 - `GOOGLE_ADS_REFRESH_TOKEN` (optional, enables automatic token refresh)
 - `GOOGLE_ADS_CLIENT_ID` (required for refresh flow)
 - `GOOGLE_ADS_CLIENT_SECRET` (required for refresh flow)
-- `GOOGLE_ADS_LOGIN_CUSTOMER_ID` (optional but commonly needed for MCC flows)
+- `NOTION_TOKEN` (used to read `DB | Ad Accounts`)
+- `NOTION_DATABASE_ID` (used to read `DB | Ad Accounts`; raw Notion database ID, not the full browser URL)
+- `GOOGLE_ADS_LOGIN_CUSTOMER_ID` (optional override; defaults to fixed MCC `366-613-7525`)
 - `GOOGLE_ADS_API_VERSION` (optional, defaults to `v22`)
 - `REPORT_COMPANY_NAME` (optional display label)
 - `REPORT_COMPANY_NAME_MAP` (optional account ID to company mapping)
@@ -66,12 +68,29 @@ Supported aliases (for existing Doppler naming) are also accepted:
 - `GOOGLE_OAUTH_CLIENT_ID`
 - `GOOGLE_OAUTH_CLIENT_SECRET`
 
+Google Ads manager account behavior:
+1. When a Google Ads lookup value is entered, the API first checks Notion `DB | Ad Accounts` for a matching Google row (`Platform = Google`) using `GET /v1/databases/{database_id}` and `POST /v1/databases/{database_id}/query`.
+2. If a row is found, the row's `ID` is treated as the Google Ads customer ID and the row's `Access Path` decides how Google Ads is queried:
+   - `Personal` or `Direct`: use direct customer access with no `login-customer-id`
+   - MCC ID like `411-468-5827`: use that MCC as `login-customer-id`
+   - MCC ID like `366-613-7525`: use that MCC as `login-customer-id`
+3. If Notion is unavailable, not configured, or no row matches, the API falls back to the incoming Google Ads customer ID plus `GOOGLE_ADS_LOGIN_CUSTOMER_ID`.
+4. If `GOOGLE_ADS_LOGIN_CUSTOMER_ID` is not set, the app falls back to fixed manager account `366-613-7525`.
+
+The report warnings panel also confirms which manager ID was resolved from Notion for each Google account.
+
 If credentials are missing or the provided account ID is not accessible, the API returns clear warnings/errors without requiring user login.
 
 Run commands through Doppler so all API secrets are available:
 
 ```bash
 doppler run -- npm run dev
+```
+
+Validate Notion access before running the main workflow:
+
+```bash
+doppler run -- npm run notion:smoke
 ```
 
 For production build:

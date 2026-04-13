@@ -7,9 +7,13 @@ interface Credentials {
   googleClientSecret: string | null;
   googleLoginCustomerId: string | null;
   googleAdsApiVersion: string;
+  notionAccessToken: string | null;
+  notionDatabaseId: string | null;
   companyName: string;
   companyNameMap: Record<string, string>;
 }
+
+const DEFAULT_GOOGLE_ADS_LOGIN_CUSTOMER_ID = "3666137525";
 
 function sanitizeSecret(value: string | undefined): string | null {
   if (!value) {
@@ -91,7 +95,9 @@ export function getCredentials(): Credentials {
   );
 
   const googleLoginCustomerIdRaw = readSecret(["GOOGLE_ADS_LOGIN_CUSTOMER_ID"], false);
-  const googleLoginCustomerId = normalizeOptionalGoogleCustomerId(googleLoginCustomerIdRaw);
+  const googleLoginCustomerId =
+    normalizeOptionalGoogleCustomerId(googleLoginCustomerIdRaw) ??
+    DEFAULT_GOOGLE_ADS_LOGIN_CUSTOMER_ID;
   const googleAdsApiVersion = normalizeGoogleAdsApiVersion(
     readSecret(["GOOGLE_ADS_API_VERSION"], false)
   );
@@ -105,6 +111,11 @@ export function getCredentials(): Credentials {
     googleClientSecret,
     googleLoginCustomerId,
     googleAdsApiVersion,
+    notionAccessToken: readSecret(
+      ["NOTION_TOKEN"],
+      false
+    ),
+    notionDatabaseId: sanitizeNotionDatabaseId(readSecret(["NOTION_DATABASE_ID"], false)),
     companyName: readSecret(["REPORT_COMPANY_NAME"], false) ?? "Company Name",
     companyNameMap: parseCompanyNameMap(readSecret(["REPORT_COMPANY_NAME_MAP"], false)),
   };
@@ -202,6 +213,26 @@ function normalizeGoogleAdsApiVersion(value: string | null): string {
     return `v${trimmed}`;
   }
   return "v22";
+}
+
+function sanitizeNotionDatabaseId(value: string | null): string | null {
+  if (!value) {
+    return null;
+  }
+
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  const idMatch = trimmed.match(
+    /([0-9a-f]{32})|([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i
+  );
+  if (idMatch) {
+    return idMatch[0];
+  }
+
+  return trimmed;
 }
 
 function parseCompanyNameMap(raw: string | null): Record<string, string> {

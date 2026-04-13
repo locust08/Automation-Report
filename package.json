@@ -5,6 +5,7 @@
   "scripts": {
     "dev": "next dev",
     "dev:doppler": "doppler run -- npm run dev",
+    "notion:smoke": "node scripts/notion-smoke.mjs",
     "typecheck": "tsc --noEmit",
     "build": "npm run typecheck && next build",
     "build:doppler": "doppler run -- npm run build",

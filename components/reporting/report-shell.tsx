@@ -44,9 +44,9 @@ export function ReportShell({
     >
       <section className="relative overflow-visible bg-[url('/headerbackground.png')] bg-cover bg-center bg-no-repeat md:bg-[length:100%_100%]">
         <div className="mx-auto max-w-[1280px] px-4 pb-5 pt-6 md:px-8 md:pb-6 md:pt-8">
-          <div className="grid gap-4 text-white md:grid-cols-[minmax(0,1fr)_auto] md:items-start">
-            <div className="space-y-4">
-              <h1 className="max-w-[960px] text-3xl font-semibold leading-tight tracking-tight sm:text-4xl md:text-6xl">
+          <div className="grid gap-4 text-white md:grid-cols-[minmax(0,1fr)_auto] md:items-start md:gap-x-6">
+            <div className="min-w-0 space-y-4">
+              <h1 className="max-w-[960px] break-words text-3xl font-semibold leading-tight tracking-tight [overflow-wrap:anywhere] sm:text-4xl md:text-6xl">
                 {title}
               </h1>
               <nav className="flex flex-wrap items-center gap-2">
@@ -85,7 +85,9 @@ export function ReportShell({
               </nav>
             </div>
             {headerDateControl ? (
-              <div className="flex w-full items-start md:w-auto md:justify-self-end">{headerDateControl}</div>
+              <div className="flex w-full items-start md:w-auto md:max-w-full md:justify-self-end">
+                {headerDateControl}
+              </div>
             ) : (
               <div className="w-full rounded-2xl bg-[#dfdfdf] px-4 py-3 text-center text-base font-semibold text-[#5f5f5f] sm:w-auto sm:px-6 sm:text-lg md:justify-self-end">
                 {dateLabel}

@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 
+import { buildReportingErrorResponse } from "@/lib/reporting/api-error";
 import { parseRequestContext } from "@/lib/reporting/request";
 import { getTopKeywordsReport } from "@/lib/reporting/service";
 
@@ -20,10 +21,6 @@ export async function GET(request: Request): Promise<NextResponse> {
 
     return NextResponse.json(payload);
   } catch (error) {
-    const message =
-      error instanceof Error
-        ? error.message
-        : "Unexpected error while loading top keyword data.";
-    return NextResponse.json({ error: message }, { status: 500 });
+    return buildReportingErrorResponse(error, "Unexpected error while loading top keyword data.");
   }
 }

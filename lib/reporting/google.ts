@@ -90,6 +90,7 @@ interface ParsedGoogleResponse {
 
 const GOOGLE_ADS_MAX_RETRIES = 3;
 const GOOGLE_ADS_STREAM_RETRIES = 2;
+const ACCESSIBLE_CUSTOMERS_CACHE = new Map<string, Promise<string[]>>();
 
 export async function fetchGoogleAccountName({
   customerId,
@@ -101,6 +102,8 @@ export async function fetchGoogleAccountName({
   clientSecret,
   loginCustomerId,
 }: GoogleAccountNameInput): Promise<string | null> {
+  const normalizedCustomerId = normalizeGoogleAdsId(customerId);
+  const normalizedLoginCustomerId = normalizeOptionalGoogleAdsId(loginCustomerId);
   const canRefresh = Boolean(refreshToken && clientId && clientSecret);
   let activeAccessToken = accessToken;
 
@@ -118,17 +121,26 @@ export async function fetchGoogleAccountName({
     );
   }
 
-  const endpoint = `https://googleads.googleapis.com/${apiVersion}/customers/${customerId}/googleAds:search`;
+  const endpoint = `https://googleads.googleapis.com/${apiVersion}/customers/${normalizedCustomerId}/googleAds:search`;
   const body = {
     query: "SELECT customer.descriptive_name FROM customer LIMIT 1",
   };
+
+  await logAccessibleGoogleAdsCustomers({
+    apiVersion,
+    developerToken,
+    accessToken: activeAccessToken,
+    customerId: normalizedCustomerId,
+    loginCustomerId: normalizedLoginCustomerId,
+  });
+  logGoogleAdsRequestRouting(normalizedCustomerId, normalizedLoginCustomerId);
 
   const firstAttempt = await requestGoogleAdsSearch(
     endpoint,
     body,
     developerToken,
     activeAccessToken,
-    loginCustomerId
+    normalizedLoginCustomerId
   );
 
   let parsed = await parseGoogleAdsSearchResponse(firstAttempt);
@@ -144,20 +156,9 @@ export async function fetchGoogleAccountName({
       body,
       developerToken,
       activeAccessToken,
-      loginCustomerId
+      normalizedLoginCustomerId
     );
     parsed = await parseGoogleAdsSearchResponse(secondAttempt);
-  }
-
-  if (!parsed.ok && loginCustomerId && isPermissionDeniedMessage(parsed.errorMessage)) {
-    const noLoginAttempt = await requestGoogleAdsSearch(
-      endpoint,
-      body,
-      developerToken,
-      activeAccessToken,
-      null
-    );
-    parsed = await parseGoogleAdsSearchResponse(noLoginAttempt);
   }
 
   if (!parsed.ok) {
@@ -487,8 +488,10 @@ export async function fetchGoogleAuctionInsightRows({
 async function fetchGoogleAdsResults(
   input: Omit<GoogleFetchInput, "startDate" | "endDate"> & { query: string }
 ): Promise<GoogleAdsResult[]> {
+  const normalizedCustomerId = normalizeGoogleAdsId(input.customerId);
+  const normalizedLoginCustomerId = normalizeOptionalGoogleAdsId(input.loginCustomerId);
   const body = { query: input.query };
-  const endpoint = `https://googleads.googleapis.com/${input.apiVersion}/customers/${input.customerId}/googleAds:searchStream`;
+  const endpoint = `https://googleads.googleapis.com/${input.apiVersion}/customers/${normalizedCustomerId}/googleAds:searchStream`;
   const canRefresh = Boolean(input.refreshToken && input.clientId && input.clientSecret);
   let activeAccessToken = input.accessToken;
 
@@ -506,36 +509,26 @@ async function fetchGoogleAdsResults(
     );
   }
 
-  let streamBatches: GoogleAdsStreamBatch[];
-  try {
-    streamBatches = await executeGoogleAdsStreamRequest({
-      endpoint,
-      body,
-      developerToken: input.developerToken,
-      accessToken: activeAccessToken,
-      loginCustomerId: input.loginCustomerId,
-      canRefresh,
-      refreshToken: input.refreshToken,
-      clientId: input.clientId,
-      clientSecret: input.clientSecret,
-    });
-  } catch (error) {
-    if (input.loginCustomerId && isPermissionDeniedError(error)) {
-      streamBatches = await executeGoogleAdsStreamRequest({
-        endpoint,
-        body,
-        developerToken: input.developerToken,
-        accessToken: activeAccessToken,
-        loginCustomerId: null,
-        canRefresh,
-        refreshToken: input.refreshToken,
-        clientId: input.clientId,
-        clientSecret: input.clientSecret,
-      });
-    } else {
-      throw error;
-    }
-  }
+  await logAccessibleGoogleAdsCustomers({
+    apiVersion: input.apiVersion,
+    developerToken: input.developerToken,
+    accessToken: activeAccessToken,
+    customerId: normalizedCustomerId,
+    loginCustomerId: normalizedLoginCustomerId,
+  });
+  logGoogleAdsRequestRouting(normalizedCustomerId, normalizedLoginCustomerId);
+
+  const streamBatches = await executeGoogleAdsStreamRequest({
+    endpoint,
+    body,
+    developerToken: input.developerToken,
+    accessToken: activeAccessToken,
+    loginCustomerId: normalizedLoginCustomerId,
+    canRefresh,
+    refreshToken: input.refreshToken,
+    clientId: input.clientId,
+    clientSecret: input.clientSecret,
+  });
 
   const results: GoogleAdsResult[] = [];
   streamBatches.forEach((batch) => {
@@ -826,6 +819,97 @@ function isPermissionDeniedError(error: unknown): boolean {
   }
 
   return isPermissionDeniedMessage(error.message);
+}
+
+async function logAccessibleGoogleAdsCustomers(input: {
+  apiVersion: string;
+  developerToken: string;
+  accessToken: string;
+  customerId: string;
+  loginCustomerId: string | null;
+}): Promise<void> {
+  try {
+    const accessibleCustomers = await getAccessibleGoogleAdsCustomerIds(input);
+    console.info(
+      `[google-routing] accessible_customers=${accessibleCustomers.join(",") || "(none)"} target_customer_id=${input.customerId} login_customer_id=${input.loginCustomerId ?? "(none)"}`
+    );
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unable to inspect accessible Google Ads customers.";
+    console.warn(`[google-routing] accessible_customer_check_failed message=${message}`);
+  }
+}
+
+async function getAccessibleGoogleAdsCustomerIds(input: {
+  apiVersion: string;
+  developerToken: string;
+  accessToken: string;
+  customerId: string;
+  loginCustomerId: string | null;
+}): Promise<string[]> {
+  const cacheKey = `${input.apiVersion}:${input.developerToken}:${input.accessToken}`;
+  const cached = ACCESSIBLE_CUSTOMERS_CACHE.get(cacheKey);
+  if (cached) {
+    return cached;
+  }
+
+  const pending = fetchAccessibleGoogleAdsCustomerIds(input);
+  ACCESSIBLE_CUSTOMERS_CACHE.set(cacheKey, pending);
+  return pending;
+}
+
+async function fetchAccessibleGoogleAdsCustomerIds(input: {
+  apiVersion: string;
+  developerToken: string;
+  accessToken: string;
+  customerId: string;
+  loginCustomerId: string | null;
+}): Promise<string[]> {
+  const endpoint = `https://googleads.googleapis.com/${input.apiVersion}/customers:listAccessibleCustomers`;
+  const response = await fetch(endpoint, {
+    method: "GET",
+    headers: {
+      Authorization: `Bearer ${input.accessToken}`,
+      "developer-token": input.developerToken,
+      "Content-Type": "application/json",
+    },
+    cache: "no-store",
+  });
+
+  const rawText = await response.text();
+  if (!response.ok) {
+    throw new Error(
+      `Google Ads accessible customer check failed with status ${response.status}. ${rawText.trim() || "Empty response body."}`
+    );
+  }
+
+  const json = JSON.parse(rawText) as { resourceNames?: string[] };
+  return (json.resourceNames ?? [])
+    .map((resourceName) => resourceName.split("/").pop() ?? "")
+    .map((value) => normalizeOptionalGoogleAdsId(value))
+    .filter((value): value is string => Boolean(value));
+}
+
+function logGoogleAdsRequestRouting(customerId: string, loginCustomerId: string | null) {
+  console.info(
+    `[google-routing] target_customer_id=${customerId} access_mode=${loginCustomerId ? "manager" : "direct"} login_customer_id=${loginCustomerId ?? "(none)"}`
+  );
+}
+
+function normalizeGoogleAdsId(value: string): string {
+  const normalized = value.replace(/\D/g, "");
+  if (!normalized) {
+    throw new Error("Google Ads customer ID is missing.");
+  }
+  return normalized;
+}
+
+function normalizeOptionalGoogleAdsId(value: string | null): string | null {
+  if (!value) {
+    return null;
+  }
+
+  const normalized = value.replace(/\D/g, "");
+  return normalized || null;
 }
 
 function findStreamBatchError(streamBatches: GoogleAdsStreamBatch[]): string | undefined {

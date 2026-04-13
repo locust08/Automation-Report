@@ -23,7 +23,12 @@ export function ReportErrorState({ message }: { message: string }) {
 
 export function ReportWarnings({ warnings }: { warnings: string[] }) {
   const uniqueWarnings = Array.from(
-    new Set(warnings.map((warning) => warning.trim()).filter((warning) => warning.length > 0))
+    new Set(
+      warnings
+        .map((warning) => warning.trim())
+        .filter((warning) => warning.length > 0)
+        .filter((warning) => !warning.startsWith("Notion resolved "))
+    )
   );
 
   if (!uniqueWarnings.length) {
