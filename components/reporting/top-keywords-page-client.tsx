@@ -46,6 +46,7 @@ export function TopKeywordsPageClient() {
     <ReportShell
       title={title}
       dateLabel={dateLabel}
+      activeQuery={queryString}
       headerDateControl={
         <ReportHeaderMonthPicker
           startDate={filters.startDate}

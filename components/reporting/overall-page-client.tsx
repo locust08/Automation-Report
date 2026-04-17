@@ -9,12 +9,16 @@ import { ReportFiltersBar } from "@/components/reporting/report-filters-bar";
 import { ReportDownloadButton } from "@/components/reporting/screenshot-mode-toggle";
 import { ReportShell } from "@/components/reporting/report-shell";
 import { ReportErrorState, ReportLoadingState, ReportWarnings } from "@/components/reporting/report-state";
-import { useReportFilters } from "@/components/reporting/use-report-filters";
+import { ReportFilters, useReportFilters } from "@/components/reporting/use-report-filters";
 import { useOverallReport } from "@/components/reporting/use-report-data";
 import { useScreenshotMode } from "@/components/reporting/use-screenshot-mode";
 
-export function OverallPageClient() {
-  const { filters, hasAccountId, setFilters } = useReportFilters();
+export function OverallPageClient({
+  initialFilters,
+}: {
+  initialFilters?: Partial<ReportFilters>;
+}) {
+  const { filters, hasAccountId, setFilters } = useReportFilters(initialFilters);
   const { screenshotMode } = useScreenshotMode();
 
   const queryString = useMemo(() => {
@@ -50,6 +54,7 @@ export function OverallPageClient() {
     <ReportShell
       title={title}
       dateLabel={dateLabel}
+      activeQuery={queryString}
       headerDateControl={
         <ReportHeaderMonthPicker
           startDate={filters.startDate}

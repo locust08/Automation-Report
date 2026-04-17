@@ -56,6 +56,7 @@ export function OverallCampaignGroupsTable({
                   key={row.id}
                   row={row}
                   actionHref={`/campaign/${encodeURIComponent(group.campaignType)}?platform=${group.platform}${queryString}`}
+                  previewHref={buildPreviewHref(row, queryString)}
                 />
               ))}
               <CampaignMobileCard row={group.totals} forceTitle="Grand Total" />
@@ -90,7 +91,16 @@ export function OverallCampaignGroupsTable({
                   {group.rows.map((row) => (
                     <tr key={row.id} className="border-b border-border/40 hover:bg-muted/20">
                       <td className="px-1.5 py-2 align-top whitespace-normal break-words leading-5">
-                        {row.campaignName}
+                        {buildPreviewHref(row, queryString) ? (
+                          <Link
+                            className="font-medium text-[#9f0019] hover:underline"
+                            href={buildPreviewHref(row, queryString)!}
+                          >
+                            {row.campaignName}
+                          </Link>
+                        ) : (
+                          row.campaignName
+                        )}
                       </td>
                       <td className="px-1.5 py-2 text-center tabular-nums whitespace-nowrap">{formatCompactNumber(row.impressions)}</td>
                       <td className="px-1.5 py-2 text-center tabular-nums whitespace-nowrap">{formatCompactNumber(row.clicks)}</td>
@@ -289,14 +299,22 @@ function CampaignMobileCard({
   row,
   forceTitle,
   actionHref,
+  previewHref,
 }: {
   row: CampaignRow;
   forceTitle?: string;
   actionHref?: string;
+  previewHref?: string | null;
 }) {
   return (
     <article className="rounded-lg border border-border/50 bg-[#f9f9f9] p-3 shadow-sm">
-      <p className="text-sm font-semibold text-[#454545]">{forceTitle ?? row.campaignName}</p>
+      {previewHref && !forceTitle ? (
+        <Link className="text-sm font-semibold text-[#9f0019] hover:underline" href={previewHref}>
+          {row.campaignName}
+        </Link>
+      ) : (
+        <p className="text-sm font-semibold text-[#454545]">{forceTitle ?? row.campaignName}</p>
+      )}
       <dl className="mt-2 grid grid-cols-2 gap-x-3 gap-y-2 text-xs">
         {CAMPAIGN_MOBILE_METRICS.map((metric) => (
           <div key={`${row.id}-${metric.key}`} className="space-y-0.5">
@@ -329,4 +347,16 @@ function buildTotalsFromRows(rows: CampaignRow[], fallback: CampaignRow): Campai
       "Grand Total"
     )
   );
+}
+
+function buildPreviewHref(row: CampaignRow, queryString: string): string | null {
+  if (row.platform !== "meta" && row.platform !== "google") {
+    return null;
+  }
+
+  const params = new URLSearchParams(queryString.startsWith("&") ? queryString.slice(1) : queryString);
+  params.set("platform", row.platform);
+  params.set("campaignName", row.campaignName);
+  const query = params.toString();
+  return query ? `/preview?${query}` : "/preview";
 }

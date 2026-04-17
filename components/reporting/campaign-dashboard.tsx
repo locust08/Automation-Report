@@ -72,6 +72,7 @@ export function CampaignDashboard({ campaignType }: { campaignType: string }) {
     <ReportShell
       title={title}
       dateLabel={dateLabel}
+      activeQuery={queryString}
       headerDateControl={
         <ReportHeaderMonthPicker
           startDate={filters.startDate}

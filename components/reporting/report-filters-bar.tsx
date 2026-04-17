@@ -130,11 +130,11 @@ export function ReportFiltersBar({
     <form
       onSubmit={handleSubmit}
       className={cn(
-        "flex flex-col gap-3 rounded-2xl border border-border/40 bg-card/90 p-4 shadow-sm sm:flex-row sm:flex-wrap sm:items-center",
+        "flex flex-col gap-3 rounded-2xl border border-border/40 bg-card/90 p-4 shadow-sm sm:flex-row sm:flex-wrap sm:items-start",
         compact && "gap-2 border-white/20 bg-white/90 p-3 shadow-none"
       )}
     >
-      <div className="w-full min-w-0 space-y-2 sm:flex-1 md:min-w-[360px]">
+      <div className="w-full min-w-0 space-y-1.5 sm:flex-1 md:min-w-[360px]">
         {searchEntries.map((entry) => (
           <div key={entry.key} className="flex min-w-0 flex-wrap items-center gap-2 sm:flex-nowrap">
             <Select
@@ -175,7 +175,12 @@ export function ReportFiltersBar({
           </div>
         ))}
 
-        <Button type="button" variant="outline" className="h-9 w-full sm:w-auto" onClick={addSearchRow}>
+        <Button
+          type="button"
+          variant="outline"
+          className="h-9 w-full sm:w-auto sm:self-start"
+          onClick={addSearchRow}
+        >
           <PlusIcon data-icon="inline-start" />
           Add Account
         </Button>
@@ -253,7 +258,7 @@ export function ReportFiltersBar({
         <div className="hidden" />
       )}
 
-      <div className="flex w-full flex-col gap-2 sm:ml-auto sm:w-auto sm:flex-row sm:items-center">
+      <div className="flex w-full flex-col gap-2 sm:ml-auto sm:w-auto sm:flex-row sm:items-start">
         <Button type="submit" className="h-10 w-full bg-red-600 hover:bg-red-700 sm:w-auto">
           <SearchIcon data-icon="inline-start" />
           {submitLabel}

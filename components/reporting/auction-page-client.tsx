@@ -44,6 +44,7 @@ export function AuctionPageClient() {
     <ReportShell
       title={title}
       dateLabel={dateLabel}
+      activeQuery={queryString}
       headerDateControl={
         <ReportHeaderMonthPicker
           startDate={filters.startDate}

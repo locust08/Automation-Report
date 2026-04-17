@@ -51,6 +51,7 @@ export function InsightsPageClient() {
     <ReportShell
       title={title}
       dateLabel={dateLabel}
+      activeQuery={queryString}
       headerDateControl={
         <ReportHeaderMonthPicker
           startDate={filters.startDate}
