@@ -20,7 +20,9 @@ import { useTopKeywordsReport } from "@/components/reporting/use-report-data";
 export function TopKeywordsPageClient() {
   const { filters, setFilters } = useReportFilters();
   const { screenshotMode } = useScreenshotMode();
-  const hasPotentialGoogleId = Boolean(filters.accountId || filters.googleAccountId);
+  const hasPotentialGoogleId = Boolean(
+    filters.accountId || filters.googleAccountId,
+  );
 
   const queryString = useMemo(() => {
     const params = new URLSearchParams();
@@ -38,9 +40,22 @@ export function TopKeywordsPageClient() {
     return params.toString();
   }, [filters]);
 
-  const { data, error, loading } = useTopKeywordsReport(queryString, hasPotentialGoogleId);
+  const { data, error, loading } = useTopKeywordsReport(
+    queryString,
+    hasPotentialGoogleId,
+  );
   const title = `${data?.companyName ?? "Company Name"} Top 10 Keyword Table`;
-  const dateLabel = data?.dateRange.currentLabel ?? `${filters.startDate} - ${filters.endDate}`;
+  const dateLabel =
+    data?.dateRange.currentLabel ?? `${filters.startDate} - ${filters.endDate}`;
+
+  if (hasPotentialGoogleId && loading) {
+    return (
+      <ReportLoadingState
+        message="Loading top keyword metrics from Google Ads Manager..."
+        fullPage
+      />
+    );
+  }
 
   return (
     <ReportShell
@@ -51,29 +66,29 @@ export function TopKeywordsPageClient() {
         <ReportHeaderMonthPicker
           startDate={filters.startDate}
           endDate={filters.endDate}
-          onChange={(next) => setFilters({ startDate: next.startDate, endDate: next.endDate })}
+          onChange={(next) =>
+            setFilters({ startDate: next.startDate, endDate: next.endDate })
+          }
         />
       }
       headerBottomControl={
-        <div className="space-y-2">
-          <ReportDownloadButton />
-          <ReportFiltersBar
-            filters={filters}
-            dateMode="month"
-            showDateFilters={false}
-            showResetButton={false}
-            submitLabel="Reload"
-            compact
-            onApply={(next) => setFilters(next)}
-            onReset={() =>
-              setFilters({
-                accountId: "",
-                metaAccountId: "",
-                googleAccountId: "",
-              })
-            }
-          />
-        </div>
+        <ReportFiltersBar
+          filters={filters}
+          dateMode="month"
+          showDateFilters={false}
+          showResetButton={false}
+          submitLabel="Reload"
+          compact
+          footerContent={<ReportDownloadButton />}
+          onApply={(next) => setFilters(next)}
+          onReset={() =>
+            setFilters({
+              accountId: "",
+              metaAccountId: "",
+              googleAccountId: "",
+            })
+          }
+        />
       }
     >
       <div className="space-y-5">
@@ -81,14 +96,17 @@ export function TopKeywordsPageClient() {
           <ReportErrorState message="Enter Google account ID (or generic accountId) to load top keyword metrics from Google Ads Manager." />
         ) : null}
 
-        {loading ? <ReportLoadingState message="Loading top keyword metrics from Google Ads Manager..." /> : null}
         {error ? <ReportErrorState message={error} /> : null}
 
         {data ? (
           <>
             <ReportWarnings warnings={data.warnings} />
             {data.rows.length > 0 ? (
-              <TopKeywordTable rows={data.rows} totals={data.totals} screenshotMode={screenshotMode} />
+              <TopKeywordTable
+                rows={data.rows}
+                totals={data.totals}
+                screenshotMode={screenshotMode}
+              />
             ) : (
               <ReportEmptyState
                 title="No keyword rows found"

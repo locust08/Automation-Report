@@ -8,7 +8,11 @@ import { MetricSection } from "@/components/reporting/metric-grid";
 import { ReportFiltersBar } from "@/components/reporting/report-filters-bar";
 import { ReportDownloadButton } from "@/components/reporting/screenshot-mode-toggle";
 import { ReportShell } from "@/components/reporting/report-shell";
-import { ReportErrorState, ReportLoadingState, ReportWarnings } from "@/components/reporting/report-state";
+import {
+  ReportErrorState,
+  ReportLoadingState,
+  ReportWarnings,
+} from "@/components/reporting/report-state";
 import { useReportFilters } from "@/components/reporting/use-report-filters";
 import { useCampaignComparison } from "@/components/reporting/use-report-data";
 import { useScreenshotMode } from "@/components/reporting/use-screenshot-mode";
@@ -19,7 +23,10 @@ export function CampaignDashboard({ campaignType }: { campaignType: string }) {
   const { filters, hasAccountId, setFilters } = useReportFilters();
   const { screenshotMode } = useScreenshotMode();
 
-  const campaignName = useMemo(() => decodeURIComponent(campaignType), [campaignType]);
+  const campaignName = useMemo(
+    () => decodeURIComponent(campaignType),
+    [campaignType],
+  );
 
   const queryString = useMemo(() => {
     const params = new URLSearchParams();
@@ -42,31 +49,48 @@ export function CampaignDashboard({ campaignType }: { campaignType: string }) {
     queryString,
     campaignName,
     filters.platform,
-    hasAccountId
+    hasAccountId,
   );
 
   const section = useMemo(() => {
     if (!data) {
       return null;
     }
-    return buildSectionFromComparison(data.platform, data.selectedTotals, data.previousTotals);
+    return buildSectionFromComparison(
+      data.platform,
+      data.selectedTotals,
+      data.previousTotals,
+    );
   }, [data]);
   const hasSelectedSpend = useMemo(
-    () => (data?.selectedMonthRows.some((row) => row.spend > 0) ?? false),
-    [data]
+    () => data?.selectedMonthRows.some((row) => row.spend > 0) ?? false,
+    [data],
   );
   const hasPreviousSpend = useMemo(
-    () => (data?.previousMonthRows.some((row) => row.spend > 0) ?? false),
-    [data]
+    () => data?.previousMonthRows.some((row) => row.spend > 0) ?? false,
+    [data],
   );
   const hasComparisonSpend = hasSelectedSpend || hasPreviousSpend;
 
-  const accountFallbackCompanyName = filters.accountId || filters.metaAccountId || filters.googleAccountId
-    ? `Account ${filters.metaAccountId || filters.googleAccountId || filters.accountId}`
-    : "Company Name";
-  const companyNameForTitle = data?.companyName ?? (hasAccountId ? "Company Name" : accountFallbackCompanyName);
+  const accountFallbackCompanyName =
+    filters.accountId || filters.metaAccountId || filters.googleAccountId
+      ? `Account ${filters.metaAccountId || filters.googleAccountId || filters.accountId}`
+      : "Company Name";
+  const companyNameForTitle =
+    data?.companyName ??
+    (hasAccountId ? "Company Name" : accountFallbackCompanyName);
   const title = `${companyNameForTitle} ${platformLabel(filters.platform)} (${campaignName})`;
-  const dateLabel = data?.dateRange.currentLabel ?? `${filters.startDate} - ${filters.endDate}`;
+  const dateLabel =
+    data?.dateRange.currentLabel ?? `${filters.startDate} - ${filters.endDate}`;
+
+  if (hasAccountId && loading) {
+    return (
+      <ReportLoadingState
+        message="Loading campaign type comparison data..."
+        fullPage
+      />
+    );
+  }
 
   return (
     <ReportShell
@@ -77,30 +101,30 @@ export function CampaignDashboard({ campaignType }: { campaignType: string }) {
         <ReportHeaderMonthPicker
           startDate={filters.startDate}
           endDate={filters.endDate}
-          onChange={(next) => setFilters({ startDate: next.startDate, endDate: next.endDate })}
+          onChange={(next) =>
+            setFilters({ startDate: next.startDate, endDate: next.endDate })
+          }
         />
       }
       headerBottomControl={
-        <div className="space-y-2">
-          <ReportDownloadButton />
-          <ReportFiltersBar
-            filters={filters}
-            includePlatform
-            dateMode="month"
-            showDateFilters={false}
-            showResetButton={false}
-            submitLabel="Reload"
-            compact
-            onApply={(next) => setFilters(next)}
-            onReset={() =>
-              setFilters({
-                accountId: "",
-                metaAccountId: "",
-                googleAccountId: "",
-              })
-            }
-          />
-        </div>
+        <ReportFiltersBar
+          filters={filters}
+          includePlatform
+          dateMode="month"
+          showDateFilters={false}
+          showResetButton={false}
+          submitLabel="Reload"
+          compact
+          footerContent={<ReportDownloadButton />}
+          onApply={(next) => setFilters(next)}
+          onReset={() =>
+            setFilters({
+              accountId: "",
+              metaAccountId: "",
+              googleAccountId: "",
+            })
+          }
+        />
       }
     >
       <div className="space-y-5">
@@ -108,7 +132,6 @@ export function CampaignDashboard({ campaignType }: { campaignType: string }) {
           <ReportErrorState message="Enter at least one account ID to request platform data for this campaign type." />
         ) : null}
 
-        {loading ? <ReportLoadingState message="Loading campaign type comparison data..." /> : null}
         {error ? <ReportErrorState message={error} /> : null}
 
         {data && section ? (
@@ -143,7 +166,7 @@ export function CampaignDashboard({ campaignType }: { campaignType: string }) {
 function buildSectionFromComparison(
   platform: Platform,
   selected: CampaignRow,
-  previous: CampaignRow
+  previous: CampaignRow,
 ): SummarySection {
   if (platform === "meta") {
     return {
@@ -151,13 +174,37 @@ function buildSectionFromComparison(
       title: "Meta",
       logoPath: "/MetaLogo.png",
       metrics: [
-        metric("results", "Results", selected.results, previous.results, "number"),
-        metric("costPerResults", "Cost/Results", selected.costPerResult, previous.costPerResult, "currency"),
+        metric(
+          "results",
+          "Results",
+          selected.results,
+          previous.results,
+          "number",
+        ),
+        metric(
+          "costPerResults",
+          "Cost/Results",
+          selected.costPerResult,
+          previous.costPerResult,
+          "currency",
+        ),
         metric("clicks", "Clicks", selected.clicks, previous.clicks, "number"),
         metric("ctr", "CTR (%)", selected.ctr, previous.ctr, "percent"),
         metric("cpm", "CPM (RM)", selected.cpm, previous.cpm, "currency"),
-        metric("impressions", "Impression", selected.impressions, previous.impressions, "number"),
-        metric("spend", "Ads Spent", selected.spend, previous.spend, "currency"),
+        metric(
+          "impressions",
+          "Impression",
+          selected.impressions,
+          previous.impressions,
+          "number",
+        ),
+        metric(
+          "spend",
+          "Ads Spent",
+          selected.spend,
+          previous.spend,
+          "currency",
+        ),
       ],
     };
   }
@@ -173,20 +220,44 @@ function buildSectionFromComparison(
           "Youtube Earned Shares",
           selected.youtubeEarnedShares,
           previous.youtubeEarnedShares,
-          "number"
+          "number",
         ),
-        metric("costPerConv", "Cost/Conv. (RM)", selected.costPerResult, previous.costPerResult, "currency"),
+        metric(
+          "costPerConv",
+          "Cost/Conv. (RM)",
+          selected.costPerResult,
+          previous.costPerResult,
+          "currency",
+        ),
         metric("clicks", "Clicks", selected.clicks, previous.clicks, "number"),
-        metric("avgCpc", "Av. CPC (RM)", selected.avgCpc, previous.avgCpc, "currency"),
+        metric(
+          "avgCpc",
+          "Av. CPC (RM)",
+          selected.avgCpc,
+          previous.avgCpc,
+          "currency",
+        ),
         metric(
           "youtubeEarnedLikes",
           "Youtube Earned Likes",
           selected.youtubeEarnedLikes,
           previous.youtubeEarnedLikes,
-          "number"
+          "number",
         ),
-        metric("impressions", "Impression", selected.impressions, previous.impressions, "number"),
-        metric("spend", "Ads Spent (RM)", selected.spend, previous.spend, "currency"),
+        metric(
+          "impressions",
+          "Impression",
+          selected.impressions,
+          previous.impressions,
+          "number",
+        ),
+        metric(
+          "spend",
+          "Ads Spent (RM)",
+          selected.spend,
+          previous.spend,
+          "currency",
+        ),
       ],
     };
   }
@@ -196,13 +267,43 @@ function buildSectionFromComparison(
     title: "Google Ads",
     logoPath: "/GoogleLogo.png",
     metrics: [
-      metric("conversions", "Conversions", selected.conversions, previous.conversions, "number"),
-      metric("costPerConv", "Cost/Conv. (RM)", selected.costPerResult, previous.costPerResult, "currency"),
+      metric(
+        "conversions",
+        "Conversions",
+        selected.conversions,
+        previous.conversions,
+        "number",
+      ),
+      metric(
+        "costPerConv",
+        "Cost/Conv. (RM)",
+        selected.costPerResult,
+        previous.costPerResult,
+        "currency",
+      ),
       metric("clicks", "Clicks", selected.clicks, previous.clicks, "number"),
-      metric("avgCpc", "Avg. CPC (RM)", selected.avgCpc, previous.avgCpc, "currency"),
+      metric(
+        "avgCpc",
+        "Avg. CPC (RM)",
+        selected.avgCpc,
+        previous.avgCpc,
+        "currency",
+      ),
       metric("ctr", "CTR", selected.ctr, previous.ctr, "percent"),
-      metric("impressions", "Impression", selected.impressions, previous.impressions, "number"),
-      metric("spend", "Ads Spent (RM)", selected.spend, previous.spend, "currency"),
+      metric(
+        "impressions",
+        "Impression",
+        selected.impressions,
+        previous.impressions,
+        "number",
+      ),
+      metric(
+        "spend",
+        "Ads Spent (RM)",
+        selected.spend,
+        previous.spend,
+        "currency",
+      ),
     ],
   };
 }
@@ -212,7 +313,7 @@ function metric(
   label: string,
   selected: number,
   previous: number,
-  format: "number" | "currency" | "percent"
+  format: "number" | "currency" | "percent",
 ) {
   return {
     key,

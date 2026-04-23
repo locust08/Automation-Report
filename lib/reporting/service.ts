@@ -369,7 +369,7 @@ export async function getPreviewReport(input: OverallInput): Promise<PreviewRepo
       metaAccountIds: resolvedAccountIds.metaAccountIds,
       googleAccountIds: resolvedAccountIds.googleAccountIds,
     },
-    sections: activeSections,
+    sections,
     warnings: dedupeWarnings(warnings),
     metaWarnings: metaSections.structuredWarnings,
     metaFatalErrors: metaSections.fatalErrors,

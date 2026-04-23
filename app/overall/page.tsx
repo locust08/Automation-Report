@@ -1,6 +1,7 @@
 import { Suspense } from "react";
 
 import { OverallPageClient } from "@/components/reporting/overall-page-client";
+import { ReportRouteLoading } from "@/components/reporting/report-route-loading";
 import { ReportFilters } from "@/components/reporting/use-report-filters";
 
 function getSingleValue(value: string | string[] | undefined): string | undefined {
@@ -27,7 +28,7 @@ export default async function OverallPage({
   } satisfies Partial<ReportFilters>;
 
   return (
-    <Suspense fallback={<div className="min-h-screen bg-[#8f0018]" />}>
+    <Suspense fallback={<ReportRouteLoading />}>
       <OverallPageClient initialFilters={initialFilters} />
     </Suspense>
   );

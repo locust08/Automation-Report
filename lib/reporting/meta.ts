@@ -603,11 +603,7 @@ export async function fetchMetaPreviewData({
     }
 
     const children = (adSetsByCampaign.get(campaignId) ?? [])
-      .filter((adSet) => adSet.ads.length > 0)
       .sort((left, right) => left.name.localeCompare(right.name));
-    if (children.length === 0) {
-      return;
-    }
 
     data.push({
       id: campaignId,

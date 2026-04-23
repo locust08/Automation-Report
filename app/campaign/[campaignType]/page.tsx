@@ -1,6 +1,7 @@
 import { Suspense } from "react";
 
 import { CampaignDashboard } from "@/components/reporting/campaign-dashboard";
+import { ReportRouteLoading } from "@/components/reporting/report-route-loading";
 
 export default async function CampaignTypePage({
   params,
@@ -9,7 +10,7 @@ export default async function CampaignTypePage({
 }) {
   const { campaignType } = await params;
   return (
-    <Suspense fallback={<div className="min-h-screen bg-[#8f0018]" />}>
+    <Suspense fallback={<ReportRouteLoading />}>
       <CampaignDashboard campaignType={campaignType} />
     </Suspense>
   );

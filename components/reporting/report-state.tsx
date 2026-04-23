@@ -1,12 +1,15 @@
-import { AlertTriangleIcon, LoaderCircleIcon } from "lucide-react";
+import { AlertTriangleIcon } from "lucide-react";
 
-export function ReportLoadingState({ message }: { message: string }) {
-  return (
-    <div className="rounded-2xl border border-border/60 bg-white p-8 text-center shadow-sm">
-      <LoaderCircleIcon className="mx-auto mb-3 size-6 animate-spin text-red-700" />
-      <p className="text-base text-muted-foreground">{message}</p>
-    </div>
-  );
+import { ReportLoadingScreen } from "@/components/reporting/report-loading-screen";
+
+export function ReportLoadingState({
+  message,
+  fullPage = false,
+}: {
+  message: string;
+  fullPage?: boolean;
+}) {
+  return <ReportLoadingScreen message={message} fullPage={fullPage} />;
 }
 
 export function ReportErrorState({ message }: { message: string }) {

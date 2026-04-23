@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import Link from "next/link";
 import { ChevronDownIcon, ChevronLeftIcon, ChevronRightIcon, ExternalLinkIcon } from "lucide-react";
 
@@ -152,12 +152,18 @@ export function CampaignComparisonTable({
   totals: CampaignRow;
   showAllRows?: boolean;
 }) {
-  const [page, setPage] = useState(1);
+  const [paginationState, setPaginationState] = useState({ page: 1, signature: "" });
   const rowsWithSpend = useMemo(() => withPositiveSpend(rows), [rows]);
   const totalsWithSpend = useMemo(() => buildTotalsFromRows(rowsWithSpend, totals), [rowsWithSpend, totals]);
   const totalPages = showAllRows ? 1 : Math.max(1, Math.ceil(rowsWithSpend.length / ROWS_PER_PAGE));
-  const rowsSignature = useMemo(() => rowsWithSpend.map((row) => row.id).join("|"), [rowsWithSpend]);
-  const safePage = Math.min(page, totalPages);
+  const paginationSignature = useMemo(
+    () => `${heading}::${rowsWithSpend.map((row) => row.id).join("|")}`,
+    [heading, rowsWithSpend]
+  );
+  const safePage =
+    showAllRows || paginationState.signature !== paginationSignature
+      ? 1
+      : Math.min(paginationState.page, totalPages);
   const startIndex = showAllRows ? 0 : (safePage - 1) * ROWS_PER_PAGE;
   const visibleRows = showAllRows
     ? rowsWithSpend
@@ -166,10 +172,6 @@ export function CampaignComparisonTable({
   const fromCount = rowsWithSpend.length === 0 ? 0 : startIndex + 1;
   const toCount =
     rowsWithSpend.length === 0 ? 0 : Math.min(startIndex + visibleRows.length, rowsWithSpend.length);
-
-  useEffect(() => {
-    setPage(1);
-  }, [heading, rowsSignature]);
 
   if (rowsWithSpend.length === 0) {
     return null;
@@ -248,7 +250,12 @@ export function CampaignComparisonTable({
             variant="ghost"
             size="icon-xs"
             className="h-6 w-6"
-            onClick={() => setPage((prev) => Math.max(1, prev - 1))}
+            onClick={() =>
+              setPaginationState({
+                page: Math.max(1, safePage - 1),
+                signature: paginationSignature,
+              })
+            }
             disabled={safePage <= 1}
             aria-label="Previous table page"
           >
@@ -259,7 +266,12 @@ export function CampaignComparisonTable({
             variant="ghost"
             size="icon-xs"
             className="h-6 w-6"
-            onClick={() => setPage((prev) => Math.min(totalPages, prev + 1))}
+            onClick={() =>
+              setPaginationState({
+                page: Math.min(totalPages, safePage + 1),
+                signature: paginationSignature,
+              })
+            }
             disabled={safePage >= totalPages}
             aria-label="Next table page"
           >
@@ -356,6 +368,7 @@ function buildPreviewHref(row: CampaignRow, queryString: string): string | null 
 
   const params = new URLSearchParams(queryString.startsWith("&") ? queryString.slice(1) : queryString);
   params.set("platform", row.platform);
+  params.set("campaignId", row.id);
   params.set("campaignName", row.campaignName);
   const query = params.toString();
   return query ? `/preview?${query}` : "/preview";

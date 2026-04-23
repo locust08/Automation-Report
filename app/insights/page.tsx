@@ -1,10 +1,11 @@
 import { Suspense } from "react";
 
 import { InsightsPageClient } from "@/components/reporting/insights-page-client";
+import { ReportRouteLoading } from "@/components/reporting/report-route-loading";
 
 export default function InsightsPage() {
   return (
-    <Suspense fallback={<div className="min-h-screen bg-[#8f0018]" />}>
+    <Suspense fallback={<ReportRouteLoading />}>
       <InsightsPageClient />
     </Suspense>
   );

@@ -2,8 +2,6 @@
 
 import { useCallback, useEffect, useState } from "react";
 import {
-  ChevronDownIcon,
-  DownloadIcon,
   FileImageIcon,
   FileTextIcon,
   LoaderCircleIcon,
@@ -88,22 +86,24 @@ export function ReportDownloadButton() {
   const isBusy = currentFormat !== null;
 
   return (
-    <div className="flex justify-end">
+    <div className="w-full">
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
           <Button
             type="button"
             variant="outline"
-            className="h-9 w-full border-white/30 bg-white/10 text-white hover:bg-white/20 hover:text-white sm:w-auto"
+            className="h-10 w-full items-center justify-start gap-2 border-border/60 bg-background px-3 text-sm font-medium leading-none text-foreground shadow-sm hover:bg-muted sm:w-[132px]"
             disabled={isBusy}
           >
             {isBusy ? (
-              <LoaderCircleIcon data-icon="inline-start" className="animate-spin" />
+              <LoaderCircleIcon
+                data-icon="inline-start"
+                className="animate-spin shrink-0 text-muted-foreground"
+              />
             ) : (
-              <DownloadIcon data-icon="inline-start" />
+              <FileTextIcon data-icon="inline-start" className="shrink-0 text-muted-foreground" />
             )}
-            {currentFormat ? `Downloading ${currentFormat.toUpperCase()}` : "Download Report"}
-            <ChevronDownIcon data-icon="inline-end" />
+            <span className="leading-none">Report</span>
           </Button>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end" className="min-w-40">
