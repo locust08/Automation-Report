@@ -18,7 +18,9 @@ import { useAuctionInsightsReport } from "@/components/reporting/use-report-data
 
 export function AuctionPageClient() {
   const { filters, setFilters } = useReportFilters();
-  const hasPotentialGoogleId = Boolean(filters.accountId || filters.googleAccountId);
+  const hasPotentialGoogleId = Boolean(
+    filters.accountId || filters.googleAccountId,
+  );
 
   const queryString = useMemo(() => {
     const params = new URLSearchParams();
@@ -36,41 +38,55 @@ export function AuctionPageClient() {
     return params.toString();
   }, [filters]);
 
-  const { data, error, loading } = useAuctionInsightsReport(queryString, hasPotentialGoogleId);
+  const { data, error, loading } = useAuctionInsightsReport(
+    queryString,
+    hasPotentialGoogleId,
+  );
   const title = `${data?.companyName ?? "Company Name"} Auction Metrics`;
-  const dateLabel = data?.dateRange.currentLabel ?? `${filters.startDate} - ${filters.endDate}`;
+  const dateLabel =
+    data?.dateRange.currentLabel ?? `${filters.startDate} - ${filters.endDate}`;
+
+  if (hasPotentialGoogleId && loading) {
+    return (
+      <ReportLoadingState
+        message="Loading auction metrics from Google Ads Manager..."
+        fullPage
+      />
+    );
+  }
 
   return (
     <ReportShell
       title={title}
       dateLabel={dateLabel}
+      activeQuery={queryString}
       headerDateControl={
         <ReportHeaderMonthPicker
           startDate={filters.startDate}
           endDate={filters.endDate}
-          onChange={(next) => setFilters({ startDate: next.startDate, endDate: next.endDate })}
+          onChange={(next) =>
+            setFilters({ startDate: next.startDate, endDate: next.endDate })
+          }
         />
       }
       headerBottomControl={
-        <div className="space-y-2">
-          <ReportDownloadButton />
-          <ReportFiltersBar
-            filters={filters}
-            dateMode="month"
-            showDateFilters={false}
-            showResetButton={false}
-            submitLabel="Reload"
-            compact
-            onApply={(next) => setFilters(next)}
-            onReset={() =>
-              setFilters({
-                accountId: "",
-                metaAccountId: "",
-                googleAccountId: "",
-              })
-            }
-          />
-        </div>
+        <ReportFiltersBar
+          filters={filters}
+          dateMode="month"
+          showDateFilters={false}
+          showResetButton={false}
+          submitLabel="Reload"
+          compact
+          footerContent={<ReportDownloadButton />}
+          onApply={(next) => setFilters(next)}
+          onReset={() =>
+            setFilters({
+              accountId: "",
+              metaAccountId: "",
+              googleAccountId: "",
+            })
+          }
+        />
       }
     >
       <div className="space-y-5">
@@ -78,7 +94,6 @@ export function AuctionPageClient() {
           <ReportErrorState message="Enter Google account ID (or generic accountId) to load auction metrics from Google Ads Manager." />
         ) : null}
 
-        {loading ? <ReportLoadingState message="Loading auction metrics from Google Ads Manager..." /> : null}
         {error ? <ReportErrorState message={error} /> : null}
 
         {data ? (

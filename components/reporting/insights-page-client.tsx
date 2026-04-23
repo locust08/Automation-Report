@@ -2,7 +2,10 @@
 
 import { useMemo, useState } from "react";
 
-import { InsightsDataTable, InsightsTable } from "@/components/reporting/insights-table";
+import {
+  InsightsDataTable,
+  InsightsTable,
+} from "@/components/reporting/insights-table";
 import { ReportHeaderMonthPicker } from "@/components/reporting/report-header-month-picker";
 import { ReportFiltersBar } from "@/components/reporting/report-filters-bar";
 import { ReportShell } from "@/components/reporting/report-shell";
@@ -19,7 +22,8 @@ import { PlatformInsightsSection } from "@/lib/reporting/types";
 
 export function InsightsPageClient() {
   const { filters, hasAccountId, setFilters } = useReportFilters();
-  const [activePlatform, setActivePlatform] = useState<PlatformInsightsSection["platform"]>("meta");
+  const [activePlatform, setActivePlatform] =
+    useState<PlatformInsightsSection["platform"]>("meta");
 
   const queryString = useMemo(() => {
     const params = new URLSearchParams();
@@ -39,45 +43,61 @@ export function InsightsPageClient() {
 
   const { data, error, loading } = useInsightsReport(queryString, hasAccountId);
   const resolvedPlatform =
-    data?.sections.find((section) => section.platform === activePlatform && section.rows.length > 0)?.platform ??
+    data?.sections.find(
+      (section) =>
+        section.platform === activePlatform && section.rows.length > 0,
+    )?.platform ??
     data?.sections.find((section) => section.rows.length > 0)?.platform ??
     activePlatform;
   const activeSection =
-    data?.sections.find((section) => section.platform === resolvedPlatform) ?? data?.sections[0] ?? null;
+    data?.sections.find((section) => section.platform === resolvedPlatform) ??
+    data?.sections[0] ??
+    null;
   const title = `${data?.companyName ?? "Company Name"} Insights`;
-  const dateLabel = data?.dateRange.currentLabel ?? `${filters.startDate} - ${filters.endDate}`;
+  const dateLabel =
+    data?.dateRange.currentLabel ?? `${filters.startDate} - ${filters.endDate}`;
+
+  if (hasAccountId && loading) {
+    return (
+      <ReportLoadingState
+        message="Building ranked Meta and Google insights from campaign output data..."
+        fullPage
+      />
+    );
+  }
 
   return (
     <ReportShell
       title={title}
       dateLabel={dateLabel}
+      activeQuery={queryString}
       headerDateControl={
         <ReportHeaderMonthPicker
           startDate={filters.startDate}
           endDate={filters.endDate}
-          onChange={(next) => setFilters({ startDate: next.startDate, endDate: next.endDate })}
+          onChange={(next) =>
+            setFilters({ startDate: next.startDate, endDate: next.endDate })
+          }
         />
       }
       headerBottomControl={
-        <div className="space-y-2">
-          <ReportDownloadButton />
-          <ReportFiltersBar
-            filters={filters}
-            dateMode="month"
-            showDateFilters={false}
-            showResetButton={false}
-            submitLabel="Reload"
-            compact
-            onApply={(next) => setFilters(next)}
-            onReset={() =>
-              setFilters({
-                accountId: "",
-                metaAccountId: "",
-                googleAccountId: "",
-              })
-            }
-          />
-        </div>
+        <ReportFiltersBar
+          filters={filters}
+          dateMode="month"
+          showDateFilters={false}
+          showResetButton={false}
+          submitLabel="Reload"
+          compact
+          footerContent={<ReportDownloadButton />}
+          onApply={(next) => setFilters(next)}
+          onReset={() =>
+            setFilters({
+              accountId: "",
+              metaAccountId: "",
+              googleAccountId: "",
+            })
+          }
+        />
       }
     >
       <div className="space-y-5">
@@ -85,7 +105,6 @@ export function InsightsPageClient() {
           <ReportErrorState message="Enter at least one Meta or Google account ID to generate insights from the selected month output data." />
         ) : null}
 
-        {loading ? <ReportLoadingState message="Building ranked Meta and Google insights from campaign output data..." /> : null}
         {error ? <ReportErrorState message={error} /> : null}
 
         {data ? (

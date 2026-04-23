@@ -10,6 +10,11 @@ Multi-page reporting website for Meta Ads Manager + Google Ads Manager with a sh
   - Google Ads metrics
   - Google Ads YouTube overview metrics
   - Collapsible campaign-type grouped table
+- `/preview` Read-only platform preview page:
+  - Same shell/theme as Overall
+  - Live campaign hierarchy from Google Ads + Meta Ads APIs
+  - Expand campaign names to inspect Campaign -> Ad Group / Ad Set -> Ad -> Details
+  - No edit or management actions
 - `/campaign/[campaignType]` Campaign type page:
   - Selected month vs previous month comparison
   - Collapsible sections and totals

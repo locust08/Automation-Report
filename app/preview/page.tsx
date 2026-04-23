@@ -1,12 +1,12 @@
 import { Suspense } from "react";
 
-import { InsightsPageClient } from "@/components/reporting/insights-page-client";
+import { PreviewPageClient } from "@/components/reporting/preview-page-client";
 import { ReportRouteLoading } from "@/components/reporting/report-route-loading";
 
-export default function InsightsPage() {
+export default function PreviewPage() {
   return (
     <Suspense fallback={<ReportRouteLoading />}>
-      <InsightsPageClient />
+      <PreviewPageClient />
     </Suspense>
   );
 }

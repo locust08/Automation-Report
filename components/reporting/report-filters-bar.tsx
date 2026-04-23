@@ -1,6 +1,7 @@
 "use client";
 
 import { FormEvent, MutableRefObject, useEffect, useRef, useState } from "react";
+import type { ReactNode } from "react";
 import {
   CalendarDaysIcon,
   ChevronLeftIcon,
@@ -34,6 +35,7 @@ interface ReportFiltersBarProps {
   showResetButton?: boolean;
   submitLabel?: string;
   compact?: boolean;
+  footerContent?: ReactNode;
 }
 
 type SearchPlatform = "meta" | "google";
@@ -54,6 +56,7 @@ export function ReportFiltersBar({
   showResetButton = true,
   submitLabel = "Load Report",
   compact = false,
+  footerContent,
 }: ReportFiltersBarProps) {
   const [searchEntries, setSearchEntries] = useState<SearchEntry[]>([]);
   const nextSearchEntryId = useRef(0);
@@ -130,11 +133,11 @@ export function ReportFiltersBar({
     <form
       onSubmit={handleSubmit}
       className={cn(
-        "flex flex-col gap-3 rounded-2xl border border-border/40 bg-card/90 p-4 shadow-sm sm:flex-row sm:flex-wrap sm:items-center",
+        "flex flex-col gap-3 rounded-2xl border border-border/40 bg-card/90 p-4 shadow-sm sm:flex-row sm:flex-wrap sm:items-start",
         compact && "gap-2 border-white/20 bg-white/90 p-3 shadow-none"
       )}
     >
-      <div className="w-full min-w-0 space-y-2 sm:flex-1 md:min-w-[360px]">
+      <div className="w-full min-w-0 space-y-1.5 sm:flex-1 md:min-w-[360px]">
         {searchEntries.map((entry) => (
           <div key={entry.key} className="flex min-w-0 flex-wrap items-center gap-2 sm:flex-nowrap">
             <Select
@@ -175,7 +178,12 @@ export function ReportFiltersBar({
           </div>
         ))}
 
-        <Button type="button" variant="outline" className="h-9 w-full sm:w-auto" onClick={addSearchRow}>
+        <Button
+          type="button"
+          variant="outline"
+          className="h-9 w-full sm:w-auto sm:self-start"
+          onClick={addSearchRow}
+        >
           <PlusIcon data-icon="inline-start" />
           Add Account
         </Button>
@@ -253,17 +261,28 @@ export function ReportFiltersBar({
         <div className="hidden" />
       )}
 
-      <div className="flex w-full flex-col gap-2 sm:ml-auto sm:w-auto sm:flex-row sm:items-center">
-        <Button type="submit" className="h-10 w-full bg-red-600 hover:bg-red-700 sm:w-auto">
-          <SearchIcon data-icon="inline-start" />
-          {submitLabel}
-        </Button>
-        {showResetButton ? (
-          <Button type="button" variant="outline" className="h-10 w-full sm:w-auto" onClick={onReset}>
-            <RefreshCcwIcon data-icon="inline-start" />
-            Reset
+      <div className="flex w-full flex-col gap-2 sm:ml-auto sm:w-auto sm:items-start">
+        <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:items-start">
+          <Button
+            type="submit"
+            className="h-10 w-full items-center justify-start gap-2 bg-red-600 px-3 text-left text-sm font-medium leading-none text-white hover:bg-red-700 sm:w-[132px]"
+          >
+            <SearchIcon data-icon="inline-start" className="shrink-0" />
+            {submitLabel}
           </Button>
-        ) : null}
+          {showResetButton ? (
+            <Button
+              type="button"
+              variant="outline"
+              className="h-10 w-full items-center justify-start gap-2 px-3 text-sm font-medium leading-none sm:w-[132px]"
+              onClick={onReset}
+            >
+              <RefreshCcwIcon data-icon="inline-start" className="shrink-0" />
+              Reset
+            </Button>
+          ) : null}
+        </div>
+        {footerContent ? <div className="w-full sm:w-auto">{footerContent}</div> : null}
       </div>
     </form>
   );

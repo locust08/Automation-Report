@@ -2,12 +2,15 @@
 
 import { useEffect, useMemo, useState } from "react";
 
+import { formatGoogleAdsAccessPathErrorMessage } from "@/lib/reporting/google-access-path";
 import {
+  GoogleAdsAccessPathErrorPayload,
   AuctionInsightsPayload,
   CampaignComparisonPayload,
   InsightsPayload,
   OverallReportPayload,
   Platform,
+  PreviewReportPayload,
   TopKeywordsPayload,
 } from "@/lib/reporting/types";
 
@@ -17,10 +20,61 @@ interface LoadingState<T> {
   loading: boolean;
 }
 
-export function useOverallReport(queryString: string, enabled: boolean): LoadingState<OverallReportPayload> {
-  const [data, setData] = useState<OverallReportPayload | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
+interface ReportingErrorPayload {
+  error?: string;
+  message?: string;
+  stage?: string;
+  errorCode?: string;
+  originalAccessPath?: string | null;
+  resolvedAccessPath?: string | null;
+  fallbackUsed?: boolean;
+  loginCustomerId?: string | null;
+  customerId?: string | null;
+  accountId?: string | null;
+  errorMessage?: string;
+  googleAdsAccessPathError?: GoogleAdsAccessPathErrorPayload;
+}
+
+interface QueryState<T> {
+  data: T | null;
+  error: string | null;
+  queryKey: string | null;
+}
+
+function extractErrorMessage(
+  payload: ReportingErrorPayload | null | undefined,
+  fallbackMessage: string
+): string {
+  if (payload?.googleAdsAccessPathError) {
+    return formatGoogleAdsAccessPathErrorMessage(payload.googleAdsAccessPathError);
+  }
+
+  if (payload?.stage === "google_ads_access_path" && payload.accountId) {
+    return formatGoogleAdsAccessPathErrorMessage({
+      accountId: payload.accountId,
+      originalAccessPath: payload.originalAccessPath ?? null,
+      resolvedAccessPath: payload.resolvedAccessPath ?? null,
+      fallbackUsed: Boolean(payload.fallbackUsed),
+      errorCode: payload.errorCode ?? "UNKNOWN",
+      errorMessage: payload.errorMessage ?? payload.message ?? payload.error ?? fallbackMessage,
+    });
+  }
+
+  return payload?.error ?? payload?.message ?? fallbackMessage;
+}
+
+function useReportQuery<T>(
+  requestPath: string,
+  queryString: string,
+  enabled: boolean,
+  fallbackMessage: string
+): LoadingState<T> {
+  const queryKey = `${requestPath}?${queryString}`;
+  const [state, setState] = useState<QueryState<T>>({
+    data: null,
+    error: null,
+    queryKey: null,
+  });
 
   useEffect(() => {
     if (!enabled) {
@@ -28,41 +82,55 @@ export function useOverallReport(queryString: string, enabled: boolean): Loading
     }
 
     const controller = new AbortController();
-    queueMicrotask(() => {
-      setLoading(true);
-      setError(null);
-    });
 
-    fetch(`/api/reporting?${queryString}`, {
+    fetch(queryKey, {
       cache: "no-store",
       signal: controller.signal,
     })
       .then(async (response) => {
-        const json = (await response.json()) as OverallReportPayload & { error?: string };
+        const json = (await response.json()) as T & ReportingErrorPayload;
         if (!response.ok) {
-          throw new Error(json.error ?? "Unable to load overall report.");
+          throw new Error(extractErrorMessage(json, fallbackMessage));
         }
         return json;
       })
       .then((json) => {
-        setData(json);
+        setState({
+          data: json,
+          error: null,
+          queryKey,
+        });
       })
       .catch((fetchError: unknown) => {
         if (fetchError instanceof DOMException && fetchError.name === "AbortError") {
           return;
         }
-        setError(fetchError instanceof Error ? fetchError.message : "Unable to load overall report.");
-      })
-      .finally(() => setLoading(false));
+
+        setState({
+          data: null,
+          error: fetchError instanceof Error ? fetchError.message : fallbackMessage,
+          queryKey,
+        });
+      });
 
     return () => controller.abort();
-  }, [enabled, queryString]);
+  }, [enabled, fallbackMessage, queryKey]);
 
-  return {
-    data: enabled ? data : null,
-    error: enabled ? error : null,
-    loading: enabled ? loading : false,
-  };
+  const isCurrentQuery = state.queryKey === queryKey;
+  const data = enabled && isCurrentQuery ? state.data : null;
+  const error = enabled && isCurrentQuery ? state.error : null;
+  const loading = enabled && !isCurrentQuery;
+
+  return { data, error, loading };
+}
+
+export function useOverallReport(queryString: string, enabled: boolean): LoadingState<OverallReportPayload> {
+  return useReportQuery<OverallReportPayload>(
+    "/api/reporting",
+    queryString,
+    enabled,
+    "Unable to load overall report."
+  );
 }
 
 export function useCampaignComparison(
@@ -78,208 +146,58 @@ export function useCampaignComparison(
     return params.toString();
   }, [campaignType, platform, queryString]);
 
-  const [data, setData] = useState<CampaignComparisonPayload | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
+  return useReportQuery<CampaignComparisonPayload>(
+    "/api/reporting/campaign",
+    fullQuery,
+    enabled,
+    "Unable to load campaign comparison data."
+  );
+}
 
-  useEffect(() => {
-    if (!enabled) {
-      return;
-    }
-
-    const controller = new AbortController();
-    queueMicrotask(() => {
-      setLoading(true);
-      setError(null);
-    });
-
-    fetch(`/api/reporting/campaign?${fullQuery}`, {
-      cache: "no-store",
-      signal: controller.signal,
-    })
-      .then(async (response) => {
-        const json = (await response.json()) as CampaignComparisonPayload & { error?: string };
-        if (!response.ok) {
-          throw new Error(json.error ?? "Unable to load campaign comparison data.");
-        }
-        return json;
-      })
-      .then((json) => {
-        setData(json);
-      })
-      .catch((fetchError: unknown) => {
-        if (fetchError instanceof DOMException && fetchError.name === "AbortError") {
-          return;
-        }
-        setError(
-          fetchError instanceof Error
-            ? fetchError.message
-            : "Unable to load campaign comparison data."
-        );
-      })
-      .finally(() => setLoading(false));
-
-    return () => controller.abort();
-  }, [enabled, fullQuery]);
-
-  return {
-    data: enabled ? data : null,
-    error: enabled ? error : null,
-    loading: enabled ? loading : false,
-  };
+export function usePreviewReport(
+  queryString: string,
+  enabled: boolean
+): LoadingState<PreviewReportPayload> {
+  return useReportQuery<PreviewReportPayload>(
+    "/api/reporting/preview",
+    queryString,
+    enabled,
+    "Unable to load preview report."
+  );
 }
 
 export function useTopKeywordsReport(
   queryString: string,
   enabled: boolean
 ): LoadingState<TopKeywordsPayload> {
-  const [data, setData] = useState<TopKeywordsPayload | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
-
-  useEffect(() => {
-    if (!enabled) {
-      return;
-    }
-
-    const controller = new AbortController();
-    queueMicrotask(() => {
-      setLoading(true);
-      setError(null);
-    });
-
-    fetch(`/api/reporting/keywords?${queryString}`, {
-      cache: "no-store",
-      signal: controller.signal,
-    })
-      .then(async (response) => {
-        const json = (await response.json()) as TopKeywordsPayload & { error?: string };
-        if (!response.ok) {
-          throw new Error(json.error ?? "Unable to load top keyword data.");
-        }
-        return json;
-      })
-      .then((json) => {
-        setData(json);
-      })
-      .catch((fetchError: unknown) => {
-        if (fetchError instanceof DOMException && fetchError.name === "AbortError") {
-          return;
-        }
-        setError(fetchError instanceof Error ? fetchError.message : "Unable to load top keyword data.");
-      })
-      .finally(() => setLoading(false));
-
-    return () => controller.abort();
-  }, [enabled, queryString]);
-
-  return {
-    data: enabled ? data : null,
-    error: enabled ? error : null,
-    loading: enabled ? loading : false,
-  };
+  return useReportQuery<TopKeywordsPayload>(
+    "/api/reporting/keywords",
+    queryString,
+    enabled,
+    "Unable to load top keyword data."
+  );
 }
 
 export function useAuctionInsightsReport(
   queryString: string,
   enabled: boolean
 ): LoadingState<AuctionInsightsPayload> {
-  const [data, setData] = useState<AuctionInsightsPayload | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
-
-  useEffect(() => {
-    if (!enabled) {
-      return;
-    }
-
-    const controller = new AbortController();
-    queueMicrotask(() => {
-      setLoading(true);
-      setError(null);
-    });
-
-    fetch(`/api/reporting/auction?${queryString}`, {
-      cache: "no-store",
-      signal: controller.signal,
-    })
-      .then(async (response) => {
-        const json = (await response.json()) as AuctionInsightsPayload & { error?: string };
-        if (!response.ok) {
-          throw new Error(json.error ?? "Unable to load auction insights data.");
-        }
-        return json;
-      })
-      .then((json) => {
-        setData(json);
-      })
-      .catch((fetchError: unknown) => {
-        if (fetchError instanceof DOMException && fetchError.name === "AbortError") {
-          return;
-        }
-        setError(
-          fetchError instanceof Error ? fetchError.message : "Unable to load auction insights data."
-        );
-      })
-      .finally(() => setLoading(false));
-
-    return () => controller.abort();
-  }, [enabled, queryString]);
-
-  return {
-    data: enabled ? data : null,
-    error: enabled ? error : null,
-    loading: enabled ? loading : false,
-  };
+  return useReportQuery<AuctionInsightsPayload>(
+    "/api/reporting/auction",
+    queryString,
+    enabled,
+    "Unable to load auction insights data."
+  );
 }
 
 export function useInsightsReport(
   queryString: string,
   enabled: boolean
 ): LoadingState<InsightsPayload> {
-  const [data, setData] = useState<InsightsPayload | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
-
-  useEffect(() => {
-    if (!enabled) {
-      return;
-    }
-
-    const controller = new AbortController();
-    queueMicrotask(() => {
-      setLoading(true);
-      setError(null);
-    });
-
-    fetch(`/api/reporting/insights?${queryString}`, {
-      cache: "no-store",
-      signal: controller.signal,
-    })
-      .then(async (response) => {
-        const json = (await response.json()) as InsightsPayload & { error?: string };
-        if (!response.ok) {
-          throw new Error(json.error ?? "Unable to load insights data.");
-        }
-        return json;
-      })
-      .then((json) => {
-        setData(json);
-      })
-      .catch((fetchError: unknown) => {
-        if (fetchError instanceof DOMException && fetchError.name === "AbortError") {
-          return;
-        }
-        setError(fetchError instanceof Error ? fetchError.message : "Unable to load insights data.");
-      })
-      .finally(() => setLoading(false));
-
-    return () => controller.abort();
-  }, [enabled, queryString]);
-
-  return {
-    data: enabled ? data : null,
-    error: enabled ? error : null,
-    loading: enabled ? loading : false,
-  };
+  return useReportQuery<InsightsPayload>(
+    "/api/reporting/insights",
+    queryString,
+    enabled,
+    "Unable to load insights data."
+  );
 }

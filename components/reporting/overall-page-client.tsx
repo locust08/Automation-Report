@@ -8,13 +8,25 @@ import { MetricSection } from "@/components/reporting/metric-grid";
 import { ReportFiltersBar } from "@/components/reporting/report-filters-bar";
 import { ReportDownloadButton } from "@/components/reporting/screenshot-mode-toggle";
 import { ReportShell } from "@/components/reporting/report-shell";
-import { ReportErrorState, ReportLoadingState, ReportWarnings } from "@/components/reporting/report-state";
-import { useReportFilters } from "@/components/reporting/use-report-filters";
+import {
+  ReportErrorState,
+  ReportLoadingState,
+  ReportWarnings,
+} from "@/components/reporting/report-state";
+import {
+  ReportFilters,
+  useReportFilters,
+} from "@/components/reporting/use-report-filters";
 import { useOverallReport } from "@/components/reporting/use-report-data";
 import { useScreenshotMode } from "@/components/reporting/use-screenshot-mode";
 
-export function OverallPageClient() {
-  const { filters, hasAccountId, setFilters } = useReportFilters();
+export function OverallPageClient({
+  initialFilters,
+}: {
+  initialFilters?: Partial<ReportFilters>;
+}) {
+  const { filters, hasAccountId, setFilters } =
+    useReportFilters(initialFilters);
   const { screenshotMode } = useScreenshotMode();
 
   const queryString = useMemo(() => {
@@ -31,7 +43,13 @@ export function OverallPageClient() {
     params.set("startDate", filters.startDate);
     params.set("endDate", filters.endDate);
     return params.toString();
-  }, [filters.accountId, filters.endDate, filters.googleAccountId, filters.metaAccountId, filters.startDate]);
+  }, [
+    filters.accountId,
+    filters.endDate,
+    filters.googleAccountId,
+    filters.metaAccountId,
+    filters.startDate,
+  ]);
 
   const { data, error, loading } = useOverallReport(queryString, hasAccountId);
 
@@ -44,47 +62,56 @@ export function OverallPageClient() {
   }, [queryString, screenshotMode]);
 
   const title = `${data?.companyName ?? "Company Name"} Monthly Performance`;
-  const dateLabel = data?.dateRange.currentLabel ?? `${filters.startDate} - ${filters.endDate}`;
+  const dateLabel =
+    data?.dateRange.currentLabel ?? `${filters.startDate} - ${filters.endDate}`;
+
+  if (hasAccountId && loading) {
+    return (
+      <ReportLoadingState
+        message="Loading overview data from Meta and Google APIs..."
+        fullPage
+      />
+    );
+  }
 
   return (
     <ReportShell
       title={title}
       dateLabel={dateLabel}
+      activeQuery={queryString}
       headerDateControl={
         <ReportHeaderMonthPicker
           startDate={filters.startDate}
           endDate={filters.endDate}
-          onChange={(next) => setFilters({ startDate: next.startDate, endDate: next.endDate })}
+          onChange={(next) =>
+            setFilters({ startDate: next.startDate, endDate: next.endDate })
+          }
         />
       }
       headerBottomControl={
-        <div className="space-y-2">
-          <ReportDownloadButton />
-          <ReportFiltersBar
-            filters={filters}
-            dateMode="month"
-            showDateFilters={false}
-            showResetButton={false}
-            submitLabel="Reload"
-            compact
-            onApply={(next) => setFilters(next)}
-            onReset={() =>
-              setFilters({
-                accountId: "",
-                metaAccountId: "",
-                googleAccountId: "",
-              })
-            }
-          />
-        </div>
+        <ReportFiltersBar
+          filters={filters}
+          dateMode="month"
+          showDateFilters={false}
+          showResetButton={false}
+          submitLabel="Reload"
+          compact
+          footerContent={<ReportDownloadButton />}
+          onApply={(next) => setFilters(next)}
+          onReset={() =>
+            setFilters({
+              accountId: "",
+              metaAccountId: "",
+              googleAccountId: "",
+            })
+          }
+        />
       }
     >
       <div className="space-y-5">
         {!hasAccountId ? (
           <ReportErrorState message="Enter at least one account ID to request data from Meta Ads Manager and Google Ads Manager." />
         ) : null}
-
-        {loading ? <ReportLoadingState message="Loading overview data from Meta and Google APIs..." /> : null}
 
         {error ? <ReportErrorState message={error} /> : null}
 
@@ -94,7 +121,10 @@ export function OverallPageClient() {
             {data.summaries.map((section) => (
               <MetricSection key={section.platform} section={section} />
             ))}
-            <OverallCampaignGroupsTable groups={data.campaignGroups} queryString={forwardQuery} />
+            <OverallCampaignGroupsTable
+              groups={data.campaignGroups}
+              queryString={forwardQuery}
+            />
           </>
         ) : null}
       </div>
