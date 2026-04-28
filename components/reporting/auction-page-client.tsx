@@ -3,6 +3,7 @@
 import { useMemo } from "react";
 
 import { AuctionInsightsTable } from "@/components/reporting/google-insights-table";
+import { ReportSuccessScreen } from "@/components/reporting/report-loading-screen";
 import { ReportHeaderMonthPicker } from "@/components/reporting/report-header-month-picker";
 import { ReportFiltersBar } from "@/components/reporting/report-filters-bar";
 import { ReportShell } from "@/components/reporting/report-shell";
@@ -14,6 +15,7 @@ import {
 } from "@/components/reporting/report-state";
 import { ReportDownloadButton } from "@/components/reporting/screenshot-mode-toggle";
 import { useReportFilters } from "@/components/reporting/use-report-filters";
+import { useReportReadyTransition } from "@/components/reporting/use-report-ready-transition";
 import { useAuctionInsightsReport } from "@/components/reporting/use-report-data";
 
 export function AuctionPageClient() {
@@ -38,21 +40,37 @@ export function AuctionPageClient() {
     return params.toString();
   }, [filters]);
 
-  const { data, error, loading } = useAuctionInsightsReport(
+  const { data, error, loading, retry, successToken } = useAuctionInsightsReport(
     queryString,
     hasPotentialGoogleId,
   );
   const title = `${data?.companyName ?? "Company Name"} Auction Metrics`;
   const dateLabel =
     data?.dateRange.currentLabel ?? `${filters.startDate} - ${filters.endDate}`;
+  const auctionReady =
+    hasPotentialGoogleId &&
+    !loading &&
+    !error &&
+    Boolean(data && data.rows.length > 0) &&
+    (data?.warnings.length ?? 0) === 0;
+  const { showReadyState } = useReportReadyTransition({
+    ready: auctionReady,
+    transitionKey: successToken,
+  });
 
   if (hasPotentialGoogleId && loading) {
     return (
       <ReportLoadingState
+        kind="dashboard"
         message="Loading auction metrics from Google Ads Manager..."
         fullPage
+        onRetry={retry}
       />
     );
+  }
+
+  if (showReadyState) {
+    return <ReportSuccessScreen kind="dashboard" fullPage />;
   }
 
   return (
@@ -91,10 +109,13 @@ export function AuctionPageClient() {
     >
       <div className="space-y-5">
         {!hasPotentialGoogleId ? (
-          <ReportErrorState message="Enter Google account ID (or generic accountId) to load auction metrics from Google Ads Manager." />
+          <ReportErrorState
+            kind="dashboard"
+            message="Enter Google account ID (or generic accountId) to load auction metrics from Google Ads Manager."
+          />
         ) : null}
 
-        {error ? <ReportErrorState message={error} /> : null}
+        {error ? <ReportErrorState kind="dashboard" message={error} onRetry={retry} /> : null}
 
         {data ? (
           <>

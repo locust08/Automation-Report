@@ -5,7 +5,7 @@ import { ReportRouteLoading } from "@/components/reporting/report-route-loading"
 
 export default function KeywordsPage() {
   return (
-    <Suspense fallback={<ReportRouteLoading />}>
+    <Suspense fallback={<ReportRouteLoading kind="keywords" />}>
       <TopKeywordsPageClient />
     </Suspense>
   );

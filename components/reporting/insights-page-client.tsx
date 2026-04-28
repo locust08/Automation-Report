@@ -6,6 +6,7 @@ import {
   InsightsDataTable,
   InsightsTable,
 } from "@/components/reporting/insights-table";
+import { ReportSuccessScreen } from "@/components/reporting/report-loading-screen";
 import { ReportHeaderMonthPicker } from "@/components/reporting/report-header-month-picker";
 import { ReportFiltersBar } from "@/components/reporting/report-filters-bar";
 import { ReportShell } from "@/components/reporting/report-shell";
@@ -18,6 +19,7 @@ import {
 import { ReportDownloadButton } from "@/components/reporting/screenshot-mode-toggle";
 import { useReportFilters } from "@/components/reporting/use-report-filters";
 import { useInsightsReport } from "@/components/reporting/use-report-data";
+import { useReportReadyTransition } from "@/components/reporting/use-report-ready-transition";
 import { PlatformInsightsSection } from "@/lib/reporting/types";
 
 export function InsightsPageClient() {
@@ -41,7 +43,7 @@ export function InsightsPageClient() {
     return params.toString();
   }, [filters]);
 
-  const { data, error, loading } = useInsightsReport(queryString, hasAccountId);
+  const { data, error, loading, retry, successToken } = useInsightsReport(queryString, hasAccountId);
   const resolvedPlatform =
     data?.sections.find(
       (section) =>
@@ -56,14 +58,30 @@ export function InsightsPageClient() {
   const title = `${data?.companyName ?? "Company Name"} Insights`;
   const dateLabel =
     data?.dateRange.currentLabel ?? `${filters.startDate} - ${filters.endDate}`;
+  const insightsReady =
+    hasAccountId &&
+    !loading &&
+    !error &&
+    Boolean(activeSection && activeSection.rows.length > 0) &&
+    (data?.warnings.length ?? 0) === 0;
+  const { showReadyState } = useReportReadyTransition({
+    ready: insightsReady,
+    transitionKey: successToken,
+  });
 
   if (hasAccountId && loading) {
     return (
       <ReportLoadingState
+        kind="dashboard"
         message="Building ranked Meta and Google insights from campaign output data..."
         fullPage
+        onRetry={retry}
       />
     );
+  }
+
+  if (showReadyState) {
+    return <ReportSuccessScreen kind="insights" fullPage />;
   }
 
   return (
@@ -102,10 +120,13 @@ export function InsightsPageClient() {
     >
       <div className="space-y-5">
         {!hasAccountId ? (
-          <ReportErrorState message="Enter at least one Meta or Google account ID to generate insights from the selected month output data." />
+          <ReportErrorState
+            kind="dashboard"
+            message="Enter at least one Meta or Google account ID to generate insights from the selected month output data."
+          />
         ) : null}
 
-        {error ? <ReportErrorState message={error} /> : null}
+        {error ? <ReportErrorState kind="dashboard" message={error} onRetry={retry} /> : null}
 
         {data ? (
           <>

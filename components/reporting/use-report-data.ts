@@ -18,6 +18,8 @@ interface LoadingState<T> {
   data: T | null;
   error: string | null;
   loading: boolean;
+  retry: () => void;
+  successToken: string | null;
 }
 
 interface ReportingErrorPayload {
@@ -39,6 +41,7 @@ interface QueryState<T> {
   data: T | null;
   error: string | null;
   queryKey: string | null;
+  successToken: string | null;
 }
 
 function extractErrorMessage(
@@ -74,7 +77,9 @@ function useReportQuery<T>(
     data: null,
     error: null,
     queryKey: null,
+    successToken: null,
   });
+  const [requestVersion, setRequestVersion] = useState(0);
 
   useEffect(() => {
     if (!enabled) {
@@ -99,6 +104,7 @@ function useReportQuery<T>(
           data: json,
           error: null,
           queryKey,
+          successToken: `${queryKey}::${requestVersion}`,
         });
       })
       .catch((fetchError: unknown) => {
@@ -110,18 +116,33 @@ function useReportQuery<T>(
           data: null,
           error: fetchError instanceof Error ? fetchError.message : fallbackMessage,
           queryKey,
+          successToken: null,
         });
       });
 
     return () => controller.abort();
-  }, [enabled, fallbackMessage, queryKey]);
+  }, [enabled, fallbackMessage, queryKey, requestVersion]);
 
   const isCurrentQuery = state.queryKey === queryKey;
   const data = enabled && isCurrentQuery ? state.data : null;
   const error = enabled && isCurrentQuery ? state.error : null;
   const loading = enabled && !isCurrentQuery;
+  const successToken = enabled && isCurrentQuery ? state.successToken : null;
+  const retry = () => {
+    setState((current) =>
+      current.queryKey === queryKey
+        ? {
+            data: null,
+            error: null,
+            queryKey: null,
+            successToken: null,
+          }
+        : current
+    );
+    setRequestVersion((current) => current + 1);
+  };
 
-  return { data, error, loading };
+  return { data, error, loading, retry, successToken };
 }
 
 export function useOverallReport(queryString: string, enabled: boolean): LoadingState<OverallReportPayload> {

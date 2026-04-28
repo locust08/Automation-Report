@@ -3,6 +3,7 @@
 import { useMemo } from "react";
 
 import { OverallCampaignGroupsTable } from "@/components/reporting/campaign-table";
+import { ReportSuccessScreen } from "@/components/reporting/report-loading-screen";
 import { ReportHeaderMonthPicker } from "@/components/reporting/report-header-month-picker";
 import { MetricSection } from "@/components/reporting/metric-grid";
 import { ReportFiltersBar } from "@/components/reporting/report-filters-bar";
@@ -19,6 +20,7 @@ import {
 } from "@/components/reporting/use-report-filters";
 import { useOverallReport } from "@/components/reporting/use-report-data";
 import { useScreenshotMode } from "@/components/reporting/use-screenshot-mode";
+import { useReportReadyTransition } from "@/components/reporting/use-report-ready-transition";
 
 export function OverallPageClient({
   initialFilters,
@@ -51,7 +53,13 @@ export function OverallPageClient({
     filters.startDate,
   ]);
 
-  const { data, error, loading } = useOverallReport(queryString, hasAccountId);
+  const { data, error, loading, retry, successToken } = useOverallReport(queryString, hasAccountId);
+  const overallReady =
+    hasAccountId && !loading && !error && Boolean(data) && (data?.warnings.length ?? 0) === 0;
+  const { showReadyState } = useReportReadyTransition({
+    ready: overallReady,
+    transitionKey: successToken,
+  });
 
   const forwardQuery = useMemo(() => {
     const params = new URLSearchParams(queryString);
@@ -68,10 +76,16 @@ export function OverallPageClient({
   if (hasAccountId && loading) {
     return (
       <ReportLoadingState
+        kind="overall"
         message="Loading overview data from Meta and Google APIs..."
         fullPage
+        onRetry={retry}
       />
     );
+  }
+
+  if (showReadyState) {
+    return <ReportSuccessScreen kind="overall" fullPage />;
   }
 
   return (
@@ -110,10 +124,13 @@ export function OverallPageClient({
     >
       <div className="space-y-5">
         {!hasAccountId ? (
-          <ReportErrorState message="Enter at least one account ID to request data from Meta Ads Manager and Google Ads Manager." />
+          <ReportErrorState
+            kind="overall"
+            message="Enter at least one account ID to request data from Meta Ads Manager and Google Ads Manager."
+          />
         ) : null}
 
-        {error ? <ReportErrorState message={error} /> : null}
+        {error ? <ReportErrorState kind="overall" message={error} onRetry={retry} /> : null}
 
         {data ? (
           <>

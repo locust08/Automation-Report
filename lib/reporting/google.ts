@@ -102,6 +102,15 @@ interface GoogleAdsResult {
     biddingStrategyType?: string;
     startDate?: string;
     endDate?: string;
+    networkSettings?: {
+      targetGoogleSearch?: boolean;
+      targetSearchNetwork?: boolean;
+      targetPartnerSearchNetwork?: boolean;
+      targetContentNetwork?: boolean;
+    };
+  };
+  campaignBudget?: {
+    amountMicros?: string | number;
   };
   adGroup?: {
     id?: string;
@@ -109,6 +118,27 @@ interface GoogleAdsResult {
     status?: string;
     type?: string;
     cpcBidMicros?: string | number;
+  };
+  campaignCriterion?: {
+    criterionId?: string;
+    type?: string;
+    negative?: boolean;
+    status?: string;
+    location?: {
+      geoTargetConstant?: string;
+    };
+  };
+  geoTargetConstant?: {
+    resourceName?: string;
+    id?: string | number;
+    name?: string;
+    canonicalName?: string;
+    countryCode?: string;
+    targetType?: string;
+    status?: string;
+  };
+  languageConstant?: {
+    name?: string;
   };
   adGroupAd?: {
     status?: string;
@@ -250,7 +280,9 @@ interface GooglePreviewBlockDefinition {
     | "preview-keywords"
     | "preview-ad-group-assets"
     | "preview-campaign-assets"
-    | "preview-customer-assets";
+    | "preview-customer-assets"
+    | "preview-campaign-locations"
+    | "preview-campaign-languages";
   required: boolean;
   queries: string[];
 }
@@ -661,6 +693,24 @@ export async function fetchGooglePreviewData(
         context,
         input
       ),
+      runGooglePreviewCampaignLocationBlock(
+        {
+          label: "preview-campaign-locations",
+          required: false,
+          queries: buildGooglePreviewCampaignLocationQueries(),
+        },
+        context,
+        input
+      ),
+      runGoogleOptionalPreviewBlock(
+        {
+          label: "preview-campaign-languages",
+          required: false,
+          queries: buildGooglePreviewCampaignLanguageQueries(),
+        },
+        context,
+        input
+      ),
     ]);
 
     const optionalWarnings = optionalResults.flatMap((result) => result.warnings);
@@ -677,6 +727,10 @@ export async function fetchGooglePreviewData(
         adGroupAssetResults: optionalResults[1].results,
         campaignAssetResults: optionalResults[2].results,
         customerAssetResults: optionalResults[3].results,
+        campaignCriterionResults: [
+          ...optionalResults[4].results,
+          ...optionalResults[5].results,
+        ],
       }),
       warnings: optionalWarnings,
       fatalError: null,
@@ -1202,6 +1256,125 @@ async function runGoogleOptionalPreviewBlock(
   }
 }
 
+async function runGooglePreviewCampaignLocationBlock(
+  block: GooglePreviewBlockDefinition,
+  context: GooglePreviewContext,
+  credentials: Omit<GoogleFetchInput, "customerId" | "loginCustomerId">
+): Promise<{
+  results: GoogleAdsResult[];
+  warnings: GooglePreviewWarning[];
+  diagnostic: GooglePreviewBlockDiagnostic;
+}> {
+  const gaql = block.queries[0];
+  logGooglePreviewInfo(
+    `[google-preview] label=${block.label} required=${block.required} accountId=${context.customerId} customerId=${context.customerId} loginCustomerId=${context.loginCustomerId ?? "(none)"} gaql=${JSON.stringify(compactWhitespace(gaql))}`
+  );
+
+  try {
+    const criteriaResults = await fetchGoogleAdsResultsWithFallback({
+      customerId: context.customerId,
+      apiVersion: credentials.apiVersion,
+      developerToken: credentials.developerToken,
+      accessToken: credentials.accessToken,
+      refreshToken: credentials.refreshToken,
+      clientId: credentials.clientId,
+      clientSecret: credentials.clientSecret,
+      loginCustomerId: context.loginCustomerId,
+      queries: block.queries,
+    });
+
+    const resourceNames = collectCampaignLocationResourceNames(criteriaResults);
+    let warning: GooglePreviewWarning | null = null;
+    let geoTargetsByResourceName = new Map<string, GoogleAdsResult["geoTargetConstant"]>();
+
+    if (resourceNames.length > 0) {
+      try {
+        geoTargetsByResourceName = await fetchGoogleGeoTargetConstantsByResourceName({
+          customerId: context.customerId,
+          apiVersion: credentials.apiVersion,
+          developerToken: credentials.developerToken,
+          accessToken: credentials.accessToken,
+          refreshToken: credentials.refreshToken,
+          clientId: credentials.clientId,
+          clientSecret: credentials.clientSecret,
+          loginCustomerId: context.loginCustomerId,
+          resourceNames,
+        });
+      } catch (error) {
+        const requestError = asGoogleAdsRequestError(error);
+        const reason =
+          requestError?.message ??
+          (error instanceof Error ? error.message : "Unknown Google Ads geo target lookup failure.");
+        console.warn(
+          `[google-preview] label=${block.label} required=${block.required} accountId=${context.customerId} customerId=${context.customerId} loginCustomerId=${context.loginCustomerId ?? "(none)"} requestId=${requestError?.requestId ?? "(none)"} errorCode=${requestError?.errorCode ?? "(none)"} category=${requestError?.category ?? "unknown"} message=${JSON.stringify(reason)}`
+        );
+        warning = createGooglePreviewWarning({
+          label: block.label,
+          context,
+          reason,
+          category: requestError?.category ?? "unknown",
+          requestId: requestError?.requestId ?? null,
+          errorCode: requestError?.errorCode ?? null,
+        });
+      }
+    }
+
+    const results = attachGeoTargetConstants(criteriaResults, geoTargetsByResourceName);
+    const status = results.length === 0 ? "empty" : "passed";
+    const message =
+      results.length === 0 ? `Optional Google Ads preview block "${block.label}" returned zero rows.` : null;
+    logGooglePreviewInfo(
+      `[google-preview] label=${block.label} required=${block.required} accountId=${context.customerId} customerId=${context.customerId} loginCustomerId=${context.loginCustomerId ?? "(none)"} requestId=(success) status=${status} rowCount=${results.length}`
+    );
+
+    return {
+      results,
+      warnings: warning ? [warning] : [],
+      diagnostic: {
+        label: block.label,
+        required: block.required,
+        status,
+        customerId: context.customerId,
+        loginCustomerId: context.loginCustomerId,
+        rowCount: results.length,
+        requestId: warning?.requestId ?? null,
+        errorCode: warning?.errorCode ?? null,
+        message: warning?.reason ?? message,
+      },
+    };
+  } catch (error) {
+    const requestError = asGoogleAdsRequestError(error);
+    logGooglePreviewBlockFailure(block, context, gaql, requestError, error);
+
+    const warning = createGooglePreviewWarning({
+      label: block.label,
+      context,
+      reason:
+        requestError?.message ??
+        (error instanceof Error ? error.message : "Unknown Google Ads optional block failure."),
+      category: requestError?.category ?? "unknown",
+      requestId: requestError?.requestId ?? null,
+      errorCode: requestError?.errorCode ?? null,
+    });
+
+    return {
+      results: [],
+      warnings: [warning],
+      diagnostic: {
+        label: block.label,
+        required: block.required,
+        status: "failed",
+        customerId: context.customerId,
+        loginCustomerId: context.loginCustomerId,
+        rowCount: 0,
+        requestId: warning.requestId,
+        errorCode: warning.errorCode,
+        message: warning.reason,
+      },
+    };
+  }
+}
+
 async function resolveVerifiedGoogleAdsContext(
   input: Omit<GoogleFetchInput, "startDate" | "endDate"> & { accessPath?: string | null }
 ): Promise<GooglePreviewContext> {
@@ -1305,7 +1478,10 @@ function buildGooglePreviewHierarchyData(input: {
   adGroupAssetResults: GoogleAdsResult[];
   campaignAssetResults: GoogleAdsResult[];
   customerAssetResults: GoogleAdsResult[];
+  campaignCriterionResults: GoogleAdsResult[];
 }): PreviewCampaignNode[] {
+  const locationsByCampaign = collectCampaignCriterionNames(input.campaignCriterionResults, "LOCATION");
+  const languagesByCampaign = collectCampaignCriterionNames(input.campaignCriterionResults, "LANGUAGE");
   const visibleCampaigns = input.campaignResults
     .map((result) => {
       const campaignId = result.campaign?.id?.trim();
@@ -1321,6 +1497,10 @@ function buildGooglePreviewHierarchyData(input: {
         details: compactDetailFields([
           detailField("Campaign ID", campaignId),
           detailField("Channel", humanizeEnum(result.campaign?.advertisingChannelType)),
+          detailField("Networks", formatGoogleCampaignNetworks(result)),
+          detailField("Budget", formatMicrosCurrency(result.campaignBudget?.amountMicros)),
+          detailField("Locations", joinDetailValues(locationsByCampaign.get(campaignId))),
+          detailField("Languages", joinDetailValues(languagesByCampaign.get(campaignId))),
           detailField("Serving Status", humanizeEnum(result.campaign?.servingStatus)),
           detailField("Bidding Strategy", humanizeEnum(result.campaign?.biddingStrategyType)),
           detailField("Start Date", result.campaign?.startDate),
@@ -1639,6 +1819,43 @@ async function fetchGoogleAdsResultsWithFallback(
   }
 
   throw new Error("Google Ads API request failed for all fallback queries.");
+}
+
+async function fetchGoogleGeoTargetConstantsByResourceName(
+  input: Omit<GoogleFetchInput, "startDate" | "endDate"> & { resourceNames: string[] }
+): Promise<Map<string, GoogleAdsResult["geoTargetConstant"]>> {
+  const geoTargetsByResourceName = new Map<string, GoogleAdsResult["geoTargetConstant"]>();
+  const resourceNameChunks = chunkArray(input.resourceNames, 100);
+
+  for (const resourceNameChunk of resourceNameChunks) {
+    const query = buildGooglePreviewGeoTargetConstantQuery(resourceNameChunk);
+    logGooglePreviewInfo(
+      `[google-preview] label=preview-campaign-locations-geo-lookup required=false accountId=${input.customerId} customerId=${input.customerId} loginCustomerId=${input.loginCustomerId ?? "(none)"} gaql=${JSON.stringify(compactWhitespace(query))}`
+    );
+
+    const results = await fetchGoogleAdsResults({
+      customerId: input.customerId,
+      apiVersion: input.apiVersion,
+      developerToken: input.developerToken,
+      accessToken: input.accessToken,
+      refreshToken: input.refreshToken,
+      clientId: input.clientId,
+      clientSecret: input.clientSecret,
+      loginCustomerId: input.loginCustomerId,
+      query,
+    });
+
+    results.forEach((result) => {
+      const resourceName = result.geoTargetConstant?.resourceName?.trim();
+      if (!resourceName) {
+        return;
+      }
+
+      geoTargetsByResourceName.set(resourceName, result.geoTargetConstant);
+    });
+  }
+
+  return geoTargetsByResourceName;
 }
 
 async function executeGoogleAdsStreamRequest(input: {
@@ -2254,7 +2471,12 @@ function buildGooglePreviewCampaignQueries(startDate: string, endDate: string): 
         campaign.serving_status,
         campaign.bidding_strategy_type,
         campaign.start_date,
-        campaign.end_date
+        campaign.end_date,
+        campaign.network_settings.target_google_search,
+        campaign.network_settings.target_search_network,
+        campaign.network_settings.target_partner_search_network,
+        campaign.network_settings.target_content_network,
+        campaign_budget.amount_micros
       FROM campaign
       WHERE campaign.status = 'ENABLED'
       ORDER BY campaign.name
@@ -2319,6 +2541,62 @@ function buildGooglePreviewKeywordQueries(startDate: string, endDate: string): s
         AND ad_group.status != 'REMOVED'
         AND ad_group_criterion.status != 'REMOVED'
       ORDER BY campaign.id, ad_group.id, ad_group_criterion.criterion_id
+    `,
+  ];
+}
+
+function buildGooglePreviewCampaignLocationQueries(): string[] {
+  return [
+    `
+      SELECT
+        campaign.id,
+        campaign.name,
+        campaign_criterion.criterion_id,
+        campaign_criterion.type,
+        campaign_criterion.negative,
+        campaign_criterion.status,
+        campaign_criterion.location.geo_target_constant
+      FROM campaign_criterion
+      WHERE campaign.status = 'ENABLED'
+        AND campaign_criterion.type = 'LOCATION'
+        AND campaign_criterion.negative = FALSE
+        AND campaign_criterion.status != 'REMOVED'
+      ORDER BY campaign.id, campaign_criterion.type, campaign_criterion.criterion_id
+    `,
+  ];
+}
+
+function buildGooglePreviewGeoTargetConstantQuery(resourceNames: string[]): string {
+  const quotedResourceNames = resourceNames.map((resourceName) => `'${escapeGaqlString(resourceName)}'`);
+
+  return `
+    SELECT
+      geo_target_constant.resource_name,
+      geo_target_constant.id,
+      geo_target_constant.name,
+      geo_target_constant.canonical_name,
+      geo_target_constant.country_code,
+      geo_target_constant.target_type,
+      geo_target_constant.status
+    FROM geo_target_constant
+    WHERE geo_target_constant.resource_name IN (${quotedResourceNames.join(", ")})
+  `;
+}
+
+function buildGooglePreviewCampaignLanguageQueries(): string[] {
+  return [
+    `
+      SELECT
+        campaign.id,
+        campaign_criterion.criterion_id,
+        campaign_criterion.type,
+        campaign_criterion.negative,
+        language_constant.name
+      FROM campaign_criterion
+      WHERE campaign.status = 'ENABLED'
+        AND campaign_criterion.type = 'LANGUAGE'
+        AND campaign_criterion.negative = FALSE
+      ORDER BY campaign.id, campaign_criterion.type, campaign_criterion.criterion_id
     `,
   ];
 }
@@ -2525,6 +2803,20 @@ function compactWhitespace(value: string): string {
   return value.replace(/\s+/g, " ").trim();
 }
 
+function escapeGaqlString(value: string): string {
+  return value.replace(/\\/g, "\\\\").replace(/'/g, "\\'");
+}
+
+function chunkArray<T>(values: T[], chunkSize: number): T[][] {
+  const chunks: T[][] = [];
+
+  for (let index = 0; index < values.length; index += chunkSize) {
+    chunks.push(values.slice(index, index + chunkSize));
+  }
+
+  return chunks;
+}
+
 function normalizeCtr(ctr: number | string | undefined, impressions: number, clicks: number): number {
   const normalized = normalizePercent(ctr);
   if (normalized > 0) {
@@ -2594,6 +2886,117 @@ function formatMicrosCurrency(value: string | number | undefined): string | null
   }
 
   return `RM ${amount.toFixed(2)}`;
+}
+
+function joinDetailValues(values: string[] | undefined): string | null {
+  if (!values || values.length === 0) {
+    return null;
+  }
+
+  return values.join(", ");
+}
+
+function collectCampaignLocationResourceNames(results: GoogleAdsResult[]): string[] {
+  const resourceNames = new Set<string>();
+
+  results.forEach((result) => {
+    const resourceName = result.campaignCriterion?.location?.geoTargetConstant?.trim();
+    if (resourceName) {
+      resourceNames.add(resourceName);
+    }
+  });
+
+  return Array.from(resourceNames);
+}
+
+function attachGeoTargetConstants(
+  results: GoogleAdsResult[],
+  geoTargetsByResourceName: Map<string, GoogleAdsResult["geoTargetConstant"]>
+): GoogleAdsResult[] {
+  return results.map((result) => {
+    const resourceName = result.campaignCriterion?.location?.geoTargetConstant?.trim();
+    if (!resourceName) {
+      return result;
+    }
+
+    const geoTarget = geoTargetsByResourceName.get(resourceName);
+    const fallbackName = formatGeoTargetFallbackName(resourceName, result.campaignCriterion?.criterionId);
+
+    return {
+      ...result,
+      geoTargetConstant: {
+        resourceName,
+        id: result.campaignCriterion?.criterionId,
+        ...geoTarget,
+        name: geoTarget?.name?.trim() || geoTarget?.canonicalName?.trim() || fallbackName,
+      },
+    };
+  });
+}
+
+function formatGeoTargetFallbackName(resourceName: string, criterionId: string | undefined): string {
+  const resourceId = resourceName.split("/").pop()?.trim() || criterionId?.trim();
+  return resourceId ? `${resourceName} (${resourceId})` : resourceName;
+}
+
+function collectCampaignCriterionNames(
+  results: GoogleAdsResult[],
+  criterionType: "LOCATION" | "LANGUAGE"
+): Map<string, string[]> {
+  const namesByCampaign = new Map<string, string[]>();
+
+  results.forEach((result) => {
+    const campaignId = result.campaign?.id?.trim();
+    const type = result.campaignCriterion?.type?.trim();
+    if (!campaignId || type !== criterionType) {
+      return;
+    }
+
+    const name =
+      criterionType === "LOCATION"
+        ? result.geoTargetConstant?.name?.trim()
+        : result.languageConstant?.name?.trim();
+    if (!name) {
+      return;
+    }
+
+    const items = namesByCampaign.get(campaignId) ?? [];
+    if (!items.includes(name)) {
+      items.push(name);
+      namesByCampaign.set(campaignId, items);
+    }
+  });
+
+  return namesByCampaign;
+}
+
+function formatGoogleCampaignNetworks(result: GoogleAdsResult): string | null {
+  const labels: string[] = [];
+  const settings = result.campaign?.networkSettings;
+
+  if (settings?.targetGoogleSearch) {
+    labels.push("Google Search");
+  }
+  if (settings?.targetSearchNetwork || settings?.targetPartnerSearchNetwork) {
+    labels.push("Search Partners");
+  }
+  if (settings?.targetContentNetwork) {
+    labels.push("Display Network");
+  }
+
+  if (labels.length > 0) {
+    return labels.join(", ");
+  }
+
+  const channel = result.campaign?.advertisingChannelType?.trim();
+  if (channel === "SEARCH") {
+    return "Google Search";
+  }
+  if (channel === "DISPLAY") {
+    return "Display Network";
+  }
+
+  return humanizeEnum(channel);
 }
 
 function compactStrings(values: Array<string | undefined | null>): string[] {

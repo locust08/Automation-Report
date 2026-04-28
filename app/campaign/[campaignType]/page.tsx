@@ -10,7 +10,7 @@ export default async function CampaignTypePage({
 }) {
   const { campaignType } = await params;
   return (
-    <Suspense fallback={<ReportRouteLoading />}>
+    <Suspense fallback={<ReportRouteLoading kind="campaign" />}>
       <CampaignDashboard campaignType={campaignType} />
     </Suspense>
   );

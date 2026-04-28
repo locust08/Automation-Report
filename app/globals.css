@@ -149,49 +149,181 @@
 }
 
 @keyframes report-loading-orbit {
-  0%,
-  100% {
-    transform: translateY(0px) scale(1);
-  }
-  50% {
-    transform: translateY(-6px) scale(1.02);
-  }
-}
-
-@keyframes report-loading-shimmer {
   0% {
-    transform: translateX(-30%);
-    opacity: 0.25;
+    transform: rotate(0deg) scale(1);
   }
   50% {
-    opacity: 0.95;
+    transform: rotate(180deg) scale(1.015);
   }
   100% {
-    transform: translateX(30%);
-    opacity: 0.25;
+    transform: rotate(360deg) scale(1);
   }
 }
 
-@keyframes report-loading-step-dot {
+@keyframes report-loading-orbit-reverse {
+  0% {
+    transform: rotate(0deg);
+  }
+  100% {
+    transform: rotate(-360deg);
+  }
+}
+
+@keyframes report-loading-drift {
   0%,
   100% {
-    transform: scale(0.94);
-    box-shadow: 0 0 0 0 rgba(185, 28, 28, 0.08);
+    transform: translateY(0px);
+    opacity: 0.55;
   }
   50% {
-    transform: scale(1);
-    box-shadow: 0 0 0 8px rgba(185, 28, 28, 0.12);
+    transform: translateY(-5px);
+    opacity: 1;
   }
+}
+
+@keyframes report-loading-pulse {
+  0%,
+  100% {
+    transform: scale(1);
+    box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.1);
+  }
+  50% {
+    transform: scale(1.04);
+    box-shadow: 0 0 0 14px rgba(239, 68, 68, 0);
+  }
+}
+
+@keyframes report-loading-enter {
+  0% {
+    opacity: 0;
+    transform: translateY(14px);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes report-loading-copy-swap {
+  0% {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes report-loading-ping {
+  0% {
+    transform: scale(0.6);
+    opacity: 0.5;
+  }
+  100% {
+    transform: scale(1.7);
+    opacity: 0;
+  }
+}
+
+@keyframes report-success-ring {
+  0% {
+    transform: scale(0.92);
+    opacity: 0.35;
+  }
+  100% {
+    transform: scale(1.08);
+    opacity: 0;
+  }
+}
+
+@keyframes report-success-pop {
+  0% {
+    transform: scale(0.82);
+    opacity: 0;
+  }
+  65% {
+    transform: scale(1.05);
+    opacity: 1;
+  }
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+@keyframes report-success-spark {
+  0%,
+  100% {
+    transform: scale(0.8);
+    opacity: 0.35;
+  }
+  50% {
+    transform: scale(1.2);
+    opacity: 1;
+  }
+}
+
+.report-loading-enter {
+  animation: report-loading-enter 0.45s ease-out;
 }
 
 .report-loading-orbit {
-  animation: report-loading-orbit 4.2s ease-in-out infinite;
+  animation: report-loading-drift 4.6s ease-in-out infinite;
 }
 
-.report-loading-shimmer {
-  animation: report-loading-shimmer 2.6s ease-in-out infinite;
+.report-loading-arc {
+  animation: report-loading-orbit 3.8s linear infinite;
 }
 
-.report-loading-step-dot {
-  animation: report-loading-step-dot 1.8s ease-in-out infinite;
+.report-loading-arc-reverse {
+  animation: report-loading-orbit-reverse 5.8s linear infinite;
+}
+
+.report-loading-dots {
+  animation: report-loading-orbit 8.5s linear infinite;
+}
+
+.report-loading-core {
+  animation: report-loading-pulse 2.8s ease-in-out infinite;
+}
+
+.report-loading-step-active {
+  animation: report-loading-pulse 2.4s ease-in-out infinite;
+}
+
+.report-loading-copy-swap {
+  animation: report-loading-copy-swap 0.35s ease-out;
+}
+
+.report-loading-ping {
+  animation: report-loading-ping 1.8s ease-out infinite;
+}
+
+.report-success-halo {
+  animation: report-success-ring 1.6s ease-out infinite;
+}
+
+.report-success-ring {
+  animation: report-success-ring 1.8s ease-out infinite;
+}
+
+.report-success-ring-strong {
+  animation: report-success-ring 2.2s ease-out infinite 0.18s;
+}
+
+.report-success-core {
+  animation: report-success-pop 0.45s ease-out;
+}
+
+.report-success-check {
+  animation: report-success-pop 0.42s ease-out;
+}
+
+.report-success-spark {
+  animation: report-success-spark 1.9s ease-in-out infinite;
+}
+
+.report-success-ping {
+  animation: report-loading-ping 1.6s ease-out infinite;
 }

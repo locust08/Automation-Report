@@ -4,7 +4,7 @@ import {
   resolveGoogleAdsAccessPath,
 } from "@/lib/reporting/google-access-path";
 
-interface NotionPageProperty {
+export interface NotionPageProperty {
   type?: string;
   title?: Array<{ plain_text?: string }>;
   rich_text?: Array<{ plain_text?: string }>;
@@ -366,7 +366,10 @@ async function fetchGoogleAdAccountRecords(
   }
 }
 
-async function resolveNotionDataSourceId(config: NotionConfig): Promise<string> {
+async function resolveNotionDataSourceId(
+  config: NotionConfig,
+  options?: { log?: boolean }
+): Promise<string> {
   const cacheKey = `${config.databaseId}:${config.notionAccessToken}`;
   const cached = notionDataSourceIdCache.get(cacheKey);
   if (cached && cached.expiresAt > Date.now()) {
@@ -375,7 +378,9 @@ async function resolveNotionDataSourceId(config: NotionConfig): Promise<string> 
 
   const promise = (async () => {
   const endpoint = `${NOTION_API_BASE_URL}/databases/${config.databaseId}`;
-  console.info(`[notion] resolving_data_source database_id=${config.databaseId} endpoint=${endpoint}`);
+  if (options?.log !== false) {
+    console.info(`[notion] resolving_data_source database_id=${config.databaseId} endpoint=${endpoint}`);
+  }
 
   const response = await fetch(endpoint, {
     method: "GET",
@@ -445,9 +450,11 @@ async function resolveNotionDataSourceId(config: NotionConfig): Promise<string> 
     );
   }
 
-  console.info(
-    `[notion] resolved_data_source database_id=${config.databaseId} data_source_id=${dataSourceId}`
-  );
+  if (options?.log !== false) {
+    console.info(
+      `[notion] resolved_data_source database_id=${config.databaseId} data_source_id=${dataSourceId}`
+    );
+  }
 
   return dataSourceId;
   })();
@@ -473,10 +480,88 @@ interface NotionConfig {
   tokenFingerprint: string;
 }
 
-function resolveNotionConfig(input: {
+export interface NotionQueryPage {
+  id?: string;
+  properties?: Record<string, NotionPageProperty | undefined>;
+}
+
+export async function queryNotionDatabasePages(input: {
   notionAccessToken: string | null;
   notionDatabaseId: string | null;
-}): NotionConfig {
+  pageSize?: number;
+  filter?: Record<string, unknown>;
+}): Promise<NotionQueryPage[]> {
+  const notionConfig = resolveNotionConfig(
+    {
+      notionAccessToken: input.notionAccessToken,
+      notionDatabaseId: input.notionDatabaseId,
+    },
+    { log: false }
+  );
+  const dataSourceId = await resolveNotionDataSourceId(notionConfig, { log: false });
+  const pages: NotionQueryPage[] = [];
+  let nextCursor: string | null = null;
+
+  do {
+    const endpoint = `${NOTION_API_BASE_URL}/data_sources/${dataSourceId}/query`;
+    const response: Response = await fetch(endpoint, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${notionConfig.notionAccessToken}`,
+        "Content-Type": "application/json",
+        "Notion-Version": NOTION_API_VERSION,
+      },
+      body: JSON.stringify({
+        page_size: input.pageSize ?? 100,
+        start_cursor: nextCursor ?? undefined,
+        filter: input.filter,
+      }),
+      cache: "no-store",
+    });
+
+    const bodyText: string = await response.text().catch(() => "");
+    const json: NotionQueryResponse | null = parseNotionJson<NotionQueryResponse>(bodyText);
+
+    if (!response.ok) {
+      const body = json?.message ?? (bodyText.trim() || null);
+      if (response.status === 401) {
+        throw new NotionIntegrationError(
+          {
+            success: false,
+            stage: "notion_auth",
+            errorCode: "NOTION_TOKEN_INVALID",
+            message: "Notion rejected the configured bearer token.",
+          },
+          401
+        );
+      }
+
+      throw new NotionIntegrationError(
+        {
+          success: false,
+          stage: "notion_query",
+          errorCode: "NOTION_SMOKE_FAILED",
+          message:
+            body ?? `Notion API request failed with status ${response.status} while querying ${NOTION_DATABASE_LABEL}.`,
+        },
+        response.status
+      );
+    }
+
+    pages.push(...(json?.results ?? []));
+    nextCursor = json?.has_more ? json.next_cursor ?? null : null;
+  } while (nextCursor);
+
+  return pages;
+}
+
+function resolveNotionConfig(
+  input: {
+    notionAccessToken: string | null;
+    notionDatabaseId: string | null;
+  },
+  options?: { log?: boolean }
+): NotionConfig {
   const notionAccessToken = trimNotionEnvValue(input.notionAccessToken);
   const rawDatabaseId = trimNotionEnvValue(input.notionDatabaseId) ?? "";
   const hasToken = Boolean(notionAccessToken);
@@ -484,9 +569,11 @@ function resolveNotionConfig(input: {
   const tokenLength = notionAccessToken?.length ?? 0;
   const tokenFingerprint = maskTokenFingerprint(notionAccessToken);
 
-  console.info(
-    `[notion] config token_present=${hasToken} token_length=${tokenLength} token_fingerprint=${tokenFingerprint} database_id=${databaseId || "(missing)"}`
-  );
+  if (options?.log !== false) {
+    console.info(
+      `[notion] config token_present=${hasToken} token_length=${tokenLength} token_fingerprint=${tokenFingerprint} database_id=${databaseId || "(missing)"}`
+    );
+  }
 
   if (!hasToken) {
     throw new NotionIntegrationError(
@@ -603,7 +690,7 @@ function parseAdAccountRecord(page: {
 }): AdAccountRecord | null {
   const properties = page.properties ?? {};
   const accountId = normalizeOptionalGoogleCustomerId(
-    getPropertyText(properties["ID"]) ?? getPropertyText(properties["userDefined:ID"])
+    getNotionPropertyText(properties["ID"]) ?? getNotionPropertyText(properties["userDefined:ID"])
   );
 
   if (!page.id || !accountId) {
@@ -612,8 +699,8 @@ function parseAdAccountRecord(page: {
 
   return {
     accountId,
-    accountName: getPropertyText(properties["Account Name"]),
-    accessPath: getPropertyText(properties["Access Path"]),
+    accountName: getNotionPropertyText(properties["Account Name"]),
+    accessPath: getNotionPropertyText(properties["Access Path"]),
   };
 }
 
@@ -671,7 +758,7 @@ function matchGoogleAdAccountRecord(
   return recordsByAccountName.get(normalizedLookupTerm) ?? null;
 }
 
-function getPropertyText(property: NotionPageProperty | undefined): string | null {
+export function getNotionPropertyText(property: NotionPageProperty | undefined): string | null {
   if (!property || !property.type) {
     return null;
   }
@@ -702,6 +789,30 @@ function getPropertyText(property: NotionPageProperty | undefined): string | nul
     default:
       return null;
   }
+}
+
+export function getNotionPropertyBoolean(property: NotionPageProperty | undefined): boolean | null {
+  if (!property || !property.type) {
+    return null;
+  }
+
+  if (property.type === "checkbox") {
+    return property.checkbox ?? false;
+  }
+
+  if (property.type === "formula" && property.formula?.type === "boolean") {
+    return property.formula.boolean ?? false;
+  }
+
+  const text = getNotionPropertyText(property)?.trim().toLowerCase();
+  if (text === "true" || text === "yes") {
+    return true;
+  }
+  if (text === "false" || text === "no") {
+    return false;
+  }
+
+  return null;
 }
 
 function getFormulaText(property: NotionPageProperty["formula"]): string | null {

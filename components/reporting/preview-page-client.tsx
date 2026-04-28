@@ -4,6 +4,7 @@ import { useMemo } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 
 import { PreviewHierarchy } from "@/components/reporting/preview-hierarchy";
+import { ReportSuccessScreen } from "@/components/reporting/report-loading-screen";
 import { ReportDownloadButton } from "@/components/reporting/screenshot-mode-toggle";
 import { ReportHeaderMonthPicker } from "@/components/reporting/report-header-month-picker";
 import { ReportFiltersBar } from "@/components/reporting/report-filters-bar";
@@ -15,6 +16,7 @@ import {
   ReportWarnings,
 } from "@/components/reporting/report-state";
 import { usePreviewReport } from "@/components/reporting/use-report-data";
+import { useReportReadyTransition } from "@/components/reporting/use-report-ready-transition";
 import { useReportFilters } from "@/components/reporting/use-report-filters";
 import { formatGoogleAdsAccessPathErrorMessage } from "@/lib/reporting/google-access-path";
 import { resolvePreviewEntry } from "@/lib/reporting/preview-selection";
@@ -50,7 +52,7 @@ export function PreviewPageClient() {
     filters.startDate,
   ]);
 
-  const { data, error, loading } = usePreviewReport(queryString, hasAccountId);
+  const { data, error, loading, retry, successToken } = usePreviewReport(queryString, hasAccountId);
   const metaFatalError = data?.metaFatalErrors?.[0] ?? null;
   const googleFatalError = data?.googleFatalErrors?.[0] ?? null;
   const previewResolution = useMemo(
@@ -71,6 +73,21 @@ export function PreviewPageClient() {
   const title = `${data?.companyName ?? "Company Name"} Campaign Preview`;
   const dateLabel =
     data?.dateRange.currentLabel ?? `${filters.startDate} - ${filters.endDate}`;
+  const previewReady =
+    hasAccountId &&
+    !loading &&
+    !error &&
+    Boolean(data) &&
+    (data?.warnings.length ?? 0) === 0 &&
+    !metaFatalError &&
+    !googleFatalError &&
+    previewResolution?.status === "ready" &&
+    Boolean(previewResolution.section) &&
+    Boolean(previewResolution.campaign);
+  const { showReadyState } = useReportReadyTransition({
+    ready: previewReady,
+    transitionKey: successToken,
+  });
 
   function handleCampaignChange(next: {
     platform: "meta" | "google";
@@ -98,10 +115,16 @@ export function PreviewPageClient() {
   if (hasAccountId && loading) {
     return (
       <ReportLoadingState
+        kind="preview"
         message="Loading live Google Ads and Meta Ads hierarchy..."
         fullPage
+        onRetry={retry}
       />
     );
+  }
+
+  if (showReadyState) {
+    return <ReportSuccessScreen kind="preview" fullPage />;
   }
 
   return (
@@ -140,21 +163,27 @@ export function PreviewPageClient() {
     >
       <div className="space-y-5">
         {!hasAccountId ? (
-          <ReportErrorState message="Enter at least one account ID to open the read-only campaign preview." />
+          <ReportErrorState
+            kind="preview"
+            message="Enter at least one account ID to open the read-only campaign preview."
+          />
         ) : null}
 
-        {error ? <ReportErrorState message={error} /> : null}
+        {error ? <ReportErrorState kind="preview" message={error} onRetry={retry} /> : null}
 
         {data && metaFatalError ? (
           <ReportErrorState
+            kind="preview"
             message={`Required Meta block failed: [${metaFatalError.label}] fields=${metaFatalError.fields.join(",")} code=${
               metaFatalError.errorCode ?? "n/a"
             } subcode=${metaFatalError.errorSubcode ?? "n/a"} message=${metaFatalError.message}`}
+            onRetry={retry}
           />
         ) : null}
 
         {data && googleFatalError ? (
           <ReportErrorState
+            kind="preview"
             message={
               googleFatalError.code === "google-account-resolution-failed"
                 ? formatGoogleAdsAccessPathErrorMessage({
@@ -164,7 +193,7 @@ export function PreviewPageClient() {
                     fallbackUsed: googleFatalError.fallbackUsed,
                     errorCode: googleFatalError.errorCode ?? "UNKNOWN",
                     errorMessage:
-                      googleFatalError.errorMessage ??
+                    googleFatalError.errorMessage ??
                       googleFatalError.reason ??
                       googleFatalError.message,
                   })
@@ -172,6 +201,7 @@ export function PreviewPageClient() {
                     googleFatalError.errorCode ?? "n/a"
                   } message=${googleFatalError.message}`
             }
+            onRetry={retry}
           />
         ) : null}
 
@@ -179,7 +209,10 @@ export function PreviewPageClient() {
           <>
             <ReportWarnings warnings={data.warnings} />
             {previewResolution?.status === "invalid-campaign" ? (
-              <ReportErrorState message={previewResolution.message ?? "The selected campaign is invalid."} />
+              <ReportErrorState
+                kind="preview"
+                message={previewResolution.message ?? "The selected campaign is invalid."}
+              />
             ) : null}
             {previewResolution?.status === "empty" ? (
               <ReportEmptyState

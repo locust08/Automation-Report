@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import type { ReactNode } from "react";
 import { useMemo, useState } from "react";
 import {
@@ -8,10 +9,18 @@ import {
   ChevronLeftIcon,
   ChevronDownIcon,
   ChevronRightIcon,
+  EllipsisVerticalIcon,
   ExternalLinkIcon,
+  FileTextIcon,
   FolderIcon,
+  ImageIcon,
   LayoutPanelLeftIcon,
+  Link2Icon,
   MegaphoneIcon,
+  MonitorIcon,
+  SearchIcon,
+  Settings2Icon,
+  SmartphoneIcon,
 } from "lucide-react";
 
 import {
@@ -170,11 +179,6 @@ function GoogleAdsPreviewWorkspace({
     selectChild,
     selectAd,
   } = usePreviewSelection(section, initialCampaignId, onCampaignChange);
-  const detailFields = [
-    ...(selectedCampaign?.details ?? []),
-    ...(selectedChild?.details ?? []),
-    ...(selectedAd?.details ?? []),
-  ];
   const previewSlides = useMemo(() => buildGooglePreviewSlides(selectedAd), [selectedAd]);
   const adGroupCount = section.campaigns.reduce((count, campaign) => count + campaign.children.length, 0);
   const adCount = section.campaigns.reduce(
@@ -182,193 +186,644 @@ function GoogleAdsPreviewWorkspace({
       count + campaign.children.reduce((childCount, adGroup) => childCount + adGroup.ads.length, 0),
     0
   );
+  const selectedCampaignDetails = selectedCampaign?.details ?? [];
+  const selectedChildDetails = selectedChild?.details ?? [];
+  const selectedAdDetails = selectedAd?.details ?? [];
+  const campaignOverviewFields = [
+    { label: "Campaign status", value: selectedCampaign?.status || "Unknown" },
+    { label: "Networks", value: getDetailFieldValue(selectedCampaignDetails, "Networks") },
+    { label: "Budget", value: getDetailFieldValue(selectedCampaignDetails, "Budget") },
+    { label: "Locations", value: getDetailFieldValue(selectedCampaignDetails, "Locations") },
+    { label: "Languages", value: getDetailFieldValue(selectedCampaignDetails, "Languages") },
+    { label: "Channel", value: getDetailFieldValue(selectedCampaignDetails, "Channel") },
+    { label: "Serving status", value: getDetailFieldValue(selectedCampaignDetails, "Serving Status") },
+    { label: "Bidding strategy", value: getDetailFieldValue(selectedCampaignDetails, "Bidding Strategy") },
+    { label: "Start date", value: getDetailFieldValue(selectedCampaignDetails, "Start Date") },
+    { label: "End date", value: getDetailFieldValue(selectedCampaignDetails, "End Date") },
+    { label: "Ad group status", value: selectedChild?.status || "Unknown" },
+    { label: "Ad status", value: selectedAd?.status || "Unknown" },
+  ];
+  const advancedGroups = [
+    { title: "Campaign", fields: selectedCampaignDetails },
+    { title: "Ad Group", fields: selectedChildDetails },
+    { title: "Ad", fields: selectedAdDetails },
+  ].filter((group) => group.fields.length > 0);
 
   return (
-    <section className="overflow-hidden rounded-[36px] border border-[#d5dae3] bg-white shadow-sm">
-      <div className="border-b border-[#dbe3ee] bg-[#eaf2ff] px-4 py-4 sm:px-6">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="min-w-0 space-y-2">
-            <div className="flex items-center gap-3">
+    <section className="space-y-6">
+      <div className="rounded-[32px] border border-[#dbe2ea] bg-white p-6 shadow-[0_18px_55px_rgba(15,23,42,0.05)]">
+        <div className="flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
+          <div className="min-w-0">
+            <div className="flex items-center gap-4">
               <GoogleMark />
               <div className="min-w-0">
-                <h2 className="truncate text-2xl font-semibold text-[#202124]">Google Ads Preview</h2>
-                <p className="text-sm text-[#5f6368]">
-                  Use the Google Ads asset editor style for campaign, ad group, and ad preview.
+                <h2 className="truncate text-[2rem] font-semibold tracking-[-0.03em] text-[#1f2937]">
+                  Google Ads Preview
+                </h2>
+                <p className="mt-1 text-base text-[#5f6368]">
+                  Review campaign setup, ad assets, and live search preview from the Google Ads hierarchy.
                 </p>
               </div>
             </div>
-            <div className="flex flex-wrap gap-2">
+            <div className="mt-5 flex flex-wrap gap-2">
               <MetricPill label="Campaigns" value={section.campaigns.length} accent="blue" />
               <MetricPill label="Ad Groups" value={adGroupCount} accent="green" />
               <MetricPill label="Ads" value={adCount} accent="amber" />
             </div>
-            <div className="flex flex-wrap items-center gap-2 text-sm text-[#3c4043]">
-              <span className="font-semibold text-[#202124]">Campaign:</span>
-              <span>{selectedCampaign?.name || "Campaign"}</span>
-              <span>/</span>
-              <span className="font-semibold text-[#202124]">Ad group:</span>
-              <span>{selectedChild?.name || "Ad Group"}</span>
-            </div>
-            <div className="flex flex-wrap items-center gap-2 text-sm text-[#5f6368]">
-              <span className="font-semibold text-[#202124]">Keywords:</span>
-              {selectedAd?.keywords && selectedAd.keywords.length > 0 ? (
-                <span>{selectedAd.keywords.join(", ")}</span>
-              ) : (
-                <span>No keywords available</span>
-              )}
-            </div>
           </div>
-          <div className="rounded-2xl border border-[#c7d5f2] bg-white px-4 py-3 text-sm text-[#3c4043] shadow-sm">
-            <p className="font-semibold text-[#202124]">Google template</p>
-            <p className="mt-1 max-w-[18rem]">This section follows the Google Ads UI, not the Meta UI.</p>
+          <div className="rounded-[24px] border border-[#edf1f5] bg-[#f8fafc] px-5 py-4">
+            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#64748b]">Selected path</p>
+            <p className="mt-2 max-w-[420px] text-sm leading-6 text-[#334155]">
+              <span className="font-semibold text-[#0f172a]">{selectedCampaign?.name || "Campaign"}</span>
+              {" / "}
+              <span className="font-semibold text-[#0f172a]">{selectedChild?.name || "Ad Group"}</span>
+              {" / "}
+              <span className="font-semibold text-[#0f172a]">{selectedAd?.name || "Ad"}</span>
+            </p>
           </div>
         </div>
       </div>
 
-      <div className="grid gap-0 lg:grid-cols-[minmax(0,1fr)_440px] xl:grid-cols-[minmax(0,1fr)_460px]">
-        <div className="border-b border-[#e5e7eb] bg-[#fcfcfd] p-4 lg:border-b-0 lg:border-r lg:p-5">
-          <div className="space-y-4">
-            <div className="grid gap-4 xl:grid-cols-3">
-              <SelectionPicker
-                title="Campaign"
-                icon={<FolderIcon className="size-4" />}
-                items={section.campaigns}
-                selectedId={selectedCampaign?.id ?? ""}
-                selectedLabel={selectedCampaign?.name ?? "Choose campaign"}
-                onSelect={selectCampaign}
-              />
-              <SelectionPicker
-                title="Ad Group"
-                icon={<LayoutPanelLeftIcon className="size-4" />}
-                items={children}
-                selectedId={selectedChild?.id ?? ""}
-                selectedLabel={selectedChild?.name ?? "Choose ad group"}
-                onSelect={selectChild}
-                emptyMessage="No ad groups were returned for the selected campaign."
-              />
-              <SelectionPicker
-                title="Ad"
-                icon={<MegaphoneIcon className="size-4" />}
-                items={ads}
-                selectedId={selectedAd?.id ?? ""}
-                selectedLabel={selectedAd?.name ?? "Choose ad"}
-                onSelect={selectAd}
-                emptyMessage="No ads were returned for the selected ad group."
-              />
+      <div className="grid gap-4 xl:grid-cols-3">
+        <SelectionPicker
+          title="Campaign"
+          icon={<FolderIcon className="size-4" />}
+          items={section.campaigns}
+          selectedId={selectedCampaign?.id ?? ""}
+          selectedLabel={selectedCampaign?.name ?? "Choose campaign"}
+          onSelect={selectCampaign}
+        />
+        <SelectionPicker
+          title="Ad Group"
+          icon={<LayoutPanelLeftIcon className="size-4" />}
+          items={children}
+          selectedId={selectedChild?.id ?? ""}
+          selectedLabel={selectedChild?.name ?? "Choose ad group"}
+          onSelect={selectChild}
+          emptyMessage="No ad groups were returned for the selected campaign."
+        />
+        <SelectionPicker
+          title="Ad"
+          icon={<MegaphoneIcon className="size-4" />}
+          items={ads}
+          selectedId={selectedAd?.id ?? ""}
+          selectedLabel={selectedAd?.name ?? "Choose ad"}
+          onSelect={selectAd}
+          emptyMessage="No ads were returned for the selected ad group."
+        />
+      </div>
+
+      {children.length === 0 ? <EmptyState message="No ad groups are available under the selected campaign." /> : null}
+
+      <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_420px]">
+        <div className="space-y-6">
+          <GoogleSectionCard
+            title="Campaign Overview"
+            subtitle="Live campaign metadata from the selected Google Ads entities."
+            icon={<BarChart3Icon className="size-6" />}
+            badge={selectedCampaign?.status || "Unknown"}
+            badgeTone={selectedCampaign?.status === "Enabled" ? "green" : "slate"}
+          >
+            <div className="grid overflow-hidden rounded-[24px] border border-[#e5e7eb] md:grid-cols-2">
+              {campaignOverviewFields.map((field, index) => (
+                <div
+                  key={field.label}
+                  className={`px-5 py-4 border-[#e5e7eb] ${
+                    index < campaignOverviewFields.length - 2 ? "border-b" : ""
+                  } ${index % 2 === 0 ? "border-r" : ""}`}
+                >
+                  <p className="text-sm text-[#6b7280]">{field.label}</p>
+                  <p className="mt-2 text-xl font-semibold tracking-[-0.02em] text-[#0f172a]">
+                    {field.value || "Not available"}
+                  </p>
+                </div>
+              ))}
             </div>
+          </GoogleSectionCard>
 
-            {children.length === 0 ? (
-              <EmptyState message="No ad groups are available under the selected campaign." />
-            ) : null}
+          <GoogleSectionCard
+            title="Ad Content"
+            subtitle="Responsive Search Ad assets from the selected ad."
+            icon={<FileTextIcon className="size-6" />}
+          >
+            <div className="space-y-5">
+              <div>
+                <p className="text-sm font-semibold text-[#111827]">Final URL</p>
+                <div className="mt-2 flex items-center justify-between gap-3 rounded-[18px] border border-[#d7dee7] bg-white px-4 py-3">
+                  <p className="min-w-0 break-all text-base text-[#1f2937]">
+                    {selectedAd?.finalUrl || "No final URL available"}
+                  </p>
+                  {selectedAd?.finalUrl ? (
+                    <a
+                      href={selectedAd.finalUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="shrink-0 text-[#5f6368] transition hover:text-[#1a73e8]"
+                      aria-label="Open final URL"
+                    >
+                      <ExternalLinkIcon className="size-6" />
+                    </a>
+                  ) : null}
+                </div>
+              </div>
 
-            <AssetCard title="Final URL" subtitle="This will be used to suggest assets for your ad">
-              <ValueBox value={selectedAd?.finalUrl || "No final URL available"} />
-            </AssetCard>
-
-            <AssetCard title="Display path" subtitle="Preview URL path for search ads">
-              <div className="space-y-3">
-                <p className="text-sm text-[#5f6368]">{getDisplayDomain(selectedAd)}</p>
-                <div className="flex gap-2">
+              <div>
+                <p className="text-sm font-semibold text-[#111827]">Display Path</p>
+                <div className="mt-2 flex flex-wrap items-center gap-3 text-lg text-[#475569]">
+                  <span>{getDisplayDomain(selectedAd)}</span>
                   {(selectedAd?.displayPathParts ?? []).length > 0 ? (
                     selectedAd!.displayPathParts!.map((part, index) => (
-                      <ValueBox key={`${part}-${index}`} value={part} compact />
+                      <div key={`${part}-${index}`} className="flex items-center gap-3">
+                        <span>/</span>
+                        <span className="font-medium text-[#2563eb]">{part}</span>
+                      </div>
                     ))
                   ) : (
-                    <ValueBox value="No display path" compact />
+                    <span className="text-sm text-[#94a3b8]">No display path</span>
                   )}
                 </div>
               </div>
-            </AssetCard>
 
-            <AssetCard
-              title={`Headlines ${selectedAd?.headlines?.length ?? 0}/15`}
-              subtitle="Ideas based on your website and existing ads"
-            >
-              <ChipList
-                items={selectedAd?.headlines?.map((headline) => headline.text) ?? []}
-                emptyLabel="No headlines returned"
-              />
-            </AssetCard>
+              <div>
+                <p className="text-sm font-semibold text-[#111827]">
+                  Headlines {selectedAd?.headlines?.length ?? 0}/15
+                </p>
+                <div className="mt-2 flex flex-wrap gap-3">
+                  {(selectedAd?.headlines?.map((headline) => headline.text) ?? []).length > 0 ? (
+                    selectedAd!.headlines!.map((headline, index) => (
+                      <KeywordChip key={`${headline.text}-${index}`} value={headline.text} />
+                    ))
+                  ) : (
+                    <ValueBox value="No headlines returned" />
+                  )}
+                </div>
+              </div>
 
-            <AssetCard
-              title={`Descriptions ${selectedAd?.descriptions?.length ?? 0}/4`}
-              subtitle="Match the screenshots by showing the ad copy stack"
-            >
-              <StackList
-                items={selectedAd?.descriptions?.map((description) => description.text) ?? []}
-                emptyLabel="No descriptions returned"
-              />
-            </AssetCard>
+              <div>
+                <p className="text-sm font-semibold text-[#111827]">
+                  Descriptions {selectedAd?.descriptions?.length ?? 0}/4
+                </p>
+                <div className="mt-2 space-y-3">
+                  {(selectedAd?.descriptions?.map((description) => description.text) ?? []).length > 0 ? (
+                    selectedAd!.descriptions!.map((description, index) => (
+                      <ValueBox key={`${description.text}-${index}`} value={description.text} />
+                    ))
+                  ) : (
+                    <ValueBox value="No descriptions returned" />
+                  )}
+                </div>
+              </div>
+            </div>
+          </GoogleSectionCard>
 
-            <AssetCard title="Images" subtitle="Add images to your campaign">
-              <ImageGrid images={selectedAd?.images ?? []} />
-            </AssetCard>
-
-            <AssetCard
-              title="Business name"
-              subtitle="This name should match your URL or verified advertiser name"
-            >
-              <ValueBox value={selectedAd?.businessName || "No business name available"} />
-            </AssetCard>
-
-            <AssetCard title="Business logo" subtitle="Add business logo to your campaign">
-              {selectedAd?.businessLogoUrl ? (
-                <div className="flex items-center gap-3 rounded-2xl border border-[#dfe3eb] bg-white p-3">
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img
-                    src={selectedAd.businessLogoUrl}
-                    alt={selectedAd.businessName || "Business logo"}
-                    className="size-12 rounded-xl object-cover"
-                  />
-                  <div>
-                    <p className="text-sm font-semibold text-[#202124]">
-                      {selectedAd.businessName || "Business logo"}
-                    </p>
-                    <p className="text-xs text-[#5f6368]">Attached business logo</p>
+          <GoogleSectionCard
+            title="Assets"
+            subtitle="Images, business name, and business logo attached to the selected ad."
+            icon={<ImageIcon className="size-6" />}
+          >
+            <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_340px]">
+              <div>
+                <p className="text-sm font-semibold text-[#111827]">Images</p>
+                <div className="mt-2 rounded-[22px] border border-dashed border-[#cfd8e3] bg-[#fbfcfe] p-4">
+                  <ImageGrid images={selectedAd?.images ?? []} />
+                </div>
+              </div>
+              <div className="space-y-4">
+                <div>
+                  <p className="text-sm font-semibold text-[#111827]">Business Name</p>
+                  <div className="mt-2">
+                    <ValueBox value={selectedAd?.businessName || "Not available"} />
                   </div>
                 </div>
-              ) : (
-                <ValueBox value="No business logo available" />
-              )}
-            </AssetCard>
+                <div>
+                  <p className="text-sm font-semibold text-[#111827]">Business Logo</p>
+                  <div className="mt-2">
+                    {selectedAd?.businessLogoUrl ? (
+                      <div className="flex items-center gap-3 rounded-[18px] border border-[#d7dee7] bg-white px-4 py-3">
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img
+                          src={selectedAd.businessLogoUrl}
+                          alt={selectedAd.businessName || "Business logo"}
+                          className="size-12 rounded-xl object-cover"
+                        />
+                        <div className="min-w-0">
+                          <p className="truncate text-sm font-semibold text-[#111827]">
+                            {selectedAd.businessName || "Business logo"}
+                          </p>
+                          <p className="text-sm text-[#64748b]">Attached business logo</p>
+                        </div>
+                      </div>
+                    ) : (
+                      <ValueBox value="Not available" />
+                    )}
+                  </div>
+                </div>
+              </div>
+            </div>
+          </GoogleSectionCard>
 
-            <AssetCard
-              title="Sitelinks"
-              subtitle="Add links to your ads to take people to specific pages on your website"
-            >
-              <SitelinkList items={selectedAd?.sitelinks ?? []} />
-            </AssetCard>
+          <GoogleSectionCard
+            title="Site Links"
+            subtitle="Sitelink assets attached through customer, campaign, or ad group scope."
+            icon={<Link2Icon className="size-6" />}
+          >
+            <SitelinkGrid items={selectedAd?.sitelinks ?? []} />
+          </GoogleSectionCard>
 
-            <AssetCard title="Ad group" subtitle="Campaign hierarchy" compact>
-              <StackList
-                items={[selectedCampaign?.name, selectedChild?.name].filter(Boolean) as string[]}
-                emptyLabel="No hierarchy available"
-              />
-            </AssetCard>
-
-            <AssetCard title="Ad details" subtitle="Campaign and ad metadata" compact>
-              <DetailList fields={detailFields} />
-            </AssetCard>
-          </div>
+          <GoogleAdvancedDetails groups={advancedGroups} />
         </div>
 
-        <div className="bg-white px-4 py-5 sm:px-6 lg:px-5 lg:py-6 xl:px-6">
-          <div className="mb-4 flex items-center justify-between gap-3">
-            <h3 className="text-lg font-semibold text-[#202124]">Preview</h3>
-            <div className="flex gap-4 text-sm font-semibold text-[#1a73e8]">
-              <button type="button" className="hover:underline">
-                Share
-              </button>
-              <button type="button" className="hover:underline">
-                Preview ads
-              </button>
-            </div>
-          </div>
-          <GoogleMobilePreviewCarousel key={selectedAd?.id ?? "empty"} slides={previewSlides} />
+        <div className="xl:sticky xl:top-6 xl:self-start">
+          <GoogleSearchPreviewPanel
+            key={selectedAd?.id ?? "empty"}
+            slides={previewSlides}
+            keywordFallbacks={selectedAd?.keywords ?? []}
+          />
         </div>
       </div>
     </section>
   );
+}
+
+function GoogleSectionCard({
+  title,
+  subtitle,
+  icon,
+  badge,
+  badgeTone = "slate",
+  children,
+}: {
+  title: string;
+  subtitle?: string;
+  icon: ReactNode;
+  badge?: string;
+  badgeTone?: "slate" | "green";
+  children: ReactNode;
+}) {
+  const badgeClassName =
+    badgeTone === "green"
+      ? "border-[#ccebd5] bg-[#effaf2] text-[#1f9d47]"
+      : "border-[#e5e7eb] bg-[#f8fafc] text-[#475569]";
+
+  return (
+    <section className="rounded-[30px] border border-[#dfe6ee] bg-white p-6 shadow-[0_18px_55px_rgba(15,23,42,0.045)]">
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div className="flex items-start gap-4">
+          <div className="flex size-14 items-center justify-center rounded-[18px] border border-[#dbe7ff] bg-[#edf4ff] text-[#2563eb]">
+            {icon}
+          </div>
+          <div>
+            <h3 className="text-[1.9rem] font-semibold tracking-[-0.04em] text-[#0f172a]">{title}</h3>
+            {subtitle ? <p className="mt-1 text-base text-[#64748b]">{subtitle}</p> : null}
+          </div>
+        </div>
+        {badge ? (
+          <span className={`rounded-full border px-5 py-2 text-xl font-medium ${badgeClassName}`}>
+            {badge}
+          </span>
+        ) : null}
+      </div>
+      <div className="mt-6">{children}</div>
+    </section>
+  );
+}
+
+function KeywordChip({ value }: { value: string }) {
+  return (
+    <div className="rounded-[16px] border border-[#d7dee7] bg-white px-4 py-3 text-base text-[#1f2937] shadow-[0_6px_18px_rgba(15,23,42,0.03)]">
+      {value}
+    </div>
+  );
+}
+
+function SitelinkGrid({
+  items,
+}: {
+  items: Array<{
+    id: string;
+    linkText: string;
+    description1?: string | null;
+    description2?: string | null;
+    finalUrl?: string | null;
+  }>;
+}) {
+  if (items.length === 0) {
+    return <ValueBox value="No sitelinks available" />;
+  }
+
+  return (
+    <div className="grid gap-3 lg:grid-cols-2">
+      {items.map((item) => (
+        <a
+          key={item.id}
+          href={item.finalUrl || "#"}
+          target={item.finalUrl ? "_blank" : undefined}
+          rel={item.finalUrl ? "noreferrer" : undefined}
+          className="rounded-[18px] border border-[#dfe6ee] bg-white p-4 transition hover:border-[#bfdbfe]"
+        >
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <p className="text-lg font-semibold tracking-[-0.02em] text-[#1d4ed8]">{item.linkText}</p>
+              <p className="mt-2 text-sm leading-6 text-[#4b5563]">
+                {[item.description1, item.description2].filter(Boolean).join(" ") || "No sitelink description available"}
+              </p>
+            </div>
+            <ExternalLinkIcon className="mt-0.5 size-5 shrink-0 text-[#64748b]" />
+          </div>
+        </a>
+      ))}
+    </div>
+  );
+}
+
+function GoogleAdvancedDetails({
+  groups,
+}: {
+  groups: Array<{ title: string; fields: PreviewDetailField[] }>;
+}) {
+  return (
+    <details className="group rounded-[28px] border border-[#dfe6ee] bg-white shadow-[0_18px_55px_rgba(15,23,42,0.04)]">
+      <summary className="flex cursor-pointer list-none items-center justify-between gap-4 px-6 py-5">
+        <div className="flex items-center gap-4">
+          <div className="flex size-14 items-center justify-center rounded-[18px] border border-[#dbe7ff] bg-[#edf4ff] text-[#2563eb]">
+            <Settings2Icon className="size-6" />
+          </div>
+          <div>
+            <h3 className="text-[1.9rem] font-semibold tracking-[-0.04em] text-[#0f172a]">Advanced Details</h3>
+            <p className="mt-1 text-base text-[#64748b]">Campaign IDs, ad metadata, and technical setup.</p>
+          </div>
+        </div>
+        <ChevronDownIcon className="size-6 text-[#475569] transition group-open:rotate-180" />
+      </summary>
+      <div className="border-t border-[#edf2f7] px-6 pb-6 pt-5">
+        <div className="grid gap-4 lg:grid-cols-3">
+          {groups.map((group) => (
+            <section key={group.title} className="rounded-[22px] border border-[#e5e7eb] bg-[#fbfcfe] p-4">
+              <h4 className="text-base font-semibold text-[#0f172a]">{group.title}</h4>
+              <div className="mt-4 space-y-3">
+                {group.fields.map((field) => (
+                  <div key={`${group.title}-${field.label}-${field.value}`} className="rounded-[16px] border border-[#dfe6ee] bg-white px-4 py-3">
+                    <p className="text-xs font-semibold uppercase tracking-[0.16em] text-[#64748b]">{field.label}</p>
+                    <p className="mt-1 text-sm text-[#1f2937]">{field.value}</p>
+                  </div>
+                ))}
+              </div>
+            </section>
+          ))}
+        </div>
+      </div>
+    </details>
+  );
+}
+
+function GoogleSearchPreviewPanel({
+  slides,
+  keywordFallbacks,
+}: {
+  slides: GooglePreviewSlide[];
+  keywordFallbacks: string[];
+}) {
+  const [index, setIndex] = useState(0);
+  const [device, setDevice] = useState<"mobile" | "desktop">("mobile");
+  const safeIndex = Math.min(index, Math.max(slides.length - 1, 0));
+  const slide = slides[safeIndex] ?? null;
+
+  if (!slide) {
+    return <EmptyState message="No Google preview was returned for the current selection." />;
+  }
+
+  return (
+    <section className="rounded-[30px] border border-[#dfe6ee] bg-white p-6 shadow-[0_18px_55px_rgba(15,23,42,0.045)]">
+      <div className="flex items-center gap-3">
+        <div className="flex size-12 items-center justify-center rounded-[16px] border border-[#dbe7ff] bg-[#edf4ff] text-[#2563eb]">
+          <SmartphoneIcon className="size-5" />
+        </div>
+        <div>
+          <h3 className="text-[1.75rem] font-semibold tracking-[-0.03em] text-[#0f172a]">Phone Preview</h3>
+          <p className="text-sm text-[#64748b]">Search-result rendering based on the selected ad assets.</p>
+        </div>
+      </div>
+
+      <div className="mt-5 grid grid-cols-2 rounded-full border border-[#d7dee7] bg-[#fbfcfe] p-1">
+        <button
+          type="button"
+          onClick={() => setDevice("mobile")}
+          className={`flex items-center justify-center gap-2 rounded-full px-4 py-3 text-base font-medium transition ${
+            device === "mobile"
+              ? "border border-[#4f8df6] bg-white text-[#2563eb] shadow-sm"
+              : "text-[#5f6368]"
+          }`}
+        >
+          <SmartphoneIcon className="size-4" />
+          Mobile
+        </button>
+        <button
+          type="button"
+          onClick={() => setDevice("desktop")}
+          className={`flex items-center justify-center gap-2 rounded-full px-4 py-3 text-base font-medium transition ${
+            device === "desktop"
+              ? "border border-[#4f8df6] bg-white text-[#2563eb] shadow-sm"
+              : "text-[#5f6368]"
+          }`}
+        >
+          <MonitorIcon className="size-4" />
+          Desktop
+        </button>
+      </div>
+
+      <div className="mt-6">
+        {device === "mobile" ? (
+          <GoogleMobilePreviewCard slide={slide} />
+        ) : (
+          <GoogleDesktopPreviewCard slide={slide} keywordFallbacks={keywordFallbacks} />
+        )}
+      </div>
+
+      {slides.length > 1 ? (
+        <div className="mt-5 flex items-center justify-center gap-2">
+          <button
+            type="button"
+            onClick={() => setIndex((current) => Math.max(0, current - 1))}
+            disabled={safeIndex === 0}
+            className="flex size-9 items-center justify-center rounded-full border border-[#d7dbe3] bg-white text-[#5f6368] shadow-sm transition hover:border-[#aecbfa] disabled:cursor-not-allowed disabled:opacity-40"
+            aria-label="Previous preview"
+          >
+            <ChevronLeftIcon className="size-4" />
+          </button>
+          {slides.map((_, dotIndex) => (
+            <button
+              key={dotIndex}
+              type="button"
+              onClick={() => setIndex(dotIndex)}
+              className={`size-2.5 rounded-full transition-all ${
+                dotIndex === safeIndex ? "bg-[#5f6368]" : "bg-[#d0d5db]"
+              }`}
+              aria-label={`Go to preview ${dotIndex + 1}`}
+            />
+          ))}
+          <button
+            type="button"
+            onClick={() => setIndex((current) => Math.min(slides.length - 1, current + 1))}
+            disabled={safeIndex >= slides.length - 1}
+            className="flex size-9 items-center justify-center rounded-full border border-[#d7dbe3] bg-white text-[#5f6368] shadow-sm transition hover:border-[#aecbfa] disabled:cursor-not-allowed disabled:opacity-40"
+            aria-label="Next preview"
+          >
+            <ChevronRightIcon className="size-4" />
+          </button>
+        </div>
+      ) : null}
+
+      <p className="mt-5 text-sm leading-6 text-[#5f6368]">
+        This preview shows how your ad may appear on Google Search results across supported devices.
+      </p>
+    </section>
+  );
+}
+
+function GoogleMobilePreviewCard({ slide }: { slide: GooglePreviewSlide }) {
+  const searchTabs = ["All", "Images", "News", "Videos", "Maps", "Shopping"];
+
+  return (
+    <div className="mx-auto max-w-[360px]">
+      <div className="rounded-[42px] border-[10px] border-[#111111] bg-[#161616] p-2 shadow-[0_24px_64px_rgba(15,23,42,0.18)]">
+        <div className="overflow-hidden rounded-[34px] bg-white">
+          <div className="px-5 pb-4 pt-4">
+            <div className="flex items-center justify-between text-[#111827]">
+              <span className="text-[14px] font-semibold">9:41</span>
+              <div className="flex items-center gap-2">
+                <div className="h-3 w-4 rounded-sm border border-[#111827]" />
+                <div className="h-3 w-5 rounded-sm bg-[#111827]" />
+              </div>
+            </div>
+
+            <div className="mt-5 flex items-center justify-center">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src="https://www.gstatic.com/images/branding/googlelogo/2x/googlelogo_color_92x30dp.png"
+                alt="Google logo"
+                className="h-10 w-auto"
+              />
+            </div>
+
+            <div className="mt-5 rounded-full border border-[#e3e6ea] px-4 py-3 shadow-[0_2px_8px_rgba(60,64,67,0.08)]">
+              <div className="flex items-center justify-between gap-3">
+                <div className="flex min-w-0 items-center gap-3">
+                  <SearchIcon className="size-5 shrink-0 text-[#6b7280]" />
+                  <span className="truncate text-[14px] text-[#111827]">
+                    {slide.keywords[0] || slide.businessName || slide.displayDomain}
+                  </span>
+                </div>
+                <div className="size-5 rounded-full bg-[#e8f0fe]" />
+              </div>
+            </div>
+
+            <div className="mt-5 flex gap-6 overflow-hidden whitespace-nowrap text-[13px] text-[#6b7280]">
+              {searchTabs.map((tab, index) => (
+                <div key={tab} className="flex flex-col items-center">
+                  <span className={index === 0 ? "font-medium text-[#2563eb]" : ""}>{tab}</span>
+                  <span className={`mt-2 h-0.5 w-8 rounded-full ${index === 0 ? "bg-[#2563eb]" : "bg-transparent"}`} />
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className="border-t border-[#edf1f4] px-5 pb-5 pt-4">
+            <p className="text-[13px] font-medium text-[#111827]">Sponsored</p>
+            <div className="mt-4 flex items-start justify-between gap-3">
+              <div className="flex min-w-0 gap-3">
+                {slide.businessLogoUrl ? (
+                  /* eslint-disable-next-line @next/next/no-img-element */
+                  <img
+                    src={slide.businessLogoUrl}
+                    alt={slide.businessName || "Business logo"}
+                    className="size-9 rounded-full object-cover"
+                  />
+                ) : (
+                  <div className="flex size-9 items-center justify-center rounded-full bg-[#e8f0fe] text-sm font-semibold text-[#2563eb]">
+                    {slide.businessName?.slice(0, 1).toUpperCase() ?? "G"}
+                  </div>
+                )}
+                <div className="min-w-0">
+                  <p className="truncate text-[13px] font-medium text-[#202124]">{slide.displayDomain}</p>
+                  <p className="truncate text-[12px] text-[#6b7280]">{slide.finalUrlLabel}</p>
+                </div>
+              </div>
+              <EllipsisVerticalIcon className="mt-1 size-4 shrink-0 text-[#5f6368]" />
+            </div>
+
+            <div className="mt-4">
+              <h4 className="text-[18px] leading-7 text-[#1a0dab]">{slide.headline}</h4>
+              <p className="mt-3 text-[14px] leading-7 text-[#4b5563]">{slide.description}</p>
+            </div>
+
+            {slide.sitelinks.length > 0 ? (
+              <div className="mt-4 border-t border-[#edf1f4]">
+                {slide.sitelinks.slice(0, 4).map((sitelink) => (
+                  <div key={sitelink.id} className="flex items-center justify-between border-b border-[#edf1f4] py-4">
+                    <span className="text-[14px] font-medium text-[#1a73e8]">{sitelink.linkText}</span>
+                    <ChevronRightIcon className="size-4 text-[#6b7280]" />
+                  </div>
+                ))}
+              </div>
+            ) : null}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function GoogleDesktopPreviewCard({
+  slide,
+  keywordFallbacks,
+}: {
+  slide: GooglePreviewSlide;
+  keywordFallbacks: string[];
+}) {
+  const query = keywordFallbacks[0] || slide.businessName || slide.displayDomain;
+
+  return (
+    <div className="rounded-[28px] border border-[#dfe6ee] bg-[#fbfcfe] p-4">
+      <div className="rounded-[24px] border border-[#dfe6ee] bg-white p-4 shadow-[0_12px_30px_rgba(15,23,42,0.06)]">
+        <div className="flex items-center gap-3 rounded-full border border-[#dfe3e8] px-4 py-3">
+          <SearchIcon className="size-4 text-[#64748b]" />
+          <span className="truncate text-sm text-[#111827]">{query}</span>
+        </div>
+        <div className="mt-5 rounded-[18px] border border-[#edf1f4] bg-white p-4">
+          <div className="flex items-start gap-3">
+            <div className="flex size-10 items-center justify-center rounded-full bg-[#e8f0fe] text-sm font-semibold text-[#2563eb]">
+              {slide.businessName?.slice(0, 1).toUpperCase() ?? "G"}
+            </div>
+            <div className="min-w-0">
+              <p className="truncate text-sm font-medium text-[#202124]">{slide.displayDomain}</p>
+              <p className="truncate text-xs text-[#188038]">
+                {slide.displayDomain}
+                {slide.displayPath ? ` / ${slide.displayPath}` : ""}
+              </p>
+            </div>
+          </div>
+          <h4 className="mt-4 text-[24px] leading-8 text-[#1a0dab]">{slide.headline}</h4>
+          <p className="mt-3 text-sm leading-7 text-[#4d5156]">{slide.description}</p>
+          {slide.sitelinks.length > 0 ? (
+            <div className="mt-5 grid gap-3 sm:grid-cols-2">
+              {slide.sitelinks.slice(0, 4).map((sitelink) => (
+                <div key={sitelink.id} className="rounded-[16px] border border-[#edf1f4] bg-[#fbfcfe] p-3">
+                  <p className="text-sm font-medium text-[#1a73e8]">{sitelink.linkText}</p>
+                  <p className="mt-1 text-xs leading-5 text-[#5f6368]">
+                    {[sitelink.description1, sitelink.description2].filter(Boolean).join(" ")}
+                  </p>
+                </div>
+              ))}
+            </div>
+          ) : null}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function getDetailFieldValue(fields: PreviewDetailField[], label: string): string {
+  return fields.find((field) => field.label === label)?.value ?? "";
 }
 
 interface WorkspaceProps {
@@ -624,50 +1079,6 @@ function MetricPill({
   );
 }
 
-function AssetCard({
-  title,
-  subtitle,
-  children,
-  compact = false,
-}: {
-  title: string;
-  subtitle?: string;
-  children: ReactNode;
-  compact?: boolean;
-}) {
-  return (
-    <section className={`rounded-[18px] border border-[#dfe3eb] bg-white ${compact ? "p-3" : "p-4"}`}>
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <h4 className="text-sm font-semibold text-[#202124]">{title}</h4>
-          {subtitle ? <p className="mt-1 text-xs leading-5 text-[#5f6368]">{subtitle}</p> : null}
-        </div>
-        <span className="rounded-full border border-[#dfe3eb] bg-[#f8f9fa] px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.08em] text-[#5f6368]">
-          Google
-        </span>
-      </div>
-      <div className="mt-4">{children}</div>
-    </section>
-  );
-}
-
-function DetailList({ fields }: { fields: PreviewDetailField[] }) {
-  if (fields.length === 0) {
-    return <ValueBox value="No detail fields returned" />;
-  }
-
-  return (
-    <div className="space-y-2">
-      {fields.map((field) => (
-        <div key={`${field.label}-${field.value}`} className="rounded-xl border border-[#dfe3eb] bg-[#fafbfd] px-3 py-2">
-          <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-[#5f6368]">{field.label}</p>
-          <p className="mt-1 text-sm text-[#202124]">{field.value}</p>
-        </div>
-      ))}
-    </div>
-  );
-}
-
 function ValueBox({ value, compact = false }: { value: string; compact?: boolean }) {
   return (
     <div
@@ -676,36 +1087,6 @@ function ValueBox({ value, compact = false }: { value: string; compact?: boolean
       }`}
     >
       <p className="break-words">{value}</p>
-    </div>
-  );
-}
-
-function ChipList({ items, emptyLabel }: { items: string[]; emptyLabel: string }) {
-  if (items.length === 0) {
-    return <ValueBox value={emptyLabel} />;
-  }
-
-  return (
-    <div className="flex flex-wrap gap-2">
-      {items.map((item, index) => (
-        <ValueBox key={`${item}-${index}`} value={item} compact />
-      ))}
-    </div>
-  );
-}
-
-function StackList({ items, emptyLabel }: { items: string[]; emptyLabel: string }) {
-  if (items.length === 0) {
-    return <ValueBox value={emptyLabel} />;
-  }
-
-  return (
-    <div className="space-y-2">
-      {items.map((item, index) => (
-        <div key={`${item}-${index}`} className="rounded-xl border border-[#dfe3eb] bg-[#fafbfd] px-3 py-2 text-sm text-[#202124]">
-          {item}
-        </div>
-      ))}
     </div>
   );
 }
@@ -732,199 +1113,16 @@ function ImageGrid({ images }: { images: Array<{ id: string; url: string; alt: s
   );
 }
 
-function SitelinkList({
-  items,
-}: {
-  items: Array<{
-    id: string;
-    linkText: string;
-    description1?: string | null;
-    description2?: string | null;
-    finalUrl?: string | null;
-  }>;
-}) {
-  if (items.length === 0) {
-    return <ValueBox value="No sitelinks available" />;
-  }
-
-  return (
-    <div className="space-y-2">
-      {items.map((item) => (
-        <a
-          key={item.id}
-          href={item.finalUrl || "#"}
-          target={item.finalUrl ? "_blank" : undefined}
-          rel={item.finalUrl ? "noreferrer" : undefined}
-          className="block rounded-xl border border-[#dfe3eb] bg-[#fafbfd] px-3 py-3 transition hover:border-[#aecbfa]"
-        >
-          <div className="flex items-center justify-between gap-3">
-            <p className="text-sm font-semibold text-[#1a73e8]">{item.linkText}</p>
-            <ExternalLinkIcon className="size-4 shrink-0 text-[#5f6368]" />
-          </div>
-          <p className="mt-1 text-xs leading-5 text-[#5f6368]">
-            {[item.description1, item.description2].filter(Boolean).join(" ")}
-          </p>
-        </a>
-      ))}
-    </div>
-  );
-}
-
 function GoogleMark() {
   return (
-    <div className="flex size-11 items-center justify-center rounded-2xl bg-white shadow-sm ring-1 ring-[#d7dbe3]">
-      <div className="grid grid-cols-2 gap-1.5">
-        <span className="size-2.5 rounded-full bg-[#4285f4]" />
-        <span className="size-2.5 rounded-full bg-[#ea4335]" />
-        <span className="size-2.5 rounded-full bg-[#fbbc05]" />
-        <span className="size-2.5 rounded-full bg-[#34a853]" />
-      </div>
-    </div>
-  );
-}
-
-function GoogleMobilePreviewCarousel({ slides }: { slides: GooglePreviewSlide[] }) {
-  const [index, setIndex] = useState(0);
-  const slideCount = slides.length;
-  const safeIndex = Math.min(index, Math.max(slideCount - 1, 0));
-  const slide = slides[safeIndex] ?? null;
-
-  if (!slide) {
-    return <EmptyState message="No Google preview was returned for the current selection." />;
-  }
-
-  return (
-    <div className="space-y-4">
-      <div className="flex flex-col items-center justify-center gap-3 sm:flex-row sm:gap-4">
-        <button
-          type="button"
-          onClick={() => setIndex((current) => Math.max(0, current - 1))}
-          disabled={safeIndex === 0}
-          className="flex size-8 items-center justify-center rounded-full border border-[#d7dbe3] bg-white text-[#5f6368] shadow-sm transition hover:border-[#aecbfa] disabled:cursor-not-allowed disabled:opacity-40 sm:size-10"
-          aria-label="Previous preview"
-        >
-          <ChevronLeftIcon className="size-4 sm:size-5" />
-        </button>
-
-        <div className="w-full max-w-[286px] sm:max-w-[340px] lg:max-w-[380px]">
-          <div className="rounded-[34px] border border-[#d7dbe3] bg-white p-3 shadow-[0_24px_60px_rgba(60,64,67,0.14)] sm:rounded-[42px] sm:p-4 sm:shadow-[0_30px_80px_rgba(60,64,67,0.18)]">
-            <div className="mx-auto flex max-w-[248px] items-center justify-between text-[#5f6368] sm:max-w-[300px]">
-              <span className="text-[11px] font-medium sm:text-xs">9:41</span>
-              <span className="text-[11px] font-medium sm:text-xs">Google</span>
-            </div>
-            <div className="mx-auto mt-3 max-w-[248px] rounded-[28px] border border-[#e0e0e0] bg-[#f8f9fa] p-2.5 sm:max-w-[300px] sm:rounded-[34px] sm:p-3">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  {slide.businessLogoUrl ? (
-                    /* eslint-disable-next-line @next/next/no-img-element */
-                    <img
-                      src={slide.businessLogoUrl}
-                      alt={slide.businessName || "Business logo"}
-                      className="size-5 rounded-full object-cover sm:size-6"
-                    />
-                  ) : (
-                    <div className="flex size-5 items-center justify-center rounded-full bg-[#e8f0fe] text-[9px] font-semibold text-[#1a73e8] sm:size-6 sm:text-[10px]">
-                      {slide.businessName?.slice(0, 1).toUpperCase() ?? "G"}
-                    </div>
-                  )}
-                  <div>
-                    <p className="text-[11px] font-semibold text-[#202124] sm:text-xs">
-                      {slide.businessName || "Business name"}
-                    </p>
-                    <p className="text-[10px] text-[#5f6368] sm:text-[11px]">{slide.displayDomain}</p>
-                  </div>
-                </div>
-                <div className="size-5 rounded-full bg-[#dadce0] sm:size-6" />
-              </div>
-
-              <div className="mt-3 space-y-1.5 sm:mt-4 sm:space-y-2">
-                <p className="text-[10px] font-medium tracking-[0.08em] text-[#5f6368] sm:text-[11px]">
-                  {slide.displayPath}
-                </p>
-                <h4 className="text-[15px] font-semibold leading-5 text-[#1a73e8] sm:text-[18px] sm:leading-6">
-                  {slide.headline}
-                </h4>
-                <p className="text-[11px] leading-4 text-[#3c4043] sm:text-xs sm:leading-5">
-                  {slide.description}
-                </p>
-              </div>
-
-              {slide.keywords.length > 0 ? (
-                <div className="mt-2.5 flex flex-wrap gap-1.5 sm:mt-3">
-                  {slide.keywords.slice(0, 3).map((keyword) => (
-                    <span
-                      key={keyword}
-                      className="rounded-full border border-[#dfe3eb] bg-white px-2 py-1 text-[9px] text-[#5f6368] sm:px-2.5 sm:text-[10px]"
-                    >
-                      {keyword}
-                    </span>
-                  ))}
-                </div>
-              ) : null}
-
-              {slide.sitelinks.length > 0 ? (
-                <div className="mt-2.5 space-y-2 sm:mt-3">
-                  {slide.sitelinks.slice(0, 2).map((sitelink) => (
-                    <div
-                      key={sitelink.id}
-                      className="rounded-xl bg-white px-3 py-2 shadow-[0_1px_2px_rgba(60,64,67,0.08)]"
-                    >
-                      <p className="text-[11px] font-semibold text-[#1a73e8] sm:text-xs">
-                        {sitelink.linkText}
-                      </p>
-                      <p className="mt-0.5 text-[10px] leading-4 text-[#5f6368] sm:text-[11px]">
-                        {[sitelink.description1, sitelink.description2].filter(Boolean).join(" ")}
-                      </p>
-                    </div>
-                  ))}
-                </div>
-              ) : null}
-
-              {slide.images.length > 0 ? (
-                <div className="mt-2.5 overflow-hidden rounded-2xl border border-[#e0e0e0] bg-white sm:mt-3">
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img
-                    src={slide.images[slide.imageIndex % slide.images.length].url}
-                    alt={slide.images[slide.imageIndex % slide.images.length].alt}
-                    className="h-24 w-full object-cover sm:h-28"
-                  />
-                </div>
-              ) : null}
-
-              <div className="mt-3 flex items-center gap-2 text-[11px] text-[#5f6368] sm:mt-4 sm:text-xs">
-                <span className="inline-flex size-4 items-center justify-center rounded-full bg-[#e8f0fe] text-[#1a73e8]">
-                  i
-                </span>
-                <span>Preview ads</span>
-              </div>
-            </div>
-
-            <div className="mt-3 flex items-center justify-center gap-1.5 sm:mt-4">
-              {slides.map((_, dotIndex) => (
-                <button
-                  key={dotIndex}
-                  type="button"
-                  onClick={() => setIndex(dotIndex)}
-                  className={`h-1.5 rounded-full transition-all sm:h-2 ${
-                    dotIndex === safeIndex ? "w-4 bg-[#1a73e8] sm:w-5" : "w-1.5 bg-[#d7dbe3] sm:w-2"
-                  }`}
-                  aria-label={`Go to preview ${dotIndex + 1}`}
-                />
-              ))}
-            </div>
-          </div>
-        </div>
-
-        <button
-          type="button"
-          onClick={() => setIndex((current) => Math.min(slideCount - 1, current + 1))}
-          disabled={safeIndex >= slideCount - 1}
-          className="flex size-8 items-center justify-center rounded-full border border-[#d7dbe3] bg-white text-[#5f6368] shadow-sm transition hover:border-[#aecbfa] disabled:cursor-not-allowed disabled:opacity-40 sm:size-10"
-          aria-label="Next preview"
-        >
-          <ChevronRightIcon className="size-4 sm:size-5" />
-        </button>
-      </div>
+    <div className="relative h-11 w-[68px] shrink-0 overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ring-[#d7dbe3]">
+      <Image
+        src="/google-ads-logo.svg"
+        alt="Google Ads logo"
+        fill
+        className="object-contain"
+        sizes="68px"
+      />
     </div>
   );
 }
@@ -949,6 +1147,7 @@ function buildGooglePreviewSlides(selectedAd: PreviewAdNode | null): GooglePrevi
     businessName: selectedAd.businessName || null,
     businessLogoUrl: selectedAd.businessLogoUrl || null,
     displayDomain,
+    finalUrlLabel: selectedAd.finalUrl || `https://${displayDomain}/`,
     displayPath,
     headline: headline.text,
     description: descriptions[index % descriptions.length]?.text ?? descriptions[0].text,
@@ -977,6 +1176,7 @@ interface GooglePreviewSlide {
   businessName: string | null;
   businessLogoUrl: string | null;
   displayDomain: string;
+  finalUrlLabel: string;
   displayPath: string;
   headline: string;
   description: string;

@@ -28,7 +28,7 @@ export default async function OverallPage({
   } satisfies Partial<ReportFilters>;
 
   return (
-    <Suspense fallback={<ReportRouteLoading />}>
+    <Suspense fallback={<ReportRouteLoading kind="overall" />}>
       <OverallPageClient initialFilters={initialFilters} />
     </Suspense>
   );

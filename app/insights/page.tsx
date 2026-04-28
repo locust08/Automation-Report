@@ -5,7 +5,7 @@ import { ReportRouteLoading } from "@/components/reporting/report-route-loading"
 
 export default function InsightsPage() {
   return (
-    <Suspense fallback={<ReportRouteLoading />}>
+    <Suspense fallback={<ReportRouteLoading kind="dashboard" />}>
       <InsightsPageClient />
     </Suspense>
   );

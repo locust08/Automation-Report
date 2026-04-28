@@ -3,6 +3,7 @@
 import { useMemo } from "react";
 
 import { CampaignComparisonTable } from "@/components/reporting/campaign-table";
+import { ReportSuccessScreen } from "@/components/reporting/report-loading-screen";
 import { ReportHeaderMonthPicker } from "@/components/reporting/report-header-month-picker";
 import { MetricSection } from "@/components/reporting/metric-grid";
 import { ReportFiltersBar } from "@/components/reporting/report-filters-bar";
@@ -15,6 +16,7 @@ import {
 } from "@/components/reporting/report-state";
 import { useReportFilters } from "@/components/reporting/use-report-filters";
 import { useCampaignComparison } from "@/components/reporting/use-report-data";
+import { useReportReadyTransition } from "@/components/reporting/use-report-ready-transition";
 import { useScreenshotMode } from "@/components/reporting/use-screenshot-mode";
 import { computeDelta } from "@/lib/reporting/metrics";
 import { CampaignRow, Platform, SummarySection } from "@/lib/reporting/types";
@@ -45,7 +47,7 @@ export function CampaignDashboard({ campaignType }: { campaignType: string }) {
     return params.toString();
   }, [filters]);
 
-  const { data, error, loading } = useCampaignComparison(
+  const { data, error, loading, retry, successToken } = useCampaignComparison(
     queryString,
     campaignName,
     filters.platform,
@@ -82,14 +84,30 @@ export function CampaignDashboard({ campaignType }: { campaignType: string }) {
   const title = `${companyNameForTitle} ${platformLabel(filters.platform)} (${campaignName})`;
   const dateLabel =
     data?.dateRange.currentLabel ?? `${filters.startDate} - ${filters.endDate}`;
+  const campaignReady =
+    hasAccountId &&
+    !loading &&
+    !error &&
+    Boolean(data && section) &&
+    (data?.warnings.length ?? 0) === 0;
+  const { showReadyState } = useReportReadyTransition({
+    ready: campaignReady,
+    transitionKey: successToken,
+  });
 
   if (hasAccountId && loading) {
     return (
       <ReportLoadingState
+        kind="campaign"
         message="Loading campaign type comparison data..."
         fullPage
+        onRetry={retry}
       />
     );
+  }
+
+  if (showReadyState) {
+    return <ReportSuccessScreen kind="campaign" fullPage />;
   }
 
   return (
@@ -129,10 +147,13 @@ export function CampaignDashboard({ campaignType }: { campaignType: string }) {
     >
       <div className="space-y-5">
         {!hasAccountId ? (
-          <ReportErrorState message="Enter at least one account ID to request platform data for this campaign type." />
+          <ReportErrorState
+            kind="campaign"
+            message="Enter at least one account ID to request platform data for this campaign type."
+          />
         ) : null}
 
-        {error ? <ReportErrorState message={error} /> : null}
+        {error ? <ReportErrorState kind="campaign" message={error} onRetry={retry} /> : null}
 
         {data && section ? (
           <>

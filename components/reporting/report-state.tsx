@@ -1,27 +1,40 @@
-import { AlertTriangleIcon } from "lucide-react";
-
-import { ReportLoadingScreen } from "@/components/reporting/report-loading-screen";
+import type { ReportLoadingKind } from "@/components/reporting/report-loading-config";
+import {
+  ReportErrorScreen,
+  ReportLoadingScreen,
+} from "@/components/reporting/report-loading-screen";
 
 export function ReportLoadingState({
+  kind = "fallback",
   message,
   fullPage = false,
+  onRetry,
 }: {
+  kind?: ReportLoadingKind;
   message: string;
   fullPage?: boolean;
+  onRetry?: (() => void) | undefined;
 }) {
-  return <ReportLoadingScreen message={message} fullPage={fullPage} />;
+  return (
+    <ReportLoadingScreen
+      kind={kind}
+      message={message}
+      fullPage={fullPage}
+      onRetry={onRetry}
+    />
+  );
 }
 
-export function ReportErrorState({ message }: { message: string }) {
-  return (
-    <div className="rounded-2xl border border-red-300 bg-red-50 p-6 text-red-700">
-      <div className="mb-2 flex items-center gap-2 font-semibold">
-        <AlertTriangleIcon className="size-5" />
-        Data Fetch Error
-      </div>
-      <p className="text-sm">{message}</p>
-    </div>
-  );
+export function ReportErrorState({
+  kind = "fallback",
+  message,
+  onRetry,
+}: {
+  kind?: ReportLoadingKind;
+  message: string;
+  onRetry?: (() => void) | undefined;
+}) {
+  return <ReportErrorScreen kind={kind} message={message} onRetry={onRetry} />;
 }
 
 export function ReportWarnings({ warnings }: { warnings: string[] }) {
