@@ -1,0 +1,6 @@
+name = "ads-dashboard-monthly-report-cron"
+main = "src/index.ts"
+compatibility_date = "2026-04-28"
+
+[triggers]
+crons = ["0 1 5 * *"]
