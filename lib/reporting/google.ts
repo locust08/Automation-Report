@@ -493,7 +493,7 @@ export async function fetchGoogleCampaignRows({
       AND segments.date BETWEEN '${startDate}' AND '${endDate}'
   `;
 
-  const metricResults = await fetchGoogleAdsResultsWithFallback({
+  const results = await fetchGoogleAdsResultsWithFallback({
     customerId: context.customerId,
     apiVersion,
     developerToken,
@@ -524,30 +524,6 @@ export async function fetchGoogleCampaignRows({
       baseSelect,
     ],
   });
-  const results =
-    metricResults.length > 0
-      ? metricResults
-      : await fetchGoogleAdsResultsWithFallback({
-          customerId: context.customerId,
-          apiVersion,
-          developerToken,
-          accessToken,
-          refreshToken,
-          clientId,
-          clientSecret,
-          loginCustomerId: context.loginCustomerId,
-          queries: [
-            `
-              SELECT
-                campaign.id,
-                campaign.name,
-                campaign.advertising_channel_type,
-                campaign.status
-              FROM campaign
-              WHERE campaign.status = 'ENABLED'
-            `,
-          ],
-        });
 
   return results
     .filter((result) => result.campaign?.status === "ENABLED")
