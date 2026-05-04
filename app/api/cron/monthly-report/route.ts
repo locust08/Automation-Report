@@ -1,27 +1,64 @@
-import { NextResponse } from "next/server";
+import {
+  parseBooleanEnv,
+  parseTargetList,
+  type MonthlyReportTargetConfig,
+} from "@/src/lib/cron/monthly-report-targets";
+import { runMonthlyReportJob } from "@/src/lib/cron/run-monthly-report-job";
 
-import { runMonthlyReportCron } from "@/lib/automation/monthly-report";
-
-export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
 export async function GET() {
   return Response.json({ message: "CRON ENDPOINT LIVE" });
 }
 
-export async function POST(request: Request): Promise<NextResponse> {
-  const expectedSecret = process.env.CRON_SECRET?.trim();
-  const authorization = request.headers.get("authorization")?.trim();
-
-  if (!expectedSecret || authorization !== `Bearer ${expectedSecret}`) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-
+export async function POST(request: Request) {
   try {
-    const summary = await runMonthlyReportCron();
-    return NextResponse.json(summary);
+    console.log("Monthly report cron triggered");
+    const body = (await safeReadJson(request)) as
+      | {
+          forceTestMode?: boolean | string;
+          overrideTargets?: MonthlyReportTargetConfig[];
+          overrideTargetsJson?: string;
+        }
+      | null;
+    const result = await runMonthlyReportJob({
+      forceTestMode:
+        typeof body?.forceTestMode === "boolean"
+          ? body.forceTestMode
+          : parseBooleanEnv(typeof body?.forceTestMode === "string" ? body.forceTestMode : undefined),
+      overrideTargets:
+        Array.isArray(body?.overrideTargets)
+          ? body.overrideTargets
+          : parseTargetList(typeof body?.overrideTargetsJson === "string" ? body.overrideTargetsJson : undefined),
+    });
+
+    return Response.json({
+      success: true,
+      message: "CRON STARTED",
+      result,
+    });
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Monthly report cron failed.";
-    return NextResponse.json({ error: message }, { status: 500 });
+    console.error("CRON ERROR", error);
+
+    return Response.json(
+      {
+        success: false,
+        error: "Internal error",
+      },
+      { status: 500 }
+    );
+  }
+}
+
+async function safeReadJson(request: Request): Promise<unknown> {
+  try {
+    const contentType = request.headers.get("content-type") ?? "";
+    if (!contentType.includes("application/json")) {
+      return null;
+    }
+
+    return await request.json();
+  } catch {
+    return null;
   }
 }

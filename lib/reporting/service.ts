@@ -1,5 +1,9 @@
 import { buildDateRange } from "@/lib/reporting/date";
 import {
+  createEmptyAudienceClickBreakdownResponse,
+  mergeAudienceClickBreakdownResponses,
+} from "@/lib/reporting/audience-breakdown";
+import {
   getCredentials,
   normalizeGoogleAccountId,
   normalizeMetaAccountId,
@@ -8,6 +12,7 @@ import {
 import { buildPlatformInsights } from "@/lib/reporting/insights";
 import {
   fetchGoogleAccountName,
+  fetchGoogleAudienceBreakdown,
   fetchGoogleAuctionInsightRows,
   fetchGoogleCampaignRows,
   fetchGooglePreviewData,
@@ -16,12 +21,14 @@ import {
 } from "@/lib/reporting/google";
 import { buildGroups, computeDelta, emptyCampaignRow, mergeCampaignRows } from "@/lib/reporting/metrics";
 import {
+  fetchMetaAudienceBreakdown,
   fetchMetaAccountName,
   fetchMetaActiveCampaignIds,
   fetchMetaCampaignRows,
   fetchMetaPreviewData,
 } from "@/lib/reporting/meta";
 import {
+  AudienceClickBreakdownResponse,
   AuctionInsightRow,
   AuctionInsightsPayload,
   CampaignComparisonPayload,
@@ -173,7 +180,7 @@ export async function getOverallReport(input: OverallInput): Promise<OverallRepo
 
   const warnings: string[] = [...googleManagerContext.messages];
 
-  const [metaCurrentResult, metaPreviousResult] = await Promise.all([
+  const [metaCurrentResult, metaPreviousResult, metaAudienceBreakdownResult] = await Promise.all([
     tryFetchMetaForAccounts(
       resolvedAccountIds.metaAccountIds,
       credentials.metaAccessToken,
@@ -185,6 +192,12 @@ export async function getOverallReport(input: OverallInput): Promise<OverallRepo
       credentials.metaAccessToken,
       dateRange.previousStartDate,
       dateRange.previousEndDate
+    ),
+    tryFetchMetaAudienceBreakdownForAccounts(
+      resolvedAccountIds.metaAccountIds,
+      credentials.metaAccessToken,
+      dateRange.startDate,
+      dateRange.endDate
     ),
   ]);
 
@@ -201,7 +214,8 @@ export async function getOverallReport(input: OverallInput): Promise<OverallRepo
     googleManagerContext.accessPathByAccount,
     credentials.googleLoginCustomerId,
     dateRange.startDate,
-    dateRange.endDate
+    dateRange.endDate,
+    true
   );
   const googlePreviousResult = await tryFetchGoogleForAccounts(
     resolvedAccountIds.googleAccountIds,
@@ -215,14 +229,31 @@ export async function getOverallReport(input: OverallInput): Promise<OverallRepo
     googleManagerContext.accessPathByAccount,
     credentials.googleLoginCustomerId,
     dateRange.previousStartDate,
-    dateRange.previousEndDate
+    dateRange.previousEndDate,
+    true
+  );
+  const googleAudienceBreakdownResult = await tryFetchGoogleAudienceBreakdownForAccounts(
+    resolvedAccountIds.googleAccountIds,
+    credentials.googleAdsApiVersion,
+    credentials.googleDeveloperToken,
+    credentials.googleAccessToken,
+    credentials.googleRefreshToken,
+    credentials.googleClientId,
+    credentials.googleClientSecret,
+    googleManagerContext.loginCustomerIdByAccount,
+    googleManagerContext.accessPathByAccount,
+    credentials.googleLoginCustomerId,
+    dateRange.startDate,
+    dateRange.endDate
   );
 
   warnings.push(
     ...metaCurrentResult.warnings,
     ...metaPreviousResult.warnings,
+    ...metaAudienceBreakdownResult.warnings,
     ...googleCurrentResult.warnings,
-    ...googlePreviousResult.warnings
+    ...googlePreviousResult.warnings,
+    ...googleAudienceBreakdownResult.warnings
   );
 
   if (
@@ -264,6 +295,10 @@ export async function getOverallReport(input: OverallInput): Promise<OverallRepo
   ];
 
   const campaignGroups = buildGroups([...metaCurrent, ...googleCurrent, ...youtubeCurrent]);
+  const audienceClickBreakdown = mergeAudienceClickBreakdownResponses(
+    metaAudienceBreakdownResult.breakdown,
+    googleAudienceBreakdownResult.breakdown
+  );
 
   if (campaignGroups.length === 0 && warnings.length === 0) {
     warnings.push(
@@ -282,6 +317,7 @@ export async function getOverallReport(input: OverallInput): Promise<OverallRepo
     },
     summaries: sections,
     campaignGroups,
+    audienceClickBreakdown,
     warnings: dedupeWarnings(warnings),
   };
 }
@@ -871,6 +907,44 @@ async function tryFetchMeta(
   }
 }
 
+async function tryFetchMetaAudience(
+  accountId: string | null,
+  accessToken: string | null,
+  startDate: string,
+  endDate: string
+): Promise<{ breakdown: AudienceClickBreakdownResponse; warnings: string[] }> {
+  if (!accountId) {
+    return { breakdown: createEmptyAudienceClickBreakdownResponse(), warnings: [] };
+  }
+  if (!accessToken) {
+    return {
+      breakdown: createEmptyAudienceClickBreakdownResponse(),
+      warnings: [
+        "Meta API: Missing META_ACCESS_TOKEN. Add this secret in Vercel Environment Variables or run locally with `doppler run -- npm run dev`.",
+      ],
+    };
+  }
+
+  try {
+    const breakdown = await fetchMetaAudienceBreakdown({
+      accountId,
+      accessToken,
+      startDate,
+      endDate,
+    });
+    return { breakdown, warnings: [] };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Failed to load Meta audience breakdown data.";
+    const hint = message.includes("(#200)")
+      ? " Meta token is valid but missing required ads scopes (`ads_read` or `ads_management`) for this ad account, or the token owner is not assigned to the ad account."
+      : "";
+    return {
+      breakdown: createEmptyAudienceClickBreakdownResponse(),
+      warnings: [`Meta API: ${message}${hint}`],
+    };
+  }
+}
+
 async function tryFetchMetaPreview(
   accountId: string | null,
   accessToken: string | null,
@@ -986,6 +1060,67 @@ async function tryFetchGoogle(
     }
     const message = error instanceof Error ? error.message : "Failed to load Google Ads data.";
     return { rows: [], warnings: [`Google Ads API: ${message}${googleErrorHint(message)}`] };
+  }
+}
+
+async function tryFetchGoogleAudience(
+  customerId: string | null,
+  apiVersion: string,
+  developerToken: string | null,
+  accessToken: string | null,
+  refreshToken: string | null,
+  clientId: string | null,
+  clientSecret: string | null,
+  loginCustomerId: string | null,
+  accessPath: string | null,
+  fallbackLoginCustomerId: string | null,
+  startDate: string,
+  endDate: string
+): Promise<{ breakdown: AudienceClickBreakdownResponse; warnings: string[] }> {
+  if (!customerId) {
+    return { breakdown: createEmptyAudienceClickBreakdownResponse(), warnings: [] };
+  }
+
+  const credentialWarnings = getGoogleCredentialWarnings(
+    developerToken,
+    accessToken,
+    refreshToken,
+    clientId,
+    clientSecret
+  );
+  if (credentialWarnings.length > 0) {
+    return {
+      breakdown: createEmptyAudienceClickBreakdownResponse(),
+      warnings: credentialWarnings,
+    };
+  }
+
+  try {
+    const breakdown = await fetchGoogleAudienceBreakdown({
+      customerId,
+      apiVersion,
+      developerToken: developerToken!,
+      accessToken,
+      refreshToken,
+      clientId,
+      clientSecret,
+      loginCustomerId,
+      accessPath,
+      fallbackLoginCustomerId,
+      startDate,
+      endDate,
+    });
+    return { breakdown, warnings: [] };
+  } catch (error) {
+    if (isGoogleAdsAccessPathError(error)) {
+      throw error;
+    }
+    const message =
+      error instanceof Error ? error.message : "Failed to load Google Ads audience breakdown data.";
+    return {
+      breakdown: createEmptyAudienceClickBreakdownResponse(),
+      warnings: [`Google Ads API: ${message}${googleErrorHint(message)}`],
+    };
   }
 }
 
@@ -1210,7 +1345,31 @@ async function tryFetchMetaForAccounts(
   return { rows, warnings };
 }
 
-async function tryFetchGoogleForAccounts(
+async function tryFetchMetaAudienceBreakdownForAccounts(
+  accountIds: string[],
+  accessToken: string | null,
+  startDate: string,
+  endDate: string
+): Promise<{ breakdown: AudienceClickBreakdownResponse; warnings: string[] }> {
+  if (accountIds.length === 0) {
+    return { breakdown: createEmptyAudienceClickBreakdownResponse(), warnings: [] };
+  }
+
+  let breakdown = createEmptyAudienceClickBreakdownResponse();
+  const warnings: string[] = [];
+
+  for (const accountId of accountIds) {
+    const result = await tryFetchMetaAudience(accountId, accessToken, startDate, endDate);
+    breakdown = mergeAudienceClickBreakdownResponses(breakdown, result.breakdown);
+    warnings.push(
+      ...result.warnings.map((warning) => annotateWarningWithAccount(warning, "meta", accountId))
+    );
+  }
+
+  return { breakdown, warnings };
+}
+
+async function tryFetchGoogleAudienceBreakdownForAccounts(
   accountIds: string[],
   apiVersion: string,
   developerToken: string | null,
@@ -1223,6 +1382,66 @@ async function tryFetchGoogleForAccounts(
   fallbackLoginCustomerId: string | null,
   startDate: string,
   endDate: string
+): Promise<{ breakdown: AudienceClickBreakdownResponse; warnings: string[] }> {
+  if (accountIds.length === 0) {
+    return { breakdown: createEmptyAudienceClickBreakdownResponse(), warnings: [] };
+  }
+
+  let breakdown = createEmptyAudienceClickBreakdownResponse();
+  const warnings: string[] = [];
+
+  for (const accountId of accountIds) {
+    try {
+      const result = await tryFetchGoogleAudience(
+        accountId,
+        apiVersion,
+        developerToken,
+        accessToken,
+        refreshToken,
+        clientId,
+        clientSecret,
+        loginCustomerIdByAccount[accountId] ?? null,
+        accessPathByAccount[accountId] ?? null,
+        fallbackLoginCustomerId,
+        startDate,
+        endDate
+      );
+      breakdown = mergeAudienceClickBreakdownResponses(breakdown, result.breakdown);
+      const accountWarnings = result.warnings.map((warning) =>
+        annotateWarningWithAccount(warning, "google", accountId)
+      );
+      logGoogleWarningsForTerminal(accountWarnings);
+      warnings.push(...accountWarnings);
+    } catch (error) {
+      if (!isGoogleAdsAccessPathError(error)) {
+        throw error;
+      }
+
+      const accountWarnings = [
+        annotateWarningWithAccount(error.payload.message, "google", accountId),
+      ];
+      logGoogleWarningsForTerminal(accountWarnings);
+      warnings.push(...accountWarnings);
+    }
+  }
+
+  return { breakdown, warnings };
+}
+
+async function tryFetchGoogleForAccounts(
+  accountIds: string[],
+  apiVersion: string,
+  developerToken: string | null,
+  accessToken: string | null,
+  refreshToken: string | null,
+  clientId: string | null,
+  clientSecret: string | null,
+  loginCustomerIdByAccount: GoogleLoginCustomerIdMap,
+  accessPathByAccount: Record<string, string | null>,
+  fallbackLoginCustomerId: string | null,
+  startDate: string,
+  endDate: string,
+  suppressAccessPathErrors = false
 ): Promise<{ rows: CampaignRow[]; warnings: string[] }> {
   if (accountIds.length === 0) {
     return { rows: [], warnings: [] };
@@ -1232,26 +1451,38 @@ async function tryFetchGoogleForAccounts(
   const warnings: string[] = [];
 
   for (const accountId of accountIds) {
-    const result = await tryFetchGoogle(
-      accountId,
-      apiVersion,
-      developerToken,
-      accessToken,
-      refreshToken,
-      clientId,
-      clientSecret,
-      loginCustomerIdByAccount[accountId] ?? null,
-      accessPathByAccount[accountId] ?? null,
-      fallbackLoginCustomerId,
-      startDate,
-      endDate
-    );
-    rows.push(...result.rows);
-    const accountWarnings = result.warnings.map((warning) =>
-      annotateWarningWithAccount(warning, "google", accountId)
-    );
-    logGoogleWarningsForTerminal(accountWarnings);
-    warnings.push(...accountWarnings);
+    try {
+      const result = await tryFetchGoogle(
+        accountId,
+        apiVersion,
+        developerToken,
+        accessToken,
+        refreshToken,
+        clientId,
+        clientSecret,
+        loginCustomerIdByAccount[accountId] ?? null,
+        accessPathByAccount[accountId] ?? null,
+        fallbackLoginCustomerId,
+        startDate,
+        endDate
+      );
+      rows.push(...result.rows);
+      const accountWarnings = result.warnings.map((warning) =>
+        annotateWarningWithAccount(warning, "google", accountId)
+      );
+      logGoogleWarningsForTerminal(accountWarnings);
+      warnings.push(...accountWarnings);
+    } catch (error) {
+      if (!suppressAccessPathErrors || !isGoogleAdsAccessPathError(error)) {
+        throw error;
+      }
+
+      const accountWarnings = [
+        annotateWarningWithAccount(error.payload.message, "google", accountId),
+      ];
+      logGoogleWarningsForTerminal(accountWarnings);
+      warnings.push(...accountWarnings);
+    }
   }
 
   return { rows, warnings };

@@ -1,5 +1,19 @@
 import { emptyCampaignRow } from "@/lib/reporting/metrics";
 import {
+  addSourceToAudienceItems,
+  aggregateAudienceItems,
+  coerceAudienceClicks,
+  createAudienceClickBreakdownItem,
+  createEmptyGoogleAudienceClickBreakdownResponse,
+  limitAudienceItemsWithOthers,
+  normalizeAudienceAgeLabel,
+  normalizeAudienceGenderLabel,
+  normalizeAudienceLocationLabel,
+  sortAudienceItems,
+} from "@/lib/reporting/audience-breakdown";
+import {
+  AudienceClickBreakdownItem,
+  AudienceClickBreakdownResponse,
   AuctionInsightRow,
   CampaignRow,
   GoogleAdsAccessPathErrorPayload,
@@ -9,6 +23,8 @@ import {
   GooglePreviewDiagnostics,
   GooglePreviewFatalError,
   GooglePreviewWarning,
+  GoogleAudienceClickBreakdownResponse,
+  GoogleAudienceSourceClickItem,
   PreviewImageAsset,
   PreviewSitelinkAsset,
   PreviewTextAsset,
@@ -17,10 +33,8 @@ import {
 import {
   DEFAULT_GOOGLE_ADS_FALLBACK_LOGIN_CUSTOMER_ID,
   formatGoogleAdsAccessPathErrorMessage,
-  formatGoogleAdsCustomerId,
   isDirectGoogleAdsAccessPath,
   normalizeGoogleAdsAccessPath,
-  normalizeGoogleAdsCustomerId,
   resolveGoogleAdsAccessPath,
   sanitizeGoogleAdsAccessPath,
 } from "@/lib/reporting/google-access-path";
@@ -84,8 +98,32 @@ interface GoogleAdsSearchResponse {
 }
 
 interface GoogleAdsResult {
+  ageRangeView?: {
+    ageRange?: string;
+  };
   customer?: {
     id?: string;
+  };
+  genderView?: {
+    gender?: string;
+  };
+  geographicView?: {
+    countryCriterionId?: string | number;
+    locationType?: string;
+  };
+  userLocationView?: {
+    countryCriterionId?: string | number;
+    targetingLocation?: string | boolean;
+  };
+  detailPlacementView?: {
+    placement?: string;
+    displayName?: string;
+  };
+  groupPlacementView?: {
+    targetUrl?: string;
+  };
+  topicView?: {
+    topic?: string;
   };
   customerClient?: {
     id?: string;
@@ -201,9 +239,21 @@ interface GoogleAdsResult {
   };
   segments?: {
     auctionInsightDomain?: string;
+    geoTargetCity?: string;
+    geoTargetCountry?: string;
+    geoTargetMostSpecificLocation?: string;
+    geoTargetProvince?: string;
+    geoTargetRegion?: string;
+    geoTargetState?: string;
   };
   adGroupCriterion?: {
     criterionId?: string;
+    ageRange?: {
+      type?: string;
+    };
+    gender?: {
+      type?: string;
+    };
     keyword?: {
       text?: string;
     };
@@ -560,6 +610,673 @@ export async function fetchGoogleCampaignRows({
       return row;
     });
 }
+
+export async function fetchGoogleAudienceClickBreakdown({
+  customerId,
+  apiVersion,
+  developerToken,
+  accessToken,
+  refreshToken,
+  clientId,
+  clientSecret,
+  loginCustomerId,
+  accessPath,
+  fallbackLoginCustomerId,
+  startDate,
+  endDate,
+}: GoogleFetchInput): Promise<GoogleAudienceClickBreakdownResponse> {
+  const context = await resolveVerifiedGoogleAdsContext({
+    customerId,
+    apiVersion,
+    developerToken,
+    accessToken,
+    refreshToken,
+    clientId,
+    clientSecret,
+    loginCustomerId,
+    accessPath: accessPath ?? null,
+    fallbackLoginCustomerId: fallbackLoginCustomerId ?? null,
+  });
+
+  const [age, gender, location, keywords, content] = await Promise.all([
+    fetchGoogleAudienceAgeBreakdown({
+      customerId: context.customerId,
+      apiVersion,
+      developerToken,
+      accessToken,
+      refreshToken,
+      clientId,
+      clientSecret,
+      loginCustomerId: context.loginCustomerId,
+      startDate,
+      endDate,
+    }),
+    fetchGoogleAudienceGenderBreakdown({
+      customerId: context.customerId,
+      apiVersion,
+      developerToken,
+      accessToken,
+      refreshToken,
+      clientId,
+      clientSecret,
+      loginCustomerId: context.loginCustomerId,
+      startDate,
+      endDate,
+    }),
+    fetchGoogleAudienceLocationBreakdown({
+      customerId: context.customerId,
+      apiVersion,
+      developerToken,
+      accessToken,
+      refreshToken,
+      clientId,
+      clientSecret,
+      loginCustomerId: context.loginCustomerId,
+      startDate,
+      endDate,
+    }),
+    fetchGoogleAudienceKeywordBreakdown({
+      customerId: context.customerId,
+      apiVersion,
+      developerToken,
+      accessToken,
+      refreshToken,
+      clientId,
+      clientSecret,
+      loginCustomerId: context.loginCustomerId,
+      startDate,
+      endDate,
+    }),
+    fetchGoogleAudienceContentBreakdown({
+      customerId: context.customerId,
+      apiVersion,
+      developerToken,
+      accessToken,
+      refreshToken,
+      clientId,
+      clientSecret,
+      loginCustomerId: context.loginCustomerId,
+      startDate,
+      endDate,
+    }),
+  ]);
+
+  return {
+    age: addSourceToAudienceItems(age, "audiences", "age"),
+    gender: addSourceToAudienceItems(gender, "audiences", "gender"),
+    location,
+    sources: {
+      keywords,
+      content,
+    },
+  };
+}
+
+export async function fetchGoogleAudienceBreakdown(
+  input: GoogleFetchInput
+): Promise<AudienceClickBreakdownResponse> {
+  const breakdown = await fetchGoogleAudienceClickBreakdown(input);
+  return {
+    age: breakdown.age.map(stripGoogleAudienceSource),
+    gender: breakdown.gender.map(stripGoogleAudienceSource),
+    location: {
+      country: breakdown.location.country.map(stripGoogleAudienceSource),
+      region: breakdown.location.region.map(stripGoogleAudienceSource),
+      city: breakdown.location.city.map(stripGoogleAudienceSource),
+    },
+  };
+}
+
+async function fetchGoogleAudienceAgeBreakdown(
+  input: Omit<GoogleFetchInput, "accessPath" | "fallbackLoginCustomerId">
+): Promise<AudienceClickBreakdownItem[]> {
+  const label = "[audience-breakdown][google][age]";
+  const query = buildGoogleAudienceAgeQuery(input.startDate, input.endDate);
+
+  try {
+    logGoogleAudienceGaql(`${label}[gaql]`, input.customerId, input.loginCustomerId, query);
+    const results = await fetchGoogleAdsResultsWithFallback({
+      customerId: input.customerId,
+      apiVersion: input.apiVersion,
+      developerToken: input.developerToken,
+      accessToken: input.accessToken,
+      refreshToken: input.refreshToken,
+      clientId: input.clientId,
+      clientSecret: input.clientSecret,
+      loginCustomerId: input.loginCustomerId,
+      queries: [query],
+    });
+
+    const items = sortAudienceItems(
+      aggregateAudienceItems(
+        results
+          .map((result) =>
+            createAudienceClickBreakdownItem({
+              platform: "google",
+              dimension: "age",
+              label: normalizeAudienceAgeLabel(result.adGroupCriterion?.ageRange?.type),
+              clicks: coerceAudienceClicks(result.metrics?.clicks),
+            })
+          )
+          .filter((item) => item.clicks > 0)
+      ),
+      "age"
+    );
+    console.info(`${label} customerId=${input.customerId} rows=${items.length}`);
+    return items;
+  } catch (error) {
+    logGoogleAudienceBreakdownFailure(label, input.customerId, error);
+    return [];
+  }
+}
+
+async function fetchGoogleAudienceGenderBreakdown(
+  input: Omit<GoogleFetchInput, "accessPath" | "fallbackLoginCustomerId">
+): Promise<AudienceClickBreakdownItem[]> {
+  const label = "[audience-breakdown][google][gender]";
+  const query = buildGoogleAudienceGenderQuery(input.startDate, input.endDate);
+
+  try {
+    logGoogleAudienceGaql(`${label}[gaql]`, input.customerId, input.loginCustomerId, query);
+    const results = await fetchGoogleAdsResultsWithFallback({
+      customerId: input.customerId,
+      apiVersion: input.apiVersion,
+      developerToken: input.developerToken,
+      accessToken: input.accessToken,
+      refreshToken: input.refreshToken,
+      clientId: input.clientId,
+      clientSecret: input.clientSecret,
+      loginCustomerId: input.loginCustomerId,
+      queries: [query],
+    });
+
+    const items = sortAudienceItems(
+      aggregateAudienceItems(
+        results
+          .map((result) =>
+            createAudienceClickBreakdownItem({
+              platform: "google",
+              dimension: "gender",
+              label: normalizeAudienceGenderLabel(result.adGroupCriterion?.gender?.type),
+              clicks: coerceAudienceClicks(result.metrics?.clicks),
+            })
+          )
+          .filter((item) => item.clicks > 0)
+      ),
+      "gender"
+    );
+    console.info(`${label} customerId=${input.customerId} rows=${items.length}`);
+    return items;
+  } catch (error) {
+    logGoogleAudienceBreakdownFailure(label, input.customerId, error);
+    return [];
+  }
+}
+
+async function fetchGoogleAudienceLocationBreakdown(
+  input: Omit<GoogleFetchInput, "accessPath" | "fallbackLoginCustomerId">
+): Promise<GoogleAudienceClickBreakdownResponse["location"]> {
+  const label = "[audience-breakdown][google][location]";
+  // `segments.geo_target_*` is rejected for our Google Ads v22 audience queries, so we
+  // derive the chart hierarchy from `location_view` + `geo_target_constant` instead.
+  const locationViewQuery = buildGoogleAudienceLocationViewQuery(input.startDate, input.endDate);
+
+  try {
+    logGoogleAudienceGaql(
+      `${label}[gaql]`,
+      input.customerId,
+      input.loginCustomerId,
+      locationViewQuery
+    );
+    const results = await fetchGoogleAdsResultsWithFallback({
+      customerId: input.customerId,
+      apiVersion: input.apiVersion,
+      developerToken: input.developerToken,
+      accessToken: input.accessToken,
+      refreshToken: input.refreshToken,
+      clientId: input.clientId,
+      clientSecret: input.clientSecret,
+      loginCustomerId: input.loginCustomerId,
+      queries: [locationViewQuery],
+    });
+
+    const geoTargetsByResourceName = await resolveGoogleAudienceLocationTargets({
+      input,
+      results,
+    });
+
+    const country = addSourceToAudienceItems(
+      buildGoogleTargetLocationAudienceItems(results, geoTargetsByResourceName, "country"),
+      "locations",
+      "country"
+    );
+    const region = addSourceToAudienceItems(
+      buildGoogleTargetLocationAudienceItems(results, geoTargetsByResourceName, "region"),
+      "locations",
+      "region"
+    );
+    const city = addSourceToAudienceItems(
+      buildGoogleTargetLocationAudienceItems(results, geoTargetsByResourceName, "city"),
+      "locations",
+      "city"
+    );
+
+    console.info(
+      `${label} customerId=${input.customerId} country=${country.length} region=${region.length} city=${city.length}`
+    );
+
+    return {
+      country,
+      region,
+      city,
+    };
+  } catch (error) {
+    logGoogleAudienceBreakdownFailure(label, input.customerId, error);
+    return createEmptyGoogleAudienceClickBreakdownResponse().location;
+  }
+}
+
+async function resolveGoogleAudienceLocationTargets(input: {
+  input: Omit<GoogleFetchInput, "accessPath" | "fallbackLoginCustomerId">;
+  results: GoogleAdsResult[];
+}): Promise<Map<string, GoogleAdsResult["geoTargetConstant"]>> {
+  const label = "[audience-breakdown][google][geo-resolver]";
+  const resourceNames = new Set<string>();
+
+  input.results.forEach((result) => {
+    const resourceName = result.campaignCriterion?.location?.geoTargetConstant?.trim();
+    if (resourceName) {
+      resourceNames.add(resourceName);
+    }
+  });
+
+  if (resourceNames.size === 0) {
+    console.info(`${label} customerId=${input.input.customerId} requested=0 resolved=0`);
+    return new Map();
+  }
+
+  try {
+    const geoTargets = await fetchGoogleGeoTargetConstantsByResourceName({
+      customerId: input.input.customerId,
+      apiVersion: input.input.apiVersion,
+      developerToken: input.input.developerToken,
+      accessToken: input.input.accessToken,
+      refreshToken: input.input.refreshToken,
+      clientId: input.input.clientId,
+      clientSecret: input.input.clientSecret,
+      loginCustomerId: input.input.loginCustomerId,
+      resourceNames: Array.from(resourceNames),
+    });
+    console.info(
+      `${label} customerId=${input.input.customerId} requested=${resourceNames.size} resolved=${geoTargets.size}`
+    );
+    return geoTargets;
+  } catch (error) {
+    logGoogleAudienceBreakdownFailure(label, input.input.customerId, error);
+    return new Map();
+  }
+}
+
+function buildGoogleTargetLocationAudienceItems(
+  results: GoogleAdsResult[],
+  geoTargetsByResourceName: Map<string, GoogleAdsResult["geoTargetConstant"]>,
+  dimension: "country" | "region" | "city"
+): AudienceClickBreakdownItem[] {
+  const totals = new Map<string, number>();
+
+  results.forEach((result) => {
+    const clicks = coerceAudienceClicks(result.metrics?.clicks);
+    if (clicks <= 0) {
+      return;
+    }
+
+    const label = resolveGoogleTargetLocationDimensionLabel(
+      result,
+      geoTargetsByResourceName,
+      dimension
+    );
+    if (!label) {
+      return;
+    }
+
+    totals.set(label, (totals.get(label) ?? 0) + clicks);
+  });
+
+  return limitAudienceItemsWithOthers(
+    sortAudienceItems(
+      Array.from(totals.entries()).map(([label, clicks]) =>
+        createAudienceClickBreakdownItem({
+          platform: "google",
+          dimension,
+          label,
+          clicks,
+        })
+      ),
+      dimension
+    ),
+    10
+  );
+}
+
+function resolveGoogleTargetLocationDimensionLabel(
+  result: GoogleAdsResult,
+  geoTargetsByResourceName: Map<string, GoogleAdsResult["geoTargetConstant"]>,
+  dimension: "country" | "region" | "city"
+): string | null {
+  const resourceName = result.campaignCriterion?.location?.geoTargetConstant?.trim();
+  if (!resourceName) {
+    return null;
+  }
+
+  const geoTarget = geoTargetsByResourceName.get(resourceName);
+  const hierarchy = deriveGoogleGeoTargetHierarchy(geoTarget);
+
+  if (dimension === "country") {
+    return hierarchy.country;
+  }
+  if (dimension === "region") {
+    return hierarchy.region;
+  }
+  return hierarchy.city;
+}
+
+function deriveGoogleGeoTargetHierarchy(
+  geoTarget: GoogleAdsResult["geoTargetConstant"] | undefined
+): {
+  country: string | null;
+  region: string | null;
+  city: string | null;
+} {
+  const name = normalizeAudienceLocationLabel(
+    geoTarget?.name?.trim() || geoTarget?.canonicalName?.trim(),
+    ""
+  ).trim();
+  const canonicalParts = (geoTarget?.canonicalName ?? "")
+    .split(",")
+    .map((segment) => segment.trim())
+    .filter((segment) => segment.length > 0);
+  const canonicalLeaf = canonicalParts[0] ?? "";
+  const normalizedName = name || canonicalLeaf || null;
+  const targetType = (geoTarget?.targetType ?? "").trim().toUpperCase();
+  const country =
+    targetType === "COUNTRY"
+      ? normalizedName
+      : canonicalParts.length > 0
+        ? canonicalParts[canonicalParts.length - 1] ?? null
+        : null;
+
+  if (!normalizedName) {
+    return {
+      country: country || null,
+      region: null,
+      city: null,
+    };
+  }
+
+  if (isGoogleRegionTargetType(targetType)) {
+    return {
+      country: country || null,
+      region: normalizedName,
+      city: null,
+    };
+  }
+
+  if (targetType === "COUNTRY") {
+    return {
+      country: normalizedName,
+      region: null,
+      city: null,
+    };
+  }
+
+  return {
+    country: country || null,
+    region: canonicalParts.length >= 2 ? canonicalParts[canonicalParts.length - 2] ?? null : null,
+    city: normalizedName,
+  };
+}
+
+function isGoogleRegionTargetType(targetType: string): boolean {
+  return (
+    targetType === "REGION" ||
+    targetType === "STATE" ||
+    targetType === "PROVINCE" ||
+    targetType === "CANTON" ||
+    targetType === "DEPARTMENT" ||
+    targetType === "GOVERNORATE" ||
+    targetType === "ADM1"
+  );
+}
+
+async function fetchGoogleAudienceKeywordBreakdown(
+  input: Omit<GoogleFetchInput, "accessPath" | "fallbackLoginCustomerId">
+): Promise<GoogleAudienceSourceClickItem[]> {
+  const label = "[audience-breakdown][google][keywords]";
+
+  try {
+    const results = await fetchGoogleAdsResultsWithFallback({
+      customerId: input.customerId,
+      apiVersion: input.apiVersion,
+      developerToken: input.developerToken,
+      accessToken: input.accessToken,
+      refreshToken: input.refreshToken,
+      clientId: input.clientId,
+      clientSecret: input.clientSecret,
+      loginCustomerId: input.loginCustomerId,
+      queries: [buildGoogleAudienceKeywordQuery(input.startDate, input.endDate)],
+    });
+
+    const items = buildGoogleSourceItems({
+      results,
+      source: "keywords",
+      labelResolver: (result) =>
+        normalizeAudienceLocationLabel(result.adGroupCriterion?.keyword?.text, "Unknown keyword"),
+    });
+    console.info(`${label} customerId=${input.customerId} rows=${items.length}`);
+    return items;
+  } catch (error) {
+    logGoogleAudienceBreakdownFailure(label, input.customerId, error);
+    return [];
+  }
+}
+
+async function fetchGoogleAudienceContentBreakdown(
+  input: Omit<GoogleFetchInput, "accessPath" | "fallbackLoginCustomerId">
+): Promise<GoogleAudienceSourceClickItem[]> {
+  const label = "[audience-breakdown][google][content]";
+
+  try {
+    const results = await fetchGoogleAdsResultsWithFallback({
+      customerId: input.customerId,
+      apiVersion: input.apiVersion,
+      developerToken: input.developerToken,
+      accessToken: input.accessToken,
+      refreshToken: input.refreshToken,
+      clientId: input.clientId,
+      clientSecret: input.clientSecret,
+      loginCustomerId: input.loginCustomerId,
+      queries: buildGoogleAudienceContentQueries(input.startDate, input.endDate),
+    });
+
+    const items = buildGoogleSourceItems({
+      results,
+      source: "content",
+      labelResolver: (result) =>
+        normalizeAudienceLocationLabel(
+          result.detailPlacementView?.displayName?.trim() ||
+            result.detailPlacementView?.placement?.trim() ||
+            result.groupPlacementView?.targetUrl?.trim() ||
+            result.topicView?.topic?.trim(),
+          "Unknown content"
+        ),
+    });
+    console.info(`${label} customerId=${input.customerId} rows=${items.length}`);
+    return items;
+  } catch (error) {
+    logGoogleAudienceBreakdownFailure(label, input.customerId, error);
+    return [];
+  }
+}
+
+function buildGoogleAudienceAgeQuery(startDate: string, endDate: string): string {
+  return `
+    SELECT
+      ad_group_criterion.age_range.type,
+      metrics.clicks
+    FROM age_range_view
+    WHERE segments.date BETWEEN '${startDate}' AND '${endDate}'
+  `;
+}
+
+function buildGoogleAudienceGenderQuery(startDate: string, endDate: string): string {
+  return `
+    SELECT
+      ad_group_criterion.gender.type,
+      metrics.clicks
+    FROM gender_view
+    WHERE segments.date BETWEEN '${startDate}' AND '${endDate}'
+  `;
+}
+
+function buildGoogleAudienceLocationViewQuery(startDate: string, endDate: string): string {
+  return `
+    SELECT
+      location_view.resource_name,
+      campaign.id,
+      campaign_criterion.criterion_id,
+      campaign_criterion.location.geo_target_constant,
+      metrics.clicks
+    FROM location_view
+    WHERE segments.date BETWEEN '${startDate}' AND '${endDate}'
+      AND campaign.status = 'ENABLED'
+  `;
+}
+
+function buildGoogleAudienceKeywordQuery(startDate: string, endDate: string): string {
+  return `
+    SELECT
+      ad_group_criterion.keyword.text,
+      metrics.clicks
+    FROM keyword_view
+    WHERE segments.date BETWEEN '${startDate}' AND '${endDate}'
+  `;
+}
+
+function buildGoogleAudienceContentQueries(startDate: string, endDate: string): string[] {
+  return [
+    `
+      SELECT
+        detail_placement_view.placement,
+        metrics.clicks
+      FROM detail_placement_view
+      WHERE segments.date BETWEEN '${startDate}' AND '${endDate}'
+    `,
+    `
+      SELECT
+        group_placement_view.target_url,
+        metrics.clicks
+      FROM group_placement_view
+      WHERE segments.date BETWEEN '${startDate}' AND '${endDate}'
+    `,
+    `
+      SELECT
+        topic_view.topic,
+        metrics.clicks
+      FROM topic_view
+      WHERE segments.date BETWEEN '${startDate}' AND '${endDate}'
+    `,
+  ];
+}
+
+function logGoogleAudienceBreakdownFailure(
+  label: string,
+  customerId: string,
+  error: unknown
+) {
+  const requestError = asGoogleAdsRequestError(error);
+  const message =
+    requestError?.message ?? (error instanceof Error ? error.message : "Google audience breakdown failed.");
+  console.warn(
+    `${label} customerId=${customerId} requestId=${requestError?.requestId ?? "(none)"} errorCode=${requestError?.errorCode ?? "(none)"} message=${JSON.stringify(message)}`
+  );
+}
+
+function logGoogleAudienceGaql(
+  label: string,
+  customerId: string,
+  loginCustomerId: string | null,
+  gaql: string
+) {
+  console.info(
+    `${label} customerId=${customerId} loginCustomerId=${loginCustomerId ?? "(none)"} gaql=${JSON.stringify(compactWhitespace(gaql))}`
+  );
+}
+
+function stripGoogleAudienceSource(item: {
+  platform: "google";
+  label: string;
+  clicks: number;
+  dimension: AudienceClickBreakdownItem["dimension"];
+}): AudienceClickBreakdownItem {
+  return {
+    platform: item.platform,
+    dimension: item.dimension,
+    label: item.label,
+    clicks: item.clicks,
+  };
+}
+
+function buildGoogleSourceItems(input: {
+  results: GoogleAdsResult[];
+  source: "keywords" | "content";
+  labelResolver: (result: GoogleAdsResult) => string;
+}): GoogleAudienceSourceClickItem[] {
+  const totals = new Map<string, number>();
+
+  input.results.forEach((result) => {
+    const clicks = coerceAudienceClicks(result.metrics?.clicks);
+    if (clicks <= 0) {
+      return;
+    }
+
+    const label = input.labelResolver(result).trim();
+    if (!label) {
+      return;
+    }
+
+    totals.set(label, (totals.get(label) ?? 0) + clicks);
+  });
+
+  return Array.from(totals.entries())
+    .map(([label, clicks]) => ({
+      platform: "google" as const,
+      source: input.source,
+      label,
+      clicks,
+    }))
+    .sort((left, right) => {
+      if (right.clicks !== left.clicks) {
+        return right.clicks - left.clicks;
+      }
+      return left.label.localeCompare(right.label);
+    });
+}
+
+function resolveGoogleGeoTargetLabel(
+  resourceName: string | null,
+  geoTargetsByResourceName: Map<string, GoogleAdsResult["geoTargetConstant"]>
+): string | null {
+  if (!resourceName) {
+    return null;
+  }
+
+  const target = geoTargetsByResourceName.get(resourceName);
+  return normalizeAudienceLocationLabel(
+    target?.name?.trim() || target?.canonicalName?.trim(),
+    "Unknown Location"
+  );
+}
+
 
 export async function fetchGooglePreviewHierarchy({
   customerId,
@@ -1394,24 +2111,49 @@ async function resolveVerifiedGoogleAdsContext(
       : null;
   const candidates: Array<{ loginCustomerId: string | null; resolvedAccessPath: string; fallbackUsed: boolean }> =
     [];
+  const addCandidate = (candidate: {
+    loginCustomerId: string | null;
+    resolvedAccessPath: string;
+    fallbackUsed: boolean;
+  }) => {
+    if (candidates.some((existing) => existing.loginCustomerId === candidate.loginCustomerId)) {
+      return;
+    }
+
+    candidates.push(candidate);
+  };
 
   if (baseRoute.resolutionMode === "direct") {
-    candidates.push({
+    addCandidate({
       loginCustomerId: null,
       resolvedAccessPath: "Personal",
       fallbackUsed: false,
     });
   } else {
     if (originalManagerCustomerId) {
-      candidates.push({
+      addCandidate({
         loginCustomerId: originalManagerCustomerId,
         resolvedAccessPath: formatGoogleAccessPath(originalManagerCustomerId),
         fallbackUsed: false,
       });
     }
 
+    if (!originalManagerCustomerId) {
+      const discoveredCandidates = await discoverGoogleAdsRouteCandidates({
+        customerId,
+        apiVersion: input.apiVersion,
+        developerToken: input.developerToken,
+        accessToken: input.accessToken,
+        refreshToken: input.refreshToken,
+        clientId: input.clientId,
+        clientSecret: input.clientSecret,
+      });
+
+      discoveredCandidates.forEach((candidate) => addCandidate(candidate));
+    }
+
     if (!originalManagerCustomerId || fallbackLoginCustomerId !== originalManagerCustomerId) {
-      candidates.push({
+      addCandidate({
         loginCustomerId: fallbackLoginCustomerId,
         resolvedAccessPath: formatGoogleAccessPath(fallbackLoginCustomerId),
         fallbackUsed: true,
@@ -1467,6 +2209,64 @@ async function resolveVerifiedGoogleAdsContext(
     loginCustomerId: lastCandidate.loginCustomerId,
     error: lastError,
   });
+}
+
+async function discoverGoogleAdsRouteCandidates(input: {
+  customerId: string;
+  apiVersion: string;
+  developerToken: string;
+  accessToken: string | null;
+  refreshToken: string | null;
+  clientId: string | null;
+  clientSecret: string | null;
+}): Promise<Array<{ loginCustomerId: string | null; resolvedAccessPath: string; fallbackUsed: boolean }>> {
+  try {
+    const activeAccessToken = await resolveGoogleAccessToken({
+      accessToken: input.accessToken,
+      refreshToken: input.refreshToken,
+      clientId: input.clientId,
+      clientSecret: input.clientSecret,
+    });
+    const accessibleCustomerIds = await getAccessibleGoogleAdsCustomerIds({
+      apiVersion: input.apiVersion,
+      developerToken: input.developerToken,
+      accessToken: activeAccessToken,
+      customerId: input.customerId,
+      loginCustomerId: null,
+    });
+    const discovered: Array<{
+      loginCustomerId: string | null;
+      resolvedAccessPath: string;
+      fallbackUsed: boolean;
+    }> = [];
+
+    if (accessibleCustomerIds.includes(input.customerId)) {
+      discovered.push({
+        loginCustomerId: null,
+        resolvedAccessPath: "Personal",
+        fallbackUsed: false,
+      });
+    }
+
+    accessibleCustomerIds
+      .filter((candidateId) => candidateId !== input.customerId)
+      .forEach((candidateId) => {
+        discovered.push({
+          loginCustomerId: candidateId,
+          resolvedAccessPath: formatGoogleAccessPath(candidateId),
+          fallbackUsed: false,
+        });
+      });
+
+    return discovered;
+  } catch (error) {
+    const message =
+      error instanceof Error
+        ? error.message
+        : "Unable to inspect accessible Google Ads customers for route discovery.";
+    console.warn(`[google-routing] candidate_discovery_failed message=${message}`);
+    return [];
+  }
 }
 
 function buildGooglePreviewHierarchyData(input: {
@@ -1742,21 +2542,12 @@ async function fetchGoogleAdsResults(
   const body = { query: input.query };
   const endpoint = `https://googleads.googleapis.com/${input.apiVersion}/customers/${normalizedCustomerId}/googleAds:searchStream`;
   const canRefresh = Boolean(input.refreshToken && input.clientId && input.clientSecret);
-  let activeAccessToken = input.accessToken;
-
-  if (canRefresh) {
-    activeAccessToken = await refreshGoogleAccessToken({
-      refreshToken: input.refreshToken!,
-      clientId: input.clientId!,
-      clientSecret: input.clientSecret!,
-    });
-  }
-
-  if (!activeAccessToken) {
-    throw new Error(
-      "Missing Google Ads access token. Set GOOGLE_ADS_ACCESS_TOKEN (or GOOGLE_OAUTH_ACCESS_TOKEN), or provide refresh credentials."
-    );
-  }
+  const activeAccessToken = await resolveGoogleAccessToken({
+    accessToken: input.accessToken,
+    refreshToken: input.refreshToken,
+    clientId: input.clientId,
+    clientSecret: input.clientSecret,
+  });
 
   await logAccessibleGoogleAdsCustomers({
     apiVersion: input.apiVersion,
@@ -1785,6 +2576,29 @@ async function fetchGoogleAdsResults(
   });
 
   return results;
+}
+
+async function resolveGoogleAccessToken(input: {
+  accessToken: string | null;
+  refreshToken: string | null;
+  clientId: string | null;
+  clientSecret: string | null;
+}): Promise<string> {
+  if (input.refreshToken && input.clientId && input.clientSecret) {
+    return refreshGoogleAccessToken({
+      refreshToken: input.refreshToken,
+      clientId: input.clientId,
+      clientSecret: input.clientSecret,
+    });
+  }
+
+  if (input.accessToken) {
+    return input.accessToken;
+  }
+
+  throw new Error(
+    "Missing Google Ads access token. Set GOOGLE_ADS_ACCESS_TOKEN (or GOOGLE_OAUTH_ACCESS_TOKEN), or provide refresh credentials."
+  );
 }
 
 async function fetchGoogleAdsResultsWithFallback(
@@ -2460,7 +3274,9 @@ function normalizeCampaignType(channelType: string): string {
     .replace(/\b\w/g, (segment) => segment.toUpperCase());
 }
 
-function buildGooglePreviewCampaignQueries(startDate: string, endDate: string): string[] {
+function buildGooglePreviewCampaignQueries(_startDate: string, _endDate: string): string[] {
+  void _startDate;
+  void _endDate;
   return [
     `
       SELECT
@@ -2484,7 +3300,9 @@ function buildGooglePreviewCampaignQueries(startDate: string, endDate: string): 
   ];
 }
 
-function buildGooglePreviewAdGroupQueries(startDate: string, endDate: string): string[] {
+function buildGooglePreviewAdGroupQueries(_startDate: string, _endDate: string): string[] {
+  void _startDate;
+  void _endDate;
   return [
     `
       SELECT
@@ -2502,7 +3320,9 @@ function buildGooglePreviewAdGroupQueries(startDate: string, endDate: string): s
   ];
 }
 
-function buildGooglePreviewAdQueries(startDate: string, endDate: string): string[] {
+function buildGooglePreviewAdQueries(_startDate: string, _endDate: string): string[] {
+  void _startDate;
+  void _endDate;
   return [
     `
       SELECT
@@ -2528,7 +3348,9 @@ function buildGooglePreviewAdQueries(startDate: string, endDate: string): string
   ];
 }
 
-function buildGooglePreviewKeywordQueries(startDate: string, endDate: string): string[] {
+function buildGooglePreviewKeywordQueries(_startDate: string, _endDate: string): string[] {
+  void _startDate;
+  void _endDate;
   return [
     `
       SELECT
@@ -2538,8 +3360,8 @@ function buildGooglePreviewKeywordQueries(startDate: string, endDate: string): s
         ad_group_criterion.keyword.text
       FROM keyword_view
       WHERE campaign.status = 'ENABLED'
-        AND ad_group.status != 'REMOVED'
-        AND ad_group_criterion.status != 'REMOVED'
+        AND ad_group.status = 'ENABLED'
+        AND ad_group_criterion.status = 'ENABLED'
       ORDER BY campaign.id, ad_group.id, ad_group_criterion.criterion_id
     `,
   ];
@@ -2663,10 +3485,6 @@ function buildGooglePreviewCustomerAssetQueries(): string[] {
 
 function normalizeGooglePreviewAccessPath(value: string | null): string | null {
   return normalizeGoogleAdsAccessPath(value);
-}
-
-function isDirectGoogleAccessPath(value: string): boolean {
-  return isDirectGoogleAdsAccessPath(value);
 }
 
 function formatGoogleAccessPath(value: string): string {

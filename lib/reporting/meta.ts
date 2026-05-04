@@ -1,3 +1,11 @@
+import {
+  coerceAudienceClicks,
+  createAudienceClickBreakdownItem,
+  normalizeAudienceAgeLabel,
+  normalizeAudienceGenderLabel,
+  normalizeAudienceLocationLabel,
+  sortAudienceItems,
+} from "@/lib/reporting/audience-breakdown";
 import { emptyCampaignRow } from "@/lib/reporting/metrics";
 import {
   CampaignRow,
@@ -9,6 +17,8 @@ import {
   PreviewDetailField,
   PreviewLinkAsset,
   PreviewPerformanceSummary,
+  AudienceClickBreakdownResponse,
+  AudienceClickBreakdownItem,
 } from "@/lib/reporting/types";
 
 interface MetaFetchInput {
@@ -152,6 +162,9 @@ interface MetaInsightRow {
     action_type?: string;
     value?: string;
   }>;
+  country?: string;
+  region?: string;
+  city?: string;
 }
 
 interface MetaPreviewResponse {
@@ -357,6 +370,61 @@ export async function fetchMetaCampaignRows({
   });
 
   return responseRows;
+}
+
+export async function fetchMetaAudienceBreakdown({
+  accountId,
+  accessToken,
+  startDate,
+  endDate,
+}: MetaFetchInput): Promise<AudienceClickBreakdownResponse> {
+  const [age, gender, country, region, city] = await Promise.all([
+    fetchMetaAudienceBreakdownDimension({
+      accountId,
+      accessToken,
+      startDate,
+      endDate,
+      dimension: "age",
+    }),
+    fetchMetaAudienceBreakdownDimension({
+      accountId,
+      accessToken,
+      startDate,
+      endDate,
+      dimension: "gender",
+    }),
+    fetchMetaAudienceBreakdownDimension({
+      accountId,
+      accessToken,
+      startDate,
+      endDate,
+      dimension: "country",
+    }),
+    fetchMetaAudienceBreakdownDimension({
+      accountId,
+      accessToken,
+      startDate,
+      endDate,
+      dimension: "region",
+    }),
+    fetchMetaAudienceBreakdownDimension({
+      accountId,
+      accessToken,
+      startDate,
+      endDate,
+      dimension: "city",
+    }),
+  ]);
+
+  return {
+    age,
+    gender,
+    location: {
+      country,
+      region,
+      city,
+    },
+  };
 }
 
 export async function fetchMetaPreviewData({
@@ -830,6 +898,84 @@ async function fetchMetaInsightsCollection(input: {
   return fetchMetaCollection<MetaInsightRow>(
     `https://graph.facebook.com/v22.0/act_${input.accountId}/insights?${params.toString()}`
   );
+}
+
+async function fetchMetaAudienceBreakdownDimension(input: {
+  accountId: string;
+  accessToken: string;
+  startDate: string;
+  endDate: string;
+  dimension: "age" | "gender" | "country" | "region" | "city";
+}): Promise<AudienceClickBreakdownItem[]> {
+  const breakdownLabel = `[audience-breakdown][meta][${input.dimension}]`;
+
+  try {
+    const rows = await fetchMetaInsightsCollection({
+      accountId: input.accountId,
+      accessToken: input.accessToken,
+      startDate: input.startDate,
+      endDate: input.endDate,
+      breakdowns: [input.dimension],
+      fields: [input.dimension, "clicks"],
+    });
+
+    const items = sortAudienceItems(
+      aggregateMetaAudienceItems(rows, input.dimension),
+      input.dimension
+    );
+    console.info(`${breakdownLabel} accountId=${input.accountId} rows=${items.length}`);
+    return items;
+  } catch (error) {
+    const message =
+      error instanceof Error ? error.message : "Meta audience breakdown request failed.";
+    console.warn(`${breakdownLabel} accountId=${input.accountId} message=${JSON.stringify(message)}`);
+    return [];
+  }
+}
+
+function aggregateMetaAudienceItems(
+  rows: MetaInsightRow[],
+  dimension: "age" | "gender" | "country" | "region" | "city"
+): AudienceClickBreakdownItem[] {
+  const totals = new Map<string, number>();
+
+  rows.forEach((row) => {
+    const clicks = coerceAudienceClicks(row.clicks);
+    if (clicks <= 0) {
+      return;
+    }
+
+    const label = resolveMetaAudienceLabel(row, dimension);
+    totals.set(label, (totals.get(label) ?? 0) + clicks);
+  });
+
+  return Array.from(totals.entries()).map(([label, clicks]) =>
+    createAudienceClickBreakdownItem({
+      platform: "meta",
+      dimension,
+      label,
+      clicks,
+    })
+  );
+}
+
+function resolveMetaAudienceLabel(
+  row: MetaInsightRow,
+  dimension: "age" | "gender" | "country" | "region" | "city"
+): string {
+  if (dimension === "age") {
+    return normalizeAudienceAgeLabel(row.age);
+  }
+  if (dimension === "gender") {
+    return normalizeAudienceGenderLabel(row.gender);
+  }
+  if (dimension === "country") {
+    return normalizeAudienceLocationLabel(row.country);
+  }
+  if (dimension === "region") {
+    return normalizeAudienceLocationLabel(row.region);
+  }
+  return normalizeAudienceLocationLabel(row.city);
 }
 
 async function fetchMetaCollection<TItem>(initialUrl: string): Promise<TItem[]> {
@@ -1375,6 +1521,9 @@ function sortAgeRange(left: string, right: string): number {
 
 function ageRangeOrder(value: string): number {
   const normalized = value.toLowerCase();
+  if (normalized === "unknown") {
+    return 9999;
+  }
   if (normalized.endsWith("+")) {
     return Number.parseInt(normalized, 10) || 999;
   }

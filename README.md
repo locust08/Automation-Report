@@ -56,6 +56,7 @@ Credentials are expected from environment variables (Doppler injects these at ru
 - `NOTION_MONTHLY_REPORT_LOGS_DATABASE_ID` (optional Notion database for monthly cron send logs)
 - `CRON_SECRET` (required by `/api/cron/monthly-report`)
 - `RESEND_API_KEY` (required for monthly report email delivery)
+- `RESEND_FROM_MONTHLY_REPORT` (optional; defaults to `Locus-T <no-reply@locus-t.com.my>`)
 - `MONTHLY_REPORT_TEST_MODE` (optional; when `true`, only the first eligible account is processed)
 - `MONTHLY_REPORT_TEST_RECIPIENT` (optional; defaults to `ava@locus-t.com.my`)
 - `GOOGLE_ADS_LOGIN_CUSTOMER_ID` (optional override; defaults to fixed MCC `366-613-7525`)

@@ -32,6 +32,9 @@ type DownloadOverlayState =
   | { phase: "success"; format: DownloadFormat }
   | { phase: "error"; format: DownloadFormat; message: string };
 
+const TRANSPARENT_IMAGE_PLACEHOLDER =
+  "data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='1' height='1'%3E%3C/svg%3E";
+
 export function ReportDownloadButton() {
   const { screenshotMode, setScreenshotMode } = useScreenshotMode();
   const [queuedFormat, setQueuedFormat] = useState<DownloadFormat | null>(null);
@@ -135,7 +138,7 @@ export function ReportDownloadButton() {
             <Button
               type="button"
               variant="outline"
-              className="h-10 w-full items-center justify-start gap-2 border-border/60 bg-background px-3 text-sm font-medium leading-none text-foreground shadow-sm hover:bg-muted sm:w-[132px]"
+              className="h-10 w-full items-center justify-center gap-2 border-border/60 bg-background px-4 text-center text-sm font-medium leading-none text-foreground shadow-sm hover:bg-muted sm:min-w-[148px] sm:w-auto"
               disabled={isBusy}
             >
               {isBusy ? (
@@ -210,6 +213,7 @@ async function captureReportPng(root: HTMLElement, scale: number): Promise<strin
   return toPng(root, {
     cacheBust: true,
     backgroundColor: "#f0f0f0",
+    imagePlaceholder: TRANSPARENT_IMAGE_PLACEHOLDER,
     pixelRatio: Math.max(2, window.devicePixelRatio || 1) * scale,
     width: root.scrollWidth,
     height: root.scrollHeight,

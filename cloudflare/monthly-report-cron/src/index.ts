@@ -15,6 +15,8 @@ interface ExecutionContext {
 
 const JOB_NAME = "monthly-report";
 const JOB_SOURCE = "cloudflare-cron";
+const MONTHLY_PRODUCTION_CRON = "0 1 5 * *";
+const DUMMY_TEST_CRON = "30 2 29 4 *";
 
 export default {
   async scheduled(controller: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
@@ -40,6 +42,7 @@ export default {
 async function runScheduledJob(controller: ScheduledController, env: Env): Promise<void> {
   const endpoint = readRequiredEnv(env.VERCEL_MONTHLY_REPORT_ENDPOINT, "VERCEL_MONTHLY_REPORT_ENDPOINT");
   const secret = readRequiredEnv(env.CRON_SECRET, "CRON_SECRET");
+  const payload = buildScheduledPayload(controller.cron);
 
   console.log(
     `[monthly-report-cron] scheduled trigger started cron=${controller.cron} scheduled_time=${new Date(
@@ -53,10 +56,7 @@ async function runScheduledJob(controller: ScheduledController, env: Env): Promi
       Authorization: `Bearer ${secret}`,
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({
-      source: JOB_SOURCE,
-      job: JOB_NAME,
-    }),
+    body: JSON.stringify(payload),
   });
 
   const responseSummary = await buildSafeResponseSummary(response);
@@ -71,6 +71,34 @@ async function runScheduledJob(controller: ScheduledController, env: Env): Promi
   console.log(
     `[monthly-report-cron] request succeeded status=${response.status} summary=${responseSummary}`
   );
+}
+
+function buildScheduledPayload(cron: string): Record<string, unknown> {
+  if (cron === DUMMY_TEST_CRON) {
+    return {
+      source: JOB_SOURCE,
+      job: JOB_NAME,
+      mode: "dummy-test",
+      scheduledCron: cron,
+      forceTestMode: true,
+      overrideTargets: [
+        {
+          clientName: "Overall Report 228-624-8023",
+          googleAccountId: "228-624-8023",
+          recipientEmail: "ava@locus-t.com.my",
+          reportType: "Overall",
+          platform: "Google",
+        },
+      ],
+    };
+  }
+
+  return {
+    source: JOB_SOURCE,
+    job: JOB_NAME,
+    mode: cron === MONTHLY_PRODUCTION_CRON ? "monthly-production" : "scheduled",
+    scheduledCron: cron,
+  };
 }
 
 async function buildSafeResponseSummary(response: Response): Promise<string> {

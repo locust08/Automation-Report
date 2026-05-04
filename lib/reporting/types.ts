@@ -52,6 +52,72 @@ export interface CampaignGroup {
   totals: CampaignRow;
 }
 
+export type AudienceClickBreakdownPlatform = "google" | "meta";
+
+export type AudienceClickBreakdownDimension =
+  | "age"
+  | "gender"
+  | "country"
+  | "region"
+  | "city";
+
+export interface AudienceClickBreakdownItem {
+  platform: AudienceClickBreakdownPlatform;
+  dimension: AudienceClickBreakdownDimension;
+  label: string;
+  clicks: number;
+}
+
+export type GoogleAudienceClickBreakdownSource =
+  | "audiences"
+  | "locations"
+  | "keywords"
+  | "content";
+
+export interface GoogleAudienceClickBreakdownMetricItem {
+  platform: "google";
+  source: GoogleAudienceClickBreakdownSource;
+  dimension: AudienceClickBreakdownDimension;
+  label: string;
+  clicks: number;
+}
+
+export interface GoogleAudienceSourceClickItem {
+  platform: "google";
+  source: "keywords" | "content";
+  label: string;
+  clicks: number;
+}
+
+export interface AudienceBreakdownRow {
+  label: string;
+  clicks: number;
+}
+
+export interface AudienceClickBreakdownResponse {
+  age: AudienceClickBreakdownItem[];
+  gender: AudienceClickBreakdownItem[];
+  location: {
+    country: AudienceClickBreakdownItem[];
+    region: AudienceClickBreakdownItem[];
+    city: AudienceClickBreakdownItem[];
+  };
+}
+
+export interface GoogleAudienceClickBreakdownResponse {
+  age: GoogleAudienceClickBreakdownMetricItem[];
+  gender: GoogleAudienceClickBreakdownMetricItem[];
+  location: {
+    country: GoogleAudienceClickBreakdownMetricItem[];
+    region: GoogleAudienceClickBreakdownMetricItem[];
+    city: GoogleAudienceClickBreakdownMetricItem[];
+  };
+  sources: {
+    keywords: GoogleAudienceSourceClickItem[];
+    content: GoogleAudienceSourceClickItem[];
+  };
+}
+
 export interface OverallReportPayload {
   companyName: string;
   dateRange: DateRangeConfig;
@@ -63,6 +129,7 @@ export interface OverallReportPayload {
   };
   summaries: SummarySection[];
   campaignGroups: CampaignGroup[];
+  audienceClickBreakdown: AudienceClickBreakdownResponse;
   warnings: string[];
 }
 

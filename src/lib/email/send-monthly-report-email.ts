@@ -3,7 +3,7 @@ import { Resend } from "resend";
 import type { MonthlyReportAccount } from "@/src/lib/notion/get-monthly-report-accounts";
 
 const DEFAULT_TEST_RECIPIENT = "ava@locus-t.com.my";
-const DEFAULT_FROM_ADDRESS = "No-Reply <demo@mail.alphaonlineclass.com>";
+const DEFAULT_FROM_ADDRESS = "Locus-T <no-reply@locus-t.com.my>";
 
 let resendClient: Resend | null = null;
 
@@ -31,8 +31,9 @@ export async function sendMonthlyReportEmail(
   const fromAddress = readOptionalEnv("RESEND_FROM_MONTHLY_REPORT") ?? DEFAULT_FROM_ADDRESS;
   const recipientEmail = testMode ? testRecipient : input.account.clientEmail;
   const ccEmail = testMode ? null : input.account.picEmail;
-  const subjectPrefix = testMode ? "[TEST] " : "";
-  const subject = `${subjectPrefix}Monthly Ads Report - ${input.account.clientName} - ${input.reportMonthLabel}`;
+  const subject = testMode
+    ? `[TEST] Monthly Ads Report - ${input.account.clientName}`
+    : `Monthly Ads Report - ${input.account.clientName} - ${input.reportMonthLabel}`;
 
   console.info(
     `[monthly-report] email send started client=${input.account.clientName} test_mode=${testMode}`
@@ -58,13 +59,14 @@ export async function sendMonthlyReportEmail(
       cc: ccEmail ? [ccEmail] : undefined,
       subject,
       html: buildEmailHtml({
+        recipientEmail,
         clientName: input.account.clientName,
         reportMonthLabel: input.reportMonthLabel,
         includePicNote: Boolean(input.account.picEmail),
       }),
       attachments: [
         {
-          filename: buildAttachmentFilename(input.account.clientName, input.reportMonthKey),
+          filename: buildAttachmentFilename(input.account.clientName, input.reportMonthLabel),
           content: input.pdfBuffer.toString("base64"),
         },
       ],
@@ -104,25 +106,44 @@ function getResendClient(): Resend {
   return resendClient;
 }
 
-function buildAttachmentFilename(clientName: string, reportMonthKey: string): string {
-  return `monthly-ads-report-${slugify(clientName)}-${reportMonthKey}.pdf`;
+function buildAttachmentFilename(clientName: string, reportMonthLabel: string): string {
+  return `Monthly Report-${sanitizeFilenameSegment(clientName)}-${sanitizeFilenameSegment(reportMonthLabel)}.pdf`;
 }
 
 function buildEmailHtml(input: {
+  recipientEmail: string;
   clientName: string;
   reportMonthLabel: string;
   includePicNote: boolean;
 }): string {
+  const greeting = resolveGreeting(input.recipientEmail);
+
   return `
-    <div style="font-family: Arial, sans-serif; color: #111827; line-height: 1.6;">
-      <p>Dear Team,</p>
-      <p>Please find attached the monthly ads report for <strong>${escapeHtml(input.clientName)}</strong>.</p>
-      <p>Report month: ${escapeHtml(input.reportMonthLabel)}</p>
-      <p>The PDF report is attached for your review.</p>
-      <p>${input.includePicNote ? "The person in charge has been copied for follow-up if needed." : "Please let us know if any follow-up is required."}</p>
-      <p>Regards,<br/>Alpha Online Class</p>
+    <div style="font-family: Arial, sans-serif; color: #111827; line-height: 1.7; font-size: 15px;">
+      <p>${escapeHtml(greeting)}</p>
+      <p>Please find attached the <strong>Overall Monthly Report</strong> for <strong>${escapeHtml(input.clientName)}</strong>.</p>
+      <p>This report covers <strong>${escapeHtml(input.reportMonthLabel)}</strong> and has been exported directly from the reporting system as a PDF generated from the report screenshot for your review.</p>
+      <p>${input.includePicNote ? "The relevant person in charge has been copied for visibility and follow-up if needed." : "Please let us know if you would like any clarification or a follow-up review session."}</p>
+      <p>Thank you.</p>
+      <p>Best regards,<br/>Locus-T</p>
     </div>
   `.trim();
+}
+
+function resolveGreeting(recipientEmail: string): string {
+  const localPart = recipientEmail.split("@")[0]?.trim() ?? "";
+  const cleaned = localPart.replace(/[._-]+/g, " ").trim();
+
+  if (!cleaned) {
+    return "Dear Team,";
+  }
+
+  const words = cleaned
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((word) => `${word.charAt(0).toUpperCase()}${word.slice(1).toLowerCase()}`);
+
+  return words.length > 0 ? `Dear ${words.join(" ")},` : "Dear Team,";
 }
 
 function slugify(value: string): string {
@@ -133,6 +154,13 @@ function slugify(value: string): string {
     .replace(/(^-|-$)/g, "");
 
   return slug || "client";
+}
+
+function sanitizeFilenameSegment(value: string): string {
+  const trimmed = value.trim().replace(/[<>:"/\\|?*\u0000-\u001F]+/g, " ");
+  const normalizedWhitespace = trimmed.replace(/\s+/g, " ").trim();
+
+  return normalizedWhitespace || slugify(value);
 }
 
 function escapeHtml(value: string): string {

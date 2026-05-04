@@ -1,5 +1,6 @@
 import { jsPDF } from "jspdf";
 
+import { summarizeAudienceItemsForChart } from "@/lib/reporting/audience-breakdown";
 import { extractNotionDatabaseId } from "@/lib/reporting/notion";
 import { getCredentials } from "@/lib/reporting/env";
 import { getOverallReport } from "@/lib/reporting/service";
@@ -324,6 +325,10 @@ async function generateMonthlyReportPdf(input: {
     });
   });
 
+  writeLine("", { size: 6 });
+  writeLine("Audience Click Breakdown", { bold: true, size: 14 });
+  renderAudienceBreakdown(writeLine, input.reportPayload);
+
   if (input.reportPayload.warnings.length > 0) {
     writeLine("", { size: 6 });
     writeLine("Warnings", { bold: true, size: 14 });
@@ -362,6 +367,45 @@ function renderCampaignGroup(
       `${row.campaignName}: Spend ${formatCurrency(row.spend)} | Impr. ${formatInteger(row.impressions)} | Clicks ${formatInteger(row.clicks)} | Results ${formatInteger(row.results)}`,
       { indent: 14 }
     );
+  });
+}
+
+function renderAudienceBreakdown(
+  writeLine: (text: string, options?: { bold?: boolean; size?: number; indent?: number }) => void,
+  reportPayload: OverallReportPayload
+) {
+  const ageRows = summarizeAudienceItemsForChart(reportPayload.audienceClickBreakdown.age, "age");
+  const genderRows = summarizeAudienceItemsForChart(reportPayload.audienceClickBreakdown.gender, "gender");
+  const countryRows = summarizeAudienceItemsForChart(
+    reportPayload.audienceClickBreakdown.location.country,
+    "country"
+  );
+  const regionRows = summarizeAudienceItemsForChart(
+    reportPayload.audienceClickBreakdown.location.region,
+    "region"
+  );
+  const cityRows = summarizeAudienceItemsForChart(reportPayload.audienceClickBreakdown.location.city, "city");
+
+  writeAudienceBreakdownRows(writeLine, "Age", ageRows);
+  writeAudienceBreakdownRows(writeLine, "Gender", genderRows);
+  writeAudienceBreakdownRows(writeLine, "Country", countryRows);
+  writeAudienceBreakdownRows(writeLine, "State / Region", regionRows);
+  writeAudienceBreakdownRows(writeLine, "City", cityRows);
+}
+
+function writeAudienceBreakdownRows(
+  writeLine: (text: string, options?: { bold?: boolean; size?: number; indent?: number }) => void,
+  heading: string,
+  rows: Array<{ label: string; clicks: number }>
+) {
+  writeLine(heading, { bold: true, size: 12 });
+  if (rows.length === 0) {
+    writeLine("No audience click data available for this breakdown.", { indent: 14 });
+    return;
+  }
+
+  rows.forEach((row) => {
+    writeLine(`${row.label}: ${formatInteger(row.clicks)} clicks`, { indent: 14 });
   });
 }
 

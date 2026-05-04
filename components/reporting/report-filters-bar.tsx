@@ -265,7 +265,7 @@ export function ReportFiltersBar({
         <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:items-start">
           <Button
             type="submit"
-            className="h-10 w-full items-center justify-start gap-2 bg-red-600 px-3 text-left text-sm font-medium leading-none text-white hover:bg-red-700 sm:w-[132px]"
+            className="h-10 w-full items-center justify-center gap-2 bg-red-600 px-4 text-center text-sm font-medium leading-none text-white hover:bg-red-700 sm:min-w-[148px] sm:w-auto"
           >
             <SearchIcon data-icon="inline-start" className="shrink-0" />
             {submitLabel}
@@ -274,7 +274,7 @@ export function ReportFiltersBar({
             <Button
               type="button"
               variant="outline"
-              className="h-10 w-full items-center justify-start gap-2 px-3 text-sm font-medium leading-none sm:w-[132px]"
+              className="h-10 w-full items-center justify-center gap-2 px-4 text-sm font-medium leading-none sm:min-w-[148px] sm:w-auto"
               onClick={onReset}
             >
               <RefreshCcwIcon data-icon="inline-start" className="shrink-0" />

@@ -2,6 +2,7 @@
 
 import { useMemo } from "react";
 
+import { AudienceClickBreakdownSection } from "@/components/reporting/audience-click-breakdown";
 import { OverallCampaignGroupsTable } from "@/components/reporting/campaign-table";
 import { ReportSuccessScreen } from "@/components/reporting/report-loading-screen";
 import { ReportHeaderMonthPicker } from "@/components/reporting/report-header-month-picker";
@@ -142,6 +143,7 @@ export function OverallPageClient({
               groups={data.campaignGroups}
               queryString={forwardQuery}
             />
+            <AudienceClickBreakdownSection breakdown={data.audienceClickBreakdown} />
           </>
         ) : null}
       </div>
