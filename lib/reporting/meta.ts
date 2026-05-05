@@ -151,20 +151,41 @@ interface MetaInsightRow {
   cpc?: string;
   cpm?: string;
   spend?: string;
+  optimization_goal?: string;
+  objective_results?: MetaObjectiveResultMetricValue;
+  cost_per_result?: MetaObjectiveResultMetricValue;
+  cost_per_objective_result?: MetaObjectiveResultMetricValue;
   age?: string;
   gender?: string;
-  actions?: Array<{
-    action_type?: string;
-    value?: string;
-  }>;
-  cost_per_action_type?: Array<{
-    action_type?: string;
-    value?: string;
-  }>;
+  actions?: MetaActionMetric[];
+  cost_per_action_type?: MetaActionMetric[];
   country?: string;
   region?: string;
   city?: string;
 }
+
+type MetaActionMetric = {
+  action_type?: string;
+  value?: string;
+};
+
+type MetaObjectiveResultMetric = {
+  id?: string;
+  indicator?: string;
+  name?: string;
+  title?: string;
+  value?: string | number;
+  values?: Array<{
+    value?: string | number;
+  }>;
+  attribution_window?: string;
+};
+
+type MetaObjectiveResultMetricValue =
+  | MetaObjectiveResultMetric
+  | MetaObjectiveResultMetric[]
+  | string
+  | number;
 
 interface MetaPreviewResponse {
   data: PreviewCampaignNode[];
@@ -200,9 +221,70 @@ const RESULT_ACTION_PRIORITY = [
   "purchase",
   "complete_registration",
   "omni_complete_registration",
+  "onsite_conversion.messaging_conversation_started_7d",
   "landing_page_view",
   "link_click",
 ] as const;
+
+const META_MESSAGING_RESULT_ACTION_PRIORITY = [
+  "onsite_conversion.messaging_conversation_started_7d",
+  "onsite_conversion.messaging_first_reply",
+  "onsite_conversion.messaging_user_depth_2_message_send",
+  "onsite_conversion.messaging_user_depth_3_message_send",
+  "onsite_conversion.messaging_user_subscribed",
+] as const;
+
+const META_ENGAGEMENT_RESULT_ACTION_PRIORITY = [
+  ...META_MESSAGING_RESULT_ACTION_PRIORITY,
+  "post_engagement",
+  "page_engagement",
+  "video_view",
+] as const;
+
+const META_LEAD_RESULT_ACTION_PRIORITY = [
+  "lead",
+  "omni_lead",
+  "onsite_conversion.lead_grouped",
+  "onsite_conversion.lead",
+  "offsite_conversion.fb_pixel_lead",
+] as const;
+
+const META_SALES_RESULT_ACTION_PRIORITY = [
+  "purchase",
+  "omni_purchase",
+  "offsite_conversion.fb_pixel_purchase",
+] as const;
+
+const META_TRAFFIC_RESULT_ACTION_PRIORITY = [
+  "landing_page_view",
+  "link_click",
+] as const;
+
+const META_CAMPAIGN_INSIGHT_BASE_FIELDS = [
+  "campaign_id",
+  "campaign_name",
+  "objective",
+  "impressions",
+  "clicks",
+  "ctr",
+  "cpm",
+  "spend",
+] as const;
+
+const META_OBJECTIVE_RESULT_FIELDS = [
+  "optimization_goal",
+  "objective_results",
+  "cost_per_result",
+  "cost_per_objective_result",
+] as const;
+
+const META_LEGACY_RESULT_FIELDS = [
+  "actions",
+  "cost_per_action_type",
+] as const;
+
+const META_GRAPH_API_VERSION = process.env.META_GRAPH_API_VERSION?.trim() || "v24.0";
+const META_GRAPH_API_BASE_URL = `https://graph.facebook.com/${META_GRAPH_API_VERSION}`;
 
 const META_PREVIEW_CAMPAIGN_FIELDS = [
   "id",
@@ -259,12 +341,17 @@ const META_PREVIEW_INSIGHT_FIELDS = [
   "adset_name",
   "ad_id",
   "ad_name",
+  "objective",
+  "optimization_goal",
   "impressions",
   "clicks",
   "ctr",
   "cpc",
   "cpm",
   "spend",
+  "objective_results",
+  "cost_per_result",
+  "cost_per_objective_result",
   "actions",
   "cost_per_action_type",
 ] as const;
@@ -286,27 +373,12 @@ export async function fetchMetaCampaignRows({
   startDate,
   endDate,
 }: MetaFetchInput): Promise<CampaignRow[]> {
-  const params = new URLSearchParams({
-    access_token: accessToken,
-    level: "campaign",
-    limit: "200",
-    fields: [
-      "campaign_id",
-      "campaign_name",
-      "objective",
-      "impressions",
-      "clicks",
-      "ctr",
-      "cpm",
-      "spend",
-      "actions",
-    ].join(","),
-    time_range: JSON.stringify({ since: startDate, until: endDate }),
+  const rows = await fetchMetaCampaignInsightRows({
+    accountId,
+    accessToken,
+    startDate,
+    endDate,
   });
-
-  const rows = await fetchMetaCollection<MetaInsightRow>(
-    `https://graph.facebook.com/v22.0/act_${accountId}/insights?${params.toString()}`
-  );
 
   const responseRows: CampaignRow[] = [];
   let totalSpend = 0;
@@ -319,7 +391,15 @@ export async function fetchMetaCampaignRows({
     const spend = toNumber(item.spend);
     totalSpend += spend;
     maxSpend = Math.max(maxSpend, spend);
-    const resultMetric = pickResultMetric(item.actions, item.cost_per_action_type);
+    const resultMetric = pickResultMetric({
+      objectiveResults: item.objective_results,
+      costPerResult: item.cost_per_result,
+      costPerObjectiveResult: item.cost_per_objective_result,
+      actions: item.actions,
+      costs: item.cost_per_action_type,
+      objective: item.objective,
+      optimizationGoal: item.optimization_goal,
+    });
 
     const campaignName = item.campaign_name?.trim() || "Untitled Campaign";
     const campaignType = normalizeCampaignType(item.objective, campaignName);
@@ -336,7 +416,8 @@ export async function fetchMetaCampaignRows({
     row.results = resultMetric.value;
     row.ctr = toNumber(item.ctr) || (impressions > 0 ? (clicks * 100) / impressions : 0);
     row.cpm = toNumber(item.cpm) || (impressions > 0 ? (spend * 1000) / impressions : 0);
-    row.costPerResult = resultMetric.value > 0 ? spend / resultMetric.value : 0;
+    row.costPerResult =
+      resultMetric.costPerResult ?? (resultMetric.value > 0 ? spend / resultMetric.value : 0);
     row.avgCpc = clicks > 0 ? spend / clicks : 0;
     row.conversions = resultMetric.value;
 
@@ -398,6 +479,48 @@ export async function fetchMetaAudienceBreakdown({
       city: [],
     },
   };
+}
+
+async function fetchMetaCampaignInsightRows(input: MetaFetchInput): Promise<MetaInsightRow[]> {
+  const primaryFields = [
+    ...META_CAMPAIGN_INSIGHT_BASE_FIELDS,
+    ...META_OBJECTIVE_RESULT_FIELDS,
+    ...META_LEGACY_RESULT_FIELDS,
+  ];
+
+  try {
+    return await fetchMetaCampaignInsightRowsWithFields(input, primaryFields);
+  } catch (error) {
+    if (!isUnsupportedMetaInsightFieldError(error)) {
+      throw error;
+    }
+
+    console.warn(
+      `[meta-campaigns] accountId=${input.accountId} objective_result_fields_unavailable=true message="${escapeLogMessage(error.message)}"`
+    );
+
+    return fetchMetaCampaignInsightRowsWithFields(input, [
+      ...META_CAMPAIGN_INSIGHT_BASE_FIELDS,
+      ...META_LEGACY_RESULT_FIELDS,
+    ]);
+  }
+}
+
+async function fetchMetaCampaignInsightRowsWithFields(
+  input: MetaFetchInput,
+  fields: readonly string[]
+): Promise<MetaInsightRow[]> {
+  const params = new URLSearchParams({
+    access_token: input.accessToken,
+    level: "campaign",
+    limit: "200",
+    fields: fields.join(","),
+    time_range: JSON.stringify({ since: input.startDate, until: input.endDate }),
+  });
+
+  return fetchMetaCollection<MetaInsightRow>(
+    `${META_GRAPH_API_BASE_URL}/act_${input.accountId}/insights?${params.toString()}`
+  );
 }
 
 export async function fetchMetaPreviewData({
@@ -676,7 +799,7 @@ export async function fetchMetaAccountName({
   accountId,
   accessToken,
 }: MetaAccountNameInput): Promise<string | null> {
-  const endpoint = `https://graph.facebook.com/v22.0/act_${accountId}?fields=name&access_token=${encodeURIComponent(accessToken)}`;
+  const endpoint = `${META_GRAPH_API_BASE_URL}/act_${accountId}?fields=name&access_token=${encodeURIComponent(accessToken)}`;
   const response = await fetch(endpoint, { cache: "no-store" });
   const rawText = await response.text();
 
@@ -708,7 +831,7 @@ async function fetchMetaCampaignCollection(input: {
   });
 
   return fetchMetaCollection<MetaCampaignRow>(
-    `https://graph.facebook.com/v22.0/act_${input.accountId}/campaigns?${params.toString()}`
+    `${META_GRAPH_API_BASE_URL}/act_${input.accountId}/campaigns?${params.toString()}`
   );
 }
 
@@ -724,7 +847,7 @@ async function fetchMetaAdSetCollection(input: {
   });
 
   return fetchMetaCollection<MetaAdSetRow>(
-    `https://graph.facebook.com/v22.0/act_${input.accountId}/adsets?${params.toString()}`
+    `${META_GRAPH_API_BASE_URL}/act_${input.accountId}/adsets?${params.toString()}`
   );
 }
 
@@ -740,7 +863,7 @@ async function fetchMetaAdCollection(input: {
   });
 
   return fetchMetaCollection<MetaAdRow>(
-    `https://graph.facebook.com/v22.0/act_${input.accountId}/ads?${params.toString()}`
+    `${META_GRAPH_API_BASE_URL}/act_${input.accountId}/ads?${params.toString()}`
   );
 }
 
@@ -757,7 +880,7 @@ async function fetchMetaCreativeCollection(input: {
       ids: chunk.join(","),
       fields: META_PREVIEW_CREATIVE_FIELDS.join(","),
     });
-    const response = await fetch(`https://graph.facebook.com/v22.0/?${params.toString()}`, {
+    const response = await fetch(`${META_GRAPH_API_BASE_URL}/?${params.toString()}`, {
       cache: "no-store",
     });
     const parsed = await parseMetaResponse<Record<string, MetaCreativeRow | { error?: MetaApiErrorShape }>>(
@@ -807,7 +930,7 @@ async function fetchMetaPreviewLinks(input: {
     });
 
     const response = await fetch(
-      `https://graph.facebook.com/v22.0/${adId}/previews?${params.toString()}`,
+      `${META_GRAPH_API_BASE_URL}/${adId}/previews?${params.toString()}`,
       { cache: "no-store" }
     );
     const parsed = await parseMetaResponse<MetaGraphResponse<{ body?: string }>>(response);
@@ -869,7 +992,7 @@ async function fetchMetaInsightsCollection(input: {
   }
 
   return fetchMetaCollection<MetaInsightRow>(
-    `https://graph.facebook.com/v22.0/act_${input.accountId}/insights?${params.toString()}`
+    `${META_GRAPH_API_BASE_URL}/act_${input.accountId}/insights?${params.toString()}`
   );
 }
 
@@ -1118,6 +1241,27 @@ function isRetryableMetaError(error: MetaApiError): boolean {
   );
 }
 
+function isUnsupportedMetaInsightFieldError(error: unknown): error is Error {
+  if (!(error instanceof MetaApiError)) {
+    return false;
+  }
+
+  const message = error.message.toLowerCase();
+  return (
+    error.code === 100 &&
+    message.includes("field") &&
+    (message.includes("objective_results") ||
+      message.includes("cost_per_result") ||
+      message.includes("cost_per_objective_result") ||
+      message.includes("optimization_goal") ||
+      message.includes("valid for fields param"))
+  );
+}
+
+function escapeLogMessage(message: string): string {
+  return message.replaceAll('"', '\\"').replaceAll("\n", " ");
+}
+
 async function sleepMetaRetry(attempt: number) {
   const delayMs = 750 * 2 ** attempt;
   await new Promise((resolve) => setTimeout(resolve, delayMs));
@@ -1143,7 +1287,15 @@ function buildPerformanceMap(rows: MetaInsightRow[]): Map<string, PreviewPerform
       return;
     }
 
-    const resultMetric = pickResultMetric(row.actions, row.cost_per_action_type);
+    const resultMetric = pickResultMetric({
+      objectiveResults: row.objective_results,
+      costPerResult: row.cost_per_result,
+      costPerObjectiveResult: row.cost_per_objective_result,
+      actions: row.actions,
+      costs: row.cost_per_action_type,
+      objective: row.objective,
+      optimizationGoal: row.optimization_goal,
+    });
     const current = performanceByAdId.get(adId) ?? {
       resultLabel: resultMetric.label,
       results: 0,
@@ -1206,7 +1358,15 @@ function buildDemographicMap(rows: MetaInsightRow[]): Map<string, PreviewDemogra
       femaleSpend: 0,
       unknownSpend: 0,
     };
-    const resultMetric = pickResultMetric(row.actions, row.cost_per_action_type);
+    const resultMetric = pickResultMetric({
+      objectiveResults: row.objective_results,
+      costPerResult: row.cost_per_result,
+      costPerObjectiveResult: row.cost_per_objective_result,
+      actions: row.actions,
+      costs: row.cost_per_action_type,
+      objective: row.objective,
+      optimizationGoal: row.optimization_goal,
+    });
     const spend = toNumber(row.spend);
 
     if (gender === "male") {
@@ -1390,27 +1550,50 @@ function mergeDemographicRows(rows: PreviewDemographicRow[]): PreviewDemographic
     .sort((left, right) => sortAgeRange(left.ageRange, right.ageRange));
 }
 
-function pickResultMetric(
-  actions: Array<{ action_type?: string; value?: string }> | undefined,
-  costs: Array<{ action_type?: string; value?: string }> | undefined
-): { actionType: string; label: string; value: number; costPerResult: number | null } {
+function pickResultMetric(input: {
+  objectiveResults?: MetaObjectiveResultMetricValue;
+  costPerResult?: MetaObjectiveResultMetricValue;
+  costPerObjectiveResult?: MetaObjectiveResultMetricValue;
+  actions?: MetaActionMetric[];
+  costs?: MetaActionMetric[];
+  objective?: string;
+  optimizationGoal?: string;
+}): { actionType: string; label: string; value: number; costPerResult: number | null } {
+  const objectiveResultMetric = pickObjectiveResultMetric(
+    input.objectiveResults,
+    input.costPerResult,
+    input.costPerObjectiveResult
+  );
+  if (objectiveResultMetric) {
+    return objectiveResultMetric;
+  }
+
+  const actions = input.actions;
+  const costs = input.costs;
+
   if (!actions?.length) {
     return { actionType: "results", label: "Results", value: 0, costPerResult: null };
   }
 
-  for (const actionType of RESULT_ACTION_PRIORITY) {
+  const prioritizedActionTypes = uniqueActionTypes([
+    ...resultActionPriorityForObjective(input.objective, input.optimizationGoal),
+    ...RESULT_ACTION_PRIORITY,
+  ]);
+
+  for (const actionType of prioritizedActionTypes) {
     const matched = actions.find((action) => action.action_type === actionType);
     if (!matched) {
       continue;
     }
 
-    const costMatched = costs?.find((cost) => cost.action_type === actionType);
-    return {
-      actionType,
-      label: humanizeActionType(actionType),
-      value: toNumber(matched.value),
-      costPerResult: costMatched?.value ? toNumber(costMatched.value) : null,
-    };
+    return createResultMetric(actionType, matched, costs);
+  }
+
+  const inferredMessagingMatch = actions.find((action) =>
+    isMessagingConversationAction(action.action_type)
+  );
+  if (inferredMessagingMatch?.action_type) {
+    return createResultMetric(inferredMessagingMatch.action_type, inferredMessagingMatch, costs);
   }
 
   const fallback = actions[0];
@@ -1423,8 +1606,167 @@ function pickResultMetric(
   };
 }
 
+function pickObjectiveResultMetric(
+  objectiveResults: MetaObjectiveResultMetricValue | undefined,
+  costPerResult: MetaObjectiveResultMetricValue | undefined,
+  costPerObjectiveResult: MetaObjectiveResultMetricValue | undefined
+): { actionType: string; label: string; value: number; costPerResult: number | null } | null {
+  const validResults = normalizeMetaObjectiveResultMetrics(objectiveResults).filter(
+    (result) => readMetaObjectiveResultValue(result) > 0
+  );
+  if (validResults.length === 0) {
+    return null;
+  }
+
+  const preferredResult = validResults[0];
+  const actionType = readMetaObjectiveResultKey(preferredResult);
+  const value = validResults.reduce(
+    (total, result) => total + readMetaObjectiveResultValue(result),
+    0
+  );
+  const costMetric =
+    findMatchingObjectiveCost(actionType, costPerResult) ??
+    findMatchingObjectiveCost(actionType, costPerObjectiveResult);
+
+  return {
+    actionType,
+    label: humanizeObjectiveResultLabel(preferredResult, actionType),
+    value,
+    costPerResult: costMetric ? readMetaObjectiveResultValue(costMetric) : null,
+  };
+}
+
+function resultActionPriorityForObjective(
+  objective: string | undefined,
+  optimizationGoal: string | undefined
+): readonly string[] {
+  const normalizedObjective = objective?.trim().toUpperCase() ?? "";
+  const normalizedOptimizationGoal = optimizationGoal?.trim().toUpperCase() ?? "";
+
+  if (
+    normalizedOptimizationGoal.includes("MESSAGE") ||
+    normalizedOptimizationGoal.includes("CONVERSATION")
+  ) {
+    return META_MESSAGING_RESULT_ACTION_PRIORITY;
+  }
+
+  if (normalizedObjective.includes("ENGAGEMENT")) {
+    return META_ENGAGEMENT_RESULT_ACTION_PRIORITY;
+  }
+
+  if (normalizedObjective.includes("LEAD")) {
+    return META_LEAD_RESULT_ACTION_PRIORITY;
+  }
+
+  if (normalizedObjective.includes("SALES") || normalizedObjective.includes("CONVERSION")) {
+    return META_SALES_RESULT_ACTION_PRIORITY;
+  }
+
+  if (normalizedObjective.includes("TRAFFIC")) {
+    return META_TRAFFIC_RESULT_ACTION_PRIORITY;
+  }
+
+  return [];
+}
+
+function findMatchingObjectiveCost(
+  actionType: string,
+  costs: MetaObjectiveResultMetricValue | undefined
+): MetaObjectiveResultMetric | null {
+  const normalizedCosts = normalizeMetaObjectiveResultMetrics(costs);
+  if (normalizedCosts.length === 0) {
+    return null;
+  }
+
+  return (
+    normalizedCosts.find((cost) => readMetaObjectiveResultKey(cost) === actionType) ??
+    normalizedCosts.find((cost) => readMetaObjectiveResultValue(cost) > 0) ??
+    null
+  );
+}
+
+function normalizeMetaObjectiveResultMetrics(
+  value: MetaObjectiveResultMetricValue | undefined
+): MetaObjectiveResultMetric[] {
+  if (value === undefined || value === null) {
+    return [];
+  }
+
+  if (Array.isArray(value)) {
+    return value;
+  }
+
+  if (typeof value === "string" || typeof value === "number") {
+    return [{ value }];
+  }
+
+  return [value];
+}
+
+function readMetaObjectiveResultKey(result: MetaObjectiveResultMetric): string {
+  return (
+    result.indicator?.trim() ||
+    result.id?.trim() ||
+    result.name?.trim() ||
+    result.title?.trim() ||
+    "objective_results"
+  );
+}
+
+function readMetaObjectiveResultValue(result: MetaObjectiveResultMetric): number {
+  const directValue = toNumber(result.value);
+  if (directValue > 0) {
+    return directValue;
+  }
+
+  return result.values?.reduce((total, item) => total + toNumber(item.value), 0) ?? 0;
+}
+
+function humanizeObjectiveResultLabel(
+  result: MetaObjectiveResultMetric,
+  actionType: string
+): string {
+  const explicitLabel = result.title?.trim() || result.name?.trim();
+  if (explicitLabel) {
+    return explicitLabel;
+  }
+
+  if (actionType === "objective_results") {
+    return "Results";
+  }
+
+  return humanizeActionType(actionType);
+}
+
+function createResultMetric(
+  actionType: string,
+  action: MetaActionMetric,
+  costs: MetaActionMetric[] | undefined
+): { actionType: string; label: string; value: number; costPerResult: number | null } {
+  const costMatched = costs?.find((cost) => cost.action_type === actionType);
+  return {
+    actionType,
+    label: humanizeActionType(actionType),
+    value: toNumber(action.value),
+    costPerResult: costMatched?.value ? toNumber(costMatched.value) : null,
+  };
+}
+
+function uniqueActionTypes(actionTypes: readonly string[]): string[] {
+  return Array.from(new Set(actionTypes));
+}
+
+function isMessagingConversationAction(actionType: string | undefined): boolean {
+  const normalizedActionType = actionType?.trim().toLowerCase();
+  return Boolean(
+    normalizedActionType &&
+      normalizedActionType.includes("messaging") &&
+      normalizedActionType.includes("conversation")
+  );
+}
+
 function pickActionValue(
-  actions: Array<{ action_type?: string; value?: string }> | undefined,
+  actions: MetaActionMetric[] | undefined,
   actionType: string
 ): number {
   const match = actions?.find((action) => action.action_type === actionType);
