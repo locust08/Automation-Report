@@ -116,6 +116,37 @@ interface ReportQueueMessage {
   force?: boolean;
 }
 
+interface ReportApiMetric {
+  key: string;
+  label: string;
+  value: number | null;
+  delta: number | null;
+  format: "number" | "currency" | "percent";
+}
+
+interface ReportApiSummarySection {
+  platform: "meta" | "google" | "googleYoutube";
+  title: string;
+  metrics: ReportApiMetric[];
+}
+
+interface ReportApiPayload {
+  summaries?: ReportApiSummarySection[];
+}
+
+interface EmailMetricValue {
+  label: string;
+  value: string;
+  delta: number | null;
+}
+
+interface EmailPlatformStats {
+  platformLabel: string;
+  spend: EmailMetricValue;
+  outcome: EmailMetricValue;
+  cost: EmailMetricValue;
+}
+
 interface JobRow {
   id: string;
   status: string;
@@ -365,7 +396,10 @@ async function processReportItem(env: Env, message: ReportQueueMessage): Promise
 
   try {
     const reportUrl = buildReportUrl(env, message);
-    const pdf = await renderPdfWithBrowserRun(env, reportUrl);
+    const [pdf, emailStats] = await Promise.all([
+      renderPdfWithBrowserRun(env, reportUrl),
+      message.sendEmail ? fetchEmailSummaryStats(env, message) : Promise.resolve([]),
+    ]);
     const r2Key = buildR2Key(message);
     const filename = buildPdfFilename(message.target.clientName, message.reportMonthLabel);
 
@@ -390,6 +424,7 @@ async function processReportItem(env: Env, message: ReportQueueMessage): Promise
         pdf,
         r2Key,
         filename,
+        stats: emailStats,
       });
       resendEmailId = emailResult.resendEmailId;
     }
@@ -615,17 +650,22 @@ async function renderPdfWithBrowserRun(env: Env, reportUrl: string): Promise<Arr
       height: 2200,
       deviceScaleFactor: 1,
     });
+    await page.emulateMediaType("screen");
     await page.goto(reportUrl, {
       waitUntil: "networkidle0",
       timeout: 45000,
     });
     await page.addStyleTag({
       content: `
-        @page { margin: 0; }
         html, body {
+          margin: 0 !important;
           background: #f3f4f6 !important;
           -webkit-print-color-adjust: exact !important;
           print-color-adjust: exact !important;
+        }
+        [data-report-capture-root='true'] {
+          width: 1440px !important;
+          max-width: none !important;
         }
         [data-report-export-exclude='true'],
         [data-report-download-overlay='true'] {
@@ -637,9 +677,31 @@ async function renderPdfWithBrowserRun(env: Env, reportUrl: string): Promise<Arr
       visible: true,
       timeout: 45000,
     });
+    await page.evaluate(() => document.fonts.ready);
+    await page.waitForFunction(() => {
+      const root = document.querySelector<HTMLElement>("[data-report-capture-root='true']");
+      return Boolean(root && root.scrollHeight > 0 && root.scrollWidth > 0);
+    });
+    const pageSize = await page.$eval("[data-report-capture-root='true']", (element) => {
+      const target = element as HTMLElement;
+      const rect = target.getBoundingClientRect();
+      return {
+        width: Math.ceil(Math.max(rect.width, target.scrollWidth)),
+        height: Math.ceil(Math.max(rect.height, target.scrollHeight)),
+      };
+    });
+    await page.addStyleTag({
+      content: `
+        @page {
+          size: ${pageSize.width}px ${pageSize.height}px;
+          margin: 0;
+        }
+      `,
+    });
     const pdf = await page.pdf({
+      width: `${pageSize.width}px`,
+      height: `${pageSize.height}px`,
       printBackground: true,
-      preferCSSPageSize: true,
       scale: 1,
       margin: {
         top: "0px",
@@ -655,6 +717,26 @@ async function renderPdfWithBrowserRun(env: Env, reportUrl: string): Promise<Arr
   }
 }
 
+async function fetchEmailSummaryStats(env: Env, message: ReportQueueMessage): Promise<EmailPlatformStats[]> {
+  try {
+    const response = await fetch(buildReportApiUrl(env, message), {
+      headers: {
+        accept: "application/json",
+      },
+    });
+
+    if (!response.ok) {
+      throw new Error(`Report stats request failed with status ${response.status}.`);
+    }
+
+    const payload = (await response.json()) as ReportApiPayload;
+    return extractEmailSummaryStats(payload);
+  } catch (error) {
+    console.error("[monthly-report-automation] email stats unavailable", formatError(error));
+    return [];
+  }
+}
+
 async function sendReportEmail(
   env: Env,
   input: {
@@ -663,6 +745,7 @@ async function sendReportEmail(
     pdf: ArrayBuffer;
     r2Key: string;
     filename: string;
+    stats: EmailPlatformStats[];
   }
 ): Promise<{ resendEmailId: string | null }> {
   const recipientEmail = normalizeOptional(input.target.recipientEmail);
@@ -680,6 +763,7 @@ async function sendReportEmail(
       clientName: input.target.clientName,
       reportMonthLabel: input.reportMonthLabel,
       downloadUrl: deliveryMode === "link" ? buildDownloadUrl(env, input.r2Key) : null,
+      stats: input.stats,
     }),
   };
 
@@ -754,10 +838,29 @@ function buildReportUrl(env: Env, message: ReportQueueMessage): string {
   return url.toString();
 }
 
+function buildReportApiUrl(env: Env, message: ReportQueueMessage): string {
+  const url = new URL("/api/reporting", trimTrailingSlash(env.VERCEL_APP_BASE_URL));
+  url.searchParams.set("startDate", message.startDate);
+  url.searchParams.set("endDate", message.endDate);
+
+  const googleAccountId = normalizeOptional(message.target.googleAccountId);
+  const metaAccountId = normalizeOptional(message.target.metaAccountId);
+
+  if (googleAccountId) {
+    url.searchParams.set("googleAccountId", googleAccountId);
+  }
+
+  if (metaAccountId) {
+    url.searchParams.set("metaAccountId", metaAccountId);
+  }
+
+  return url.toString();
+}
+
 function buildR2Key(message: ReportQueueMessage): string {
   const platform = inferPlatform(message.target).toLowerCase();
   const accountId = normalizeOptional(message.target.googleAccountId) ?? normalizeOptional(message.target.metaAccountId) ?? "unknown";
-  return `reports/${message.reportMonthKey}/${platform}/${accountId.replace(/[^a-z0-9-]+/gi, "")}/overall.pdf`;
+  return `reports/${message.reportMonthKey}/${platform}/${accountId.replace(/[^a-z0-9-]+/gi, "")}/${message.jobId}/overall.pdf`;
 }
 
 function buildDownloadUrl(env: Env, r2Key: string): string | null {
@@ -807,25 +910,238 @@ function summarizeItems(items: JobItemRow[]): Record<string, number> {
   );
 }
 
+function extractEmailSummaryStats(payload: ReportApiPayload): EmailPlatformStats[] {
+  return (payload.summaries ?? [])
+    .map((section) => {
+      if (section.platform === "google") {
+        return buildEmailPlatformStats(section, {
+          platformLabel: section.title || "Google Ads",
+          outcomeKey: "conversions",
+          outcomeLabel: "Conversions",
+          costKey: "costPerConv",
+          costLabel: "Cost / Conversion",
+        });
+      }
+
+      if (section.platform === "meta") {
+        return buildEmailPlatformStats(section, {
+          platformLabel: section.title || "Meta Ads",
+          outcomeKey: "results",
+          outcomeLabel: "Results",
+          costKey: "costPerResult",
+          costLabel: "Cost / Result",
+        });
+      }
+
+      return null;
+    })
+    .filter((stats): stats is EmailPlatformStats => Boolean(stats))
+    .filter((stats) => hasMeaningfulEmailStats(stats));
+}
+
+function buildEmailPlatformStats(
+  section: ReportApiSummarySection,
+  config: {
+    platformLabel: string;
+    outcomeKey: string;
+    outcomeLabel: string;
+    costKey: string;
+    costLabel: string;
+  }
+): EmailPlatformStats | null {
+  const spend = findMetric(section, "spend");
+  const outcome = findMetric(section, config.outcomeKey);
+  const cost = findMetric(section, config.costKey);
+
+  if (!spend && !outcome && !cost) {
+    return null;
+  }
+
+  return {
+    platformLabel: config.platformLabel,
+    spend: toEmailMetricValue(spend, "Ads Spent"),
+    outcome: toEmailMetricValue(outcome, config.outcomeLabel),
+    cost: toEmailMetricValue(cost, config.costLabel),
+  };
+}
+
+function findMetric(section: ReportApiSummarySection, key: string): ReportApiMetric | null {
+  return section.metrics.find((metric) => metric.key === key) ?? null;
+}
+
+function toEmailMetricValue(metric: ReportApiMetric | null, fallbackLabel: string): EmailMetricValue {
+  return {
+    label: fallbackLabel,
+    value: metric ? formatEmailMetric(metric.value, metric.format) : "-",
+    delta: metric?.delta ?? null,
+  };
+}
+
+function hasMeaningfulEmailStats(stats: EmailPlatformStats): boolean {
+  return [stats.spend, stats.outcome, stats.cost].some((metric) => metric.value !== "-" && metric.value !== "0" && metric.value !== "RM 0.00");
+}
+
 function buildEmailHtml(input: {
   clientName: string;
   reportMonthLabel: string;
   downloadUrl: string | null;
+  stats: EmailPlatformStats[];
 }): string {
   const downloadText = input.downloadUrl
-    ? `<p>You can also download the report here: <a href="${escapeHtml(input.downloadUrl)}">${escapeHtml(input.downloadUrl)}</a></p>`
+    ? `
+      <tr>
+        <td style="padding:0 32px 24px;">
+          <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-collapse:separate;border-spacing:0;">
+            <tr>
+              <td style="background:#fff1f2;border:1px solid #fecdd3;border-radius:14px;padding:16px 18px;">
+                <div style="font-size:13px;line-height:1.5;color:#7f1d1d;">Download link</div>
+                <a href="${escapeHtml(input.downloadUrl)}" style="display:inline-block;margin-top:4px;color:#b40012;font-weight:700;text-decoration:none;">Open stored PDF report</a>
+              </td>
+            </tr>
+          </table>
+        </td>
+      </tr>`
     : "";
 
   return `
-    <div style="font-family: Arial, sans-serif; color: #111827; line-height: 1.7; font-size: 15px;">
-      <p>Dear Team,</p>
-      <p>Please find the <strong>Overall Monthly Report</strong> for <strong>${escapeHtml(input.clientName)}</strong>.</p>
-      <p>This report covers <strong>${escapeHtml(input.reportMonthLabel)}</strong>.</p>
-      ${downloadText}
-      <p>Thank you.</p>
-      <p>Best regards,<br/>Locus-T</p>
+    <div style="margin:0;padding:0;background:#f3f4f6;font-family:Arial,Helvetica,sans-serif;color:#111827;">
+      <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#f3f4f6;padding:28px 0;border-collapse:collapse;">
+        <tr>
+          <td align="center" style="padding:0 12px;">
+            <table role="presentation" width="640" cellspacing="0" cellpadding="0" style="width:640px;max-width:100%;background:#ffffff;border-radius:20px;overflow:hidden;border:1px solid #e5e7eb;border-collapse:separate;border-spacing:0;">
+              <tr>
+                <td style="background:#b40012;background-image:linear-gradient(135deg,#8f0010 0%,#d7192a 100%);padding:30px 32px;color:#ffffff;">
+                  <div style="font-size:12px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;opacity:.9;">Monthly Performance Report</div>
+                  <div style="font-size:28px;line-height:1.2;font-weight:800;margin-top:8px;">${escapeHtml(input.clientName)}</div>
+                  <div style="display:inline-block;margin-top:14px;background:rgba(255,255,255,.16);border:1px solid rgba(255,255,255,.28);border-radius:999px;padding:7px 12px;font-size:14px;font-weight:700;">${escapeHtml(input.reportMonthLabel)}</div>
+                </td>
+              </tr>
+              <tr>
+                <td style="padding:28px 32px 10px;">
+                  <p style="margin:0 0 14px;font-size:16px;line-height:1.65;color:#111827;">Dear Team,</p>
+                  <p style="margin:0;font-size:16px;line-height:1.65;color:#374151;">Please find attached your monthly ads performance report. Here is the quick summary for this month.</p>
+                </td>
+              </tr>
+              ${buildStatsHtml(input.stats)}
+              ${downloadText}
+              <tr>
+                <td style="padding:0 32px 30px;">
+                  <p style="margin:0 0 18px;font-size:15px;line-height:1.65;color:#4b5563;">The full PDF report is attached for campaign-level details, audience breakdowns, and supporting charts.</p>
+                  <p style="margin:0;font-size:16px;line-height:1.65;color:#111827;">Best regards,<br/><strong>Locus-T</strong></p>
+                </td>
+              </tr>
+              <tr>
+                <td style="padding:16px 32px;background:#f9fafb;border-top:1px solid #e5e7eb;color:#6b7280;font-size:12px;line-height:1.5;">
+                  This report was generated automatically from the Locus-T reporting dashboard.
+                </td>
+              </tr>
+            </table>
+          </td>
+        </tr>
+      </table>
     </div>
   `.trim();
+}
+
+function buildStatsHtml(stats: EmailPlatformStats[]): string {
+  if (stats.length === 0) {
+    return `
+      <tr>
+        <td style="padding:18px 32px 28px;">
+          <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-collapse:separate;border-spacing:0;">
+            <tr>
+              <td style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:14px;padding:18px;color:#4b5563;font-size:14px;line-height:1.6;">
+                Summary metrics are unavailable for this run. The attached PDF still contains the full report details.
+              </td>
+            </tr>
+          </table>
+        </td>
+      </tr>
+    `;
+  }
+
+  return stats
+    .map(
+      (section) => `
+        <tr>
+          <td style="padding:18px 32px 10px;">
+            <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-collapse:separate;border-spacing:0;">
+              <tr>
+                <td>
+                  <div style="display:inline-block;background:#fee2e2;color:#991b1b;border-radius:999px;padding:6px 11px;font-size:12px;font-weight:800;letter-spacing:.04em;text-transform:uppercase;">${escapeHtml(section.platformLabel)}</div>
+                </td>
+              </tr>
+            </table>
+          </td>
+        </tr>
+        <tr>
+          <td style="padding:0 32px 24px;">
+            <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-collapse:separate;border-spacing:0;">
+              ${buildMetricCardRow(section.spend)}
+              <tr><td height="12" style="font-size:0;line-height:0;">&nbsp;</td></tr>
+              ${buildMetricCardRow(section.outcome)}
+              <tr><td height="12" style="font-size:0;line-height:0;">&nbsp;</td></tr>
+              ${buildMetricCardRow(section.cost)}
+            </table>
+          </td>
+        </tr>
+      `
+    )
+    .join("");
+}
+
+function buildMetricCardRow(metric: EmailMetricValue): string {
+  return `
+    <tr>
+      <td style="background:#fafafa;border:1px solid #e5e7eb;border-radius:14px;padding:16px 18px;">
+        <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-collapse:collapse;">
+          <tr>
+            <td style="font-size:12px;color:#6b7280;font-weight:800;text-transform:uppercase;letter-spacing:.04em;">${escapeHtml(metric.label)}</td>
+            <td align="right" style="font-size:12px;">${buildDeltaPill(metric.delta)}</td>
+          </tr>
+          <tr>
+            <td colspan="2" style="padding-top:7px;font-size:26px;line-height:1.2;font-weight:800;color:#111827;">${escapeHtml(metric.value)}</td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  `;
+}
+
+function buildDeltaPill(delta: number | null): string {
+  if (delta === null || !Number.isFinite(delta)) {
+    return `<span style="display:inline-block;background:#f3f4f6;color:#6b7280;border-radius:999px;padding:4px 8px;font-weight:700;">No comparison</span>`;
+  }
+
+  const isPositive = delta >= 0;
+  const color = isPositive ? "#047857" : "#dc2626";
+  const background = isPositive ? "#d1fae5" : "#fee2e2";
+  const sign = isPositive ? "+" : "";
+
+  return `<span style="display:inline-block;background:${background};color:${color};border-radius:999px;padding:4px 8px;font-weight:800;">${sign}${formatDecimal(delta, 1)}%</span>`;
+}
+
+function formatEmailMetric(value: number | null, format: ReportApiMetric["format"]): string {
+  if (value === null || !Number.isFinite(value)) {
+    return "-";
+  }
+
+  if (format === "currency") {
+    return `RM ${formatDecimal(value, 2)}`;
+  }
+
+  if (format === "percent") {
+    return `${formatDecimal(value, 2)}%`;
+  }
+
+  return formatDecimal(value, Math.abs(value % 1) > 0 ? 0 : 0);
+}
+
+function formatDecimal(value: number, fractionDigits: number): string {
+  return new Intl.NumberFormat("en-US", {
+    minimumFractionDigits: fractionDigits,
+    maximumFractionDigits: fractionDigits,
+  }).format(value);
 }
 
 function buildPdfFilename(clientName: string, reportMonthLabel: string): string {
