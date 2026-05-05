@@ -1,0 +1,35 @@
+name = "ads-dashboard-monthly-report-automation"
+main = "src/index.ts"
+compatibility_date = "2026-04-28"
+compatibility_flags = ["nodejs_compat"]
+
+# Cloudflare cron uses UTC. 04:00 UTC = 12:00 PM Malaysia time.
+[triggers]
+crons = []
+
+[browser]
+binding = "REPORT_BROWSER"
+
+[vars]
+REPORT_EMAIL_DELIVERY_MODE = "attachment"
+
+[[d1_databases]]
+binding = "REPORT_JOBS_DB"
+database_name = "automation-report-jobs"
+database_id = "06953d60-3819-46e8-b846-9b0fcfa91643"
+migrations_dir = "migrations"
+
+[[r2_buckets]]
+binding = "REPORT_PDFS"
+bucket_name = "automation-report-pdfs"
+
+[[queues.producers]]
+binding = "MONTHLY_REPORT_QUEUE"
+queue = "monthly-report-queue"
+
+[[queues.consumers]]
+queue = "monthly-report-queue"
+max_batch_size = 3
+max_batch_timeout = 30
+max_retries = 3
+dead_letter_queue = "monthly-report-dead-letter-queue"

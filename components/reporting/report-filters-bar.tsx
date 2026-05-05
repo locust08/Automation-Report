@@ -1,6 +1,7 @@
 "use client";
 
 import { FormEvent, MutableRefObject, useEffect, useRef, useState } from "react";
+import type { ReactNode } from "react";
 import {
   CalendarDaysIcon,
   ChevronLeftIcon,
@@ -34,6 +35,7 @@ interface ReportFiltersBarProps {
   showResetButton?: boolean;
   submitLabel?: string;
   compact?: boolean;
+  footerContent?: ReactNode;
 }
 
 type SearchPlatform = "meta" | "google";
@@ -54,6 +56,7 @@ export function ReportFiltersBar({
   showResetButton = true,
   submitLabel = "Load Report",
   compact = false,
+  footerContent,
 }: ReportFiltersBarProps) {
   const [searchEntries, setSearchEntries] = useState<SearchEntry[]>([]);
   const nextSearchEntryId = useRef(0);
@@ -109,6 +112,14 @@ export function ReportFiltersBar({
     );
   }
 
+  function updateSearchRowAccountId(key: string, value: string) {
+    const detected = detectAccountIdInputPlatform(value);
+    updateSearchRow(key, {
+      accountId: detected?.accountId ?? value,
+      ...(detected?.platform ? { platform: detected.platform } : {}),
+    });
+  }
+
   function removeSearchRow(key: string) {
     setSearchEntries((prev) => {
       const filtered = prev.filter((entry) => entry.key !== key);
@@ -130,11 +141,11 @@ export function ReportFiltersBar({
     <form
       onSubmit={handleSubmit}
       className={cn(
-        "flex flex-col gap-3 rounded-2xl border border-border/40 bg-card/90 p-4 shadow-sm sm:flex-row sm:flex-wrap sm:items-center",
+        "flex flex-col gap-3 rounded-2xl border border-border/40 bg-card/90 p-4 shadow-sm sm:flex-row sm:flex-wrap sm:items-start",
         compact && "gap-2 border-white/20 bg-white/90 p-3 shadow-none"
       )}
     >
-      <div className="w-full min-w-0 space-y-2 sm:flex-1 md:min-w-[360px]">
+      <div className="w-full min-w-0 space-y-1.5 sm:flex-1 md:min-w-[360px]">
         {searchEntries.map((entry) => (
           <div key={entry.key} className="flex min-w-0 flex-wrap items-center gap-2 sm:flex-nowrap">
             <Select
@@ -156,7 +167,7 @@ export function ReportFiltersBar({
               <IdCardIcon className="size-4 text-muted-foreground" />
               <Input
                 value={entry.accountId}
-                onChange={(event) => updateSearchRow(entry.key, { accountId: event.target.value })}
+                onChange={(event) => updateSearchRowAccountId(entry.key, event.target.value)}
                 className="h-10 border-0 shadow-none focus-visible:ring-0"
                 placeholder="Account ID"
               />
@@ -175,7 +186,12 @@ export function ReportFiltersBar({
           </div>
         ))}
 
-        <Button type="button" variant="outline" className="h-9 w-full sm:w-auto" onClick={addSearchRow}>
+        <Button
+          type="button"
+          variant="outline"
+          className="h-9 w-full sm:w-auto sm:self-start"
+          onClick={addSearchRow}
+        >
           <PlusIcon data-icon="inline-start" />
           Add Account
         </Button>
@@ -253,17 +269,28 @@ export function ReportFiltersBar({
         <div className="hidden" />
       )}
 
-      <div className="flex w-full flex-col gap-2 sm:ml-auto sm:w-auto sm:flex-row sm:items-center">
-        <Button type="submit" className="h-10 w-full bg-red-600 hover:bg-red-700 sm:w-auto">
-          <SearchIcon data-icon="inline-start" />
-          {submitLabel}
-        </Button>
-        {showResetButton ? (
-          <Button type="button" variant="outline" className="h-10 w-full sm:w-auto" onClick={onReset}>
-            <RefreshCcwIcon data-icon="inline-start" />
-            Reset
+      <div className="flex w-full flex-col gap-2 sm:ml-auto sm:w-auto sm:items-start">
+        <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:items-start">
+          <Button
+            type="submit"
+            className="h-10 w-full items-center justify-center gap-2 bg-red-600 px-4 text-center text-sm font-medium leading-none text-white hover:bg-red-700 sm:min-w-[148px] sm:w-auto"
+          >
+            <SearchIcon data-icon="inline-start" className="shrink-0" />
+            {submitLabel}
           </Button>
-        ) : null}
+          {showResetButton ? (
+            <Button
+              type="button"
+              variant="outline"
+              className="h-10 w-full items-center justify-center gap-2 px-4 text-sm font-medium leading-none sm:min-w-[148px] sm:w-auto"
+              onClick={onReset}
+            >
+              <RefreshCcwIcon data-icon="inline-start" className="shrink-0" />
+              Reset
+            </Button>
+          ) : null}
+        </div>
+        {footerContent ? <div className="w-full sm:w-auto">{footerContent}</div> : null}
       </div>
     </form>
   );
@@ -274,14 +301,12 @@ function toMonthValue(value: string): string {
     return value.slice(0, 7);
   }
 
-  const now = new Date();
-  return `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, "0")}`;
+  return getDefaultMonthValue();
 }
 
 function toMonthDateRange(monthValue: string): { startDate: string; endDate: string } {
   if (!/^\d{4}-\d{2}$/.test(monthValue)) {
-    const fallback = toMonthValue(new Date().toISOString().slice(0, 10));
-    return toMonthDateRange(fallback);
+    return toMonthDateRange(getDefaultMonthValue());
   }
 
   const [yearText, monthText] = monthValue.split("-");
@@ -301,6 +326,12 @@ function shiftMonth(monthValue: string, offset: number): string {
   const [yearText, monthText] = normalized.split("-");
   const monthDate = new Date(Date.UTC(Number(yearText), Number(monthText) - 1 + offset, 1));
   return `${monthDate.getUTCFullYear()}-${String(monthDate.getUTCMonth() + 1).padStart(2, "0")}`;
+}
+
+function getDefaultMonthValue(): string {
+  const now = new Date();
+  const lastMonth = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 1, 1));
+  return `${lastMonth.getUTCFullYear()}-${String(lastMonth.getUTCMonth() + 1).padStart(2, "0")}`;
 }
 
 function parseSearchEntries(filters: Pick<ReportFilters, "accountId" | "metaAccountId" | "googleAccountId">): Array<{
@@ -395,6 +426,42 @@ function classifyAccountIdToken(token: string): {
   }
 
   return { platform: "meta", accountId: trimmed };
+}
+
+function detectAccountIdInputPlatform(value: string): {
+  platform: SearchPlatform;
+  accountId: string;
+} | null {
+  const trimmed = value.trim();
+  const lowered = trimmed.toLowerCase();
+  const digitsOnly = trimmed.replace(/\D/g, "");
+  const prefixed = /^(meta|m|google|g)\s*:\s*(.+)$/i.exec(trimmed);
+
+  if (prefixed) {
+    const prefix = prefixed[1].toLowerCase();
+    return {
+      platform: prefix === "google" || prefix === "g" ? "google" : "meta",
+      accountId: prefixed[2].trim(),
+    };
+  }
+
+  if (lowered.startsWith("act_")) {
+    return { platform: "meta", accountId: trimmed };
+  }
+
+  if (/^\d{3}-\d{3}-\d{4}$/.test(trimmed)) {
+    return { platform: "google", accountId: trimmed };
+  }
+
+  if (/^[\d\s-]+$/.test(trimmed) && digitsOnly.length === 10) {
+    return { platform: "google", accountId: trimmed };
+  }
+
+  if (/^[\d\s-]+$/.test(trimmed) && digitsOnly.length >= 12) {
+    return { platform: "meta", accountId: trimmed };
+  }
+
+  return null;
 }
 
 function dedupeSearchEntries(

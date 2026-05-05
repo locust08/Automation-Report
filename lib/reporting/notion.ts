@@ -1,6 +1,10 @@
 import { normalizeGoogleAccountId } from "@/lib/reporting/env";
+import {
+  formatGoogleAdsCustomerId,
+  resolveGoogleAdsAccessPath,
+} from "@/lib/reporting/google-access-path";
 
-interface NotionPageProperty {
+export interface NotionPageProperty {
   type?: string;
   title?: Array<{ plain_text?: string }>;
   rich_text?: Array<{ plain_text?: string }>;
@@ -43,17 +47,21 @@ interface AdAccountRecord {
   accountId: string;
   accountName: string | null;
   accessPath: string | null;
+  platform: string | null;
 }
 
 interface GoogleAdsRouteResolution {
   accountId: string;
-  accessPath: string;
+  originalAccessPath: string | null;
+  resolvedAccessPath: string;
+  fallbackUsed: boolean;
   mode: "direct" | "manager";
   loginCustomerId: string | null;
 }
 
 export interface GoogleManagerResolution {
   loginCustomerIdByAccount: Record<string, string | null>;
+  accessPathByAccount: Record<string, string | null>;
   messages: string[];
 }
 
@@ -64,6 +72,16 @@ export interface GoogleAccountResolution extends GoogleManagerResolution {
 const NOTION_API_VERSION = "2026-03-11";
 const NOTION_DATABASE_LABEL = "DB | Ad Accounts";
 const NOTION_API_BASE_URL = "https://api.notion.com/v1";
+const NOTION_LOOKUP_CACHE_TTL_MS = 5 * 60 * 1000;
+
+const notionDataSourceIdCache = new Map<
+  string,
+  { expiresAt: number; promise: Promise<string> }
+>();
+const notionAccountRecordsCache = new Map<
+  string,
+  { expiresAt: number; promise: Promise<AdAccountRecord[]> }
+>();
 
 export interface NotionErrorPayload {
   success: false;
@@ -116,16 +134,19 @@ export async function resolveGoogleManagerIdsFromNotion(input: {
   googleAccountIds: string[];
   notionAccessToken: string | null;
   notionDatabaseId: string | null;
+  fallbackLoginCustomerId?: string | null;
 }): Promise<GoogleManagerResolution> {
   const resolution = await resolveGoogleAccountsFromNotion({
     googleAccountIds: input.googleAccountIds,
     googleLookupTerms: input.googleAccountIds,
     notionAccessToken: input.notionAccessToken,
     notionDatabaseId: input.notionDatabaseId,
+    fallbackLoginCustomerId: input.fallbackLoginCustomerId,
   });
 
   return {
     loginCustomerIdByAccount: resolution.loginCustomerIdByAccount,
+    accessPathByAccount: resolution.accessPathByAccount,
     messages: resolution.messages,
   };
 }
@@ -135,6 +156,7 @@ export async function resolveGoogleAccountsFromNotion(input: {
   googleLookupTerms: string[];
   notionAccessToken: string | null;
   notionDatabaseId: string | null;
+  fallbackLoginCustomerId?: string | null;
 }): Promise<GoogleAccountResolution> {
   const uniqueGoogleAccountIds = Array.from(new Set(input.googleAccountIds.filter(Boolean)));
   const uniqueGoogleLookupTerms = Array.from(
@@ -142,7 +164,12 @@ export async function resolveGoogleAccountsFromNotion(input: {
   );
 
   if (uniqueGoogleAccountIds.length === 0 && uniqueGoogleLookupTerms.length === 0) {
-    return { googleAccountIds: [], loginCustomerIdByAccount: {}, messages: [] };
+    return {
+      googleAccountIds: [],
+      loginCustomerIdByAccount: {},
+      accessPathByAccount: {},
+      messages: [],
+    };
   }
 
   try {
@@ -150,7 +177,6 @@ export async function resolveGoogleAccountsFromNotion(input: {
       notionAccessToken: input.notionAccessToken,
       notionDatabaseId: input.notionDatabaseId,
     });
-    await smokeTestNotionDatabaseAccess(notionConfig);
     const records = await fetchGoogleAdAccountRecords(notionConfig);
     const recordsByAccountId = new Map(records.map((record) => [record.accountId, record]));
     const recordsByAccountName = new Map(
@@ -161,6 +187,7 @@ export async function resolveGoogleAccountsFromNotion(input: {
     const messages: string[] = [];
     const resolvedGoogleAccountIds: string[] = [];
     const loginCustomerIdByAccount: Record<string, string | null> = {};
+    const accessPathByAccount: Record<string, string | null> = {};
     const lookupTerms =
       uniqueGoogleLookupTerms.length > 0 ? uniqueGoogleLookupTerms : uniqueGoogleAccountIds;
 
@@ -172,9 +199,10 @@ export async function resolveGoogleAccountsFromNotion(input: {
       );
 
       if (matchedRecord) {
-        const route = resolveGoogleAdsRoute(matchedRecord);
+        const route = resolveGoogleAdsRoute(matchedRecord, input.fallbackLoginCustomerId ?? null);
         pushUnique(resolvedGoogleAccountIds, route.accountId);
         loginCustomerIdByAccount[route.accountId] = route.loginCustomerId;
+        accessPathByAccount[route.accountId] = route.originalAccessPath;
 
         const accountLabel = matchedRecord.accountName
           ? `${matchedRecord.accountName} (${formatGoogleCustomerId(matchedRecord.accountId)})`
@@ -186,6 +214,13 @@ export async function resolveGoogleAccountsFromNotion(input: {
 
         if (route.mode === "direct") {
           messages.push(`Notion resolved ${lookupLabel} with direct customer access.`);
+          return;
+        }
+
+        if (route.fallbackUsed) {
+          messages.push(
+            `Notion resolved ${lookupLabel} with fallback manager ID ${formatGoogleCustomerId(route.loginCustomerId ?? "")}.`
+          );
           return;
         }
 
@@ -217,7 +252,12 @@ export async function resolveGoogleAccountsFromNotion(input: {
       );
     });
 
-    return { googleAccountIds: resolvedGoogleAccountIds, loginCustomerIdByAccount, messages };
+    return {
+      googleAccountIds: resolvedGoogleAccountIds,
+      loginCustomerIdByAccount,
+      accessPathByAccount,
+      messages,
+    };
   } catch (error) {
     if (isNotionIntegrationError(error)) {
       throw error;
@@ -234,82 +274,108 @@ export async function resolveGoogleAccountsFromNotion(input: {
 async function fetchGoogleAdAccountRecords(
   config: NotionConfig
 ): Promise<AdAccountRecord[]> {
-  const records: AdAccountRecord[] = [];
-  let nextCursor: string | null = null;
-  const dataSourceId = await resolveNotionDataSourceId(config);
+  const cacheKey = `${config.databaseId}:${config.notionAccessToken}`;
+  const cached = notionAccountRecordsCache.get(cacheKey);
+  if (cached && cached.expiresAt > Date.now()) {
+    return cached.promise;
+  }
 
-  do {
-    const endpoint = `${NOTION_API_BASE_URL}/data_sources/${dataSourceId}/query`;
-    console.info(
-      `[notion] query database_id=${config.databaseId} data_source_id=${dataSourceId} endpoint=${endpoint}`
-    );
-    logNotionRequest("POST", endpoint, config.databaseId, config.hasToken);
-    const response: Response = await fetch(endpoint, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${config.notionAccessToken}`,
-        "Content-Type": "application/json",
-        "Notion-Version": NOTION_API_VERSION,
-      },
-      body: JSON.stringify({
-        page_size: 100,
-        start_cursor: nextCursor ?? undefined,
-        filter: {
-          property: "Platform",
-          select: {
-            equals: "Google",
-          },
+  const promise = (async () => {
+    const records: AdAccountRecord[] = [];
+    let nextCursor: string | null = null;
+    const dataSourceId = await resolveNotionDataSourceId(config);
+
+    do {
+      const endpoint = `${NOTION_API_BASE_URL}/data_sources/${dataSourceId}/query`;
+      console.info(
+        `[notion] query database_id=${config.databaseId} data_source_id=${dataSourceId} endpoint=${endpoint}`
+      );
+      logNotionRequest("POST", endpoint, config.databaseId, config.hasToken);
+      const response: Response = await fetch(endpoint, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${config.notionAccessToken}`,
+          "Content-Type": "application/json",
+          "Notion-Version": NOTION_API_VERSION,
         },
-      }),
-      cache: "no-store",
-    });
+        body: JSON.stringify({
+          page_size: 100,
+          start_cursor: nextCursor ?? undefined,
+        }),
+        cache: "no-store",
+      });
 
-    const bodyText: string = await response.text().catch(() => "");
-    const json: NotionQueryResponse | null = parseNotionJson<NotionQueryResponse>(bodyText);
+      const bodyText: string = await response.text().catch(() => "");
+      const json: NotionQueryResponse | null = parseNotionJson<NotionQueryResponse>(bodyText);
 
-    if (!response.ok) {
-      const body = json?.message ?? (bodyText.trim() || null);
-      logNotionFailure(response.status, endpoint, body);
-      if (response.status === 401) {
+      if (!response.ok) {
+        const body = json?.message ?? (bodyText.trim() || null);
+        logNotionFailure(response.status, endpoint, body);
+        if (response.status === 401) {
+          throw new NotionIntegrationError(
+            {
+              success: false,
+              stage: "notion_auth",
+              errorCode: "NOTION_TOKEN_INVALID",
+              message: "Notion rejected the configured bearer token.",
+            },
+            401
+          );
+        }
+
         throw new NotionIntegrationError(
           {
             success: false,
-            stage: "notion_auth",
-            errorCode: "NOTION_TOKEN_INVALID",
-            message: "Notion rejected the configured bearer token.",
+            stage: "notion_query",
+            errorCode: "NOTION_SMOKE_FAILED",
+            message:
+              body ?? `Notion API request failed with status ${response.status} while querying ${NOTION_DATABASE_LABEL}.`,
           },
-          401
+          response.status
         );
       }
 
-      throw new NotionIntegrationError(
-        {
-          success: false,
-          stage: "notion_query",
-          errorCode: "NOTION_SMOKE_FAILED",
-          message:
-            body ?? `Notion API request failed with status ${response.status} while querying ${NOTION_DATABASE_LABEL}.`,
-        },
-        response.status
-      );
-    }
-
-    for (const page of json?.results ?? []) {
-      const parsed = parseAdAccountRecord(page);
-      if (parsed) {
-        records.push(parsed);
+      for (const page of json?.results ?? []) {
+        const parsed = parseAdAccountRecord(page);
+        if (parsed && isGoogleAdAccountRecord(parsed)) {
+          records.push(parsed);
+        }
       }
-    }
 
-    nextCursor = json?.has_more ? json.next_cursor ?? null : null;
-  } while (nextCursor);
+      nextCursor = json?.has_more ? json.next_cursor ?? null : null;
+    } while (nextCursor);
 
-  return records;
+    return records;
+  })();
+
+  notionAccountRecordsCache.set(cacheKey, {
+    expiresAt: Date.now() + NOTION_LOOKUP_CACHE_TTL_MS,
+    promise,
+  });
+
+  try {
+    return await promise;
+  } catch (error) {
+    notionAccountRecordsCache.delete(cacheKey);
+    throw error;
+  }
 }
 
-async function resolveNotionDataSourceId(config: NotionConfig): Promise<string> {
+async function resolveNotionDataSourceId(
+  config: NotionConfig,
+  options?: { log?: boolean }
+): Promise<string> {
+  const cacheKey = `${config.databaseId}:${config.notionAccessToken}`;
+  const cached = notionDataSourceIdCache.get(cacheKey);
+  if (cached && cached.expiresAt > Date.now()) {
+    return cached.promise;
+  }
+
+  const promise = (async () => {
   const endpoint = `${NOTION_API_BASE_URL}/databases/${config.databaseId}`;
-  console.info(`[notion] resolving_data_source database_id=${config.databaseId} endpoint=${endpoint}`);
+  if (options?.log !== false) {
+    console.info(`[notion] resolving_data_source database_id=${config.databaseId} endpoint=${endpoint}`);
+  }
 
   const response = await fetch(endpoint, {
     method: "GET",
@@ -379,11 +445,26 @@ async function resolveNotionDataSourceId(config: NotionConfig): Promise<string> 
     );
   }
 
-  console.info(
-    `[notion] resolved_data_source database_id=${config.databaseId} data_source_id=${dataSourceId}`
-  );
+  if (options?.log !== false) {
+    console.info(
+      `[notion] resolved_data_source database_id=${config.databaseId} data_source_id=${dataSourceId}`
+    );
+  }
 
   return dataSourceId;
+  })();
+
+  notionDataSourceIdCache.set(cacheKey, {
+    expiresAt: Date.now() + NOTION_LOOKUP_CACHE_TTL_MS,
+    promise,
+  });
+
+  try {
+    return await promise;
+  } catch (error) {
+    notionDataSourceIdCache.delete(cacheKey);
+    throw error;
+  }
 }
 
 interface NotionConfig {
@@ -394,10 +475,88 @@ interface NotionConfig {
   tokenFingerprint: string;
 }
 
-function resolveNotionConfig(input: {
+export interface NotionQueryPage {
+  id?: string;
+  properties?: Record<string, NotionPageProperty | undefined>;
+}
+
+export async function queryNotionDatabasePages(input: {
   notionAccessToken: string | null;
   notionDatabaseId: string | null;
-}): NotionConfig {
+  pageSize?: number;
+  filter?: Record<string, unknown>;
+}): Promise<NotionQueryPage[]> {
+  const notionConfig = resolveNotionConfig(
+    {
+      notionAccessToken: input.notionAccessToken,
+      notionDatabaseId: input.notionDatabaseId,
+    },
+    { log: false }
+  );
+  const dataSourceId = await resolveNotionDataSourceId(notionConfig, { log: false });
+  const pages: NotionQueryPage[] = [];
+  let nextCursor: string | null = null;
+
+  do {
+    const endpoint = `${NOTION_API_BASE_URL}/data_sources/${dataSourceId}/query`;
+    const response: Response = await fetch(endpoint, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${notionConfig.notionAccessToken}`,
+        "Content-Type": "application/json",
+        "Notion-Version": NOTION_API_VERSION,
+      },
+      body: JSON.stringify({
+        page_size: input.pageSize ?? 100,
+        start_cursor: nextCursor ?? undefined,
+        filter: input.filter,
+      }),
+      cache: "no-store",
+    });
+
+    const bodyText: string = await response.text().catch(() => "");
+    const json: NotionQueryResponse | null = parseNotionJson<NotionQueryResponse>(bodyText);
+
+    if (!response.ok) {
+      const body = json?.message ?? (bodyText.trim() || null);
+      if (response.status === 401) {
+        throw new NotionIntegrationError(
+          {
+            success: false,
+            stage: "notion_auth",
+            errorCode: "NOTION_TOKEN_INVALID",
+            message: "Notion rejected the configured bearer token.",
+          },
+          401
+        );
+      }
+
+      throw new NotionIntegrationError(
+        {
+          success: false,
+          stage: "notion_query",
+          errorCode: "NOTION_SMOKE_FAILED",
+          message:
+            body ?? `Notion API request failed with status ${response.status} while querying ${NOTION_DATABASE_LABEL}.`,
+        },
+        response.status
+      );
+    }
+
+    pages.push(...(json?.results ?? []));
+    nextCursor = json?.has_more ? json.next_cursor ?? null : null;
+  } while (nextCursor);
+
+  return pages;
+}
+
+function resolveNotionConfig(
+  input: {
+    notionAccessToken: string | null;
+    notionDatabaseId: string | null;
+  },
+  options?: { log?: boolean }
+): NotionConfig {
   const notionAccessToken = trimNotionEnvValue(input.notionAccessToken);
   const rawDatabaseId = trimNotionEnvValue(input.notionDatabaseId) ?? "";
   const hasToken = Boolean(notionAccessToken);
@@ -405,9 +564,11 @@ function resolveNotionConfig(input: {
   const tokenLength = notionAccessToken?.length ?? 0;
   const tokenFingerprint = maskTokenFingerprint(notionAccessToken);
 
-  console.info(
-    `[notion] config token_present=${hasToken} token_length=${tokenLength} token_fingerprint=${tokenFingerprint} database_id=${databaseId || "(missing)"}`
-  );
+  if (options?.log !== false) {
+    console.info(
+      `[notion] config token_present=${hasToken} token_length=${tokenLength} token_fingerprint=${tokenFingerprint} database_id=${databaseId || "(missing)"}`
+    );
+  }
 
   if (!hasToken) {
     throw new NotionIntegrationError(
@@ -471,51 +632,6 @@ function isValidNotionDatabaseId(value: string): boolean {
   return /^[0-9a-f]{32}$/i.test(value) || /^[0-9a-f-]{36}$/i.test(value);
 }
 
-export async function smokeTestNotionDatabaseAccess(config: {
-  notionAccessToken: string;
-  databaseId: string;
-}): Promise<void> {
-  const endpoint = `${NOTION_API_BASE_URL}/databases/${config.databaseId}`;
-  logNotionRequest("GET", endpoint, config.databaseId, true);
-
-  const response = await fetch(endpoint, {
-    method: "GET",
-    headers: {
-      Authorization: `Bearer ${config.notionAccessToken}`,
-      "Content-Type": "application/json",
-      "Notion-Version": NOTION_API_VERSION,
-    },
-    cache: "no-store",
-  });
-
-  if (!response.ok) {
-    const body = await readNotionErrorBody(response);
-    logNotionFailure(response.status, endpoint, body);
-    if (response.status === 401) {
-      throw new NotionIntegrationError(
-        {
-          success: false,
-          stage: "notion_auth",
-          errorCode: "NOTION_TOKEN_INVALID",
-          message: "Notion rejected the configured bearer token.",
-        },
-        401
-      );
-    }
-
-    throw new NotionIntegrationError(
-      {
-        success: false,
-        stage: "notion_smoke",
-        errorCode: "NOTION_SMOKE_FAILED",
-        message:
-          body || `Notion API request failed with status ${response.status} while reading ${NOTION_DATABASE_LABEL}.`,
-      },
-      response.status
-    );
-  }
-}
-
 function logNotionRequest(
   method: "GET" | "POST",
   endpoint: string,
@@ -550,21 +666,6 @@ function maskTokenFingerprint(token: string | null): string {
   return `${token.slice(0, 4)}...${token.slice(-4)}`;
 }
 
-async function readNotionErrorBody(response: Response): Promise<string | null> {
-  const text = await response.text().catch(() => "");
-  const trimmed = text.trim();
-  if (!trimmed) {
-    return null;
-  }
-
-  try {
-    const parsed = JSON.parse(trimmed) as { message?: string } | null;
-    return parsed?.message ?? trimmed;
-  } catch {
-    return trimmed;
-  }
-}
-
 function parseNotionJson<T>(value: string): T | null {
   const trimmed = value.trim();
   if (!trimmed) {
@@ -584,7 +685,7 @@ function parseAdAccountRecord(page: {
 }): AdAccountRecord | null {
   const properties = page.properties ?? {};
   const accountId = normalizeOptionalGoogleCustomerId(
-    getPropertyText(properties["ID"]) ?? getPropertyText(properties["userDefined:ID"])
+    getNotionPropertyText(properties["ID"]) ?? getNotionPropertyText(properties["userDefined:ID"])
   );
 
   if (!page.id || !accountId) {
@@ -593,66 +694,50 @@ function parseAdAccountRecord(page: {
 
   return {
     accountId,
-    accountName: getPropertyText(properties["Account Name"]),
-    accessPath: getPropertyText(properties["Access Path"]),
+    accountName: getNotionPropertyText(properties["Account Name"]),
+    accessPath: getNotionPropertyText(properties["Access Path"]),
+    platform: getNotionPropertyText(properties["Platform"]),
   };
 }
 
-function resolveGoogleAdsRoute(record: AdAccountRecord): GoogleAdsRouteResolution {
-  const accountId = normalizeGoogleLookupId(record.accountId);
-  if (!accountId) {
-    throw createGoogleAdsRoutingError(
-      "Google Ads routing failed because the target customer ID is missing or invalid."
-    );
-  }
+function isGoogleAdAccountRecord(record: AdAccountRecord): boolean {
+  const platform = record.platform?.trim().toLowerCase();
+  return !platform || platform === "google";
+}
 
-  const accessPath = record.accessPath?.trim() ?? "";
-  if (!accessPath) {
-    throw createGoogleAdsRoutingError(
-      `Google Ads routing failed for customer ${formatGoogleCustomerId(accountId)} because Access Path is missing.`
-    );
-  }
-
-  if (isDirectGoogleAccessPath(accessPath)) {
-    logGoogleAdsRouteResolution({
-      accountId,
-      accessPath,
-      mode: "direct",
-      loginCustomerId: null,
+function resolveGoogleAdsRoute(
+  record: AdAccountRecord,
+  fallbackLoginCustomerId: string | null
+): GoogleAdsRouteResolution {
+  try {
+    const route = resolveGoogleAdsAccessPath({
+      accountId: record.accountId,
+      originalAccessPath: record.accessPath,
+      fallbackLoginCustomerId,
     });
-    return {
-      accountId,
-      accessPath,
-      mode: "direct",
-      loginCustomerId: null,
-    };
-  }
 
-  const managerCustomerId = normalizeGoogleLookupId(accessPath);
-  if (!managerCustomerId) {
+    const resolution: GoogleAdsRouteResolution = {
+      accountId: route.accountId,
+      originalAccessPath: route.originalAccessPath,
+      resolvedAccessPath: route.resolvedAccessPath,
+      fallbackUsed: route.fallbackUsed,
+      mode: route.resolutionMode,
+      loginCustomerId: route.loginCustomerId,
+    };
+    logGoogleAdsRouteResolution(resolution);
+    return resolution;
+  } catch (error) {
     throw createGoogleAdsRoutingError(
-      `Google Ads routing failed for customer ${formatGoogleCustomerId(accountId)} because Access Path "${accessPath}" is unsupported.`
+      error instanceof Error
+        ? error.message
+        : "Google Ads routing failed because the target customer ID is missing or invalid."
     );
   }
-
-  logGoogleAdsRouteResolution({
-    accountId,
-    accessPath,
-    mode: "manager",
-    loginCustomerId: managerCustomerId,
-  });
-
-  return {
-    accountId,
-    accessPath,
-    mode: "manager",
-    loginCustomerId: managerCustomerId,
-  };
 }
 
 function logGoogleAdsRouteResolution(route: GoogleAdsRouteResolution) {
   console.info(
-    `[google-routing] target_customer_id=${route.accountId} access_path=${route.accessPath} mode=${route.mode} login_customer_id=${route.loginCustomerId ?? "(none)"}`
+    `[google-routing] target_customer_id=${route.accountId} original_access_path=${route.originalAccessPath ?? "(missing)"} resolved_access_path=${route.resolvedAccessPath} fallback_used=${route.fallbackUsed} mode=${route.mode} login_customer_id=${route.loginCustomerId ?? "(none)"}`
   );
 }
 
@@ -674,7 +759,7 @@ function matchGoogleAdAccountRecord(
   return recordsByAccountName.get(normalizedLookupTerm) ?? null;
 }
 
-function getPropertyText(property: NotionPageProperty | undefined): string | null {
+export function getNotionPropertyText(property: NotionPageProperty | undefined): string | null {
   if (!property || !property.type) {
     return null;
   }
@@ -705,6 +790,30 @@ function getPropertyText(property: NotionPageProperty | undefined): string | nul
     default:
       return null;
   }
+}
+
+export function getNotionPropertyBoolean(property: NotionPageProperty | undefined): boolean | null {
+  if (!property || !property.type) {
+    return null;
+  }
+
+  if (property.type === "checkbox") {
+    return property.checkbox ?? false;
+  }
+
+  if (property.type === "formula" && property.formula?.type === "boolean") {
+    return property.formula.boolean ?? false;
+  }
+
+  const text = getNotionPropertyText(property)?.trim().toLowerCase();
+  if (text === "true" || text === "yes") {
+    return true;
+  }
+  if (text === "false" || text === "no") {
+    return false;
+  }
+
+  return null;
 }
 
 function getFormulaText(property: NotionPageProperty["formula"]): string | null {
@@ -764,15 +873,6 @@ function normalizeLookupTerm(value: string | null): string | null {
   return normalized || null;
 }
 
-function isDirectGoogleAccessPath(accessPath: string | null): boolean {
-  if (!accessPath) {
-    return false;
-  }
-
-  const normalized = accessPath.trim().toLowerCase();
-  return normalized === "personal" || normalized === "direct";
-}
-
 function pushUnique(target: string[], value: string) {
   if (!target.includes(value)) {
     target.push(value);
@@ -780,10 +880,5 @@ function pushUnique(target: string[], value: string) {
 }
 
 function formatGoogleCustomerId(value: string): string {
-  const normalized = normalizeGoogleAccountId(value);
-  if (normalized.length !== 10) {
-    return value;
-  }
-
-  return `${normalized.slice(0, 3)}-${normalized.slice(3, 6)}-${normalized.slice(6)}`;
+  return formatGoogleAdsCustomerId(value);
 }

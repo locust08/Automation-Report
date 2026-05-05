@@ -23,8 +23,11 @@ export function HomePageClient() {
     router.push(`/overall${params.toString() ? `?${params.toString()}` : ""}`);
   }
 
+  const overallHref = `/overall${accountId.trim() ? `?accountId=${encodeURIComponent(accountId.trim())}` : ""}`;
+  const previewHref = `/preview${accountId.trim() ? `?accountId=${encodeURIComponent(accountId.trim())}` : ""}`;
+
   return (
-    <main className="flex min-h-screen items-center justify-center bg-[url('/background.png'),url('/backround.png')] bg-cover bg-center bg-no-repeat px-4 py-8">
+    <main className="flex min-h-screen items-center justify-center bg-[url('/background.png')] bg-cover bg-center bg-no-repeat px-4 py-8">
       <div className="w-full max-w-2xl rounded-3xl border border-white/25 bg-black/40 p-6 text-white backdrop-blur-sm sm:p-8">
         <h1 className="text-3xl font-semibold sm:text-4xl md:text-5xl">
           META &amp; GOOGLE ADS
@@ -47,10 +50,17 @@ export function HomePageClient() {
             Open Overall Performance
             <ArrowRightIcon data-icon="inline-end" />
           </Button>
+
+          <a
+            href={previewHref}
+            className="inline-flex h-11 w-full items-center justify-center rounded-md border border-white/30 px-5 text-sm font-medium text-white transition hover:bg-white/10 sm:w-auto"
+          >
+            Open Preview Page
+          </a>
         </form>
 
         <a
-          href="/overall"
+          href={overallHref}
           className="mt-5 inline-flex items-center gap-2 text-sm text-white/80 underline-offset-4 hover:underline"
         >
           <LinkIcon className="size-4" />

@@ -59,8 +59,8 @@ export function buildDateRange(
   endDateParam: string | null
 ): DateRangeConfig {
   const now = new Date();
-  const defaultStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
-  const defaultEnd = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 0));
+  const defaultStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 1, 1));
+  const defaultEnd = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 0));
 
   const parsedStart = parseIsoDate(startDateParam) ?? defaultStart;
   const parsedEnd = parseIsoDate(endDateParam) ?? defaultEnd;

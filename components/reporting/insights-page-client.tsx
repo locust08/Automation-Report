@@ -2,7 +2,11 @@
 
 import { useMemo, useState } from "react";
 
-import { InsightsDataTable, InsightsTable } from "@/components/reporting/insights-table";
+import {
+  InsightsDataTable,
+  InsightsTable,
+} from "@/components/reporting/insights-table";
+import { ReportSuccessScreen } from "@/components/reporting/report-loading-screen";
 import { ReportHeaderMonthPicker } from "@/components/reporting/report-header-month-picker";
 import { ReportFiltersBar } from "@/components/reporting/report-filters-bar";
 import { ReportShell } from "@/components/reporting/report-shell";
@@ -15,11 +19,13 @@ import {
 import { ReportDownloadButton } from "@/components/reporting/screenshot-mode-toggle";
 import { useReportFilters } from "@/components/reporting/use-report-filters";
 import { useInsightsReport } from "@/components/reporting/use-report-data";
+import { useReportReadyTransition } from "@/components/reporting/use-report-ready-transition";
 import { PlatformInsightsSection } from "@/lib/reporting/types";
 
 export function InsightsPageClient() {
   const { filters, hasAccountId, setFilters } = useReportFilters();
-  const [activePlatform, setActivePlatform] = useState<PlatformInsightsSection["platform"]>("meta");
+  const [activePlatform, setActivePlatform] =
+    useState<PlatformInsightsSection["platform"]>("meta");
 
   const queryString = useMemo(() => {
     const params = new URLSearchParams();
@@ -37,56 +43,90 @@ export function InsightsPageClient() {
     return params.toString();
   }, [filters]);
 
-  const { data, error, loading } = useInsightsReport(queryString, hasAccountId);
+  const { data, error, loading, retry, successToken } = useInsightsReport(queryString, hasAccountId);
   const resolvedPlatform =
-    data?.sections.find((section) => section.platform === activePlatform && section.rows.length > 0)?.platform ??
+    data?.sections.find(
+      (section) =>
+        section.platform === activePlatform && section.rows.length > 0,
+    )?.platform ??
     data?.sections.find((section) => section.rows.length > 0)?.platform ??
     activePlatform;
   const activeSection =
-    data?.sections.find((section) => section.platform === resolvedPlatform) ?? data?.sections[0] ?? null;
+    data?.sections.find((section) => section.platform === resolvedPlatform) ??
+    data?.sections[0] ??
+    null;
   const title = `${data?.companyName ?? "Company Name"} Insights`;
-  const dateLabel = data?.dateRange.currentLabel ?? `${filters.startDate} - ${filters.endDate}`;
+  const dateLabel =
+    data?.dateRange.currentLabel ?? `${filters.startDate} - ${filters.endDate}`;
+  const insightsReady =
+    hasAccountId &&
+    !loading &&
+    !error &&
+    Boolean(activeSection && activeSection.rows.length > 0) &&
+    (data?.warnings.length ?? 0) === 0;
+  const { showReadyState } = useReportReadyTransition({
+    ready: insightsReady,
+    transitionKey: successToken,
+  });
+
+  if (hasAccountId && loading) {
+    return (
+      <ReportLoadingState
+        kind="dashboard"
+        message="Building ranked Meta and Google insights from campaign output data..."
+        fullPage
+        onRetry={retry}
+      />
+    );
+  }
+
+  if (showReadyState) {
+    return <ReportSuccessScreen kind="insights" fullPage />;
+  }
 
   return (
     <ReportShell
       title={title}
       dateLabel={dateLabel}
+      activeQuery={queryString}
       headerDateControl={
         <ReportHeaderMonthPicker
           startDate={filters.startDate}
           endDate={filters.endDate}
-          onChange={(next) => setFilters({ startDate: next.startDate, endDate: next.endDate })}
+          onChange={(next) =>
+            setFilters({ startDate: next.startDate, endDate: next.endDate })
+          }
         />
       }
       headerBottomControl={
-        <div className="space-y-2">
-          <ReportDownloadButton />
-          <ReportFiltersBar
-            filters={filters}
-            dateMode="month"
-            showDateFilters={false}
-            showResetButton={false}
-            submitLabel="Reload"
-            compact
-            onApply={(next) => setFilters(next)}
-            onReset={() =>
-              setFilters({
-                accountId: "",
-                metaAccountId: "",
-                googleAccountId: "",
-              })
-            }
-          />
-        </div>
+        <ReportFiltersBar
+          filters={filters}
+          dateMode="month"
+          showDateFilters={false}
+          showResetButton={false}
+          submitLabel="Reload"
+          compact
+          footerContent={<ReportDownloadButton fileNamePrefix={title} />}
+          onApply={(next) => setFilters(next)}
+          onReset={() =>
+            setFilters({
+              accountId: "",
+              metaAccountId: "",
+              googleAccountId: "",
+            })
+          }
+        />
       }
     >
       <div className="space-y-5">
         {!hasAccountId ? (
-          <ReportErrorState message="Enter at least one Meta or Google account ID to generate insights from the selected month output data." />
+          <ReportErrorState
+            kind="dashboard"
+            message="Enter at least one Meta or Google account ID to generate insights from the selected month output data."
+          />
         ) : null}
 
-        {loading ? <ReportLoadingState message="Building ranked Meta and Google insights from campaign output data..." /> : null}
-        {error ? <ReportErrorState message={error} /> : null}
+        {error ? <ReportErrorState kind="dashboard" message={error} onRetry={retry} /> : null}
 
         {data ? (
           <>

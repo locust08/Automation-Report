@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { TrendingDownIcon, TrendingUpIcon } from "lucide-react";
 
 import { formatDelta, formatMetricValue } from "@/lib/reporting/format";
@@ -12,16 +12,16 @@ export function MetricSection({ section }: { section: SummarySection }) {
     return null;
   }
 
-  const metrics = section.metrics;
-  const metricCount = metrics.length;
-  if (metricCount === 0) {
+  if (section.metrics.length === 0) {
     return null;
   }
-  const [activeMetricIndex, setActiveMetricIndex] = useState(0);
 
-  useEffect(() => {
-    setActiveMetricIndex(0);
-  }, [section.platform, metricCount]);
+  return <MetricSectionContent section={section} />;
+}
+
+function MetricSectionContent({ section }: { section: SummarySection }) {
+  const metrics = section.metrics;
+  const metricCount = metrics.length;
 
   const formattedValues = useMemo(
     () => metrics.map((metric) => formatMetricValue(metric.value, metric.format)),
@@ -36,7 +36,13 @@ export function MetricSection({ section }: { section: SummarySection }) {
   const baseValueSizeRem = metricCount >= 7 ? 2.2 : 2.55;
   const shrinkValueByLengthRem = Math.max(0, longestValueLength - 4) * 0.14;
   const fittedValueSizeRem = Math.max(1.35, baseValueSizeRem - shrinkValueByLengthRem);
-
+  const metricSignature = `${section.platform}:${metrics.map((metric) => metric.key).join("|")}`;
+  const [activeMetricState, setActiveMetricState] = useState({
+    index: 0,
+    signature: metricSignature,
+  });
+  const activeMetricIndex =
+    activeMetricState.signature === metricSignature ? activeMetricState.index : 0;
   const safeActiveIndex = Math.min(activeMetricIndex, Math.max(0, metricCount - 1));
   const activeMetric = metrics[safeActiveIndex];
   const activeValue = formattedValues[safeActiveIndex] ?? "No Data";
@@ -62,7 +68,7 @@ export function MetricSection({ section }: { section: SummarySection }) {
             <button
               key={`metric-tab-${metric.key}`}
               type="button"
-              onClick={() => setActiveMetricIndex(index)}
+              onClick={() => setActiveMetricState({ index, signature: metricSignature })}
               className={`shrink-0 rounded-full border px-3 py-1.5 text-xs font-semibold transition-colors ${
                 index === safeActiveIndex
                   ? "border-red-700 bg-red-700 text-white"

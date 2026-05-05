@@ -10,6 +10,11 @@ Multi-page reporting website for Meta Ads Manager + Google Ads Manager with a sh
   - Google Ads metrics
   - Google Ads YouTube overview metrics
   - Collapsible campaign-type grouped table
+- `/preview` Read-only platform preview page:
+  - Same shell/theme as Overall
+  - Live campaign hierarchy from Google Ads + Meta Ads APIs
+  - Expand campaign names to inspect Campaign -> Ad Group / Ad Set -> Ad -> Details
+  - No edit or management actions
 - `/campaign/[campaignType]` Campaign type page:
   - Selected month vs previous month comparison
   - Collapsible sections and totals
@@ -47,6 +52,13 @@ Credentials are expected from environment variables (Doppler injects these at ru
 - `GOOGLE_ADS_CLIENT_SECRET` (required for refresh flow)
 - `NOTION_TOKEN` (used to read `DB | Ad Accounts`)
 - `NOTION_DATABASE_ID` (used to read `DB | Ad Accounts`; raw Notion database ID, not the full browser URL)
+- `NOTION_AD_ACCOUNTS_DATABASE_ID` (preferred override for monthly cron account selection)
+- `NOTION_MONTHLY_REPORT_LOGS_DATABASE_ID` (optional Notion database for monthly cron send logs)
+- `CRON_SECRET` (required by `/api/cron/monthly-report`)
+- `RESEND_API_KEY` (required for monthly report email delivery)
+- `RESEND_FROM_MONTHLY_REPORT` (optional; defaults to `Locus-T <no-reply@locus-t.com.my>`)
+- `MONTHLY_REPORT_TEST_MODE` (optional; when `true`, only the first eligible account is processed)
+- `MONTHLY_REPORT_TEST_RECIPIENT` (optional; defaults to `ava@locus-t.com.my`)
 - `GOOGLE_ADS_LOGIN_CUSTOMER_ID` (optional override; defaults to fixed MCC `366-613-7525`)
 - `GOOGLE_ADS_API_VERSION` (optional, defaults to `v22`)
 - `REPORT_COMPANY_NAME` (optional display label)

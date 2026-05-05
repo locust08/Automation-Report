@@ -1,5 +1,9 @@
 import { buildDateRange } from "@/lib/reporting/date";
 import {
+  createEmptyAudienceClickBreakdownResponse,
+  mergeAudienceClickBreakdownResponses,
+} from "@/lib/reporting/audience-breakdown";
+import {
   getCredentials,
   normalizeGoogleAccountId,
   normalizeMetaAccountId,
@@ -8,30 +12,50 @@ import {
 import { buildPlatformInsights } from "@/lib/reporting/insights";
 import {
   fetchGoogleAccountName,
+  fetchGoogleAudienceBreakdown,
   fetchGoogleAuctionInsightRows,
   fetchGoogleCampaignRows,
+  fetchGooglePreviewData,
   fetchGoogleTopKeywordRows,
+  isGoogleAdsAccessPathError,
 } from "@/lib/reporting/google";
-import { buildGroups, computeDelta, emptyCampaignRow, mergeCampaignRows } from "@/lib/reporting/metrics";
 import {
+  MIN_REPORTING_CAMPAIGN_SPEND,
+  buildGroups,
+  computeDelta,
+  emptyCampaignRow,
+  mergeCampaignRows,
+} from "@/lib/reporting/metrics";
+import { MemoryCacheEntry, readThroughMemoryCache } from "@/lib/reporting/memory-cache";
+import {
+  fetchMetaAudienceBreakdown,
   fetchMetaAccountName,
-  fetchMetaActiveCampaignIds,
   fetchMetaCampaignRows,
+  fetchMetaPreviewData,
 } from "@/lib/reporting/meta";
 import {
+  AudienceClickBreakdownResponse,
   AuctionInsightRow,
   AuctionInsightsPayload,
   CampaignComparisonPayload,
   CampaignRow,
   InsightsPayload,
+  MetaPreviewBlockIssue,
+  MetaPreviewDiagnostics,
   OverallReportPayload,
   Platform,
+  PreviewCampaignNode,
+  GooglePreviewDiagnostics,
+  GooglePreviewFatalError,
+  GooglePreviewWarning,
+  PreviewPlatformSection,
+  PreviewReportPayload,
   SummaryMetric,
   SummarySection,
   TopKeywordRow,
   TopKeywordsPayload,
 } from "@/lib/reporting/types";
-import { resolveGoogleAccountsFromNotion } from "@/lib/reporting/notion";
+import { isNotionIntegrationError, resolveGoogleAccountsFromNotion } from "@/lib/reporting/notion";
 
 interface OverallInput {
   accountId: string | null;
@@ -39,6 +63,7 @@ interface OverallInput {
   googleAccountId: string | null;
   startDate: string | null;
   endDate: string | null;
+  diagnosticsMode?: boolean;
 }
 
 interface CampaignInput extends OverallInput {
@@ -52,6 +77,88 @@ interface ResolvedAccountIds {
 }
 
 type GoogleLoginCustomerIdMap = Record<string, string | null>;
+
+const GOOGLE_FETCH_CACHE_TTL_MS = parsePositiveIntegerEnv(
+  process.env.REPORTING_GOOGLE_CACHE_TTL_MS,
+  5 * 60 * 1000
+);
+const GOOGLE_FETCH_CACHE_MAX_ENTRIES = parsePositiveIntegerEnv(
+  process.env.REPORTING_GOOGLE_CACHE_MAX_ENTRIES,
+  200
+);
+
+const googleCampaignRowsCache = new Map<
+  string,
+  MemoryCacheEntry<{ rows: CampaignRow[]; warnings: string[] }>
+>();
+const googleAudienceBreakdownCache = new Map<
+  string,
+  MemoryCacheEntry<{ breakdown: AudienceClickBreakdownResponse; warnings: string[] }>
+>();
+const googlePreviewCache = new Map<
+  string,
+  MemoryCacheEntry<Awaited<ReturnType<typeof fetchGooglePreviewData>>>
+>();
+const googleTopKeywordRowsCache = new Map<string, MemoryCacheEntry<TopKeywordRow[]>>();
+const googleAuctionInsightRowsCache = new Map<string, MemoryCacheEntry<AuctionInsightRow[]>>();
+const googleAccountNameCache = new Map<string, MemoryCacheEntry<string | null>>();
+
+function parsePositiveIntegerEnv(rawValue: string | undefined, fallback: number): number {
+  const parsed = Number.parseInt(rawValue ?? "", 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function createGoogleFetchCacheKey(
+  scope: string,
+  parts: Record<string, string | number | boolean | null | undefined | Record<string, string>>
+): string {
+  const normalizedParts = Object.fromEntries(
+    Object.entries(parts)
+      .filter(([, value]) => value !== undefined)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, value]) => [
+        key,
+        value && typeof value === "object"
+          ? Object.fromEntries(Object.entries(value).sort(([left], [right]) => left.localeCompare(right)))
+          : value,
+      ])
+  );
+
+  return `${scope}:${JSON.stringify(normalizedParts)}`;
+}
+
+function fingerprintGoogleCredentials(
+  developerToken: string | null,
+  accessToken: string | null,
+  refreshToken: string | null,
+  clientId: string | null,
+  clientSecret: string | null
+): Record<string, string> {
+  return {
+    developerToken: fingerprintSecret(developerToken),
+    accessToken: fingerprintSecret(accessToken),
+    refreshToken: fingerprintSecret(refreshToken),
+    clientId: fingerprintSecret(clientId),
+    clientSecret: fingerprintSecret(clientSecret),
+  };
+}
+
+function fingerprintSecret(value: string | null): string {
+  if (!value) {
+    return "";
+  }
+
+  return `${value.length}:${hashString(value)}`;
+}
+
+function hashString(value: string): string {
+  let hash = 2166136261;
+  for (let index = 0; index < value.length; index += 1) {
+    hash ^= value.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return (hash >>> 0).toString(36);
+}
 
 const MANUAL_AUCTION_INSIGHT_ROWS_BY_ACCOUNT: Record<string, AuctionInsightRow[]> = {
   "6261186490": [
@@ -161,7 +268,7 @@ export async function getOverallReport(input: OverallInput): Promise<OverallRepo
 
   const warnings: string[] = [...googleManagerContext.messages];
 
-  const [metaCurrentResult, metaPreviousResult] = await Promise.all([
+  const [metaCurrentResult, metaPreviousResult, metaAudienceBreakdownResult] = await Promise.all([
     tryFetchMetaForAccounts(
       resolvedAccountIds.metaAccountIds,
       credentials.metaAccessToken,
@@ -173,6 +280,12 @@ export async function getOverallReport(input: OverallInput): Promise<OverallRepo
       credentials.metaAccessToken,
       dateRange.previousStartDate,
       dateRange.previousEndDate
+    ),
+    tryFetchMetaAudienceBreakdownForAccounts(
+      resolvedAccountIds.metaAccountIds,
+      credentials.metaAccessToken,
+      dateRange.startDate,
+      dateRange.endDate
     ),
   ]);
 
@@ -186,8 +299,11 @@ export async function getOverallReport(input: OverallInput): Promise<OverallRepo
     credentials.googleClientId,
     credentials.googleClientSecret,
     googleManagerContext.loginCustomerIdByAccount,
+    googleManagerContext.accessPathByAccount,
+    credentials.googleLoginCustomerId,
     dateRange.startDate,
-    dateRange.endDate
+    dateRange.endDate,
+    true
   );
   const googlePreviousResult = await tryFetchGoogleForAccounts(
     resolvedAccountIds.googleAccountIds,
@@ -198,16 +314,47 @@ export async function getOverallReport(input: OverallInput): Promise<OverallRepo
     credentials.googleClientId,
     credentials.googleClientSecret,
     googleManagerContext.loginCustomerIdByAccount,
+    googleManagerContext.accessPathByAccount,
+    credentials.googleLoginCustomerId,
     dateRange.previousStartDate,
-    dateRange.previousEndDate
+    dateRange.previousEndDate,
+    true
+  );
+  const googleAudienceBreakdownResult = await tryFetchGoogleAudienceBreakdownForAccounts(
+    resolvedAccountIds.googleAccountIds,
+    credentials.googleAdsApiVersion,
+    credentials.googleDeveloperToken,
+    credentials.googleAccessToken,
+    credentials.googleRefreshToken,
+    credentials.googleClientId,
+    credentials.googleClientSecret,
+    googleManagerContext.loginCustomerIdByAccount,
+    googleManagerContext.accessPathByAccount,
+    credentials.googleLoginCustomerId,
+    dateRange.startDate,
+    dateRange.endDate
   );
 
   warnings.push(
     ...metaCurrentResult.warnings,
     ...metaPreviousResult.warnings,
+    ...metaAudienceBreakdownResult.warnings,
     ...googleCurrentResult.warnings,
-    ...googlePreviousResult.warnings
+    ...googlePreviousResult.warnings,
+    ...googleAudienceBreakdownResult.warnings
   );
+
+  if (resolvedAccountIds.metaAccountIds.length > 0 && metaCurrentResult.rows.length === 0) {
+    warnings.push(
+      `Meta Ads returned no campaign rows with spend greater than RM${MIN_REPORTING_CAMPAIGN_SPEND} for the selected account and date range. If this account spent during the period, verify the account ID and token permissions.`
+    );
+  }
+
+  if (resolvedAccountIds.googleAccountIds.length > 0 && googleCurrentResult.rows.length === 0) {
+    warnings.push(
+      `Google Ads returned no campaign rows with spend greater than RM${MIN_REPORTING_CAMPAIGN_SPEND} for the selected account and date range. If this account spent during the period, verify that the selected Access Path can read it.`
+    );
+  }
 
   const metaCurrent = metaCurrentResult.rows;
   const metaPrevious = metaPreviousResult.rows;
@@ -215,6 +362,8 @@ export async function getOverallReport(input: OverallInput): Promise<OverallRepo
   const googlePrevious = googlePreviousResult.rows.filter((row) => row.platform === "google");
   const youtubeCurrent = googleCurrentResult.rows.filter((row) => row.platform === "googleYoutube");
   const youtubePrevious = googlePreviousResult.rows.filter((row) => row.platform === "googleYoutube");
+  const googleAccountCurrent = [...googleCurrent, ...youtubeCurrent];
+  const googleAccountPrevious = [...googlePrevious, ...youtubePrevious];
 
   const sections: SummarySection[] = [
     {
@@ -227,21 +376,19 @@ export async function getOverallReport(input: OverallInput): Promise<OverallRepo
       platform: "google",
       title: "Google Ads",
       logoPath: "/GoogleLogo.png",
-      metrics: buildGoogleSummary(googleCurrent, googlePrevious),
-    },
-    {
-      platform: "googleYoutube",
-      title: "Google Ads YouTube Overview",
-      logoPath: "/GoogleLogo.png",
-      metrics: buildYoutubeSummary(youtubeCurrent, youtubePrevious),
+      metrics: buildGoogleSummary(googleAccountCurrent, googleAccountPrevious),
     },
   ];
 
   const campaignGroups = buildGroups([...metaCurrent, ...googleCurrent, ...youtubeCurrent]);
+  const audienceClickBreakdown = mergeAudienceClickBreakdownResponses(
+    metaAudienceBreakdownResult.breakdown,
+    googleAudienceBreakdownResult.breakdown
+  );
 
   if (campaignGroups.length === 0 && warnings.length === 0) {
     warnings.push(
-      "No campaign rows were returned for the selected accounts and date range. Verify account IDs and API access permissions."
+      `No campaign rows with spend greater than RM${MIN_REPORTING_CAMPAIGN_SPEND} were returned for the selected accounts and date range. Verify account IDs and API access permissions.`
     );
   }
 
@@ -256,7 +403,107 @@ export async function getOverallReport(input: OverallInput): Promise<OverallRepo
     },
     summaries: sections,
     campaignGroups,
+    audienceClickBreakdown,
     warnings: dedupeWarnings(warnings),
+  };
+}
+
+export async function getPreviewReport(input: OverallInput): Promise<PreviewReportPayload> {
+  const credentials = getCredentials();
+  const dateRange = buildDateRange(input.startDate, input.endDate);
+  const warnings: string[] = [];
+
+  const { resolvedAccountIds, googleManagerContext } = await resolveReportAccountContext(
+    input,
+    credentials
+  );
+  warnings.push(...googleManagerContext.messages);
+
+  const companyName = await resolveCompanyNameForReport({
+    credentials,
+    accountId: input.accountId,
+    resolvedAccountIds,
+    googleLoginCustomerIdByAccount: googleManagerContext.loginCustomerIdByAccount,
+  });
+
+  const [metaSections, googleSections] = await Promise.all([
+    tryFetchMetaPreviewSections(
+      resolvedAccountIds.metaAccountIds,
+      credentials.metaAccessToken,
+      dateRange.startDate,
+      dateRange.endDate
+    ),
+    tryFetchGooglePreviewSections(
+      resolvedAccountIds.googleAccountIds,
+      credentials.googleAdsApiVersion,
+      credentials.googleDeveloperToken,
+      credentials.googleAccessToken,
+      credentials.googleRefreshToken,
+      credentials.googleClientId,
+      credentials.googleClientSecret,
+      googleManagerContext.loginCustomerIdByAccount,
+      googleManagerContext.accessPathByAccount,
+      credentials.googleLoginCustomerId,
+      dateRange.startDate,
+      dateRange.endDate,
+      Boolean(input.diagnosticsMode && isGooglePreviewDiagnosticsEnabled())
+    ),
+  ]);
+
+  warnings.push(...metaSections.warnings, ...googleSections.warnings);
+  if (resolvedAccountIds.googleAccountIds.length > 0 && googleSections.campaigns.length === 0) {
+    warnings.push(
+      "Google Ads preview returned no enabled campaigns/ad groups/ads for the selected account and date range. If the account should have data, verify that the selected Access Path can read it and that the campaigns are enabled."
+    );
+  }
+
+  const sections = [
+    {
+      platform: "meta",
+      title: "Meta Ads Manager Preview",
+      logoPath: "/MetaLogo.png",
+      childLabel: "Ad Set",
+      campaigns: metaSections.campaigns,
+    },
+    {
+      platform: "google",
+      title: "Google Ads Preview",
+      logoPath: "/GoogleLogo.png",
+      childLabel: "Ad Group",
+      campaigns: googleSections.campaigns,
+    },
+  ] satisfies PreviewPlatformSection[];
+
+  const activeSections = sections.filter((section) => section.campaigns.length > 0);
+
+  if (activeSections.length === 0 && warnings.length === 0) {
+    warnings.push(
+      "No preview hierarchy was returned for the selected accounts and date range. Verify account IDs and API access permissions."
+    );
+  }
+
+  return {
+    companyName,
+    dateRange,
+    accountIds: {
+      metaAccountId: firstOrNull(resolvedAccountIds.metaAccountIds),
+      googleAccountId: firstOrNull(resolvedAccountIds.googleAccountIds),
+      metaAccountIds: resolvedAccountIds.metaAccountIds,
+      googleAccountIds: resolvedAccountIds.googleAccountIds,
+    },
+    sections,
+    warnings: dedupeWarnings(warnings),
+    metaWarnings: metaSections.structuredWarnings,
+    metaFatalErrors: metaSections.fatalErrors,
+    googleWarnings: googleSections.structuredWarnings,
+    googleFatalErrors: googleSections.fatalErrors,
+    diagnostics:
+      metaSections.diagnostics.length || googleSections.diagnostics.length
+        ? {
+            meta: metaSections.diagnostics,
+            google: googleSections.diagnostics,
+          }
+        : undefined,
   };
 }
 
@@ -310,6 +557,7 @@ export async function getCampaignComparison(input: CampaignInput): Promise<Campa
     endDate: dateRange.endDate,
     credentials,
     googleLoginCustomerIdByAccount: googleManagerContext.loginCustomerIdByAccount,
+    accessPathByAccount: googleManagerContext.accessPathByAccount,
     warnings,
   });
 
@@ -321,6 +569,7 @@ export async function getCampaignComparison(input: CampaignInput): Promise<Campa
     endDate: dateRange.previousEndDate,
     credentials,
     googleLoginCustomerIdByAccount: googleManagerContext.loginCustomerIdByAccount,
+    accessPathByAccount: googleManagerContext.accessPathByAccount,
     warnings,
   });
 
@@ -376,6 +625,8 @@ export async function getTopKeywordsReport(input: OverallInput): Promise<TopKeyw
     credentials.googleClientId,
     credentials.googleClientSecret,
     googleManagerContext.loginCustomerIdByAccount,
+    googleManagerContext.accessPathByAccount,
+    credentials.googleLoginCustomerId,
     dateRange.startDate,
     dateRange.endDate
   );
@@ -428,6 +679,8 @@ export async function getAuctionInsightsReport(input: OverallInput): Promise<Auc
     credentials.googleClientId,
     credentials.googleClientSecret,
     googleManagerContext.loginCustomerIdByAccount,
+    googleManagerContext.accessPathByAccount,
+    credentials.googleLoginCustomerId,
     dateRange.startDate,
     dateRange.endDate
   );
@@ -504,6 +757,8 @@ export async function getInsightsReport(input: OverallInput): Promise<InsightsPa
     credentials.googleClientId,
     credentials.googleClientSecret,
     googleManagerContext.loginCustomerIdByAccount,
+    googleManagerContext.accessPathByAccount,
+    credentials.googleLoginCustomerId,
     dateRange.startDate,
     dateRange.endDate
   );
@@ -516,6 +771,8 @@ export async function getInsightsReport(input: OverallInput): Promise<InsightsPa
     credentials.googleClientId,
     credentials.googleClientSecret,
     googleManagerContext.loginCustomerIdByAccount,
+    googleManagerContext.accessPathByAccount,
+    credentials.googleLoginCustomerId,
     dateRange.previousStartDate,
     dateRange.previousEndDate
   );
@@ -575,6 +832,7 @@ async function fetchByPlatform(args: {
   endDate: string;
   credentials: ReturnType<typeof getCredentials>;
   googleLoginCustomerIdByAccount: GoogleLoginCustomerIdMap;
+  accessPathByAccount: Record<string, string | null>;
   warnings: string[];
 }): Promise<CampaignRow[]> {
   const {
@@ -585,6 +843,7 @@ async function fetchByPlatform(args: {
     endDate,
     credentials,
     googleLoginCustomerIdByAccount,
+    accessPathByAccount,
     warnings,
   } = args;
 
@@ -608,6 +867,8 @@ async function fetchByPlatform(args: {
     credentials.googleClientId,
     credentials.googleClientSecret,
     googleLoginCustomerIdByAccount,
+    accessPathByAccount,
+    credentials.googleLoginCustomerId,
     startDate,
     endDate
   );
@@ -625,7 +886,7 @@ function buildMetaSummary(currentRows: CampaignRow[], previousRows: CampaignRow[
     metric("costPerResult", "Cost/Results", current.costPerResult, previous.costPerResult, "currency"),
     metric("clicks", "Clicks", current.clicks, previous.clicks, "number"),
     metric("ctr", "CTR (%)", current.ctr, previous.ctr, "percent"),
-    metric("cpm", "CPM (RM)", current.cpm, previous.cpm, "currency"),
+    metric("cpm", "CPM", current.cpm, previous.cpm, "currency"),
     metric("impressions", "Impression", current.impressions, previous.impressions, "number"),
     metric("spend", "Ads Spent", current.spend, previous.spend, "currency"),
   ];
@@ -637,39 +898,12 @@ function buildGoogleSummary(currentRows: CampaignRow[], previousRows: CampaignRo
 
   return [
     metric("conversions", "Conversions", current.conversions, previous.conversions, "number"),
-    metric("costPerConv", "Cost/Conv. (RM)", current.costPerResult, previous.costPerResult, "currency"),
+    metric("costPerConv", "Cost/Conv.", current.costPerResult, previous.costPerResult, "currency"),
     metric("clicks", "Clicks", current.clicks, previous.clicks, "number"),
-    metric("avgCpc", "Avg. CPC (RM)", current.avgCpc, previous.avgCpc, "currency"),
+    metric("avgCpc", "Avg. CPC", current.avgCpc, previous.avgCpc, "currency"),
     metric("ctr", "CTR", current.ctr, previous.ctr, "percent"),
     metric("impressions", "Impression", current.impressions, previous.impressions, "number"),
-    metric("spend", "Ads Spent (RM)", current.spend, previous.spend, "currency"),
-  ];
-}
-
-function buildYoutubeSummary(currentRows: CampaignRow[], previousRows: CampaignRow[]): SummaryMetric[] {
-  const current = aggregateRows(currentRows, "googleYoutube");
-  const previous = aggregateRows(previousRows, "googleYoutube");
-
-  return [
-    metric(
-      "youtubeEarnedShares",
-      "Youtube Earned Shares",
-      current.youtubeEarnedShares,
-      previous.youtubeEarnedShares,
-      "number"
-    ),
-    metric("costPerConv", "Cost/Conv. (RM)", current.costPerResult, previous.costPerResult, "currency"),
-    metric("clicks", "Clicks", current.clicks, previous.clicks, "number"),
-    metric("avgCpc", "Av. CPC (RM)", current.avgCpc, previous.avgCpc, "currency"),
-    metric(
-      "youtubeEarnedLikes",
-      "Youtube Earned Likes",
-      current.youtubeEarnedLikes,
-      previous.youtubeEarnedLikes,
-      "number"
-    ),
-    metric("impressions", "Impression", current.impressions, previous.impressions, "number"),
-    metric("spend", "Ad Spent (RM)", current.spend, previous.spend, "currency"),
+    metric("spend", "Ads Spent", current.spend, previous.spend, "currency"),
   ];
 }
 
@@ -715,16 +949,11 @@ async function tryFetchMeta(
   }
 
   try {
-    const activeCampaignIds = await fetchMetaActiveCampaignIds({
-      accountId,
-      accessToken,
-    });
     const rows = await fetchMetaCampaignRows({
       accountId,
       accessToken,
       startDate,
       endDate,
-      activeCampaignIds,
     });
     return { rows, warnings: [] };
   } catch (error) {
@@ -733,6 +962,103 @@ async function tryFetchMeta(
       ? " Meta token is valid but missing required ads scopes (`ads_read` or `ads_management`) for this ad account, or the token owner is not assigned to the ad account."
       : "";
     return { rows: [], warnings: [`Meta API: ${message}${hint}`] };
+  }
+}
+
+async function tryFetchMetaAudience(
+  accountId: string | null,
+  accessToken: string | null,
+  startDate: string,
+  endDate: string
+): Promise<{ breakdown: AudienceClickBreakdownResponse; warnings: string[] }> {
+  if (!accountId) {
+    return { breakdown: createEmptyAudienceClickBreakdownResponse(), warnings: [] };
+  }
+  if (!accessToken) {
+    return {
+      breakdown: createEmptyAudienceClickBreakdownResponse(),
+      warnings: [
+        "Meta API: Missing META_ACCESS_TOKEN. Add this secret in Vercel Environment Variables or run locally with `doppler run -- npm run dev`.",
+      ],
+    };
+  }
+
+  try {
+    const breakdown = await fetchMetaAudienceBreakdown({
+      accountId,
+      accessToken,
+      startDate,
+      endDate,
+    });
+    return { breakdown, warnings: [] };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Failed to load Meta audience breakdown data.";
+    const hint = message.includes("(#200)")
+      ? " Meta token is valid but missing required ads scopes (`ads_read` or `ads_management`) for this ad account, or the token owner is not assigned to the ad account."
+      : "";
+    return {
+      breakdown: createEmptyAudienceClickBreakdownResponse(),
+      warnings: [`Meta API: ${message}${hint}`],
+    };
+  }
+}
+
+async function tryFetchMetaPreview(
+  accountId: string | null,
+  accessToken: string | null,
+  startDate: string,
+  endDate: string
+): Promise<{
+  campaigns: PreviewCampaignNode[];
+  warnings: string[];
+  structuredWarnings: MetaPreviewBlockIssue[];
+  fatalErrors: MetaPreviewBlockIssue[];
+  diagnostics: MetaPreviewDiagnostics[];
+}> {
+  if (!accountId) {
+    return { campaigns: [], warnings: [], structuredWarnings: [], fatalErrors: [], diagnostics: [] };
+  }
+  if (!accessToken) {
+    return {
+      campaigns: [],
+      warnings: [
+        "Meta API: Missing META_ACCESS_TOKEN. Add this secret in Vercel Environment Variables or run locally with `doppler run -- npm run dev`.",
+      ],
+      structuredWarnings: [],
+      fatalErrors: [],
+      diagnostics: [],
+    };
+  }
+
+  try {
+    const result = await fetchMetaPreviewData({
+      accountId,
+      accessToken,
+      startDate,
+      endDate,
+    });
+    return {
+      campaigns: result.data,
+      warnings: [
+        ...result.warnings.map(formatStructuredMetaPreviewIssue),
+        ...result.fatalErrors.map(formatStructuredMetaPreviewIssue),
+      ],
+      structuredWarnings: result.warnings,
+      fatalErrors: result.fatalErrors,
+      diagnostics: result.diagnostics.length ? [{ accountId, blocks: result.diagnostics }] : [],
+    };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Failed to load Meta preview data.";
+    const hint = message.includes("(#200)")
+      ? " Meta token is valid but missing required ads scopes (`ads_read` or `ads_management`) for this ad account, or the token owner is not assigned to the ad account."
+      : "";
+    return {
+      campaigns: [],
+      warnings: [`Meta API: ${message}${hint}`],
+      structuredWarnings: [],
+      fatalErrors: [],
+      diagnostics: [],
+    };
   }
 }
 
@@ -745,6 +1071,8 @@ async function tryFetchGoogle(
   clientId: string | null,
   clientSecret: string | null,
   loginCustomerId: string | null,
+  accessPath: string | null,
+  fallbackLoginCustomerId: string | null,
   startDate: string,
   endDate: string
 ): Promise<{ rows: CampaignRow[]; warnings: string[] }> {
@@ -768,23 +1096,255 @@ async function tryFetchGoogle(
     };
   }
 
-  try {
-    const rows = await fetchGoogleCampaignRows({
-      customerId,
-      apiVersion,
+  const cacheKey = createGoogleFetchCacheKey("campaign-rows", {
+    customerId,
+    apiVersion,
+    loginCustomerId,
+    accessPath,
+    fallbackLoginCustomerId,
+    startDate,
+    endDate,
+    credentials: fingerprintGoogleCredentials(
       developerToken,
       accessToken,
       refreshToken,
       clientId,
-      clientSecret,
-      loginCustomerId,
-      startDate,
-      endDate,
-    });
-    return { rows, warnings: [] };
+      clientSecret
+    ),
+  });
+
+  try {
+    return await readThroughMemoryCache(
+      googleCampaignRowsCache,
+      cacheKey,
+      async () => {
+        const rows = await fetchGoogleCampaignRows({
+          customerId,
+          apiVersion,
+          developerToken,
+          accessToken,
+          refreshToken,
+          clientId,
+          clientSecret,
+          loginCustomerId,
+          accessPath,
+          fallbackLoginCustomerId,
+          startDate,
+          endDate,
+        });
+        return { rows, warnings: [] };
+      },
+      {
+        ttlMs: GOOGLE_FETCH_CACHE_TTL_MS,
+        maxEntries: GOOGLE_FETCH_CACHE_MAX_ENTRIES,
+      }
+    );
   } catch (error) {
+    if (isGoogleAdsAccessPathError(error)) {
+      throw error;
+    }
     const message = error instanceof Error ? error.message : "Failed to load Google Ads data.";
     return { rows: [], warnings: [`Google Ads API: ${message}${googleErrorHint(message)}`] };
+  }
+}
+
+async function tryFetchGoogleAudience(
+  customerId: string | null,
+  apiVersion: string,
+  developerToken: string | null,
+  accessToken: string | null,
+  refreshToken: string | null,
+  clientId: string | null,
+  clientSecret: string | null,
+  loginCustomerId: string | null,
+  accessPath: string | null,
+  fallbackLoginCustomerId: string | null,
+  startDate: string,
+  endDate: string
+): Promise<{ breakdown: AudienceClickBreakdownResponse; warnings: string[] }> {
+  if (!customerId) {
+    return { breakdown: createEmptyAudienceClickBreakdownResponse(), warnings: [] };
+  }
+
+  const credentialWarnings = getGoogleCredentialWarnings(
+    developerToken,
+    accessToken,
+    refreshToken,
+    clientId,
+    clientSecret
+  );
+  if (credentialWarnings.length > 0) {
+    return {
+      breakdown: createEmptyAudienceClickBreakdownResponse(),
+      warnings: credentialWarnings,
+    };
+  }
+
+  const cacheKey = createGoogleFetchCacheKey("audience-breakdown", {
+    customerId,
+    apiVersion,
+    loginCustomerId,
+    accessPath,
+    fallbackLoginCustomerId,
+    startDate,
+    endDate,
+    credentials: fingerprintGoogleCredentials(
+      developerToken,
+      accessToken,
+      refreshToken,
+      clientId,
+      clientSecret
+    ),
+  });
+
+  try {
+    return await readThroughMemoryCache(
+      googleAudienceBreakdownCache,
+      cacheKey,
+      async () => {
+        const breakdown = await fetchGoogleAudienceBreakdown({
+          customerId,
+          apiVersion,
+          developerToken: developerToken!,
+          accessToken,
+          refreshToken,
+          clientId,
+          clientSecret,
+          loginCustomerId,
+          accessPath,
+          fallbackLoginCustomerId,
+          startDate,
+          endDate,
+        });
+        return { breakdown, warnings: [] };
+      },
+      {
+        ttlMs: GOOGLE_FETCH_CACHE_TTL_MS,
+        maxEntries: GOOGLE_FETCH_CACHE_MAX_ENTRIES,
+      }
+    );
+  } catch (error) {
+    if (isGoogleAdsAccessPathError(error)) {
+      throw error;
+    }
+    const message =
+      error instanceof Error ? error.message : "Failed to load Google Ads audience breakdown data.";
+    return {
+      breakdown: createEmptyAudienceClickBreakdownResponse(),
+      warnings: [`Google Ads API: ${message}${googleErrorHint(message)}`],
+    };
+  }
+}
+
+async function tryFetchGooglePreview(
+  customerId: string | null,
+  apiVersion: string,
+  developerToken: string | null,
+  accessToken: string | null,
+  refreshToken: string | null,
+  clientId: string | null,
+  clientSecret: string | null,
+  loginCustomerId: string | null,
+  accessPath: string | null,
+  fallbackLoginCustomerId: string | null,
+  startDate: string,
+  endDate: string,
+  includeDiagnostics: boolean
+): Promise<{
+  campaigns: PreviewCampaignNode[];
+  warnings: string[];
+  structuredWarnings: GooglePreviewWarning[];
+  fatalError: GooglePreviewFatalError | null;
+  diagnostics: GooglePreviewDiagnostics | null;
+}> {
+  if (!customerId) {
+    return {
+      campaigns: [],
+      warnings: [],
+      structuredWarnings: [],
+      fatalError: null,
+      diagnostics: null,
+    };
+  }
+
+  const credentialWarnings = getGoogleCredentialWarnings(
+    developerToken,
+    accessToken,
+    refreshToken,
+    clientId,
+    clientSecret
+  );
+  if (credentialWarnings.length > 0) {
+    return {
+      campaigns: [],
+      warnings: credentialWarnings,
+      structuredWarnings: [],
+      fatalError: null,
+      diagnostics: null,
+    };
+  }
+
+  const cacheKey = createGoogleFetchCacheKey("preview", {
+    customerId,
+    apiVersion,
+    loginCustomerId,
+    accessPath,
+    fallbackLoginCustomerId,
+    startDate,
+    endDate,
+    credentials: fingerprintGoogleCredentials(
+      developerToken,
+      accessToken,
+      refreshToken,
+      clientId,
+      clientSecret
+    ),
+  });
+
+  try {
+    const result = await readThroughMemoryCache(
+      googlePreviewCache,
+      cacheKey,
+      () =>
+        fetchGooglePreviewData({
+          customerId,
+          apiVersion,
+          developerToken: developerToken!,
+          accessToken,
+          refreshToken,
+          clientId,
+          clientSecret,
+          loginCustomerId,
+          fallbackLoginCustomerId,
+          startDate,
+          endDate,
+          accessPath,
+        }),
+      {
+        ttlMs: GOOGLE_FETCH_CACHE_TTL_MS,
+        maxEntries: GOOGLE_FETCH_CACHE_MAX_ENTRIES,
+      }
+    );
+
+    return {
+      campaigns: result.data,
+      warnings: [
+        ...result.warnings.map(formatStructuredGooglePreviewWarning),
+        ...(result.fatalError ? [formatStructuredGooglePreviewFatalError(result.fatalError)] : []),
+      ],
+      structuredWarnings: result.warnings,
+      fatalError: result.fatalError,
+      diagnostics: includeDiagnostics ? result.diagnostics : null,
+    };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Failed to load Google Ads preview data.";
+    return {
+      campaigns: [],
+      warnings: [`Google Ads API: ${message}${googleErrorHint(message)}`],
+      structuredWarnings: [],
+      fatalError: null,
+      diagnostics: null,
+    };
   }
 }
 
@@ -797,6 +1357,8 @@ async function tryFetchGoogleKeywords(
   clientId: string | null,
   clientSecret: string | null,
   loginCustomerId: string | null,
+  accessPath: string | null,
+  fallbackLoginCustomerId: string | null,
   startDate: string,
   endDate: string
 ): Promise<{ rows: TopKeywordRow[]; warnings: string[] }> {
@@ -815,22 +1377,53 @@ async function tryFetchGoogleKeywords(
     return { rows: [], warnings: credentialWarnings };
   }
 
-  try {
-    const rows = await fetchGoogleTopKeywordRows({
-      customerId,
-      apiVersion,
-      developerToken: developerToken!,
+  const cacheKey = createGoogleFetchCacheKey("top-keywords", {
+    customerId,
+    apiVersion,
+    loginCustomerId,
+    accessPath,
+    fallbackLoginCustomerId,
+    startDate,
+    endDate,
+    credentials: fingerprintGoogleCredentials(
+      developerToken,
       accessToken,
       refreshToken,
       clientId,
-      clientSecret,
-      loginCustomerId,
-      startDate,
-      endDate,
-    });
+      clientSecret
+    ),
+  });
+
+  try {
+    const rows = await readThroughMemoryCache(
+      googleTopKeywordRowsCache,
+      cacheKey,
+      () =>
+        fetchGoogleTopKeywordRows({
+          customerId,
+          apiVersion,
+          developerToken: developerToken!,
+          accessToken,
+          refreshToken,
+          clientId,
+          clientSecret,
+          loginCustomerId,
+          accessPath,
+          fallbackLoginCustomerId,
+          startDate,
+          endDate,
+        }),
+      {
+        ttlMs: GOOGLE_FETCH_CACHE_TTL_MS,
+        maxEntries: GOOGLE_FETCH_CACHE_MAX_ENTRIES,
+      }
+    );
 
     return { rows, warnings: [] };
   } catch (error) {
+    if (isGoogleAdsAccessPathError(error)) {
+      throw error;
+    }
     const message = error instanceof Error ? error.message : "Failed to load Google Ads keyword data.";
     return { rows: [], warnings: [`Google Ads API: ${message}${googleErrorHint(message)}`] };
   }
@@ -845,6 +1438,8 @@ async function tryFetchGoogleAuctionInsights(
   clientId: string | null,
   clientSecret: string | null,
   loginCustomerId: string | null,
+  accessPath: string | null,
+  fallbackLoginCustomerId: string | null,
   startDate: string,
   endDate: string
 ): Promise<{ rows: AuctionInsightRow[]; warnings: string[] }> {
@@ -863,22 +1458,53 @@ async function tryFetchGoogleAuctionInsights(
     return { rows: [], warnings: credentialWarnings };
   }
 
-  try {
-    const rows = await fetchGoogleAuctionInsightRows({
-      customerId,
-      apiVersion,
-      developerToken: developerToken!,
+  const cacheKey = createGoogleFetchCacheKey("auction-insights", {
+    customerId,
+    apiVersion,
+    loginCustomerId,
+    accessPath,
+    fallbackLoginCustomerId,
+    startDate,
+    endDate,
+    credentials: fingerprintGoogleCredentials(
+      developerToken,
       accessToken,
       refreshToken,
       clientId,
-      clientSecret,
-      loginCustomerId,
-      startDate,
-      endDate,
-    });
+      clientSecret
+    ),
+  });
+
+  try {
+    const rows = await readThroughMemoryCache(
+      googleAuctionInsightRowsCache,
+      cacheKey,
+      () =>
+        fetchGoogleAuctionInsightRows({
+          customerId,
+          apiVersion,
+          developerToken: developerToken!,
+          accessToken,
+          refreshToken,
+          clientId,
+          clientSecret,
+          loginCustomerId,
+          accessPath,
+          fallbackLoginCustomerId,
+          startDate,
+          endDate,
+        }),
+      {
+        ttlMs: GOOGLE_FETCH_CACHE_TTL_MS,
+        maxEntries: GOOGLE_FETCH_CACHE_MAX_ENTRIES,
+      }
+    );
 
     return { rows, warnings: [] };
   } catch (error) {
+    if (isGoogleAdsAccessPathError(error)) {
+      throw error;
+    }
     const message =
       error instanceof Error ? error.message : "Failed to load Google Ads auction insight data.";
     return { rows: [], warnings: [`Google Ads API: ${message}${googleErrorHint(message)}`] };
@@ -909,6 +1535,89 @@ async function tryFetchMetaForAccounts(
   return { rows, warnings };
 }
 
+async function tryFetchMetaAudienceBreakdownForAccounts(
+  accountIds: string[],
+  accessToken: string | null,
+  startDate: string,
+  endDate: string
+): Promise<{ breakdown: AudienceClickBreakdownResponse; warnings: string[] }> {
+  if (accountIds.length === 0) {
+    return { breakdown: createEmptyAudienceClickBreakdownResponse(), warnings: [] };
+  }
+
+  let breakdown = createEmptyAudienceClickBreakdownResponse();
+  const warnings: string[] = [];
+
+  for (const accountId of accountIds) {
+    const result = await tryFetchMetaAudience(accountId, accessToken, startDate, endDate);
+    breakdown = mergeAudienceClickBreakdownResponses(breakdown, result.breakdown);
+    warnings.push(
+      ...result.warnings.map((warning) => annotateWarningWithAccount(warning, "meta", accountId))
+    );
+  }
+
+  return { breakdown, warnings };
+}
+
+async function tryFetchGoogleAudienceBreakdownForAccounts(
+  accountIds: string[],
+  apiVersion: string,
+  developerToken: string | null,
+  accessToken: string | null,
+  refreshToken: string | null,
+  clientId: string | null,
+  clientSecret: string | null,
+  loginCustomerIdByAccount: GoogleLoginCustomerIdMap,
+  accessPathByAccount: Record<string, string | null>,
+  fallbackLoginCustomerId: string | null,
+  startDate: string,
+  endDate: string
+): Promise<{ breakdown: AudienceClickBreakdownResponse; warnings: string[] }> {
+  if (accountIds.length === 0) {
+    return { breakdown: createEmptyAudienceClickBreakdownResponse(), warnings: [] };
+  }
+
+  let breakdown = createEmptyAudienceClickBreakdownResponse();
+  const warnings: string[] = [];
+
+  for (const accountId of accountIds) {
+    try {
+      const result = await tryFetchGoogleAudience(
+        accountId,
+        apiVersion,
+        developerToken,
+        accessToken,
+        refreshToken,
+        clientId,
+        clientSecret,
+        loginCustomerIdByAccount[accountId] ?? null,
+        accessPathByAccount[accountId] ?? null,
+        fallbackLoginCustomerId,
+        startDate,
+        endDate
+      );
+      breakdown = mergeAudienceClickBreakdownResponses(breakdown, result.breakdown);
+      const accountWarnings = result.warnings.map((warning) =>
+        annotateWarningWithAccount(warning, "google", accountId)
+      );
+      logGoogleWarningsForTerminal(accountWarnings);
+      warnings.push(...accountWarnings);
+    } catch (error) {
+      if (!isGoogleAdsAccessPathError(error)) {
+        throw error;
+      }
+
+      const accountWarnings = [
+        annotateWarningWithAccount(error.payload.message, "google", accountId),
+      ];
+      logGoogleWarningsForTerminal(accountWarnings);
+      warnings.push(...accountWarnings);
+    }
+  }
+
+  return { breakdown, warnings };
+}
+
 async function tryFetchGoogleForAccounts(
   accountIds: string[],
   apiVersion: string,
@@ -918,8 +1627,11 @@ async function tryFetchGoogleForAccounts(
   clientId: string | null,
   clientSecret: string | null,
   loginCustomerIdByAccount: GoogleLoginCustomerIdMap,
+  accessPathByAccount: Record<string, string | null>,
+  fallbackLoginCustomerId: string | null,
   startDate: string,
-  endDate: string
+  endDate: string,
+  suppressAccessPathErrors = false
 ): Promise<{ rows: CampaignRow[]; warnings: string[] }> {
   if (accountIds.length === 0) {
     return { rows: [], warnings: [] };
@@ -929,7 +1641,118 @@ async function tryFetchGoogleForAccounts(
   const warnings: string[] = [];
 
   for (const accountId of accountIds) {
-    const result = await tryFetchGoogle(
+    try {
+      const result = await tryFetchGoogle(
+        accountId,
+        apiVersion,
+        developerToken,
+        accessToken,
+        refreshToken,
+        clientId,
+        clientSecret,
+        loginCustomerIdByAccount[accountId] ?? null,
+        accessPathByAccount[accountId] ?? null,
+        fallbackLoginCustomerId,
+        startDate,
+        endDate
+      );
+      rows.push(...result.rows);
+      const accountWarnings = result.warnings.map((warning) =>
+        annotateWarningWithAccount(warning, "google", accountId)
+      );
+      logGoogleWarningsForTerminal(accountWarnings);
+      warnings.push(...accountWarnings);
+    } catch (error) {
+      if (!suppressAccessPathErrors || !isGoogleAdsAccessPathError(error)) {
+        throw error;
+      }
+
+      const accountWarnings = [
+        annotateWarningWithAccount(error.payload.message, "google", accountId),
+      ];
+      logGoogleWarningsForTerminal(accountWarnings);
+      warnings.push(...accountWarnings);
+    }
+  }
+
+  return { rows, warnings };
+}
+
+async function tryFetchMetaPreviewSections(
+  accountIds: string[],
+  accessToken: string | null,
+  startDate: string,
+  endDate: string
+): Promise<{
+  campaigns: PreviewCampaignNode[];
+  warnings: string[];
+  structuredWarnings: MetaPreviewBlockIssue[];
+  fatalErrors: MetaPreviewBlockIssue[];
+  diagnostics: MetaPreviewDiagnostics[];
+}> {
+  if (accountIds.length === 0) {
+    return { campaigns: [], warnings: [], structuredWarnings: [], fatalErrors: [], diagnostics: [] };
+  }
+
+  const campaigns: PreviewCampaignNode[] = [];
+  const warnings: string[] = [];
+  const structuredWarnings: MetaPreviewBlockIssue[] = [];
+  const fatalErrors: MetaPreviewBlockIssue[] = [];
+  const diagnostics: MetaPreviewDiagnostics[] = [];
+
+  for (const accountId of accountIds) {
+    const result = await tryFetchMetaPreview(accountId, accessToken, startDate, endDate);
+    campaigns.push(...result.campaigns);
+    warnings.push(
+      ...result.warnings.map((warning) => annotateWarningWithAccount(warning, "meta", accountId))
+    );
+    structuredWarnings.push(...result.structuredWarnings);
+    fatalErrors.push(...result.fatalErrors);
+    diagnostics.push(...result.diagnostics);
+  }
+
+  return {
+    campaigns: sortPreviewCampaigns(campaigns),
+    warnings,
+    structuredWarnings,
+    fatalErrors,
+    diagnostics,
+  };
+}
+
+async function tryFetchGooglePreviewSections(
+  accountIds: string[],
+  apiVersion: string,
+  developerToken: string | null,
+  accessToken: string | null,
+  refreshToken: string | null,
+  clientId: string | null,
+  clientSecret: string | null,
+  loginCustomerIdByAccount: GoogleLoginCustomerIdMap,
+  accessPathByAccount: Record<string, string | null>,
+  fallbackLoginCustomerId: string | null,
+  startDate: string,
+  endDate: string,
+  includeDiagnostics: boolean
+): Promise<{
+  campaigns: PreviewCampaignNode[];
+  warnings: string[];
+  structuredWarnings: GooglePreviewWarning[];
+  fatalErrors: GooglePreviewFatalError[];
+  diagnostics: GooglePreviewDiagnostics[];
+}> {
+  if (accountIds.length === 0) {
+    return { campaigns: [], warnings: [], structuredWarnings: [], fatalErrors: [], diagnostics: [] };
+  }
+
+  const campaigns: PreviewCampaignNode[] = [];
+  const warnings: string[] = [];
+  const structuredWarnings: GooglePreviewWarning[] = [];
+  const fatalErrors: GooglePreviewFatalError[] = [];
+  const diagnostics: GooglePreviewDiagnostics[] = [];
+
+  for (const accountId of accountIds) {
+    const result = await tryFetchGooglePreview(
       accountId,
       apiVersion,
       developerToken,
@@ -938,18 +1761,35 @@ async function tryFetchGoogleForAccounts(
       clientId,
       clientSecret,
       loginCustomerIdByAccount[accountId] ?? null,
+      accessPathByAccount[accountId] ?? null,
+      fallbackLoginCustomerId,
       startDate,
-      endDate
+      endDate,
+      includeDiagnostics
     );
-    rows.push(...result.rows);
+
+    campaigns.push(...result.campaigns);
     const accountWarnings = result.warnings.map((warning) =>
       annotateWarningWithAccount(warning, "google", accountId)
     );
     logGoogleWarningsForTerminal(accountWarnings);
     warnings.push(...accountWarnings);
+    structuredWarnings.push(...result.structuredWarnings);
+    if (result.fatalError) {
+      fatalErrors.push(result.fatalError);
+    }
+    if (result.diagnostics) {
+      diagnostics.push(result.diagnostics);
+    }
   }
 
-  return { rows, warnings };
+  return {
+    campaigns: sortPreviewCampaigns(campaigns),
+    warnings,
+    structuredWarnings,
+    fatalErrors,
+    diagnostics,
+  };
 }
 
 async function tryFetchGoogleKeywordsForAccounts(
@@ -961,6 +1801,8 @@ async function tryFetchGoogleKeywordsForAccounts(
   clientId: string | null,
   clientSecret: string | null,
   loginCustomerIdByAccount: GoogleLoginCustomerIdMap,
+  accessPathByAccount: Record<string, string | null>,
+  fallbackLoginCustomerId: string | null,
   startDate: string,
   endDate: string
 ): Promise<{ rows: TopKeywordRow[]; warnings: string[] }> {
@@ -981,6 +1823,8 @@ async function tryFetchGoogleKeywordsForAccounts(
       clientId,
       clientSecret,
       loginCustomerIdByAccount[accountId] ?? null,
+      accessPathByAccount[accountId] ?? null,
+      fallbackLoginCustomerId,
       startDate,
       endDate
     );
@@ -1006,6 +1850,8 @@ async function tryFetchGoogleAuctionInsightsForAccounts(
   clientId: string | null,
   clientSecret: string | null,
   loginCustomerIdByAccount: GoogleLoginCustomerIdMap,
+  accessPathByAccount: Record<string, string | null>,
+  fallbackLoginCustomerId: string | null,
   startDate: string,
   endDate: string
 ): Promise<{ rows: AuctionInsightRow[]; warnings: string[] }> {
@@ -1026,6 +1872,8 @@ async function tryFetchGoogleAuctionInsightsForAccounts(
       clientId,
       clientSecret,
       loginCustomerIdByAccount[accountId] ?? null,
+      accessPathByAccount[accountId] ?? null,
+      fallbackLoginCustomerId,
       startDate,
       endDate
     );
@@ -1150,6 +1998,7 @@ async function resolveReportAccountContext(
   googleManagerContext: {
     googleAccountIds: string[];
     loginCustomerIdByAccount: GoogleLoginCustomerIdMap;
+    accessPathByAccount: Record<string, string | null>;
     messages: string[];
   };
 }> {
@@ -1241,6 +2090,7 @@ async function tryFetchGoogleAccountName(
   if (!googleAccountId || !credentials.googleDeveloperToken) {
     return null;
   }
+  const developerToken = credentials.googleDeveloperToken;
 
   if (
     !hasGoogleOAuthCredentials(
@@ -1253,17 +2103,39 @@ async function tryFetchGoogleAccountName(
     return null;
   }
 
+  const cacheKey = createGoogleFetchCacheKey("account-name", {
+    customerId: googleAccountId,
+    apiVersion: credentials.googleAdsApiVersion,
+    loginCustomerId,
+    credentials: fingerprintGoogleCredentials(
+      developerToken,
+      credentials.googleAccessToken,
+      credentials.googleRefreshToken,
+      credentials.googleClientId,
+      credentials.googleClientSecret
+    ),
+  });
+
   try {
-    return await fetchGoogleAccountName({
-      customerId: googleAccountId,
-      apiVersion: credentials.googleAdsApiVersion,
-      developerToken: credentials.googleDeveloperToken,
-      accessToken: credentials.googleAccessToken,
-      refreshToken: credentials.googleRefreshToken,
-      clientId: credentials.googleClientId,
-      clientSecret: credentials.googleClientSecret,
-      loginCustomerId,
-    });
+    return await readThroughMemoryCache(
+      googleAccountNameCache,
+      cacheKey,
+      () =>
+        fetchGoogleAccountName({
+          customerId: googleAccountId,
+          apiVersion: credentials.googleAdsApiVersion,
+          developerToken,
+          accessToken: credentials.googleAccessToken,
+          refreshToken: credentials.googleRefreshToken,
+          clientId: credentials.googleClientId,
+          clientSecret: credentials.googleClientSecret,
+          loginCustomerId,
+        }),
+      {
+        ttlMs: GOOGLE_FETCH_CACHE_TTL_MS,
+        maxEntries: GOOGLE_FETCH_CACHE_MAX_ENTRIES,
+      }
+    );
   } catch {
     return null;
   }
@@ -1321,15 +2193,63 @@ async function resolveGoogleManagerContext(
 ): Promise<{
   googleAccountIds: string[];
   loginCustomerIdByAccount: GoogleLoginCustomerIdMap;
+  accessPathByAccount: Record<string, string | null>;
   messages: string[];
 }> {
+  try {
     return resolveGoogleAccountsFromNotion({
       googleAccountIds: resolvedAccountIds.googleAccountIds,
       googleLookupTerms: collectGoogleLookupTerms(input.accountId, input.googleAccountId),
       notionAccessToken: credentials.notionAccessToken,
       notionDatabaseId: credentials.notionDatabaseId,
+      fallbackLoginCustomerId: credentials.googleLoginCustomerId,
     });
+  } catch (error) {
+    if (!isNotionIntegrationError(error)) {
+      throw error;
+    }
+
+    const fallbackGoogleAccountIds = resolvedAccountIds.googleAccountIds;
+    if (fallbackGoogleAccountIds.length === 0) {
+      throw error;
+    }
+
+    const loginCustomerIdByAccount = fallbackGoogleAccountIds.reduce<GoogleLoginCustomerIdMap>(
+      (acc, accountId) => {
+        acc[accountId] = credentials.googleLoginCustomerId;
+        return acc;
+      },
+      {}
+    );
+    const accessPathByAccount = fallbackGoogleAccountIds.reduce<Record<string, string | null>>(
+      (acc, accountId) => {
+        acc[accountId] = null;
+        return acc;
+      },
+      {}
+    );
+    const fallbackManagerId = credentials.googleLoginCustomerId;
+    const fallbackMessage = fallbackManagerId
+      ? `Notion lookup failed (${error.payload.message}). Falling back to the requested Google account ID(s) with manager ID ${formatGoogleCustomerId(fallbackManagerId)}.`
+      : `Notion lookup failed (${error.payload.message}). Falling back to the requested Google account ID(s) with direct customer access.`;
+
+    return {
+      googleAccountIds: fallbackGoogleAccountIds,
+      loginCustomerIdByAccount,
+      accessPathByAccount,
+      messages: [fallbackMessage],
+    };
   }
+}
+
+function formatGoogleCustomerId(value: string): string {
+  const digits = value.replace(/\D/g, "");
+  if (digits.length !== 10) {
+    return value;
+  }
+
+  return `${digits.slice(0, 3)}-${digits.slice(3, 6)}-${digits.slice(6)}`;
+}
 
 function collectGoogleLookupTerms(
   accountId: string | null,
@@ -1406,6 +2326,25 @@ function googleErrorHint(message: string): string {
   }
 
   return "";
+}
+
+function formatStructuredGooglePreviewWarning(warning: GooglePreviewWarning): string {
+  return `[${warning.label}] ${warning.reason}`;
+}
+
+function formatStructuredGooglePreviewFatalError(error: GooglePreviewFatalError): string {
+  return `[${error.label}] ${error.reason}`;
+}
+
+function formatStructuredMetaPreviewIssue(issue: MetaPreviewBlockIssue): string {
+  return `[${issue.label}] fields=${issue.fields.join(",")} code=${issue.errorCode ?? "n/a"} subcode=${
+    issue.errorSubcode ?? "n/a"
+  } message=${issue.message}`;
+}
+
+function isGooglePreviewDiagnosticsEnabled(): boolean {
+  const value = process.env.GOOGLE_ADS_PREVIEW_DIAGNOSTICS;
+  return value === "1" || value === "true";
 }
 
 function logGoogleWarningsForTerminal(warnings: string[]) {
@@ -1580,6 +2519,10 @@ function dedupeWarnings(warnings: string[]): string[] {
   return Array.from(
     new Set(warnings.map((warning) => warning.trim()).filter((warning) => warning.length > 0))
   );
+}
+
+function sortPreviewCampaigns(campaigns: PreviewCampaignNode[]): PreviewCampaignNode[] {
+  return [...campaigns].sort((a, b) => a.name.localeCompare(b.name));
 }
 
 function hasGoogleOAuthCredentials(
