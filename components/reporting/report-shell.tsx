@@ -44,14 +44,23 @@ export function ReportShell({
       data-report-capture-root="true"
     >
       <div className={REPORT_PAGE_FRAME_CLASS}>
-        <section className="relative overflow-visible rounded-[2rem] bg-[url('/headerbackground.png')] bg-cover bg-center bg-no-repeat shadow-sm md:bg-[length:100%_100%]">
-          <div className={`${REPORT_INNER_CONTAINER_CLASS} py-5 sm:py-6`}>
+        <section
+          className="relative overflow-visible rounded-[2rem] bg-[url('/headerbackground.png')] bg-cover bg-center bg-no-repeat shadow-sm md:bg-[length:100%_100%]"
+          data-report-export-header-panel="true"
+        >
+          <div
+            className={`${REPORT_INNER_CONTAINER_CLASS} py-5 sm:py-6`}
+            data-report-export-header-inner="true"
+          >
             <div className="grid gap-4 text-white md:grid-cols-[minmax(0,1fr)_auto] md:items-start md:gap-x-8">
               <div className="min-w-0 space-y-3">
-                <h1 className="break-words text-3xl font-semibold leading-tight tracking-tight [overflow-wrap:anywhere] sm:text-4xl md:text-6xl">
+                <h1
+                  className="break-words text-3xl font-semibold leading-tight tracking-tight [overflow-wrap:anywhere] sm:text-4xl md:text-6xl"
+                  data-report-export-title="true"
+                >
                   {title}
                 </h1>
-                <nav className="flex flex-wrap items-center gap-2">
+                <nav className="flex flex-wrap items-center gap-2" data-report-export-exclude="true">
                   <Link
                     href={hrefs.home}
                     title="Home"
@@ -104,7 +113,11 @@ export function ReportShell({
                 </div>
               )}
             </div>
-            {headerBottomControl ? <div className="mt-4">{headerBottomControl}</div> : null}
+            {headerBottomControl ? (
+              <div className="mt-4" data-report-export-exclude="true">
+                {headerBottomControl}
+              </div>
+            ) : null}
           </div>
         </section>
 

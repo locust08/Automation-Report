@@ -34,6 +34,24 @@ type DownloadOverlayState =
 
 const TRANSPARENT_IMAGE_PLACEHOLDER =
   "data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='1' height='1'%3E%3C/svg%3E";
+const REPORT_EXPORT_CAPTURE_STYLE = `
+  [data-report-export-exclude='true'] {
+    display: none !important;
+  }
+
+  [data-report-export-header-panel='true'] {
+    min-height: 0 !important;
+  }
+
+  [data-report-export-header-inner='true'] {
+    padding-top: 1.25rem !important;
+    padding-bottom: 1.25rem !important;
+  }
+
+  [data-report-export-title='true'] {
+    text-wrap: balance;
+  }
+`;
 
 export function ReportDownloadButton() {
   const { screenshotMode, setScreenshotMode } = useScreenshotMode();
@@ -208,23 +226,34 @@ function preparePngDownload(dataUrl: string): () => void {
 }
 
 async function captureReportPng(root: HTMLElement, scale: number): Promise<string> {
-  await document.fonts.ready;
+  const exportStyle = installReportExportCaptureStyle();
 
-  return toPng(root, {
-    cacheBust: true,
-    backgroundColor: "#f0f0f0",
-    imagePlaceholder: TRANSPARENT_IMAGE_PLACEHOLDER,
-    pixelRatio: Math.max(2, window.devicePixelRatio || 1) * scale,
-    width: root.scrollWidth,
-    height: root.scrollHeight,
-    filter: (node) => {
-      if (!(node instanceof HTMLElement)) {
-        return true;
-      }
+  try {
+    await waitForAnimationFrame();
+    await waitForAnimationFrame();
+    await document.fonts.ready;
 
-      return node.dataset.reportDownloadOverlay !== "true";
-    },
-  });
+    return toPng(root, {
+      cacheBust: true,
+      backgroundColor: "#f0f0f0",
+      imagePlaceholder: TRANSPARENT_IMAGE_PLACEHOLDER,
+      pixelRatio: Math.max(2, window.devicePixelRatio || 1) * scale,
+      width: root.scrollWidth,
+      height: root.scrollHeight,
+      filter: (node) => {
+        if (!(node instanceof HTMLElement)) {
+          return true;
+        }
+
+        return (
+          node.dataset.reportDownloadOverlay !== "true" &&
+          node.dataset.reportExportExclude !== "true"
+        );
+      },
+    });
+  } finally {
+    exportStyle.remove();
+  }
 }
 
 function downloadFile(dataUrl: string, fileName: string) {
@@ -247,6 +276,20 @@ function waitFor(durationMs: number) {
   return new Promise<void>((resolve) => {
     window.setTimeout(resolve, durationMs);
   });
+}
+
+function waitForAnimationFrame() {
+  return new Promise<void>((resolve) => {
+    window.requestAnimationFrame(() => resolve());
+  });
+}
+
+function installReportExportCaptureStyle(): HTMLStyleElement {
+  const style = document.createElement("style");
+  style.dataset.reportExportCaptureStyle = "true";
+  style.textContent = REPORT_EXPORT_CAPTURE_STYLE;
+  document.head.appendChild(style);
+  return style;
 }
 
 function buildFileName(format: DownloadFormat): string {

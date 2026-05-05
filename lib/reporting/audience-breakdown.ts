@@ -250,6 +250,20 @@ export function limitLocationRowsWithOthers(
     .slice(limit)
     .reduce((total, row) => total + row.clicks, 0);
 
+  const existingOthersIndex = visible.findIndex((row) => row.label.trim().toLowerCase() === "others");
+  if (existingOthersIndex >= 0) {
+    return visible
+      .map((row, index) =>
+        index === existingOthersIndex ? { ...row, clicks: row.clicks + remainderClicks } : row
+      )
+      .sort((left, right) => {
+        if (right.clicks !== left.clicks) {
+          return right.clicks - left.clicks;
+        }
+        return left.label.localeCompare(right.label);
+      });
+  }
+
   return [...visible, { label: "Others", clicks: remainderClicks }];
 }
 

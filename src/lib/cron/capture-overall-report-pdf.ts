@@ -67,6 +67,26 @@ export async function captureOverallReportPdf(
 
     const captureRoot = page.locator("[data-report-capture-root='true']");
     await captureRoot.waitFor({ state: "visible", timeout: 120000 });
+    await page.addStyleTag({
+      content: `
+        [data-report-export-exclude='true'] {
+          display: none !important;
+        }
+
+        [data-report-export-header-panel='true'] {
+          min-height: 0 !important;
+        }
+
+        [data-report-export-header-inner='true'] {
+          padding-top: 1.25rem !important;
+          padding-bottom: 1.25rem !important;
+        }
+
+        [data-report-export-title='true'] {
+          text-wrap: balance;
+        }
+      `,
+    });
     await page.waitForTimeout(2000);
 
     const pngBuffer = await captureRoot.screenshot({ type: "png" });
