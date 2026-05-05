@@ -103,6 +103,63 @@ const googleTopKeywordRowsCache = new Map<string, MemoryCacheEntry<TopKeywordRow
 const googleAuctionInsightRowsCache = new Map<string, MemoryCacheEntry<AuctionInsightRow[]>>();
 const googleAccountNameCache = new Map<string, MemoryCacheEntry<string | null>>();
 
+function parsePositiveIntegerEnv(rawValue: string | undefined, fallback: number): number {
+  const parsed = Number.parseInt(rawValue ?? "", 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function createGoogleFetchCacheKey(
+  scope: string,
+  parts: Record<string, string | number | boolean | null | undefined | Record<string, string>>
+): string {
+  const normalizedParts = Object.fromEntries(
+    Object.entries(parts)
+      .filter(([, value]) => value !== undefined)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, value]) => [
+        key,
+        value && typeof value === "object"
+          ? Object.fromEntries(Object.entries(value).sort(([left], [right]) => left.localeCompare(right)))
+          : value,
+      ])
+  );
+
+  return `${scope}:${JSON.stringify(normalizedParts)}`;
+}
+
+function fingerprintGoogleCredentials(
+  developerToken: string | null,
+  accessToken: string | null,
+  refreshToken: string | null,
+  clientId: string | null,
+  clientSecret: string | null
+): Record<string, string> {
+  return {
+    developerToken: fingerprintSecret(developerToken),
+    accessToken: fingerprintSecret(accessToken),
+    refreshToken: fingerprintSecret(refreshToken),
+    clientId: fingerprintSecret(clientId),
+    clientSecret: fingerprintSecret(clientSecret),
+  };
+}
+
+function fingerprintSecret(value: string | null): string {
+  if (!value) {
+    return "";
+  }
+
+  return `${value.length}:${hashString(value)}`;
+}
+
+function hashString(value: string): string {
+  let hash = 2166136261;
+  for (let index = 0; index < value.length; index += 1) {
+    hash ^= value.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return (hash >>> 0).toString(36);
+}
+
 const MANUAL_AUCTION_INSIGHT_ROWS_BY_ACCOUNT: Record<string, AuctionInsightRow[]> = {
   "6261186490": [
     {
@@ -2294,57 +2351,6 @@ function logGoogleWarningsForTerminal(warnings: string[]) {
   warnings.forEach((warning) => {
     console.warn(`[Google Ads Warning] ${warning}`);
   });
-}
-
-function createGoogleFetchCacheKey(
-  scope: string,
-  values: Record<string, string | number | boolean | null | undefined>
-): string {
-  const serializedValues = Object.entries(values)
-    .sort(([leftKey], [rightKey]) => leftKey.localeCompare(rightKey))
-    .map(([key, value]) => `${key}=${encodeURIComponent(String(value ?? ""))}`)
-    .join("&");
-
-  return `google:${scope}:${serializedValues}`;
-}
-
-function fingerprintGoogleCredentials(
-  developerToken: string | null,
-  accessToken: string | null,
-  refreshToken: string | null,
-  clientId: string | null,
-  clientSecret: string | null
-): string {
-  return [
-    fingerprintSecret(developerToken),
-    fingerprintSecret(accessToken),
-    fingerprintSecret(refreshToken),
-    fingerprintSecret(clientId),
-    fingerprintSecret(clientSecret),
-  ].join(".");
-}
-
-function fingerprintSecret(value: string | null): string {
-  if (!value) {
-    return "none";
-  }
-
-  let hash = 2166136261;
-  for (let index = 0; index < value.length; index += 1) {
-    hash ^= value.charCodeAt(index);
-    hash = Math.imul(hash, 16777619);
-  }
-
-  return `${value.length}:${(hash >>> 0).toString(36)}`;
-}
-
-function parsePositiveIntegerEnv(value: string | undefined, fallback: number): number {
-  if (!value) {
-    return fallback;
-  }
-
-  const parsed = Number.parseInt(value, 10);
-  return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
 }
 
 function getManualAuctionInsightRowsForAccounts(accountIds: string[]): AuctionInsightRow[] {

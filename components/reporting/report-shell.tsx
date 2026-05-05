@@ -48,102 +48,102 @@ export function ReportShell({
       className="flex min-h-screen flex-col bg-[#f0f0f0] text-[#111]"
       data-report-capture-root="true"
     >
-      <div className={REPORT_PAGE_FRAME_CLASS}>
+      <div className={`${REPORT_PAGE_FRAME_CLASS} ${screenshotMode ? "!min-h-0 !flex-none" : ""}`}>
         {screenshotMode ? (
           <ExportReportHeader title={title} dateLabel={dateLabel} activeQuery={activeQuery} />
-        ) : (
-          <section
-            className="relative overflow-visible rounded-[2rem] bg-[url('/headerbackground.png')] bg-cover bg-center bg-no-repeat shadow-sm md:bg-[length:100%_100%]"
-            data-report-export-header-panel="true"
+        ) : null}
+
+        <section
+          className={`${screenshotMode ? "hidden " : ""}relative overflow-visible rounded-[2rem] bg-[url('/headerbackground.png')] bg-cover bg-center bg-no-repeat shadow-sm md:bg-[length:100%_100%]`}
+          data-report-export-header-panel="true"
+        >
+          <div
+            className={`${REPORT_INNER_CONTAINER_CLASS} py-5 sm:py-6`}
+            data-report-export-header-inner="true"
           >
             <div
-              className={`${REPORT_INNER_CONTAINER_CLASS} py-5 sm:py-6`}
-              data-report-export-header-inner="true"
+              className="grid gap-4 text-white md:grid-cols-[minmax(0,1fr)_auto] md:items-start md:gap-x-8"
+              data-report-export-header-grid="true"
             >
-              <div
-                className="grid gap-4 text-white md:grid-cols-[minmax(0,1fr)_auto] md:items-start md:gap-x-8"
-                data-report-export-header-grid="true"
-              >
-                <div className="min-w-0 space-y-3">
-                  <h1
-                    className="break-words text-3xl font-semibold leading-tight tracking-tight [overflow-wrap:anywhere] sm:text-4xl md:text-6xl"
-                    data-report-export-title="true"
+              <div className="min-w-0 space-y-3">
+                <h1
+                  className="break-words text-3xl font-semibold leading-tight tracking-tight [overflow-wrap:anywhere] sm:text-4xl md:text-6xl"
+                  data-report-export-title="true"
+                >
+                  {title}
+                </h1>
+                <nav className="flex flex-wrap items-center gap-2" data-report-export-exclude="true">
+                  <Link
+                    href={hrefs.home}
+                    title="Home"
+                    aria-label="Open Home page"
+                    className="inline-flex size-10 items-center justify-center rounded-md bg-white/10 hover:bg-white/20"
                   >
-                    {title}
-                  </h1>
-                  <nav className="flex flex-wrap items-center gap-2" data-report-export-exclude="true">
-                    <Link
-                      href={hrefs.home}
-                      title="Home"
-                      aria-label="Open Home page"
-                      className="inline-flex size-10 items-center justify-center rounded-md bg-white/10 hover:bg-white/20"
-                    >
-                      <HouseIcon className="size-5" />
-                    </Link>
-                    <Link
-                      href={hrefs.overall}
-                      title="Overall"
-                      aria-label="Open Overall page"
-                      className="inline-flex size-10 items-center justify-center rounded-md bg-white/10 hover:bg-white/20"
-                    >
-                      <BarChart3Icon className="size-5" />
-                    </Link>
-                    <Link
-                      href={hrefs.preview}
-                      title="Preview"
-                      aria-label="Open Preview page"
-                      className="inline-flex size-10 items-center justify-center rounded-md bg-white/10 hover:bg-white/20"
-                    >
-                      <EyeIcon className="size-5" />
-                    </Link>
-                    <Link
-                      href={hrefs.keywords}
-                      title="Top 10 Keywords"
-                      aria-label="Open Top 10 Keywords page"
-                      className="inline-flex size-10 items-center justify-center rounded-md bg-white/10 hover:bg-white/20"
-                    >
-                      <SearchIcon className="size-5" />
-                    </Link>
-                    <Link
-                      href={hrefs.insights}
-                      title="Insights"
-                      aria-label="Open Insights page"
-                      className="inline-flex size-10 items-center justify-center rounded-md bg-white/10 hover:bg-white/20"
-                    >
-                      <LightbulbIcon className="size-5" />
-                    </Link>
-                  </nav>
-                </div>
-                {headerDateControl ? (
-                  <div
-                    className="flex w-full items-start md:w-auto md:max-w-[420px] md:justify-self-end"
-                    data-report-export-date-control="true"
+                    <HouseIcon className="size-5" />
+                  </Link>
+                  <Link
+                    href={hrefs.overall}
+                    title="Overall"
+                    aria-label="Open Overall page"
+                    className="inline-flex size-10 items-center justify-center rounded-md bg-white/10 hover:bg-white/20"
                   >
-                    {headerDateControl}
-                  </div>
-                ) : (
-                  <div
-                    className="w-full rounded-2xl bg-[#dfdfdf] px-4 py-3 text-center text-base font-semibold text-[#5f5f5f] sm:w-auto sm:px-6 sm:text-lg md:justify-self-end"
-                    data-report-export-date-control="true"
+                    <BarChart3Icon className="size-5" />
+                  </Link>
+                  <Link
+                    href={hrefs.preview}
+                    title="Preview"
+                    aria-label="Open Preview page"
+                    className="inline-flex size-10 items-center justify-center rounded-md bg-white/10 hover:bg-white/20"
                   >
-                    {dateLabel}
-                  </div>
-                )}
+                    <EyeIcon className="size-5" />
+                  </Link>
+                  <Link
+                    href={hrefs.keywords}
+                    title="Top 10 Keywords"
+                    aria-label="Open Top 10 Keywords page"
+                    className="inline-flex size-10 items-center justify-center rounded-md bg-white/10 hover:bg-white/20"
+                  >
+                    <SearchIcon className="size-5" />
+                  </Link>
+                  <Link
+                    href={hrefs.insights}
+                    title="Insights"
+                    aria-label="Open Insights page"
+                    className="inline-flex size-10 items-center justify-center rounded-md bg-white/10 hover:bg-white/20"
+                  >
+                    <LightbulbIcon className="size-5" />
+                  </Link>
+                </nav>
               </div>
-              {headerBottomControl ? (
-                <div className="mt-4" data-report-export-exclude="true">
-                  {headerBottomControl}
+              {headerDateControl ? (
+                <div
+                  className="flex w-full items-start md:w-auto md:max-w-[420px] md:justify-self-end"
+                  data-report-export-date-control="true"
+                >
+                  {headerDateControl}
                 </div>
-              ) : null}
+              ) : (
+                <div
+                  className="w-full rounded-2xl bg-[#dfdfdf] px-4 py-3 text-center text-base font-semibold text-[#5f5f5f] sm:w-auto sm:px-6 sm:text-lg md:justify-self-end"
+                  data-report-export-date-control="true"
+                >
+                  {dateLabel}
+                </div>
+              )}
             </div>
-          </section>
-        )}
+            {headerBottomControl ? (
+              <div className="mt-4" data-report-export-exclude="true">
+                {headerBottomControl}
+              </div>
+            ) : null}
+          </div>
+        </section>
 
-        <section className="flex-1 py-5 sm:py-6 lg:py-8">
+        <section className={screenshotMode ? "py-5 sm:py-6 lg:py-8" : "flex-1 py-5 sm:py-6 lg:py-8"}>
           <div className={REPORT_INNER_CONTAINER_CLASS}>{children}</div>
         </section>
 
-        <footer className="mt-auto border-t-4 border-red-600 bg-[#f0f0f0]">
+        <footer className={`${screenshotMode ? "" : "mt-auto "}border-t-4 border-red-600 bg-[#f0f0f0]`}>
           <div
             className={`${REPORT_INNER_CONTAINER_CLASS} flex flex-col items-center gap-3 py-5 text-center text-base text-[#777] sm:flex-row sm:justify-between sm:text-left`}
           >
@@ -191,27 +191,10 @@ function ExportReportHeader({
     <section className="overflow-hidden rounded-[1.5rem] bg-[url('/headerbackground.png')] bg-cover bg-center bg-no-repeat shadow-sm">
       <div className={`${REPORT_INNER_CONTAINER_CLASS} py-4 sm:py-5`}>
         <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_minmax(220px,360px)] md:items-start">
-          <div className="min-w-0 space-y-3">
+          <div className="min-w-0">
             <h1 className="max-w-4xl break-words text-[clamp(2rem,5.4vw,4rem)] font-semibold leading-[1.04] tracking-normal text-white [overflow-wrap:anywhere]">
               {title}
             </h1>
-            <div className="flex flex-wrap gap-2 text-white">
-              <span className="inline-flex size-9 items-center justify-center rounded-md bg-white/14">
-                <HouseIcon className="size-5" />
-              </span>
-              <span className="inline-flex size-9 items-center justify-center rounded-md bg-white/14">
-                <BarChart3Icon className="size-5" />
-              </span>
-              <span className="inline-flex size-9 items-center justify-center rounded-md bg-white/14">
-                <EyeIcon className="size-5" />
-              </span>
-              <span className="inline-flex size-9 items-center justify-center rounded-md bg-white/14">
-                <SearchIcon className="size-5" />
-              </span>
-              <span className="inline-flex size-9 items-center justify-center rounded-md bg-white/14">
-                <LightbulbIcon className="size-5" />
-              </span>
-            </div>
           </div>
 
           <div className="grid gap-2 md:justify-self-end md:w-full">

@@ -47,10 +47,6 @@ const REPORT_EXPORT_CAPTURE_STYLE = `
     display: none !important;
   }
 
-  [data-report-export-only='true'] {
-    display: block !important;
-  }
-
   [data-report-export-header-panel='true'] {
     height: auto !important;
     min-height: 0 !important;
