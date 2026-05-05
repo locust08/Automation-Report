@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import {
   FileImageIcon,
   FileTextIcon,
@@ -205,6 +206,7 @@ export function ReportDownloadButton({ fileNamePrefix }: ReportDownloadButtonPro
   const currentFormat = downloadingFormat ?? queuedFormat;
   const isBusy = currentFormat !== null;
   const retryFormat = overlayState.phase === "error" ? overlayState.format : null;
+  const overlay = <ReportExportOverlay state={overlayState} onRetry={handleRetryDownload} />;
 
   function handleRetryDownload() {
     if (!retryFormat) {
@@ -250,25 +252,35 @@ export function ReportDownloadButton({ fileNamePrefix }: ReportDownloadButtonPro
         </DropdownMenu>
       </div>
 
-      {overlayState.phase !== "idle" ? (
-        <div className="fixed inset-0 z-[90]" data-report-download-overlay="true">
-          {overlayState.phase === "loading" ? (
-            <ReportLoadingScreen kind={overlayState.kind} fullPage />
-          ) : null}
-          {overlayState.phase === "success" ? (
-            <ReportSuccessScreen kind={overlayState.kind} fullPage />
-          ) : null}
-          {overlayState.phase === "error" ? (
-            <ReportErrorScreen
-              kind="download"
-              message={overlayState.message}
-              onRetry={handleRetryDownload}
-              fullPage
-            />
-          ) : null}
-        </div>
-      ) : null}
+      {overlayState.phase !== "idle" ? createPortal(overlay, document.body) : null}
     </>
+  );
+}
+
+function ReportExportOverlay({
+  state,
+  onRetry,
+}: {
+  state: ExportOverlayState;
+  onRetry: () => void;
+}) {
+  if (state.phase === "idle") {
+    return null;
+  }
+
+  return (
+    <div className="fixed inset-0 z-[90]" data-report-download-overlay="true">
+      {state.phase === "loading" ? <ReportLoadingScreen kind={state.kind} fullPage /> : null}
+      {state.phase === "success" ? <ReportSuccessScreen kind={state.kind} fullPage /> : null}
+      {state.phase === "error" ? (
+        <ReportErrorScreen
+          kind="download"
+          message={state.message}
+          onRetry={onRetry}
+          fullPage
+        />
+      ) : null}
+    </div>
   );
 }
 
