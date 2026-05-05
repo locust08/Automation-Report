@@ -148,6 +148,24 @@
   }
 }
 
+@layer components {
+  [data-slot="switch"] {
+    background-color: var(--input);
+  }
+
+  [data-slot="switch"][data-state="checked"] {
+    background-color: #e10600 !important;
+  }
+
+  [data-slot="switch-thumb"][data-state="checked"] {
+    transform: translateX(1.25rem) !important;
+  }
+
+  [data-slot="switch"][data-size="sm"] [data-slot="switch-thumb"][data-state="checked"] {
+    transform: translateX(1rem) !important;
+  }
+}
+
 @keyframes report-loading-orbit {
   0% {
     transform: rotate(0deg) scale(1);
