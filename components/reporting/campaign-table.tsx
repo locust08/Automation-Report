@@ -65,7 +65,7 @@ export function OverallCampaignGroupsTable({
               <table className="w-full table-fixed text-left text-xs sm:text-sm">
                 <colgroup>
                   <col className="w-[30%]" />
-                  <col className="w-[8%]" />
+                  <col className="w-[8%]" data-report-export-exclude="true" />
                   <col className="w-[8%]" />
                   <col className="w-[8%]" />
                   <col className="w-[10%]" />
@@ -84,7 +84,12 @@ export function OverallCampaignGroupsTable({
                     <th className="px-1.5 py-2 text-center font-semibold leading-tight whitespace-normal break-words">Results</th>
                     <th className="px-1.5 py-2 text-center font-semibold leading-tight whitespace-normal break-words">Cost/Results</th>
                     <th className="px-1.5 py-2 text-center font-semibold leading-tight whitespace-normal break-words">Ads Spent (RM)</th>
-                    <th className="px-1.5 py-2 text-center font-semibold leading-tight whitespace-normal break-words">Actions</th>
+                    <th
+                      className="px-1.5 py-2 text-center font-semibold leading-tight whitespace-normal break-words"
+                      data-report-export-exclude="true"
+                    >
+                      Actions
+                    </th>
                   </tr>
                 </thead>
                 <tbody>
@@ -109,7 +114,10 @@ export function OverallCampaignGroupsTable({
                       <td className="px-1.5 py-2 text-center tabular-nums whitespace-nowrap">{formatCompactNumber(row.results)}</td>
                       <td className="px-1.5 py-2 text-center tabular-nums whitespace-nowrap">{formatCompactNumber(row.costPerResult)}</td>
                       <td className="px-1.5 py-2 text-center tabular-nums whitespace-nowrap">{formatCompactNumber(row.spend)}</td>
-                      <td className="px-1.5 py-2 text-center whitespace-nowrap">
+                      <td
+                        className="px-1.5 py-2 text-center whitespace-nowrap"
+                        data-report-export-exclude="true"
+                      >
                         <Link
                           className="inline-flex items-center gap-1 text-red-700 hover:underline"
                           href={`/campaign/${encodeURIComponent(group.campaignType)}?platform=${group.platform}${queryString}`}
@@ -129,7 +137,12 @@ export function OverallCampaignGroupsTable({
                     <td className="px-1.5 py-2 text-center tabular-nums whitespace-nowrap">{formatCompactNumber(group.totals.results)}</td>
                     <td className="px-1.5 py-2 text-center tabular-nums whitespace-nowrap">{formatCompactNumber(group.totals.costPerResult)}</td>
                     <td className="px-1.5 py-2 text-center tabular-nums whitespace-nowrap">{formatCompactNumber(group.totals.spend)}</td>
-                    <td className="px-1.5 py-2 text-center whitespace-nowrap">-</td>
+                    <td
+                      className="px-1.5 py-2 text-center whitespace-nowrap"
+                      data-report-export-exclude="true"
+                    >
+                      -
+                    </td>
                   </tr>
                 </tbody>
               </table>

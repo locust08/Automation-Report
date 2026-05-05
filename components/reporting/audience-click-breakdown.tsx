@@ -9,6 +9,7 @@ import { Switch } from "@/components/ui/switch";
 import { formatCompactNumber } from "@/lib/reporting/format";
 import { AudienceBreakdownRow, AudienceClickBreakdownResponse } from "@/lib/reporting/types";
 import { cn } from "@/lib/utils";
+import { useScreenshotMode } from "@/components/reporting/use-screenshot-mode";
 
 const LOCATION_TABS = [
   { key: "country", label: "Country" },
@@ -28,6 +29,7 @@ export function AudienceClickBreakdownSection({
 }: {
   breakdown: AudienceClickBreakdownResponse;
 }) {
+  const { screenshotMode } = useScreenshotMode();
   const [selectedLocationTab, setSelectedLocationTab] = useState<LocationTabKey | null>(null);
   const [chartType, setChartType] = useState<ChartType>("bar");
   const [unknownFilterMode, setUnknownFilterMode] = useState<UnknownFilterMode>("include");
@@ -92,6 +94,8 @@ export function AudienceClickBreakdownSection({
     }
     return regionRows;
   }, [activeLocationTab, cityRows, countryRows, regionRows]);
+  const activeLocationLabel =
+    LOCATION_TABS.find((tab) => tab.key === activeLocationTab)?.label ?? "State / Region";
 
   return (
     <section className="space-y-4 rounded-[2rem] bg-[#e7e7e7] p-4 shadow-sm sm:p-6">
@@ -101,7 +105,7 @@ export function AudienceClickBreakdownSection({
             Audience Click Breakdown
           </h2>
           <p className="max-w-4xl text-sm leading-6 text-[#5f5f5f] sm:text-base">
-            Clicks by age, gender, and location for audience optimisation.
+            Clicks by age, gender, and top 10 locations for audience optimisation.
           </p>
         </div>
         <AudienceChartControls
@@ -125,36 +129,43 @@ export function AudienceClickBreakdownSection({
         title="Location Breakdown"
         chartType={chartType}
         headerRight={
-          <div className="flex flex-wrap gap-2">
-            {LOCATION_TABS.map((tab) => {
-              const active = activeLocationTab === tab.key;
-              const disabled = locationRowCounts[tab.key] === 0;
-              return (
-                <button
-                  key={tab.key}
-                  type="button"
-                  onClick={() => {
-                    if (!disabled) {
-                      setSelectedLocationTab(tab.key);
-                    }
-                  }}
-                  disabled={disabled}
-                  className={cn(
-                    "rounded-xl border px-4 py-1.5 text-sm font-medium transition-colors",
-                    disabled
-                      ? "cursor-not-allowed border-[#dedede] bg-[#eeeeee] text-[#aaaaaa] opacity-70"
-                      : active
-                        ? "border-[#e10600] bg-[#e10600] text-white"
-                        : "border-[#dadada] bg-white text-[#444] hover:border-[#e10600]/40 hover:text-[#e10600]"
-                  )}
-                  aria-pressed={active && !disabled}
-                  title={disabled ? `${tab.label} data is not available for this report` : undefined}
-                >
-                  {tab.label}
-                </button>
-              );
-            })}
-          </div>
+          screenshotMode ? (
+            <div className="inline-flex rounded-xl border border-[#e10600] bg-[#e10600] px-4 py-1.5 text-sm font-medium text-white">
+              {activeLocationLabel}
+            </div>
+          ) : (
+            <div className="flex flex-wrap gap-2">
+              {LOCATION_TABS.map((tab) => {
+                const active = activeLocationTab === tab.key;
+                const disabled = locationRowCounts[tab.key] === 0;
+                return (
+                  <button
+                    key={tab.key}
+                    type="button"
+                    onClick={() => {
+                      if (!disabled) {
+                        setSelectedLocationTab(tab.key);
+                      }
+                    }}
+                    disabled={disabled}
+                    className={cn(
+                      "rounded-xl border px-4 py-1.5 text-sm font-medium transition-colors",
+                      disabled
+                        ? "cursor-not-allowed border-[#dedede] bg-[#eeeeee] text-[#aaaaaa] opacity-70"
+                        : active
+                          ? "border-[#e10600] bg-[#e10600] text-white"
+                          : "border-[#dadada] bg-white text-[#444] hover:border-[#e10600]/40 hover:text-[#e10600]"
+                    )}
+                    aria-pressed={active && !disabled}
+                    title={disabled ? `${tab.label} data is not available for this report` : undefined}
+                    data-report-export-location-tab="true"
+                  >
+                    {tab.label}
+                  </button>
+                );
+              })}
+            </div>
+          )
         }
       >
         <AudienceChart rows={locationRows} chartType={chartType} minBarHeightPx={10} />
@@ -522,7 +533,7 @@ function shouldUseCityLocationTab(
   cityRows: AudienceBreakdownRow[],
   hasGoogleCityData: boolean
 ): boolean {
-  return hasGoogleCityData && regionRows.length < 3 && cityRows.length > 0;
+  return hasGoogleCityData && cityRows.length > 0;
 }
 
 function formatPercent(value: number, total: number): string {

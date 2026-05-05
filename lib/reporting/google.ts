@@ -78,6 +78,11 @@ export interface GooglePreviewFetchResult {
   diagnostics: GooglePreviewDiagnostics;
 }
 
+interface GoogleGeoSegmentBreakdown {
+  items: AudienceClickBreakdownItem[];
+  countryItems: AudienceClickBreakdownItem[];
+}
+
 interface GoogleAdsStreamBatch {
   results?: GoogleAdsResult[];
   error?: {
@@ -739,14 +744,43 @@ export async function fetchGoogleAudienceClickBreakdown({
 export async function fetchGoogleAudienceBreakdown(
   input: GoogleFetchInput
 ): Promise<AudienceClickBreakdownResponse> {
-  const breakdown = await fetchGoogleAudienceClickBreakdown(input);
+  const context = await resolveVerifiedGoogleAdsContext({
+    customerId: input.customerId,
+    apiVersion: input.apiVersion,
+    developerToken: input.developerToken,
+    accessToken: input.accessToken,
+    refreshToken: input.refreshToken,
+    clientId: input.clientId,
+    clientSecret: input.clientSecret,
+    loginCustomerId: input.loginCustomerId,
+    accessPath: input.accessPath ?? null,
+    fallbackLoginCustomerId: input.fallbackLoginCustomerId ?? null,
+  });
+  const scopedInput = {
+    customerId: context.customerId,
+    apiVersion: input.apiVersion,
+    developerToken: input.developerToken,
+    accessToken: input.accessToken,
+    refreshToken: input.refreshToken,
+    clientId: input.clientId,
+    clientSecret: input.clientSecret,
+    loginCustomerId: context.loginCustomerId,
+    startDate: input.startDate,
+    endDate: input.endDate,
+  };
+  const [age, gender, location] = await Promise.all([
+    fetchGoogleAudienceAgeBreakdown(scopedInput),
+    fetchGoogleAudienceGenderBreakdown(scopedInput),
+    fetchGoogleAudienceLocationBreakdown(scopedInput),
+  ]);
+
   return {
-    age: breakdown.age.map(stripGoogleAudienceSource),
-    gender: breakdown.gender.map(stripGoogleAudienceSource),
+    age,
+    gender,
     location: {
-      country: breakdown.location.country.map(stripGoogleAudienceSource),
-      region: breakdown.location.region.map(stripGoogleAudienceSource),
-      city: breakdown.location.city.map(stripGoogleAudienceSource),
+      country: location.country.map(stripGoogleAudienceSource),
+      region: location.region.map(stripGoogleAudienceSource),
+      city: location.city.map(stripGoogleAudienceSource),
     },
   };
 }
@@ -843,28 +877,31 @@ async function fetchGoogleAudienceLocationBreakdown(
   const label = "[audience-breakdown][google][location]";
 
   try {
-    const [countryRows, regionRows, cityRows] = await Promise.all([
-      fetchGoogleAudienceGeoSegmentBreakdown(input, "country"),
+    const [regionBreakdown, cityBreakdown] = await Promise.all([
       fetchGoogleAudienceGeoSegmentBreakdown(input, "region"),
       fetchGoogleAudienceGeoSegmentBreakdown(input, "city"),
     ]);
+    const countryRows =
+      cityBreakdown.countryItems.length > 0
+        ? cityBreakdown.countryItems
+        : regionBreakdown.countryItems;
 
     const country = addSourceToAudienceItems(
-      countryRows.length > 0
-        ? countryRows
-        : await fetchGoogleTargetLocationBreakdown(input, "country"),
+      countryRows,
       "locations",
       "country"
     );
     const region = addSourceToAudienceItems(
-      regionRows.length > 0
-        ? regionRows
+      regionBreakdown.items.length > 0
+        ? regionBreakdown.items
         : await fetchGoogleTargetLocationBreakdown(input, "region"),
       "locations",
       "region"
     );
     const city = addSourceToAudienceItems(
-      cityRows.length > 0 ? cityRows : await fetchGoogleTargetLocationBreakdown(input, "city"),
+      cityBreakdown.items.length > 0
+        ? cityBreakdown.items
+        : await fetchGoogleTargetLocationBreakdown(input, "city"),
       "locations",
       "city"
     );
@@ -886,8 +923,8 @@ async function fetchGoogleAudienceLocationBreakdown(
 
 async function fetchGoogleAudienceGeoSegmentBreakdown(
   input: Omit<GoogleFetchInput, "accessPath" | "fallbackLoginCustomerId">,
-  dimension: "country" | "region" | "city"
-): Promise<AudienceClickBreakdownItem[]> {
+  dimension: "region" | "city"
+): Promise<GoogleGeoSegmentBreakdown> {
   const label = `[audience-breakdown][google][location-${dimension}]`;
   const query = buildGoogleAudienceGeoSegmentQuery(input.startDate, input.endDate, dimension);
 
@@ -912,13 +949,18 @@ async function fetchGoogleAudienceGeoSegmentBreakdown(
       label,
     });
     const items = buildGoogleGeoSegmentAudienceItems(results, geoTargetsByResourceName, dimension);
+    const countryItems = buildGoogleGeoSegmentCountryAudienceItems(
+      results,
+      geoTargetsByResourceName,
+      dimension
+    );
     console.info(
       `${label} customerId=${input.customerId} rows=${results.length} resources=${resourceNames.length} items=${items.length}`
     );
-    return items;
+    return { items, countryItems };
   } catch (error) {
     logGoogleAudienceBreakdownFailure(label, input.customerId, error);
-    return [];
+    return { items: [], countryItems: [] };
   }
 }
 
@@ -1122,7 +1164,7 @@ function collectGoogleGeoSegmentResourceNames(
 function buildGoogleGeoSegmentAudienceItems(
   results: GoogleAdsResult[],
   geoTargetsByResourceName: Map<string, GoogleAdsResult["geoTargetConstant"]>,
-  dimension: "country" | "region" | "city"
+  dimension: "region" | "city"
 ): AudienceClickBreakdownItem[] {
   const totals = new Map<string, number>();
 
@@ -1156,6 +1198,49 @@ function buildGoogleGeoSegmentAudienceItems(
         })
       ),
       dimension
+    ),
+    10
+  );
+}
+
+function buildGoogleGeoSegmentCountryAudienceItems(
+  results: GoogleAdsResult[],
+  geoTargetsByResourceName: Map<string, GoogleAdsResult["geoTargetConstant"]>,
+  dimension: "region" | "city"
+): AudienceClickBreakdownItem[] {
+  const totals = new Map<string, number>();
+
+  results.forEach((result) => {
+    const clicks = coerceAudienceClicks(result.metrics?.clicks);
+    if (clicks <= 0) {
+      return;
+    }
+
+    const resourceName = getGoogleGeoSegmentResourceName(result, dimension);
+    if (!resourceName) {
+      return;
+    }
+
+    const geoTarget = geoTargetsByResourceName.get(resourceName);
+    const country = deriveGoogleGeoTargetHierarchy(geoTarget).country;
+    if (!country) {
+      return;
+    }
+
+    totals.set(country, (totals.get(country) ?? 0) + clicks);
+  });
+
+  return limitAudienceItemsWithOthers(
+    sortAudienceItems(
+      Array.from(totals.entries()).map(([label, clicks]) =>
+        createAudienceClickBreakdownItem({
+          platform: "google",
+          dimension: "country",
+          label,
+          clicks,
+        })
+      ),
+      "country"
     ),
     10
   );
@@ -1586,14 +1671,10 @@ function buildGoogleAudienceLocationViewQuery(startDate: string, endDate: string
 function buildGoogleAudienceGeoSegmentQuery(
   startDate: string,
   endDate: string,
-  dimension: "country" | "region" | "city"
+  dimension: "region" | "city"
 ): string {
   const segmentField =
-    dimension === "country"
-      ? "segments.geo_target_country"
-      : dimension === "region"
-        ? "segments.geo_target_region"
-        : "segments.geo_target_city";
+    dimension === "region" ? "segments.geo_target_region" : "segments.geo_target_city";
 
   return `
     SELECT

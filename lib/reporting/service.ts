@@ -26,6 +26,7 @@ import {
   emptyCampaignRow,
   mergeCampaignRows,
 } from "@/lib/reporting/metrics";
+import { MemoryCacheEntry, readThroughMemoryCache } from "@/lib/reporting/memory-cache";
 import {
   fetchMetaAudienceBreakdown,
   fetchMetaAccountName,
@@ -76,6 +77,31 @@ interface ResolvedAccountIds {
 }
 
 type GoogleLoginCustomerIdMap = Record<string, string | null>;
+
+const GOOGLE_FETCH_CACHE_TTL_MS = parsePositiveIntegerEnv(
+  process.env.REPORTING_GOOGLE_CACHE_TTL_MS,
+  5 * 60 * 1000
+);
+const GOOGLE_FETCH_CACHE_MAX_ENTRIES = parsePositiveIntegerEnv(
+  process.env.REPORTING_GOOGLE_CACHE_MAX_ENTRIES,
+  200
+);
+
+const googleCampaignRowsCache = new Map<
+  string,
+  MemoryCacheEntry<{ rows: CampaignRow[]; warnings: string[] }>
+>();
+const googleAudienceBreakdownCache = new Map<
+  string,
+  MemoryCacheEntry<{ breakdown: AudienceClickBreakdownResponse; warnings: string[] }>
+>();
+const googlePreviewCache = new Map<
+  string,
+  MemoryCacheEntry<Awaited<ReturnType<typeof fetchGooglePreviewData>>>
+>();
+const googleTopKeywordRowsCache = new Map<string, MemoryCacheEntry<TopKeywordRow[]>>();
+const googleAuctionInsightRowsCache = new Map<string, MemoryCacheEntry<AuctionInsightRow[]>>();
+const googleAccountNameCache = new Map<string, MemoryCacheEntry<string | null>>();
 
 const MANUAL_AUCTION_INSIGHT_ROWS_BY_ACCOUNT: Record<string, AuctionInsightRow[]> = {
   "6261186490": [
@@ -279,6 +305,8 @@ export async function getOverallReport(input: OverallInput): Promise<OverallRepo
   const googlePrevious = googlePreviousResult.rows.filter((row) => row.platform === "google");
   const youtubeCurrent = googleCurrentResult.rows.filter((row) => row.platform === "googleYoutube");
   const youtubePrevious = googlePreviousResult.rows.filter((row) => row.platform === "googleYoutube");
+  const googleAccountCurrent = [...googleCurrent, ...youtubeCurrent];
+  const googleAccountPrevious = [...googlePrevious, ...youtubePrevious];
 
   const sections: SummarySection[] = [
     {
@@ -291,13 +319,7 @@ export async function getOverallReport(input: OverallInput): Promise<OverallRepo
       platform: "google",
       title: "Google Ads",
       logoPath: "/GoogleLogo.png",
-      metrics: buildGoogleSummary(googleCurrent, googlePrevious),
-    },
-    {
-      platform: "googleYoutube",
-      title: "Google Ads YouTube Overview",
-      logoPath: "/GoogleLogo.png",
-      metrics: buildYoutubeSummary(youtubeCurrent, youtubePrevious),
+      metrics: buildGoogleSummary(googleAccountCurrent, googleAccountPrevious),
     },
   ];
 
@@ -478,6 +500,7 @@ export async function getCampaignComparison(input: CampaignInput): Promise<Campa
     endDate: dateRange.endDate,
     credentials,
     googleLoginCustomerIdByAccount: googleManagerContext.loginCustomerIdByAccount,
+    accessPathByAccount: googleManagerContext.accessPathByAccount,
     warnings,
   });
 
@@ -489,6 +512,7 @@ export async function getCampaignComparison(input: CampaignInput): Promise<Campa
     endDate: dateRange.previousEndDate,
     credentials,
     googleLoginCustomerIdByAccount: googleManagerContext.loginCustomerIdByAccount,
+    accessPathByAccount: googleManagerContext.accessPathByAccount,
     warnings,
   });
 
@@ -751,6 +775,7 @@ async function fetchByPlatform(args: {
   endDate: string;
   credentials: ReturnType<typeof getCredentials>;
   googleLoginCustomerIdByAccount: GoogleLoginCustomerIdMap;
+  accessPathByAccount: Record<string, string | null>;
   warnings: string[];
 }): Promise<CampaignRow[]> {
   const {
@@ -761,6 +786,7 @@ async function fetchByPlatform(args: {
     endDate,
     credentials,
     googleLoginCustomerIdByAccount,
+    accessPathByAccount,
     warnings,
   } = args;
 
@@ -784,7 +810,7 @@ async function fetchByPlatform(args: {
     credentials.googleClientId,
     credentials.googleClientSecret,
     googleLoginCustomerIdByAccount,
-    {},
+    accessPathByAccount,
     credentials.googleLoginCustomerId,
     startDate,
     endDate
@@ -821,33 +847,6 @@ function buildGoogleSummary(currentRows: CampaignRow[], previousRows: CampaignRo
     metric("ctr", "CTR", current.ctr, previous.ctr, "percent"),
     metric("impressions", "Impression", current.impressions, previous.impressions, "number"),
     metric("spend", "Ads Spent (RM)", current.spend, previous.spend, "currency"),
-  ];
-}
-
-function buildYoutubeSummary(currentRows: CampaignRow[], previousRows: CampaignRow[]): SummaryMetric[] {
-  const current = aggregateRows(currentRows, "googleYoutube");
-  const previous = aggregateRows(previousRows, "googleYoutube");
-
-  return [
-    metric(
-      "youtubeEarnedShares",
-      "Youtube Earned Shares",
-      current.youtubeEarnedShares,
-      previous.youtubeEarnedShares,
-      "number"
-    ),
-    metric("costPerConv", "Cost/Conv. (RM)", current.costPerResult, previous.costPerResult, "currency"),
-    metric("clicks", "Clicks", current.clicks, previous.clicks, "number"),
-    metric("avgCpc", "Av. CPC (RM)", current.avgCpc, previous.avgCpc, "currency"),
-    metric(
-      "youtubeEarnedLikes",
-      "Youtube Earned Likes",
-      current.youtubeEarnedLikes,
-      previous.youtubeEarnedLikes,
-      "number"
-    ),
-    metric("impressions", "Impression", current.impressions, previous.impressions, "number"),
-    metric("spend", "Ad Spent (RM)", current.spend, previous.spend, "currency"),
   ];
 }
 
@@ -1040,22 +1039,49 @@ async function tryFetchGoogle(
     };
   }
 
-  try {
-    const rows = await fetchGoogleCampaignRows({
-      customerId,
-      apiVersion,
+  const cacheKey = createGoogleFetchCacheKey("campaign-rows", {
+    customerId,
+    apiVersion,
+    loginCustomerId,
+    accessPath,
+    fallbackLoginCustomerId,
+    startDate,
+    endDate,
+    credentials: fingerprintGoogleCredentials(
       developerToken,
       accessToken,
       refreshToken,
       clientId,
-      clientSecret,
-      loginCustomerId,
-      accessPath,
-      fallbackLoginCustomerId,
-      startDate,
-      endDate,
-    });
-    return { rows, warnings: [] };
+      clientSecret
+    ),
+  });
+
+  try {
+    return await readThroughMemoryCache(
+      googleCampaignRowsCache,
+      cacheKey,
+      async () => {
+        const rows = await fetchGoogleCampaignRows({
+          customerId,
+          apiVersion,
+          developerToken,
+          accessToken,
+          refreshToken,
+          clientId,
+          clientSecret,
+          loginCustomerId,
+          accessPath,
+          fallbackLoginCustomerId,
+          startDate,
+          endDate,
+        });
+        return { rows, warnings: [] };
+      },
+      {
+        ttlMs: GOOGLE_FETCH_CACHE_TTL_MS,
+        maxEntries: GOOGLE_FETCH_CACHE_MAX_ENTRIES,
+      }
+    );
   } catch (error) {
     if (isGoogleAdsAccessPathError(error)) {
       throw error;
@@ -1097,22 +1123,49 @@ async function tryFetchGoogleAudience(
     };
   }
 
-  try {
-    const breakdown = await fetchGoogleAudienceBreakdown({
-      customerId,
-      apiVersion,
-      developerToken: developerToken!,
+  const cacheKey = createGoogleFetchCacheKey("audience-breakdown", {
+    customerId,
+    apiVersion,
+    loginCustomerId,
+    accessPath,
+    fallbackLoginCustomerId,
+    startDate,
+    endDate,
+    credentials: fingerprintGoogleCredentials(
+      developerToken,
       accessToken,
       refreshToken,
       clientId,
-      clientSecret,
-      loginCustomerId,
-      accessPath,
-      fallbackLoginCustomerId,
-      startDate,
-      endDate,
-    });
-    return { breakdown, warnings: [] };
+      clientSecret
+    ),
+  });
+
+  try {
+    return await readThroughMemoryCache(
+      googleAudienceBreakdownCache,
+      cacheKey,
+      async () => {
+        const breakdown = await fetchGoogleAudienceBreakdown({
+          customerId,
+          apiVersion,
+          developerToken: developerToken!,
+          accessToken,
+          refreshToken,
+          clientId,
+          clientSecret,
+          loginCustomerId,
+          accessPath,
+          fallbackLoginCustomerId,
+          startDate,
+          endDate,
+        });
+        return { breakdown, warnings: [] };
+      },
+      {
+        ttlMs: GOOGLE_FETCH_CACHE_TTL_MS,
+        maxEntries: GOOGLE_FETCH_CACHE_MAX_ENTRIES,
+      }
+    );
   } catch (error) {
     if (isGoogleAdsAccessPathError(error)) {
       throw error;
@@ -1174,21 +1227,47 @@ async function tryFetchGooglePreview(
     };
   }
 
-  try {
-    const result = await fetchGooglePreviewData({
-      customerId,
-      apiVersion,
-      developerToken: developerToken!,
+  const cacheKey = createGoogleFetchCacheKey("preview", {
+    customerId,
+    apiVersion,
+    loginCustomerId,
+    accessPath,
+    fallbackLoginCustomerId,
+    startDate,
+    endDate,
+    credentials: fingerprintGoogleCredentials(
+      developerToken,
       accessToken,
       refreshToken,
       clientId,
-      clientSecret,
-      loginCustomerId,
-      fallbackLoginCustomerId,
-      startDate,
-      endDate,
-      accessPath,
-    });
+      clientSecret
+    ),
+  });
+
+  try {
+    const result = await readThroughMemoryCache(
+      googlePreviewCache,
+      cacheKey,
+      () =>
+        fetchGooglePreviewData({
+          customerId,
+          apiVersion,
+          developerToken: developerToken!,
+          accessToken,
+          refreshToken,
+          clientId,
+          clientSecret,
+          loginCustomerId,
+          fallbackLoginCustomerId,
+          startDate,
+          endDate,
+          accessPath,
+        }),
+      {
+        ttlMs: GOOGLE_FETCH_CACHE_TTL_MS,
+        maxEntries: GOOGLE_FETCH_CACHE_MAX_ENTRIES,
+      }
+    );
 
     return {
       campaigns: result.data,
@@ -1241,21 +1320,47 @@ async function tryFetchGoogleKeywords(
     return { rows: [], warnings: credentialWarnings };
   }
 
-  try {
-    const rows = await fetchGoogleTopKeywordRows({
-      customerId,
-      apiVersion,
-      developerToken: developerToken!,
+  const cacheKey = createGoogleFetchCacheKey("top-keywords", {
+    customerId,
+    apiVersion,
+    loginCustomerId,
+    accessPath,
+    fallbackLoginCustomerId,
+    startDate,
+    endDate,
+    credentials: fingerprintGoogleCredentials(
+      developerToken,
       accessToken,
       refreshToken,
       clientId,
-      clientSecret,
-      loginCustomerId,
-      accessPath,
-      fallbackLoginCustomerId,
-      startDate,
-      endDate,
-    });
+      clientSecret
+    ),
+  });
+
+  try {
+    const rows = await readThroughMemoryCache(
+      googleTopKeywordRowsCache,
+      cacheKey,
+      () =>
+        fetchGoogleTopKeywordRows({
+          customerId,
+          apiVersion,
+          developerToken: developerToken!,
+          accessToken,
+          refreshToken,
+          clientId,
+          clientSecret,
+          loginCustomerId,
+          accessPath,
+          fallbackLoginCustomerId,
+          startDate,
+          endDate,
+        }),
+      {
+        ttlMs: GOOGLE_FETCH_CACHE_TTL_MS,
+        maxEntries: GOOGLE_FETCH_CACHE_MAX_ENTRIES,
+      }
+    );
 
     return { rows, warnings: [] };
   } catch (error) {
@@ -1296,21 +1401,47 @@ async function tryFetchGoogleAuctionInsights(
     return { rows: [], warnings: credentialWarnings };
   }
 
-  try {
-    const rows = await fetchGoogleAuctionInsightRows({
-      customerId,
-      apiVersion,
-      developerToken: developerToken!,
+  const cacheKey = createGoogleFetchCacheKey("auction-insights", {
+    customerId,
+    apiVersion,
+    loginCustomerId,
+    accessPath,
+    fallbackLoginCustomerId,
+    startDate,
+    endDate,
+    credentials: fingerprintGoogleCredentials(
+      developerToken,
       accessToken,
       refreshToken,
       clientId,
-      clientSecret,
-      loginCustomerId,
-      accessPath,
-      fallbackLoginCustomerId,
-      startDate,
-      endDate,
-    });
+      clientSecret
+    ),
+  });
+
+  try {
+    const rows = await readThroughMemoryCache(
+      googleAuctionInsightRowsCache,
+      cacheKey,
+      () =>
+        fetchGoogleAuctionInsightRows({
+          customerId,
+          apiVersion,
+          developerToken: developerToken!,
+          accessToken,
+          refreshToken,
+          clientId,
+          clientSecret,
+          loginCustomerId,
+          accessPath,
+          fallbackLoginCustomerId,
+          startDate,
+          endDate,
+        }),
+      {
+        ttlMs: GOOGLE_FETCH_CACHE_TTL_MS,
+        maxEntries: GOOGLE_FETCH_CACHE_MAX_ENTRIES,
+      }
+    );
 
     return { rows, warnings: [] };
   } catch (error) {
@@ -1902,6 +2033,7 @@ async function tryFetchGoogleAccountName(
   if (!googleAccountId || !credentials.googleDeveloperToken) {
     return null;
   }
+  const developerToken = credentials.googleDeveloperToken;
 
   if (
     !hasGoogleOAuthCredentials(
@@ -1914,17 +2046,39 @@ async function tryFetchGoogleAccountName(
     return null;
   }
 
+  const cacheKey = createGoogleFetchCacheKey("account-name", {
+    customerId: googleAccountId,
+    apiVersion: credentials.googleAdsApiVersion,
+    loginCustomerId,
+    credentials: fingerprintGoogleCredentials(
+      developerToken,
+      credentials.googleAccessToken,
+      credentials.googleRefreshToken,
+      credentials.googleClientId,
+      credentials.googleClientSecret
+    ),
+  });
+
   try {
-    return await fetchGoogleAccountName({
-      customerId: googleAccountId,
-      apiVersion: credentials.googleAdsApiVersion,
-      developerToken: credentials.googleDeveloperToken,
-      accessToken: credentials.googleAccessToken,
-      refreshToken: credentials.googleRefreshToken,
-      clientId: credentials.googleClientId,
-      clientSecret: credentials.googleClientSecret,
-      loginCustomerId,
-    });
+    return await readThroughMemoryCache(
+      googleAccountNameCache,
+      cacheKey,
+      () =>
+        fetchGoogleAccountName({
+          customerId: googleAccountId,
+          apiVersion: credentials.googleAdsApiVersion,
+          developerToken,
+          accessToken: credentials.googleAccessToken,
+          refreshToken: credentials.googleRefreshToken,
+          clientId: credentials.googleClientId,
+          clientSecret: credentials.googleClientSecret,
+          loginCustomerId,
+        }),
+      {
+        ttlMs: GOOGLE_FETCH_CACHE_TTL_MS,
+        maxEntries: GOOGLE_FETCH_CACHE_MAX_ENTRIES,
+      }
+    );
   } catch {
     return null;
   }
@@ -2140,6 +2294,57 @@ function logGoogleWarningsForTerminal(warnings: string[]) {
   warnings.forEach((warning) => {
     console.warn(`[Google Ads Warning] ${warning}`);
   });
+}
+
+function createGoogleFetchCacheKey(
+  scope: string,
+  values: Record<string, string | number | boolean | null | undefined>
+): string {
+  const serializedValues = Object.entries(values)
+    .sort(([leftKey], [rightKey]) => leftKey.localeCompare(rightKey))
+    .map(([key, value]) => `${key}=${encodeURIComponent(String(value ?? ""))}`)
+    .join("&");
+
+  return `google:${scope}:${serializedValues}`;
+}
+
+function fingerprintGoogleCredentials(
+  developerToken: string | null,
+  accessToken: string | null,
+  refreshToken: string | null,
+  clientId: string | null,
+  clientSecret: string | null
+): string {
+  return [
+    fingerprintSecret(developerToken),
+    fingerprintSecret(accessToken),
+    fingerprintSecret(refreshToken),
+    fingerprintSecret(clientId),
+    fingerprintSecret(clientSecret),
+  ].join(".");
+}
+
+function fingerprintSecret(value: string | null): string {
+  if (!value) {
+    return "none";
+  }
+
+  let hash = 2166136261;
+  for (let index = 0; index < value.length; index += 1) {
+    hash ^= value.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+
+  return `${value.length}:${(hash >>> 0).toString(36)}`;
+}
+
+function parsePositiveIntegerEnv(value: string | undefined, fallback: number): number {
+  if (!value) {
+    return fallback;
+  }
+
+  const parsed = Number.parseInt(value, 10);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
 }
 
 function getManualAuctionInsightRowsForAccounts(accountIds: string[]): AuctionInsightRow[] {

@@ -23,13 +23,17 @@ import {
 import { useScreenshotMode } from "@/components/reporting/use-screenshot-mode";
 
 type DownloadFormat = "png" | "pdf";
-const PDF_CAPTURE_SCALE = 1.25;
-const DOWNLOAD_READY_DELAY_MS = 950;
+const DOWNLOAD_READY_DELAY_MS = 650;
+const PDF_CAPTURE_PIXEL_RATIO = 2;
+const PNG_CAPTURE_PIXEL_RATIO = 2;
+const MAX_CAPTURE_CANVAS_PIXELS = 32_000_000;
+const EXPORT_READY_TIMEOUT_MS = 2500;
+const EXPORT_LAYOUT_STABLE_TIMEOUT_MS = 900;
 
-type DownloadOverlayState =
+type ExportOverlayState =
   | { phase: "idle" }
-  | { phase: "loading"; format: DownloadFormat }
-  | { phase: "success"; format: DownloadFormat }
+  | { phase: "loading"; kind: "download"; format: DownloadFormat }
+  | { phase: "success"; kind: "download"; format: DownloadFormat }
   | { phase: "error"; format: DownloadFormat; message: string };
 
 const TRANSPARENT_IMAGE_PLACEHOLDER =
@@ -39,26 +43,81 @@ const REPORT_EXPORT_CAPTURE_STYLE = `
     display: none !important;
   }
 
+  [data-report-export-location-tab='true'][aria-pressed='false'] {
+    display: none !important;
+  }
+
+  [data-report-export-only='true'] {
+    display: block !important;
+  }
+
   [data-report-export-header-panel='true'] {
     height: auto !important;
     min-height: 0 !important;
     background-size: cover !important;
     background-position: center !important;
+    overflow: hidden !important;
+    border-radius: 1.5rem !important;
   }
 
   [data-report-export-header-inner='true'] {
-    padding-top: 1rem !important;
-    padding-bottom: 1rem !important;
+    padding: 1.25rem 1.5rem !important;
   }
 
   [data-report-export-header-grid='true'] {
-    display: block !important;
+    display: grid !important;
+    grid-template-columns: minmax(0, 1fr) minmax(14rem, 24rem) !important;
+    align-items: start !important;
+    gap: 1.25rem !important;
+  }
+
+  [data-report-export-date-control='true'] {
+    display: flex !important;
+    justify-self: end !important;
+    width: min(100%, 24rem) !important;
+    max-width: 24rem !important;
   }
 
   [data-report-export-title='true'] {
     margin: 0 !important;
-    line-height: 1.06 !important;
+    max-width: 100% !important;
+    font-size: clamp(2rem, 4vw, 3.25rem) !important;
+    line-height: 1.04 !important;
     text-wrap: balance;
+  }
+
+  [data-report-export-date-control='true'] > * {
+    width: 100% !important;
+    min-width: 0 !important;
+    max-width: 100% !important;
+    height: 2.75rem !important;
+    min-height: 0 !important;
+    border-radius: 1rem !important;
+  }
+
+  [data-report-export-date-control='true'] button {
+    min-height: 0 !important;
+  }
+
+  @media (max-width: 700px) {
+    [data-report-export-header-inner='true'] {
+      padding: 1rem !important;
+    }
+
+    [data-report-export-header-grid='true'] {
+      grid-template-columns: minmax(0, 1fr) !important;
+      gap: 0.875rem !important;
+    }
+
+    [data-report-export-date-control='true'] {
+      justify-self: stretch !important;
+      width: 100% !important;
+      max-width: none !important;
+    }
+
+    [data-report-export-title='true'] {
+      font-size: clamp(1.75rem, 8vw, 2.5rem) !important;
+    }
   }
 `;
 
@@ -71,7 +130,7 @@ export function ReportDownloadButton({ fileNamePrefix }: ReportDownloadButtonPro
   const [queuedFormat, setQueuedFormat] = useState<DownloadFormat | null>(null);
   const [downloadingFormat, setDownloadingFormat] = useState<DownloadFormat | null>(null);
   const [restoreModeAfterDownload, setRestoreModeAfterDownload] = useState(false);
-  const [overlayState, setOverlayState] = useState<DownloadOverlayState>({ phase: "idle" });
+  const [overlayState, setOverlayState] = useState<ExportOverlayState>({ phase: "idle" });
 
   const runDownload = useCallback(async (format: DownloadFormat) => {
     const root = document.querySelector<HTMLElement>("[data-report-capture-root='true']");
@@ -85,16 +144,15 @@ export function ReportDownloadButton({ fileNamePrefix }: ReportDownloadButtonPro
     }
 
     setDownloadingFormat(format);
-    setOverlayState({ phase: "loading", format });
+    setOverlayState({ phase: "loading", kind: "download", format });
     try {
-      const captureScale = format === "pdf" ? PDF_CAPTURE_SCALE : 1;
-      const dataUrl = await captureReportPng(root, captureScale);
+      const dataUrl = await captureReportPng(root, format);
       const preparedDownload =
         format === "pdf"
           ? await preparePdfDownload(root, dataUrl, fileNamePrefix)
           : preparePngDownload(dataUrl, fileNamePrefix);
 
-      setOverlayState({ phase: "success", format });
+      setOverlayState({ phase: "success", kind: "download", format });
       await waitFor(DOWNLOAD_READY_DELAY_MS);
       preparedDownload();
       setOverlayState({ phase: "idle" });
@@ -136,7 +194,7 @@ export function ReportDownloadButton({ fileNamePrefix }: ReportDownloadButtonPro
       return;
     }
 
-    setOverlayState({ phase: "loading", format });
+    setOverlayState({ phase: "loading", kind: "download", format });
 
     if (!screenshotMode) {
       setRestoreModeAfterDownload(true);
@@ -198,8 +256,12 @@ export function ReportDownloadButton({ fileNamePrefix }: ReportDownloadButtonPro
 
       {overlayState.phase !== "idle" ? (
         <div className="fixed inset-0 z-[90]" data-report-download-overlay="true">
-          {overlayState.phase === "loading" ? <ReportLoadingScreen kind="download" fullPage /> : null}
-          {overlayState.phase === "success" ? <ReportSuccessScreen kind="download" fullPage /> : null}
+          {overlayState.phase === "loading" ? (
+            <ReportLoadingScreen kind={overlayState.kind} fullPage />
+          ) : null}
+          {overlayState.phase === "success" ? (
+            <ReportSuccessScreen kind={overlayState.kind} fullPage />
+          ) : null}
           {overlayState.phase === "error" ? (
             <ReportErrorScreen
               kind="download"
@@ -219,6 +281,14 @@ async function preparePdfDownload(
   dataUrl: string,
   fileNamePrefix: string | undefined
 ): Promise<() => void> {
+  const pdfBlob = await createPdfBlob(root, dataUrl);
+
+  return () => {
+    downloadBlob(pdfBlob, buildFileName("pdf", fileNamePrefix));
+  };
+}
+
+async function createPdfBlob(root: HTMLElement, dataUrl: string): Promise<Blob> {
   const { jsPDF } = await import("jspdf");
   const orientation = root.scrollWidth > root.scrollHeight ? "landscape" : "portrait";
   const image = new jsPDF({ orientation, unit: "px", format: "a4" }).getImageProperties(dataUrl);
@@ -226,14 +296,11 @@ async function preparePdfDownload(
     orientation,
     unit: "px",
     format: [image.width, image.height],
+    compress: true,
   });
 
-  pdf.addImage(dataUrl, "PNG", 0, 0, image.width, image.height, undefined, "FAST");
-  const pdfBlob = pdf.output("blob");
-
-  return () => {
-    downloadBlob(pdfBlob, buildFileName("pdf", fileNamePrefix));
-  };
+  pdf.addImage(dataUrl, "PNG", 0, 0, image.width, image.height, "report-capture", "FAST");
+  return pdf.output("blob");
 }
 
 function preparePngDownload(dataUrl: string, fileNamePrefix: string | undefined): () => void {
@@ -242,21 +309,22 @@ function preparePngDownload(dataUrl: string, fileNamePrefix: string | undefined)
   };
 }
 
-async function captureReportPng(root: HTMLElement, scale: number): Promise<string> {
+async function captureReportPng(root: HTMLElement, format: DownloadFormat): Promise<string> {
   const exportStyle = installReportExportCaptureStyle();
 
   try {
-    await waitForAnimationFrame();
-    await waitForAnimationFrame();
-    await document.fonts.ready;
+    await waitForReportCaptureReady(root);
+
+    const width = Math.ceil(root.scrollWidth);
+    const height = Math.ceil(root.scrollHeight);
 
     return toPng(root, {
-      cacheBust: true,
+      cacheBust: false,
       backgroundColor: "#f0f0f0",
       imagePlaceholder: TRANSPARENT_IMAGE_PLACEHOLDER,
-      pixelRatio: Math.max(2, window.devicePixelRatio || 1) * scale,
-      width: root.scrollWidth,
-      height: root.scrollHeight,
+      pixelRatio: resolveCapturePixelRatio(width, height, format),
+      width,
+      height,
       filter: (node) => {
         if (!(node instanceof HTMLElement)) {
           return true;
@@ -271,6 +339,89 @@ async function captureReportPng(root: HTMLElement, scale: number): Promise<strin
   } finally {
     exportStyle.remove();
   }
+}
+
+async function waitForReportCaptureReady(root: HTMLElement): Promise<void> {
+  await waitForAnimationFrame();
+  await waitForAnimationFrame();
+  await Promise.race([document.fonts.ready, waitFor(EXPORT_READY_TIMEOUT_MS)]);
+  await waitForImages(root);
+  await waitForStableLayout(root);
+}
+
+async function waitForImages(root: HTMLElement): Promise<void> {
+  const images = Array.from(root.querySelectorAll("img"));
+  if (images.length === 0) {
+    return;
+  }
+
+  await Promise.race([
+    Promise.all(images.map((image) => waitForImage(image))),
+    waitFor(EXPORT_READY_TIMEOUT_MS),
+  ]);
+}
+
+function waitForImage(image: HTMLImageElement): Promise<void> {
+  if (image.complete && image.naturalWidth > 0) {
+    return Promise.resolve();
+  }
+
+  if (typeof image.decode === "function") {
+    return image.decode().catch(() => undefined);
+  }
+
+  return new Promise((resolve) => {
+    image.addEventListener("load", () => resolve(), { once: true });
+    image.addEventListener("error", () => resolve(), { once: true });
+  });
+}
+
+function waitForStableLayout(root: HTMLElement): Promise<void> {
+  const startedAt = performance.now();
+  let stableFrames = 0;
+  let previousSignature = readLayoutSignature(root);
+
+  return new Promise((resolve) => {
+    function check() {
+      const nextSignature = readLayoutSignature(root);
+      if (nextSignature === previousSignature) {
+        stableFrames += 1;
+      } else {
+        stableFrames = 0;
+        previousSignature = nextSignature;
+      }
+
+      if (stableFrames >= 2 || performance.now() - startedAt >= EXPORT_LAYOUT_STABLE_TIMEOUT_MS) {
+        resolve();
+        return;
+      }
+
+      window.requestAnimationFrame(check);
+    }
+
+    window.requestAnimationFrame(check);
+  });
+}
+
+function readLayoutSignature(root: HTMLElement): string {
+  const bounds = root.getBoundingClientRect();
+  return [
+    Math.ceil(root.scrollWidth),
+    Math.ceil(root.scrollHeight),
+    Math.ceil(bounds.width),
+    Math.ceil(bounds.height),
+  ].join("x");
+}
+
+function resolveCapturePixelRatio(width: number, height: number, format: DownloadFormat): number {
+  const preferredRatio =
+    format === "pdf"
+      ? PDF_CAPTURE_PIXEL_RATIO
+      : Math.min(PNG_CAPTURE_PIXEL_RATIO, Math.max(1, window.devicePixelRatio || 1));
+  const cssPixels = Math.max(1, width * height);
+  const safeRatio = Math.sqrt(MAX_CAPTURE_CANVAS_PIXELS / cssPixels);
+
+  return Math.max(1, Math.min(preferredRatio, safeRatio));
 }
 
 function downloadFile(dataUrl: string, fileName: string) {

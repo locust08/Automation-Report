@@ -109,14 +109,14 @@ export function ReportShell({
               {headerDateControl ? (
                 <div
                   className="flex w-full items-start md:w-auto md:max-w-[420px] md:justify-self-end"
-                  data-report-export-exclude="true"
+                  data-report-export-date-control="true"
                 >
                   {headerDateControl}
                 </div>
               ) : (
                 <div
                   className="w-full rounded-2xl bg-[#dfdfdf] px-4 py-3 text-center text-base font-semibold text-[#5f5f5f] sm:w-auto sm:px-6 sm:text-lg md:justify-self-end"
-                  data-report-export-exclude="true"
+                  data-report-export-date-control="true"
                 >
                   {dateLabel}
                 </div>
@@ -151,6 +151,17 @@ export function ReportShell({
             <span>LOCUS-T SDN BHD</span>
           </div>
         </footer>
+
+        <section
+          className={`${REPORT_INNER_CONTAINER_CLASS} hidden pb-8 pt-2`}
+          data-report-export-only="true"
+        >
+          <div className="flex min-h-[220px] items-center justify-center rounded-[2rem] bg-gradient-to-br from-white via-[#fff2f2] to-[#e10600] px-6 py-14 text-center shadow-sm">
+            <p className="text-[clamp(3rem,8vw,7rem)] font-extrabold leading-none tracking-normal text-[#b00014]">
+              Thrive Together
+            </p>
+          </div>
+        </section>
       </div>
     </main>
   );

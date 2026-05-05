@@ -47,6 +47,7 @@ interface AdAccountRecord {
   accountId: string;
   accountName: string | null;
   accessPath: string | null;
+  platform: string | null;
 }
 
 interface GoogleAdsRouteResolution {
@@ -300,12 +301,6 @@ async function fetchGoogleAdAccountRecords(
         body: JSON.stringify({
           page_size: 100,
           start_cursor: nextCursor ?? undefined,
-          filter: {
-            property: "Platform",
-            select: {
-              equals: "Google",
-            },
-          },
         }),
         cache: "no-store",
       });
@@ -342,7 +337,7 @@ async function fetchGoogleAdAccountRecords(
 
       for (const page of json?.results ?? []) {
         const parsed = parseAdAccountRecord(page);
-        if (parsed) {
+        if (parsed && isGoogleAdAccountRecord(parsed)) {
           records.push(parsed);
         }
       }
@@ -701,7 +696,13 @@ function parseAdAccountRecord(page: {
     accountId,
     accountName: getNotionPropertyText(properties["Account Name"]),
     accessPath: getNotionPropertyText(properties["Access Path"]),
+    platform: getNotionPropertyText(properties["Platform"]),
   };
+}
+
+function isGoogleAdAccountRecord(record: AdAccountRecord): boolean {
+  const platform = record.platform?.trim().toLowerCase();
+  return !platform || platform === "google";
 }
 
 function resolveGoogleAdsRoute(

@@ -73,6 +73,14 @@ export async function captureOverallReportPdf(
           display: none !important;
         }
 
+        [data-report-export-location-tab='true'][aria-pressed='false'] {
+          display: none !important;
+        }
+
+        [data-report-export-only='true'] {
+          display: block !important;
+        }
+
         [data-report-export-header-panel='true'] {
           height: auto !important;
           min-height: 0 !important;
@@ -86,7 +94,16 @@ export async function captureOverallReportPdf(
         }
 
         [data-report-export-header-grid='true'] {
-          display: block !important;
+          display: grid !important;
+          grid-template-columns: minmax(0, 1fr) auto !important;
+          align-items: start !important;
+          gap: 1rem !important;
+        }
+
+        [data-report-export-date-control='true'] {
+          display: flex !important;
+          justify-self: end !important;
+          width: auto !important;
         }
 
         [data-report-export-title='true'] {
@@ -96,7 +113,8 @@ export async function captureOverallReportPdf(
         }
       `,
     });
-    await page.waitForTimeout(2000);
+    await page.evaluate(() => document.fonts.ready);
+    await page.waitForTimeout(3000);
 
     const pngBuffer = await captureRoot.screenshot({ type: "png" });
     const baseFileName = buildCaptureFileName(target, reportMonthKey);
