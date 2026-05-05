@@ -52,7 +52,10 @@ export function ReportShell({
             className={`${REPORT_INNER_CONTAINER_CLASS} py-5 sm:py-6`}
             data-report-export-header-inner="true"
           >
-            <div className="grid gap-4 text-white md:grid-cols-[minmax(0,1fr)_auto] md:items-start md:gap-x-8">
+            <div
+              className="grid gap-4 text-white md:grid-cols-[minmax(0,1fr)_auto] md:items-start md:gap-x-8"
+              data-report-export-header-grid="true"
+            >
               <div className="min-w-0 space-y-3">
                 <h1
                   className="break-words text-3xl font-semibold leading-tight tracking-tight [overflow-wrap:anywhere] sm:text-4xl md:text-6xl"
@@ -104,11 +107,17 @@ export function ReportShell({
                 </nav>
               </div>
               {headerDateControl ? (
-                <div className="flex w-full items-start md:w-auto md:max-w-[420px] md:justify-self-end">
+                <div
+                  className="flex w-full items-start md:w-auto md:max-w-[420px] md:justify-self-end"
+                  data-report-export-exclude="true"
+                >
                   {headerDateControl}
                 </div>
               ) : (
-                <div className="w-full rounded-2xl bg-[#dfdfdf] px-4 py-3 text-center text-base font-semibold text-[#5f5f5f] sm:w-auto sm:px-6 sm:text-lg md:justify-self-end">
+                <div
+                  className="w-full rounded-2xl bg-[#dfdfdf] px-4 py-3 text-center text-base font-semibold text-[#5f5f5f] sm:w-auto sm:px-6 sm:text-lg md:justify-self-end"
+                  data-report-export-exclude="true"
+                >
                   {dateLabel}
                 </div>
               )}

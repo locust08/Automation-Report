@@ -149,7 +149,7 @@ export function PreviewPageClient() {
           showResetButton={false}
           submitLabel="Reload"
           compact
-          footerContent={<ReportDownloadButton />}
+          footerContent={<ReportDownloadButton fileNamePrefix={title} />}
           onApply={(next) => setFilters(next)}
           onReset={() =>
             setFilters({

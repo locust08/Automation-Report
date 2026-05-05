@@ -40,20 +40,33 @@ const REPORT_EXPORT_CAPTURE_STYLE = `
   }
 
   [data-report-export-header-panel='true'] {
+    height: auto !important;
     min-height: 0 !important;
+    background-size: cover !important;
+    background-position: center !important;
   }
 
   [data-report-export-header-inner='true'] {
-    padding-top: 1.25rem !important;
-    padding-bottom: 1.25rem !important;
+    padding-top: 1rem !important;
+    padding-bottom: 1rem !important;
+  }
+
+  [data-report-export-header-grid='true'] {
+    display: block !important;
   }
 
   [data-report-export-title='true'] {
+    margin: 0 !important;
+    line-height: 1.06 !important;
     text-wrap: balance;
   }
 `;
 
-export function ReportDownloadButton() {
+interface ReportDownloadButtonProps {
+  fileNamePrefix?: string;
+}
+
+export function ReportDownloadButton({ fileNamePrefix }: ReportDownloadButtonProps) {
   const { screenshotMode, setScreenshotMode } = useScreenshotMode();
   const [queuedFormat, setQueuedFormat] = useState<DownloadFormat | null>(null);
   const [downloadingFormat, setDownloadingFormat] = useState<DownloadFormat | null>(null);
@@ -78,8 +91,8 @@ export function ReportDownloadButton() {
       const dataUrl = await captureReportPng(root, captureScale);
       const preparedDownload =
         format === "pdf"
-          ? await preparePdfDownload(root, dataUrl)
-          : preparePngDownload(dataUrl);
+          ? await preparePdfDownload(root, dataUrl, fileNamePrefix)
+          : preparePngDownload(dataUrl, fileNamePrefix);
 
       setOverlayState({ phase: "success", format });
       await waitFor(DOWNLOAD_READY_DELAY_MS);
@@ -97,7 +110,7 @@ export function ReportDownloadButton() {
     } finally {
       setDownloadingFormat(null);
     }
-  }, []);
+  }, [fileNamePrefix]);
 
   useEffect(() => {
     if (!queuedFormat || !screenshotMode) {
@@ -201,7 +214,11 @@ export function ReportDownloadButton() {
   );
 }
 
-async function preparePdfDownload(root: HTMLElement, dataUrl: string): Promise<() => void> {
+async function preparePdfDownload(
+  root: HTMLElement,
+  dataUrl: string,
+  fileNamePrefix: string | undefined
+): Promise<() => void> {
   const { jsPDF } = await import("jspdf");
   const orientation = root.scrollWidth > root.scrollHeight ? "landscape" : "portrait";
   const image = new jsPDF({ orientation, unit: "px", format: "a4" }).getImageProperties(dataUrl);
@@ -215,13 +232,13 @@ async function preparePdfDownload(root: HTMLElement, dataUrl: string): Promise<(
   const pdfBlob = pdf.output("blob");
 
   return () => {
-    downloadBlob(pdfBlob, buildFileName("pdf"));
+    downloadBlob(pdfBlob, buildFileName("pdf", fileNamePrefix));
   };
 }
 
-function preparePngDownload(dataUrl: string): () => void {
+function preparePngDownload(dataUrl: string, fileNamePrefix: string | undefined): () => void {
   return () => {
-    downloadFile(dataUrl, buildFileName("png"));
+    downloadFile(dataUrl, buildFileName("png", fileNamePrefix));
   };
 }
 
@@ -292,12 +309,26 @@ function installReportExportCaptureStyle(): HTMLStyleElement {
   return style;
 }
 
-function buildFileName(format: DownloadFormat): string {
+function buildFileName(format: DownloadFormat, rawPrefix: string | undefined): string {
   const now = new Date();
   const stamp = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(
     now.getDate()
   ).padStart(2, "0")}_${String(now.getHours()).padStart(2, "0")}-${String(
     now.getMinutes()
   ).padStart(2, "0")}`;
-  return `report_${stamp}.${format}`;
+  return `${sanitizeFileNamePrefix(rawPrefix)}_${stamp}.${format}`;
+}
+
+function sanitizeFileNamePrefix(rawPrefix: string | undefined): string {
+  const normalized = rawPrefix
+    ?.normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/&/g, " and ")
+    .replace(/[^a-zA-Z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .replace(/-{2,}/g, "-")
+    .toLowerCase()
+    .slice(0, 80);
+
+  return normalized || "report";
 }

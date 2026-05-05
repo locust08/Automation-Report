@@ -74,15 +74,24 @@ export async function captureOverallReportPdf(
         }
 
         [data-report-export-header-panel='true'] {
+          height: auto !important;
           min-height: 0 !important;
+          background-size: cover !important;
+          background-position: center !important;
         }
 
         [data-report-export-header-inner='true'] {
-          padding-top: 1.25rem !important;
-          padding-bottom: 1.25rem !important;
+          padding-top: 1rem !important;
+          padding-bottom: 1rem !important;
+        }
+
+        [data-report-export-header-grid='true'] {
+          display: block !important;
         }
 
         [data-report-export-title='true'] {
+          margin: 0 !important;
+          line-height: 1.06 !important;
           text-wrap: balance;
         }
       `,

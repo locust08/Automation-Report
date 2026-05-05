@@ -95,7 +95,7 @@ export function AuctionPageClient() {
           showResetButton={false}
           submitLabel="Reload"
           compact
-          footerContent={<ReportDownloadButton />}
+          footerContent={<ReportDownloadButton fileNamePrefix={title} />}
           onApply={(next) => setFilters(next)}
           onReset={() =>
             setFilters({

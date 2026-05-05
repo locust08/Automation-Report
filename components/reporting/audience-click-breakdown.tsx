@@ -66,8 +66,22 @@ export function AudienceClickBreakdownSection({
     [breakdown.location.city, includeUnknown]
   );
 
-  const defaultLocationTab = shouldUseCityLocationTab(regionRows, cityRows) ? "city" : "region";
-  const activeLocationTab = selectedLocationTab ?? defaultLocationTab;
+  const locationRowCounts: Record<LocationTabKey, number> = {
+    country: countryRows.length,
+    region: regionRows.length,
+    city: cityRows.length,
+  };
+  const hasGoogleCityData = breakdown.location.city.some((item) => item.platform === "google");
+  const defaultLocationTab = getDefaultLocationTab(
+    countryRows,
+    regionRows,
+    cityRows,
+    hasGoogleCityData
+  );
+  const activeLocationTab =
+    selectedLocationTab && locationRowCounts[selectedLocationTab] > 0
+      ? selectedLocationTab
+      : defaultLocationTab;
 
   const locationRows = useMemo(() => {
     if (activeLocationTab === "country") {
@@ -114,17 +128,27 @@ export function AudienceClickBreakdownSection({
           <div className="flex flex-wrap gap-2">
             {LOCATION_TABS.map((tab) => {
               const active = activeLocationTab === tab.key;
+              const disabled = locationRowCounts[tab.key] === 0;
               return (
                 <button
                   key={tab.key}
                   type="button"
-                  onClick={() => setSelectedLocationTab(tab.key)}
-                  className={`rounded-xl border px-4 py-1.5 text-sm font-medium transition-colors ${
-                    active
-                      ? "border-[#e10600] bg-[#e10600] text-white"
-                      : "border-[#dadada] bg-white text-[#444]"
-                  }`}
-                  aria-pressed={active}
+                  onClick={() => {
+                    if (!disabled) {
+                      setSelectedLocationTab(tab.key);
+                    }
+                  }}
+                  disabled={disabled}
+                  className={cn(
+                    "rounded-xl border px-4 py-1.5 text-sm font-medium transition-colors",
+                    disabled
+                      ? "cursor-not-allowed border-[#dedede] bg-[#eeeeee] text-[#aaaaaa] opacity-70"
+                      : active
+                        ? "border-[#e10600] bg-[#e10600] text-white"
+                        : "border-[#dadada] bg-white text-[#444] hover:border-[#e10600]/40 hover:text-[#e10600]"
+                  )}
+                  aria-pressed={active && !disabled}
+                  title={disabled ? `${tab.label} data is not available for this report` : undefined}
                 >
                   {tab.label}
                 </button>
@@ -291,7 +315,7 @@ function VerticalBarChart({
           <div className={`relative z-10 grid h-full ${columnGapClass}`} style={gridColumns}>
             {rows.map((row, index) => {
               const percent = maxValue > 0 ? (row.clicks / maxValue) * 100 : 0;
-              const inactive = activeIndex !== null && activeIndex !== index;
+              const active = activeIndex === index;
               return (
                 <div
                   key={`${row.label}-${index}`}
@@ -302,12 +326,12 @@ function VerticalBarChart({
                   onFocus={() => setActiveIndex(index)}
                   onBlur={() => setActiveIndex(null)}
                 >
+                  {active ? (
+                    <div className="absolute bottom-0 left-0 right-0 top-8 rounded-t-md bg-[#eeeeee]" />
+                  ) : null}
                   <div className="absolute bottom-0 left-0 right-0 top-8 flex items-end justify-center">
                     <div
-                      className={cn(
-                        "relative w-full max-w-[2.7rem] rounded-t-[2px] transition-all duration-150",
-                        inactive ? "bg-[#d3d3d3] opacity-60" : "bg-[#f30707]"
-                      )}
+                      className="relative w-full max-w-[2.7rem] rounded-t-[2px] bg-[#f30707] transition-all duration-150"
                       style={{
                         height:
                           row.clicks > 0
@@ -316,10 +340,7 @@ function VerticalBarChart({
                       }}
                     >
                       <span
-                        className={cn(
-                          "absolute bottom-[calc(100%+0.35rem)] left-1/2 -translate-x-1/2 text-sm font-medium transition-colors sm:text-base",
-                          inactive ? "text-[#9a9a9a]" : "text-[#1f1f1f]"
-                        )}
+                        className="absolute bottom-[calc(100%+0.35rem)] left-1/2 -translate-x-1/2 text-sm font-medium text-[#1f1f1f] transition-colors sm:text-base"
                       >
                         {formatCompactNumber(row.clicks)}
                       </span>
@@ -332,20 +353,14 @@ function VerticalBarChart({
         </div>
 
         <div className={`col-start-2 row-start-2 grid pl-3 ${columnGapClass}`} style={gridColumns}>
-          {rows.map((row, index) => {
-            const inactive = activeIndex !== null && activeIndex !== index;
-            return (
-              <span
-                key={`${row.label}-${index}`}
-                className={cn(
-                  "min-w-0 break-words text-center text-[11px] leading-4 transition-colors sm:text-sm sm:leading-5",
-                  inactive ? "text-[#9a9a9a]" : "text-[#333]"
-                )}
-              >
-                {row.label}
-              </span>
-            );
-          })}
+          {rows.map((row, index) => (
+            <span
+              key={`${row.label}-${index}`}
+              className="min-w-0 break-words text-center text-[11px] leading-4 text-[#333] transition-colors sm:text-sm sm:leading-5"
+            >
+              {row.label}
+            </span>
+          ))}
         </div>
       </div>
     </div>
@@ -381,14 +396,14 @@ function PieChart({ rows }: { rows: AudienceBreakdownRow[] }) {
           className="h-[14rem] w-[14rem] max-w-full"
         >
           {segments.map((segment, index) => {
-            const inactive = activeIndex !== null && activeIndex !== index;
-            const fill = inactive ? "#d3d3d3" : PIE_COLORS[index % PIE_COLORS.length];
+            const active = activeIndex === index;
+            const fill = active ? "#b80000" : PIE_COLORS[index % PIE_COLORS.length];
             const commonProps = {
               fill,
               stroke: "#ffffff",
               strokeWidth: 2,
               className: "cursor-pointer transition-opacity duration-150",
-              opacity: inactive ? 0.58 : 1,
+              opacity: 1,
               tabIndex: 0,
               onMouseEnter: () => setActiveIndex(index),
               onFocus: () => setActiveIndex(index),
@@ -428,7 +443,7 @@ function PieChart({ rows }: { rows: AudienceBreakdownRow[] }) {
 
         <div className="grid max-h-[12rem] gap-2 overflow-y-auto pr-1 sm:grid-cols-2">
           {rows.map((row, index) => {
-            const inactive = activeIndex !== null && activeIndex !== index;
+            const active = activeIndex === index;
             return (
               <button
                 key={`${row.label}-${index}`}
@@ -438,8 +453,8 @@ function PieChart({ rows }: { rows: AudienceBreakdownRow[] }) {
                 onBlur={() => setActiveIndex(null)}
                 className={cn(
                   "flex min-w-0 items-center justify-between gap-3 rounded-lg border px-3 py-2 text-left transition-colors",
-                  inactive
-                    ? "border-[#e4e4e4] bg-[#f4f4f4] text-[#999]"
+                  active
+                    ? "border-[#f1b0b0] bg-[#fff5f5] text-[#b80000]"
                     : "border-[#ededed] bg-white text-[#333]"
                 )}
               >
@@ -448,7 +463,7 @@ function PieChart({ rows }: { rows: AudienceBreakdownRow[] }) {
                     className="size-2.5 shrink-0 rounded-full"
                     style={{
                       backgroundColor:
-                        inactive ? "#d3d3d3" : PIE_COLORS[index % PIE_COLORS.length],
+                        active ? "#b80000" : PIE_COLORS[index % PIE_COLORS.length],
                     }}
                   />
                   <span className="min-w-0 truncate text-sm font-medium">{row.label}</span>
@@ -477,11 +492,37 @@ function isUnknownAudienceLabel(label: string): boolean {
   );
 }
 
+function getDefaultLocationTab(
+  countryRows: AudienceBreakdownRow[],
+  regionRows: AudienceBreakdownRow[],
+  cityRows: AudienceBreakdownRow[],
+  hasGoogleCityData: boolean
+): LocationTabKey {
+  if (shouldUseCityLocationTab(regionRows, cityRows, hasGoogleCityData)) {
+    return "city";
+  }
+
+  if (regionRows.length > 0) {
+    return "region";
+  }
+
+  if (countryRows.length > 0) {
+    return "country";
+  }
+
+  if (cityRows.length > 0) {
+    return "city";
+  }
+
+  return "region";
+}
+
 function shouldUseCityLocationTab(
   regionRows: AudienceBreakdownRow[],
-  cityRows: AudienceBreakdownRow[]
+  cityRows: AudienceBreakdownRow[],
+  hasGoogleCityData: boolean
 ): boolean {
-  return regionRows.length <= 1 && cityRows.length > 1;
+  return hasGoogleCityData && regionRows.length < 3 && cityRows.length > 0;
 }
 
 function formatPercent(value: number, total: number): string {

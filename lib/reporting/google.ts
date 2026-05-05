@@ -97,6 +97,25 @@ interface GoogleAdsSearchResponse {
   };
 }
 
+interface GoogleProximityGeoPoint {
+  latitudeInMicroDegrees?: string | number;
+  longitudeInMicroDegrees?: string | number;
+}
+
+interface GoogleProximityInfo {
+  address?: {
+    cityName?: string;
+    countryCode?: string;
+    postalCode?: string;
+    provinceCode?: string;
+    provinceName?: string;
+    streetAddress?: string;
+  };
+  geoPoint?: GoogleProximityGeoPoint;
+  radius?: string | number;
+  radiusUnits?: string;
+}
+
 interface GoogleAdsResult {
   ageRangeView?: {
     ageRange?: string;
@@ -114,6 +133,9 @@ interface GoogleAdsResult {
   userLocationView?: {
     countryCriterionId?: string | number;
     targetingLocation?: string | boolean;
+  };
+  locationView?: {
+    resourceName?: string;
   };
   detailPlacementView?: {
     placement?: string;
@@ -158,6 +180,7 @@ interface GoogleAdsResult {
     cpcBidMicros?: string | number;
   };
   campaignCriterion?: {
+    resourceName?: string;
     criterionId?: string;
     type?: string;
     negative?: boolean;
@@ -165,6 +188,7 @@ interface GoogleAdsResult {
     location?: {
       geoTargetConstant?: string;
     };
+    proximity?: GoogleProximityInfo;
   };
   geoTargetConstant?: {
     resourceName?: string;
@@ -817,46 +841,30 @@ async function fetchGoogleAudienceLocationBreakdown(
   input: Omit<GoogleFetchInput, "accessPath" | "fallbackLoginCustomerId">
 ): Promise<GoogleAudienceClickBreakdownResponse["location"]> {
   const label = "[audience-breakdown][google][location]";
-  // `segments.geo_target_*` is rejected for our Google Ads v22 audience queries, so we
-  // derive the chart hierarchy from `location_view` + `geo_target_constant` instead.
-  const locationViewQuery = buildGoogleAudienceLocationViewQuery(input.startDate, input.endDate);
 
   try {
-    logGoogleAudienceGaql(
-      `${label}[gaql]`,
-      input.customerId,
-      input.loginCustomerId,
-      locationViewQuery
-    );
-    const results = await fetchGoogleAdsResultsWithFallback({
-      customerId: input.customerId,
-      apiVersion: input.apiVersion,
-      developerToken: input.developerToken,
-      accessToken: input.accessToken,
-      refreshToken: input.refreshToken,
-      clientId: input.clientId,
-      clientSecret: input.clientSecret,
-      loginCustomerId: input.loginCustomerId,
-      queries: [locationViewQuery],
-    });
-
-    const geoTargetsByResourceName = await resolveGoogleAudienceLocationTargets({
-      input,
-      results,
-    });
+    const [countryRows, regionRows, cityRows] = await Promise.all([
+      fetchGoogleAudienceGeoSegmentBreakdown(input, "country"),
+      fetchGoogleAudienceGeoSegmentBreakdown(input, "region"),
+      fetchGoogleAudienceGeoSegmentBreakdown(input, "city"),
+    ]);
 
     const country = addSourceToAudienceItems(
-      buildGoogleTargetLocationAudienceItems(results, geoTargetsByResourceName, "country"),
+      countryRows.length > 0
+        ? countryRows
+        : await fetchGoogleTargetLocationBreakdown(input, "country"),
       "locations",
       "country"
     );
     const region = addSourceToAudienceItems(
-      buildGoogleTargetLocationAudienceItems(results, geoTargetsByResourceName, "region"),
+      regionRows.length > 0
+        ? regionRows
+        : await fetchGoogleTargetLocationBreakdown(input, "region"),
       "locations",
       "region"
     );
     const city = addSourceToAudienceItems(
-      buildGoogleTargetLocationAudienceItems(results, geoTargetsByResourceName, "city"),
+      cityRows.length > 0 ? cityRows : await fetchGoogleTargetLocationBreakdown(input, "city"),
       "locations",
       "city"
     );
@@ -876,15 +884,109 @@ async function fetchGoogleAudienceLocationBreakdown(
   }
 }
 
+async function fetchGoogleAudienceGeoSegmentBreakdown(
+  input: Omit<GoogleFetchInput, "accessPath" | "fallbackLoginCustomerId">,
+  dimension: "country" | "region" | "city"
+): Promise<AudienceClickBreakdownItem[]> {
+  const label = `[audience-breakdown][google][location-${dimension}]`;
+  const query = buildGoogleAudienceGeoSegmentQuery(input.startDate, input.endDate, dimension);
+
+  try {
+    logGoogleAudienceGaql(`${label}[gaql]`, input.customerId, input.loginCustomerId, query);
+    const results = await fetchGoogleAdsResultsWithFallback({
+      customerId: input.customerId,
+      apiVersion: input.apiVersion,
+      developerToken: input.developerToken,
+      accessToken: input.accessToken,
+      refreshToken: input.refreshToken,
+      clientId: input.clientId,
+      clientSecret: input.clientSecret,
+      loginCustomerId: input.loginCustomerId,
+      queries: [query],
+    });
+
+    const resourceNames = collectGoogleGeoSegmentResourceNames(results, dimension);
+    const geoTargetsByResourceName = await fetchGoogleGeoTargetsForResourceNames({
+      input,
+      resourceNames,
+      label,
+    });
+    const items = buildGoogleGeoSegmentAudienceItems(results, geoTargetsByResourceName, dimension);
+    console.info(
+      `${label} customerId=${input.customerId} rows=${results.length} resources=${resourceNames.length} items=${items.length}`
+    );
+    return items;
+  } catch (error) {
+    logGoogleAudienceBreakdownFailure(label, input.customerId, error);
+    return [];
+  }
+}
+
+async function fetchGoogleTargetLocationBreakdown(
+  input: Omit<GoogleFetchInput, "accessPath" | "fallbackLoginCustomerId">,
+  dimension: "country" | "region" | "city"
+): Promise<AudienceClickBreakdownItem[]> {
+  const label = `[audience-breakdown][google][target-location-${dimension}]`;
+  const query = buildGoogleAudienceLocationViewQuery(input.startDate, input.endDate);
+
+  try {
+    logGoogleAudienceGaql(`${label}[gaql]`, input.customerId, input.loginCustomerId, query);
+    const results = await fetchGoogleAdsResultsWithFallback({
+      customerId: input.customerId,
+      apiVersion: input.apiVersion,
+      developerToken: input.developerToken,
+      accessToken: input.accessToken,
+      refreshToken: input.refreshToken,
+      clientId: input.clientId,
+      clientSecret: input.clientSecret,
+      loginCustomerId: input.loginCustomerId,
+      queries: [query],
+    });
+    const totalClicks = results.reduce(
+      (total, result) => total + coerceAudienceClicks(result.metrics?.clicks),
+      0
+    );
+
+    const criteriaByResourceName = await resolveGoogleLocationViewCriteria({
+      input,
+      results,
+      label,
+    });
+    const geoTargetsByResourceName = await resolveGoogleAudienceLocationTargets({
+      input,
+      results,
+      criteriaByResourceName,
+    });
+    const items = buildGoogleTargetLocationAudienceItems(
+      results,
+      geoTargetsByResourceName,
+      criteriaByResourceName,
+      dimension
+    );
+    console.info(
+      `${label} customerId=${input.customerId} rows=${results.length} clicks=${totalClicks} criteria=${criteriaByResourceName.size} items=${items.length}`
+    );
+    return items;
+  } catch (error) {
+    logGoogleAudienceBreakdownFailure(label, input.customerId, error);
+    return [];
+  }
+}
+
 async function resolveGoogleAudienceLocationTargets(input: {
   input: Omit<GoogleFetchInput, "accessPath" | "fallbackLoginCustomerId">;
   results: GoogleAdsResult[];
+  criteriaByResourceName?: Map<string, GoogleAdsResult["campaignCriterion"]>;
 }): Promise<Map<string, GoogleAdsResult["geoTargetConstant"]>> {
   const label = "[audience-breakdown][google][geo-resolver]";
   const resourceNames = new Set<string>();
 
   input.results.forEach((result) => {
-    const resourceName = result.campaignCriterion?.location?.geoTargetConstant?.trim();
+    const criterion = resolveGoogleLocationViewCriterion(result, input.criteriaByResourceName);
+    const resourceName =
+      criterion?.location?.geoTargetConstant?.trim() ||
+      result.campaignCriterion?.location?.geoTargetConstant?.trim() ||
+      getGoogleLocationViewGeoTargetResourceName(result);
     if (resourceName) {
       resourceNames.add(resourceName);
     }
@@ -917,9 +1019,248 @@ async function resolveGoogleAudienceLocationTargets(input: {
   }
 }
 
+async function fetchGoogleGeoTargetsForResourceNames(input: {
+  input: Omit<GoogleFetchInput, "accessPath" | "fallbackLoginCustomerId">;
+  resourceNames: string[];
+  label: string;
+}): Promise<Map<string, GoogleAdsResult["geoTargetConstant"]>> {
+  if (input.resourceNames.length === 0) {
+    console.info(`${input.label}[geo-resolver] customerId=${input.input.customerId} requested=0 resolved=0`);
+    return new Map();
+  }
+
+  try {
+    const geoTargets = await fetchGoogleGeoTargetConstantsByResourceName({
+      customerId: input.input.customerId,
+      apiVersion: input.input.apiVersion,
+      developerToken: input.input.developerToken,
+      accessToken: input.input.accessToken,
+      refreshToken: input.input.refreshToken,
+      clientId: input.input.clientId,
+      clientSecret: input.input.clientSecret,
+      loginCustomerId: input.input.loginCustomerId,
+      resourceNames: input.resourceNames,
+    });
+    console.info(
+      `${input.label}[geo-resolver] customerId=${input.input.customerId} requested=${input.resourceNames.length} resolved=${geoTargets.size}`
+    );
+    return geoTargets;
+  } catch (error) {
+    logGoogleAudienceBreakdownFailure(`${input.label}[geo-resolver]`, input.input.customerId, error);
+    return new Map();
+  }
+}
+
+async function resolveGoogleLocationViewCriteria(input: {
+  input: Omit<GoogleFetchInput, "accessPath" | "fallbackLoginCustomerId">;
+  results: GoogleAdsResult[];
+  label: string;
+}): Promise<Map<string, GoogleAdsResult["campaignCriterion"]>> {
+  const resourceNames = collectGoogleLocationViewCampaignCriterionResourceNames(
+    input.input.customerId,
+    input.results
+  );
+  if (resourceNames.length === 0) {
+    console.info(`${input.label}[criteria] customerId=${input.input.customerId} requested=0 resolved=0`);
+    return new Map();
+  }
+
+  try {
+    const criteriaByResourceName = await fetchGoogleCampaignCriteriaByResourceName({
+      customerId: input.input.customerId,
+      apiVersion: input.input.apiVersion,
+      developerToken: input.input.developerToken,
+      accessToken: input.input.accessToken,
+      refreshToken: input.input.refreshToken,
+      clientId: input.input.clientId,
+      clientSecret: input.input.clientSecret,
+      loginCustomerId: input.input.loginCustomerId,
+      resourceNames,
+    });
+    console.info(
+      `${input.label}[criteria] customerId=${input.input.customerId} requested=${resourceNames.length} resolved=${criteriaByResourceName.size}`
+    );
+    return criteriaByResourceName;
+  } catch (error) {
+    logGoogleAudienceBreakdownFailure(`${input.label}[criteria]`, input.input.customerId, error);
+    return new Map();
+  }
+}
+
+function collectGoogleLocationViewCampaignCriterionResourceNames(
+  customerId: string,
+  results: GoogleAdsResult[]
+): string[] {
+  const resourceNames = new Set<string>();
+
+  results.forEach((result) => {
+    const resourceName = getGoogleLocationViewCampaignCriterionResourceName(customerId, result);
+    if (resourceName) {
+      resourceNames.add(resourceName);
+    }
+  });
+
+  return Array.from(resourceNames);
+}
+
+function collectGoogleGeoSegmentResourceNames(
+  results: GoogleAdsResult[],
+  dimension: "country" | "region" | "city"
+): string[] {
+  const resourceNames = new Set<string>();
+
+  results.forEach((result) => {
+    const resourceName = getGoogleGeoSegmentResourceName(result, dimension);
+    if (resourceName) {
+      resourceNames.add(resourceName);
+    }
+  });
+
+  return Array.from(resourceNames);
+}
+
+function buildGoogleGeoSegmentAudienceItems(
+  results: GoogleAdsResult[],
+  geoTargetsByResourceName: Map<string, GoogleAdsResult["geoTargetConstant"]>,
+  dimension: "country" | "region" | "city"
+): AudienceClickBreakdownItem[] {
+  const totals = new Map<string, number>();
+
+  results.forEach((result) => {
+    const clicks = coerceAudienceClicks(result.metrics?.clicks);
+    if (clicks <= 0) {
+      return;
+    }
+
+    const resourceName = getGoogleGeoSegmentResourceName(result, dimension);
+    if (!resourceName) {
+      return;
+    }
+
+    const label = resolveGoogleGeoSegmentLabel(resourceName, geoTargetsByResourceName);
+    if (!label) {
+      return;
+    }
+
+    totals.set(label, (totals.get(label) ?? 0) + clicks);
+  });
+
+  return limitAudienceItemsWithOthers(
+    sortAudienceItems(
+      Array.from(totals.entries()).map(([label, clicks]) =>
+        createAudienceClickBreakdownItem({
+          platform: "google",
+          dimension,
+          label,
+          clicks,
+        })
+      ),
+      dimension
+    ),
+    10
+  );
+}
+
+function getGoogleGeoSegmentResourceName(
+  result: GoogleAdsResult,
+  dimension: "country" | "region" | "city"
+): string | null {
+  if (dimension === "country") {
+    return result.segments?.geoTargetCountry?.trim() || null;
+  }
+  if (dimension === "region") {
+    return (
+      result.segments?.geoTargetRegion?.trim() ||
+      result.segments?.geoTargetState?.trim() ||
+      result.segments?.geoTargetProvince?.trim() ||
+      null
+    );
+  }
+  return result.segments?.geoTargetCity?.trim() || null;
+}
+
+function resolveGoogleGeoSegmentLabel(
+  resourceName: string,
+  geoTargetsByResourceName: Map<string, GoogleAdsResult["geoTargetConstant"]>
+): string | null {
+  const geoTarget = geoTargetsByResourceName.get(resourceName);
+  return normalizeAudienceLocationLabel(
+    geoTarget?.name?.trim() || geoTarget?.canonicalName?.trim(),
+    ""
+  ).trim() || null;
+}
+
+function getGoogleLocationViewGeoTargetResourceName(result: GoogleAdsResult): string | null {
+  const explicitResourceName = result.campaignCriterion?.location?.geoTargetConstant?.trim();
+  if (explicitResourceName) {
+    return explicitResourceName;
+  }
+
+  const criterionId = parseGoogleLocationViewCriterionId(result.locationView?.resourceName);
+  return criterionId ? `geoTargetConstants/${criterionId}` : null;
+}
+
+function resolveGoogleLocationViewCriterion(
+  result: GoogleAdsResult,
+  criteriaByResourceName: Map<string, GoogleAdsResult["campaignCriterion"]> | undefined
+): GoogleAdsResult["campaignCriterion"] | undefined {
+  if (result.campaignCriterion?.type) {
+    return result.campaignCriterion;
+  }
+
+  if (!criteriaByResourceName) {
+    return undefined;
+  }
+
+  const resourceName = getGoogleLocationViewCampaignCriterionResourceName(
+    "",
+    result
+  );
+  return resourceName ? criteriaByResourceName.get(resourceName) : undefined;
+}
+
+function getGoogleLocationViewCampaignCriterionResourceName(
+  customerId: string,
+  result: GoogleAdsResult
+): string | null {
+  const explicitResourceName = result.campaignCriterion?.resourceName?.trim();
+  if (explicitResourceName) {
+    return explicitResourceName;
+  }
+
+  const resourceName = result.locationView?.resourceName?.trim();
+  if (!resourceName) {
+    return null;
+  }
+
+  const idPair = resourceName.split("/").pop() ?? "";
+  const [campaignId, criterionId] = idPair.split("~").map((part) => part.trim());
+  if (!campaignId || !criterionId) {
+    return null;
+  }
+
+  const resourceCustomerId =
+    customerId.trim() || resourceName.match(/^customers\/([^/]+)\//)?.[1]?.trim() || "";
+  return resourceCustomerId
+    ? `customers/${resourceCustomerId}/campaignCriteria/${campaignId}~${criterionId}`
+    : null;
+}
+
+function parseGoogleLocationViewCriterionId(resourceName: string | undefined): string | null {
+  const normalized = resourceName?.trim();
+  if (!normalized) {
+    return null;
+  }
+
+  const idPair = normalized.split("/").pop() ?? "";
+  const criterionId = idPair.split("~").pop()?.trim();
+  return criterionId || null;
+}
+
 function buildGoogleTargetLocationAudienceItems(
   results: GoogleAdsResult[],
   geoTargetsByResourceName: Map<string, GoogleAdsResult["geoTargetConstant"]>,
+  criteriaByResourceName: Map<string, GoogleAdsResult["campaignCriterion"]>,
   dimension: "country" | "region" | "city"
 ): AudienceClickBreakdownItem[] {
   const totals = new Map<string, number>();
@@ -933,6 +1274,7 @@ function buildGoogleTargetLocationAudienceItems(
     const label = resolveGoogleTargetLocationDimensionLabel(
       result,
       geoTargetsByResourceName,
+      criteriaByResourceName,
       dimension
     );
     if (!label) {
@@ -961,14 +1303,30 @@ function buildGoogleTargetLocationAudienceItems(
 function resolveGoogleTargetLocationDimensionLabel(
   result: GoogleAdsResult,
   geoTargetsByResourceName: Map<string, GoogleAdsResult["geoTargetConstant"]>,
+  criteriaByResourceName: Map<string, GoogleAdsResult["campaignCriterion"]>,
   dimension: "country" | "region" | "city"
 ): string | null {
-  const resourceName = result.campaignCriterion?.location?.geoTargetConstant?.trim();
-  if (!resourceName) {
+  const criterion = resolveGoogleLocationViewCriterion(result, criteriaByResourceName);
+  const proximityHierarchy = deriveGoogleProximityTargetHierarchy(criterion?.proximity);
+  if (proximityHierarchy) {
+    if (dimension === "country") {
+      return proximityHierarchy.country;
+    }
+    if (dimension === "region") {
+      return proximityHierarchy.region;
+    }
+    return proximityHierarchy.city;
+  }
+
+  const resolvedResourceName =
+    criterion?.location?.geoTargetConstant?.trim() ||
+    result.campaignCriterion?.location?.geoTargetConstant?.trim() ||
+    getGoogleLocationViewGeoTargetResourceName(result);
+  if (!resolvedResourceName) {
     return null;
   }
 
-  const geoTarget = geoTargetsByResourceName.get(resourceName);
+  const geoTarget = geoTargetsByResourceName.get(resolvedResourceName);
   const hierarchy = deriveGoogleGeoTargetHierarchy(geoTarget);
 
   if (dimension === "country") {
@@ -1034,6 +1392,79 @@ function deriveGoogleGeoTargetHierarchy(
     region: canonicalParts.length >= 2 ? canonicalParts[canonicalParts.length - 2] ?? null : null,
     city: normalizedName,
   };
+}
+
+function deriveGoogleProximityTargetHierarchy(
+  proximity: GoogleProximityInfo | undefined
+):
+  | {
+      country: string | null;
+      region: string | null;
+      city: string | null;
+    }
+  | null {
+  if (!proximity) {
+    return null;
+  }
+
+  const address = proximity.address;
+  const radius = toNumber(proximity.radius);
+  const unitLabel = formatGoogleProximityRadiusUnit(proximity.radiusUnits);
+  const addressParts = [
+    address?.streetAddress,
+    address?.cityName,
+    address?.provinceName || address?.provinceCode,
+  ]
+    .map((part) => part?.trim())
+    .filter((part): part is string => Boolean(part));
+  const fallbackCoordinateLabel = formatGoogleProximityCoordinateLabel(proximity.geoPoint);
+  const centerLabel = addressParts.length > 0 ? addressParts.join(", ") : fallbackCoordinateLabel;
+
+  if (!centerLabel) {
+    return null;
+  }
+
+  const detailedLabel = radius > 0 ? `${formatCompactDecimal(radius)} ${unitLabel} around ${centerLabel}` : centerLabel;
+
+  return {
+    country: formatGoogleCountryCode(address?.countryCode),
+    region: normalizeAudienceLocationLabel(address?.provinceName || address?.provinceCode, ""),
+    city: detailedLabel,
+  };
+}
+
+function formatGoogleProximityRadiusUnit(value: string | undefined): string {
+  const normalized = value?.trim().toUpperCase();
+  if (normalized === "MILES") {
+    return "mi";
+  }
+  return "km";
+}
+
+function formatCompactDecimal(value: number): string {
+  return Number.isInteger(value) ? String(value) : value.toFixed(1).replace(/\.0$/, "");
+}
+
+function formatGoogleProximityCoordinateLabel(geoPoint: GoogleProximityGeoPoint | undefined): string | null {
+  const latitude = toNumber(geoPoint?.latitudeInMicroDegrees) / 1_000_000;
+  const longitude = toNumber(geoPoint?.longitudeInMicroDegrees) / 1_000_000;
+  if (!Number.isFinite(latitude) || !Number.isFinite(longitude) || (latitude === 0 && longitude === 0)) {
+    return null;
+  }
+  return `${latitude.toFixed(5)}, ${longitude.toFixed(5)}`;
+}
+
+function formatGoogleCountryCode(value: string | undefined): string | null {
+  const code = value?.trim().toUpperCase();
+  if (!code) {
+    return null;
+  }
+
+  try {
+    return new Intl.DisplayNames(["en"], { type: "region" }).of(code) ?? code;
+  } catch {
+    return code;
+  }
 }
 
 function isGoogleRegionTargetType(targetType: string): boolean {
@@ -1148,7 +1579,28 @@ function buildGoogleAudienceLocationViewQuery(startDate: string, endDate: string
       metrics.clicks
     FROM location_view
     WHERE segments.date BETWEEN '${startDate}' AND '${endDate}'
-      AND campaign.status = 'ENABLED'
+      AND campaign.status != 'REMOVED'
+  `;
+}
+
+function buildGoogleAudienceGeoSegmentQuery(
+  startDate: string,
+  endDate: string,
+  dimension: "country" | "region" | "city"
+): string {
+  const segmentField =
+    dimension === "country"
+      ? "segments.geo_target_country"
+      : dimension === "region"
+        ? "segments.geo_target_region"
+        : "segments.geo_target_city";
+
+  return `
+    SELECT
+      ${segmentField},
+      metrics.clicks
+    FROM geographic_view
+    WHERE segments.date BETWEEN '${startDate}' AND '${endDate}'
   `;
 }
 
@@ -2656,6 +3108,42 @@ async function fetchGoogleGeoTargetConstantsByResourceName(
   return geoTargetsByResourceName;
 }
 
+async function fetchGoogleCampaignCriteriaByResourceName(
+  input: Omit<GoogleFetchInput, "startDate" | "endDate"> & { resourceNames: string[] }
+): Promise<Map<string, GoogleAdsResult["campaignCriterion"]>> {
+  const criteriaByResourceName = new Map<string, GoogleAdsResult["campaignCriterion"]>();
+  const resourceNameChunks = chunkArray(input.resourceNames, 100);
+
+  for (const resourceNameChunk of resourceNameChunks) {
+    const query = buildGoogleCampaignCriteriaLocationDetailQuery(resourceNameChunk);
+    logGooglePreviewInfo(
+      `[google-preview] label=location-view-criteria-lookup required=false accountId=${input.customerId} customerId=${input.customerId} loginCustomerId=${input.loginCustomerId ?? "(none)"} gaql=${JSON.stringify(compactWhitespace(query))}`
+    );
+
+    const results = await fetchGoogleAdsResults({
+      customerId: input.customerId,
+      apiVersion: input.apiVersion,
+      developerToken: input.developerToken,
+      accessToken: input.accessToken,
+      refreshToken: input.refreshToken,
+      clientId: input.clientId,
+      clientSecret: input.clientSecret,
+      loginCustomerId: input.loginCustomerId,
+      query,
+    });
+
+    results.forEach((result) => {
+      const resourceName = result.campaignCriterion?.resourceName?.trim();
+      if (!resourceName) {
+        return;
+      }
+      criteriaByResourceName.set(resourceName, result.campaignCriterion);
+    });
+  }
+
+  return criteriaByResourceName;
+}
+
 async function executeGoogleAdsStreamRequest(input: {
   endpoint: string;
   body: object;
@@ -3386,6 +3874,33 @@ function buildGooglePreviewGeoTargetConstantQuery(resourceNames: string[]): stri
       geo_target_constant.status
     FROM geo_target_constant
     WHERE geo_target_constant.resource_name IN (${quotedResourceNames.join(", ")})
+  `;
+}
+
+function buildGoogleCampaignCriteriaLocationDetailQuery(resourceNames: string[]): string {
+  const quotedResourceNames = resourceNames.map((resourceName) => `'${escapeGaqlString(resourceName)}'`);
+
+  return `
+    SELECT
+      campaign_criterion.resource_name,
+      campaign_criterion.criterion_id,
+      campaign_criterion.type,
+      campaign_criterion.status,
+      campaign_criterion.location.geo_target_constant,
+      campaign_criterion.proximity.address.city_name,
+      campaign_criterion.proximity.address.country_code,
+      campaign_criterion.proximity.address.postal_code,
+      campaign_criterion.proximity.address.province_code,
+      campaign_criterion.proximity.address.province_name,
+      campaign_criterion.proximity.address.street_address,
+      campaign_criterion.proximity.geo_point.latitude_in_micro_degrees,
+      campaign_criterion.proximity.geo_point.longitude_in_micro_degrees,
+      campaign_criterion.proximity.radius,
+      campaign_criterion.proximity.radius_units
+    FROM campaign_criterion
+    WHERE campaign_criterion.resource_name IN (${quotedResourceNames.join(", ")})
+      AND campaign_criterion.type IN ('LOCATION', 'PROXIMITY')
+      AND campaign_criterion.negative = FALSE
   `;
 }
 

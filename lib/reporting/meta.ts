@@ -309,12 +309,16 @@ export async function fetchMetaCampaignRows({
   );
 
   const responseRows: CampaignRow[] = [];
+  let totalSpend = 0;
+  let maxSpend = 0;
 
   rows.forEach((item) => {
     const campaignId = item.campaign_id?.trim();
     const impressions = toNumber(item.impressions);
     const clicks = toNumber(item.clicks);
     const spend = toNumber(item.spend);
+    totalSpend += spend;
+    maxSpend = Math.max(maxSpend, spend);
     const resultMetric = pickResultMetric(item.actions, item.cost_per_action_type);
 
     const campaignName = item.campaign_name?.trim() || "Untitled Campaign";
@@ -340,6 +344,10 @@ export async function fetchMetaCampaignRows({
       responseRows.push(row);
     }
   });
+
+  console.info(
+    `[meta-campaigns] accountId=${accountId} startDate=${startDate} endDate=${endDate} rawRows=${rows.length} reportableRows=${responseRows.length} minSpend=1 totalSpend=${totalSpend.toFixed(2)} maxSpend=${maxSpend.toFixed(2)}`
+  );
 
   return responseRows;
 }
