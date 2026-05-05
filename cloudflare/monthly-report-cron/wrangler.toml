@@ -29,7 +29,9 @@ queue = "monthly-report-queue"
 
 [[queues.consumers]]
 queue = "monthly-report-queue"
-max_batch_size = 3
-max_batch_timeout = 30
+max_batch_size = 1
+max_batch_timeout = 10
+max_concurrency = 1
 max_retries = 3
+retry_delay = 60
 dead_letter_queue = "monthly-report-dead-letter-queue"

@@ -1,11 +1,16 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+
 import { Resend } from "resend";
 
 import type { MonthlyReportAccount } from "@/src/lib/notion/get-monthly-report-accounts";
 
 const DEFAULT_TEST_RECIPIENT = "ava@locus-t.com.my";
 const DEFAULT_FROM_ADDRESS = "Locus-T <no-reply@locus-t.com.my>";
+const EMAIL_LOGO_CONTENT_ID = "locus-t-logo";
 
 let resendClient: Resend | null = null;
+let cachedLogoBase64: string | null | undefined;
 
 export interface SendMonthlyReportEmailInput {
   account: MonthlyReportAccount;
@@ -53,23 +58,29 @@ export async function sendMonthlyReportEmail(
   }
 
   try {
+    const attachments: Array<{ filename: string; content: string; contentId?: string }> = [
+      {
+        filename: buildAttachmentFilename(input.account.clientName, input.reportMonthLabel),
+        content: input.pdfBuffer.toString("base64"),
+      },
+    ];
+    const logoBase64 = readLogoBase64();
+
+    if (logoBase64) {
+      attachments.unshift({
+        filename: "locus-t-logo.png",
+        content: logoBase64,
+        contentId: EMAIL_LOGO_CONTENT_ID,
+      });
+    }
+
     const response = await resend.emails.send({
       from: fromAddress,
       to: [recipientEmail],
       cc: ccEmail ? [ccEmail] : undefined,
       subject,
-      html: buildEmailHtml({
-        recipientEmail,
-        clientName: input.account.clientName,
-        reportMonthLabel: input.reportMonthLabel,
-        includePicNote: Boolean(input.account.picEmail),
-      }),
-      attachments: [
-        {
-          filename: buildAttachmentFilename(input.account.clientName, input.reportMonthLabel),
-          content: input.pdfBuffer.toString("base64"),
-        },
-      ],
+      html: buildEmailHtml(),
+      attachments,
     });
 
     if (response.error) {
@@ -110,40 +121,33 @@ function buildAttachmentFilename(clientName: string, reportMonthLabel: string): 
   return `Monthly Report-${sanitizeFilenameSegment(clientName)}-${sanitizeFilenameSegment(reportMonthLabel)}.pdf`;
 }
 
-function buildEmailHtml(input: {
-  recipientEmail: string;
-  clientName: string;
-  reportMonthLabel: string;
-  includePicNote: boolean;
-}): string {
-  const greeting = resolveGreeting(input.recipientEmail);
-
+function buildEmailHtml(): string {
   return `
     <div style="font-family: Arial, sans-serif; color: #111827; line-height: 1.7; font-size: 15px;">
-      <p>${escapeHtml(greeting)}</p>
-      <p>Please find attached the <strong>Overall Monthly Report</strong> for <strong>${escapeHtml(input.clientName)}</strong>.</p>
-      <p>This report covers <strong>${escapeHtml(input.reportMonthLabel)}</strong> and has been exported directly from the reporting system as a PDF generated from the report screenshot for your review.</p>
-      <p>${input.includePicNote ? "The relevant person in charge has been copied for visibility and follow-up if needed." : "Please let us know if you would like any clarification or a follow-up review session."}</p>
-      <p>Thank you.</p>
-      <p>Best regards,<br/>Locus-T</p>
+      <div style="text-align:center;margin:0 0 22px;"><img src="cid:${EMAIL_LOGO_CONTENT_ID}" width="180" alt="LOCUS-T" style="display:inline-block;width:180px;max-width:70%;height:auto;border:0;outline:none;text-decoration:none;" /></div>
+      <p>Dear Valued Client,</p>
+      <p>Please find your Digital Ads Campaign Performance Report for this month attached in the PDF below.</p>
+      <p>Best regards,<br/><strong>LOCUS-T</strong></p>
+      <p style="margin-top:24px;color:#6b7280;font-size:12px;line-height:1.5;">
+        This report was generated automatically from the LOCUS-T reporting dashboard.<br/>
+        You received this email because LOCUS-T scheduled it to be sent to you regularly.
+      </p>
     </div>
   `.trim();
 }
 
-function resolveGreeting(recipientEmail: string): string {
-  const localPart = recipientEmail.split("@")[0]?.trim() ?? "";
-  const cleaned = localPart.replace(/[._-]+/g, " ").trim();
-
-  if (!cleaned) {
-    return "Dear Team,";
+function readLogoBase64(): string | null {
+  if (cachedLogoBase64 !== undefined) {
+    return cachedLogoBase64;
   }
 
-  const words = cleaned
-    .split(/\s+/)
-    .filter(Boolean)
-    .map((word) => `${word.charAt(0).toUpperCase()}${word.slice(1).toLowerCase()}`);
+  try {
+    cachedLogoBase64 = readFileSync(join(process.cwd(), "public", "locus-t-logo.png")).toString("base64");
+  } catch {
+    cachedLogoBase64 = null;
+  }
 
-  return words.length > 0 ? `Dear ${words.join(" ")},` : "Dear Team,";
+  return cachedLogoBase64;
 }
 
 function slugify(value: string): string {
@@ -161,15 +165,6 @@ function sanitizeFilenameSegment(value: string): string {
   const normalizedWhitespace = trimmed.replace(/\s+/g, " ").trim();
 
   return normalizedWhitespace || slugify(value);
-}
-
-function escapeHtml(value: string): string {
-  return value
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;");
 }
 
 function readRequiredEnv(name: string): string {
