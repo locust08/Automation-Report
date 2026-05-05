@@ -7,6 +7,7 @@ export interface MonthlyReportTargetConfig {
   googleAccountId?: string | null;
   metaAccountId?: string | null;
   recipientEmail?: string | null;
+  ccEmail?: string | null;
   reportType?: string | null;
   platform?: string | null;
 }
@@ -83,7 +84,7 @@ function toMonthlyReportAccount(
     googleAdsAccountId: googleAccountId,
     metaAdsAccountId: metaAccountId,
     clientEmail: target.recipientEmail?.trim() || null,
-    picEmail: null,
+    picEmail: target.ccEmail?.trim() || null,
     status: "Active",
     monthlyReportEnabled: true,
     platform: target.platform?.trim() || (metaAccountId && !googleAccountId ? "Meta" : "Google"),

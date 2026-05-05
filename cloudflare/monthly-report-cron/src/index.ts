@@ -573,20 +573,56 @@ async function resolveTargets(
 }> {
   if (Array.isArray(input.accounts) && input.accounts.length > 0) {
     const range = resolveDateRange(input);
+    const payload = await resolveTargetsFromVercel(env, {
+      forceTestMode: testMode,
+      overrideTargets: input.accounts,
+    }).catch((error) => {
+      console.error("[monthly-report-automation] Vercel target enrichment failed", formatError(error));
+      return { targets: input.accounts ?? [] };
+    });
+
     return {
       ...range,
-      targets: normalizeTargets(input.accounts),
+      targets: normalizeTargets(payload.targets ?? []),
     };
   }
 
-  const endpoint = env.VERCEL_REPORT_TARGETS_ENDPOINT?.trim() || `${trimTrailingSlash(env.VERCEL_APP_BASE_URL)}/api/report-pdf/targets`;
+  const payload = await resolveTargetsFromVercel(env, {
+    forceTestMode: testMode,
+  });
+
+  return {
+    startDate: payload.startDate ?? resolveDateRange(input).startDate,
+    endDate: payload.endDate ?? resolveDateRange(input).endDate,
+    reportMonthKey: payload.reportMonthKey ?? resolveDateRange(input).reportMonthKey,
+    reportMonthLabel: payload.reportMonthLabel ?? resolveDateRange(input).reportMonthLabel,
+    targets: normalizeTargets(payload.targets ?? []),
+  };
+}
+
+async function resolveTargetsFromVercel(
+  env: Env,
+  body: {
+    forceTestMode: boolean;
+    overrideTargets?: ReportTarget[];
+  }
+): Promise<{
+  startDate?: string;
+  endDate?: string;
+  reportMonthKey?: string;
+  reportMonthLabel?: string;
+  targets?: ReportTarget[];
+}> {
+  const endpoint =
+    env.VERCEL_REPORT_TARGETS_ENDPOINT?.trim() ||
+    `${trimTrailingSlash(env.VERCEL_APP_BASE_URL)}/api/report-pdf/targets`;
   const response = await fetch(endpoint, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${readRequired(env.REPORT_AUTOMATION_SECRET, "REPORT_AUTOMATION_SECRET")}`,
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({ forceTestMode: testMode }),
+    body: JSON.stringify(body),
   });
 
   const payload = (await response.json().catch(() => null)) as
@@ -604,13 +640,7 @@ async function resolveTargets(
     throw new Error(`Vercel target resolution failed with status ${response.status}.`);
   }
 
-  return {
-    startDate: payload.startDate ?? resolveDateRange(input).startDate,
-    endDate: payload.endDate ?? resolveDateRange(input).endDate,
-    reportMonthKey: payload.reportMonthKey ?? resolveDateRange(input).reportMonthKey,
-    reportMonthLabel: payload.reportMonthLabel ?? resolveDateRange(input).reportMonthLabel,
-    targets: normalizeTargets(payload.targets ?? []),
-  };
+  return payload;
 }
 
 function resolveDateRange(input: CreateJobRequest): {

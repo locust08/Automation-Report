@@ -7,6 +7,7 @@ import {
   type MonthlyReportTargetConfig,
 } from "@/src/lib/cron/monthly-report-targets";
 import { resolveMonthlyReportDateRange } from "@/src/lib/cron/monthly-report-date";
+import { resolveMonthlyReportTargetsFromNotion } from "@/src/lib/notion/get-monthly-report-accounts";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -32,10 +33,13 @@ export async function POST(request: Request): Promise<NextResponse> {
       ? body.overrideTargets
       : parseTargetList(typeof body?.overrideTargetsJson === "string" ? body.overrideTargetsJson : undefined);
   const dateRange = resolveMonthlyReportDateRange();
-  const targets = getMonthlyReportTargets({
-    testModeOverride: forceTestMode,
-    rawTargetsOverride: overrideTargets.length > 0 ? overrideTargets : undefined,
-  })
+  const resolvedTargets =
+    overrideTargets.length > 0
+      ? await resolveMonthlyReportTargetsFromNotion(overrideTargets)
+      : getMonthlyReportTargets({
+          testModeOverride: forceTestMode,
+        });
+  const targets = resolvedTargets
     .filter((target) => target.isValid)
     .map((target) => ({
       notionPageId: target.notionPageId,

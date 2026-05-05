@@ -15,6 +15,7 @@ export interface MonthlyReportAccount {
   reportType: string | null;
   isValid: boolean;
   skipReason: string | null;
+  clientRelationPageIds?: string[];
 }
 
 export interface MonthlyReportAccountReadResult {
@@ -23,6 +24,16 @@ export interface MonthlyReportAccountReadResult {
   accounts: MonthlyReportAccount[];
   skippedAccounts: MonthlyReportAccount[];
   sampleProperties: Record<string, unknown> | null;
+}
+
+export interface MonthlyReportTargetLookupInput {
+  clientName?: string | null;
+  googleAccountId?: string | null;
+  metaAccountId?: string | null;
+  recipientEmail?: string | null;
+  ccEmail?: string | null;
+  reportType?: string | null;
+  platform?: string | null;
 }
 
 export async function getMonthlyReportAccounts(): Promise<MonthlyReportAccountReadResult> {
@@ -91,6 +102,190 @@ export async function getMonthlyReportAccounts(): Promise<MonthlyReportAccountRe
   }
 }
 
+export async function resolveMonthlyReportTargetsFromNotion(
+  targets: MonthlyReportTargetLookupInput[]
+): Promise<MonthlyReportAccount[]> {
+  if (targets.length === 0) {
+    return [];
+  }
+
+  const allAccounts = await getAllMonthlyReportAccounts();
+  const accountsByGoogleId = new Map(
+    allAccounts
+      .filter((account) => Boolean(account.googleAdsAccountId))
+      .map((account) => [account.googleAdsAccountId as string, account])
+  );
+  const accountsByMetaId = new Map(
+    allAccounts
+      .filter((account) => Boolean(account.metaAdsAccountId))
+      .map((account) => [account.metaAdsAccountId as string, account])
+  );
+  const relatedClientNameCache = new Map<string, Promise<string | null>>();
+
+  return Promise.all(targets.map(async (target, index) => {
+    const googleAccountId = normalizeOptionalAccountId(
+      getStringValue(target.googleAccountId),
+      "google"
+    );
+    const metaAccountId = normalizeOptionalAccountId(getStringValue(target.metaAccountId), "meta");
+    const matchedAccounts = [
+      googleAccountId ? accountsByGoogleId.get(googleAccountId) : null,
+      metaAccountId ? accountsByMetaId.get(metaAccountId) : null,
+    ].filter((account): account is MonthlyReportAccount => Boolean(account));
+    const matchedAccount = matchedAccounts[0] ?? null;
+    const clientName =
+      (await resolveClientNameFromRelations(matchedAccounts, relatedClientNameCache)) ??
+      resolveClientNameFromMatches(matchedAccounts) ??
+      target.clientName?.trim() ??
+      googleAccountId ??
+      metaAccountId ??
+      `Monthly Report Target ${index + 1}`;
+
+    return {
+      notionPageId: matchedAccount?.notionPageId ?? `manual-monthly-report-target-${index + 1}`,
+      clientName,
+      googleAdsAccountId: googleAccountId ?? matchedAccount?.googleAdsAccountId ?? null,
+      metaAdsAccountId: metaAccountId ?? matchedAccount?.metaAdsAccountId ?? null,
+      clientEmail: target.recipientEmail?.trim() || matchedAccount?.clientEmail || null,
+      picEmail: target.ccEmail?.trim() || matchedAccount?.picEmail || null,
+      status: matchedAccount?.status ?? null,
+      monthlyReportEnabled: matchedAccount?.monthlyReportEnabled ?? true,
+      platform:
+        target.platform?.trim() ||
+        matchedAccount?.platform ||
+        (metaAccountId && !googleAccountId ? "Meta" : googleAccountId && !metaAccountId ? "Google" : "Google + Meta"),
+      reportType: target.reportType?.trim() || matchedAccount?.reportType || "Overall",
+      isValid: Boolean(googleAccountId || metaAccountId || matchedAccount?.isValid),
+      skipReason:
+        googleAccountId || metaAccountId || matchedAccount?.isValid ? null : "Missing account ID.",
+    };
+  }));
+}
+
+async function getAllMonthlyReportAccounts(): Promise<MonthlyReportAccount[]> {
+  const credentials = getCredentials();
+  const notionToken = process.env.NOTION_TOKEN?.trim() || credentials.notionAccessToken || undefined;
+  const databaseId =
+    process.env.NOTION_AD_ACCOUNTS_DATABASE_ID?.trim() ||
+    process.env.NOTION_DATABASE_ID?.trim() ||
+    credentials.notionDatabaseId ||
+    "";
+
+  if (!notionToken || !databaseId) {
+    return [];
+  }
+
+  const notion = new Client({
+    auth: notionToken,
+  });
+
+  try {
+    const database = await notion.databases.retrieve({
+      database_id: databaseId,
+    });
+    const dataSourceId = "data_sources" in database ? database.data_sources?.[0]?.id : undefined;
+
+    if (!dataSourceId) {
+      return [];
+    }
+
+    const results: unknown[] = [];
+    let startCursor: string | undefined;
+    do {
+      const response = await notion.dataSources.query({
+        data_source_id: dataSourceId,
+        start_cursor: startCursor,
+      });
+      results.push(...response.results);
+      startCursor = response.has_more ? response.next_cursor ?? undefined : undefined;
+    } while (startCursor);
+
+    return results
+      .map((row) => mapMonthlyReportAccount(row))
+      .filter((account): account is MonthlyReportAccount => Boolean(account))
+      .filter((account) => account.isValid);
+  } catch (error) {
+    console.error("Monthly report Notion target enrichment failed", error);
+    return [];
+  }
+}
+
+function resolveClientNameFromMatches(accounts: MonthlyReportAccount[]): string | null {
+  const names = Array.from(
+    new Set(accounts.map((account) => account.clientName.trim()).filter(Boolean))
+  );
+
+  if (names.length === 0) {
+    return null;
+  }
+
+  return names.join(" / ");
+}
+
+async function resolveClientNameFromRelations(
+  accounts: MonthlyReportAccount[],
+  cache: Map<string, Promise<string | null>>
+): Promise<string | null> {
+  const relationPageIds = Array.from(
+    new Set(accounts.flatMap((account) => account.clientRelationPageIds ?? []))
+  );
+
+  if (relationPageIds.length === 0) {
+    return null;
+  }
+
+  const names = (
+    await Promise.all(
+      relationPageIds.map((pageId) => {
+        let pending = cache.get(pageId);
+        if (!pending) {
+          pending = fetchClientRelationPageName(pageId);
+          cache.set(pageId, pending);
+        }
+        return pending;
+      })
+    )
+  ).filter((name): name is string => Boolean(name));
+
+  return names.length > 0 ? Array.from(new Set(names)).join(" / ") : null;
+}
+
+async function fetchClientRelationPageName(pageId: string): Promise<string | null> {
+  const credentials = getCredentials();
+  const notionToken = process.env.NOTION_TOKEN?.trim() || credentials.notionAccessToken || undefined;
+
+  if (!notionToken) {
+    return null;
+  }
+
+  const notion = new Client({
+    auth: notionToken,
+  });
+
+  try {
+    const page = await notion.pages.retrieve({ page_id: pageId });
+    const properties =
+      "properties" in page && page.properties && typeof page.properties === "object"
+        ? (page.properties as Record<string, NotionPropertyValue | undefined>)
+        : null;
+
+    if (!properties) {
+      return null;
+    }
+
+    return getPropertyValue(properties, [
+      "Client Name",
+      "Name",
+      "Client",
+      "Account Name",
+      "client name",
+    ]);
+  } catch (error) {
+    console.error("Monthly report Notion client relation lookup failed", error);
+    return null;
+  }
+}
+
 function buildResultFromRows(results: unknown[]): MonthlyReportAccountReadResult {
   console.log("Raw results count:", results.length);
 
@@ -154,11 +349,15 @@ function mapMonthlyReportAccount(row: unknown): MonthlyReportAccount | null {
       "Google Account ID",
       "Google Ads Customer ID",
       "Google Ads Account",
+      "Account ID",
+      "ID",
       "google ads account id",
       "google ads id",
       "google account id",
       "google ads customer id",
       "google ads account",
+      "account id",
+      "id",
     ]),
     "google"
   );
@@ -170,12 +369,16 @@ function mapMonthlyReportAccount(row: unknown): MonthlyReportAccount | null {
       "Facebook Ads Account ID",
       "Facebook Account ID",
       "Meta Ads Account",
+      "Account ID",
+      "ID",
       "meta ads account id",
       "meta ads id",
       "meta account id",
       "facebook ads account id",
       "facebook account id",
       "meta ads account",
+      "account id",
+      "id",
     ]),
     "meta"
   );
@@ -184,6 +387,7 @@ function mapMonthlyReportAccount(row: unknown): MonthlyReportAccount | null {
     googleAdsAccountId ??
     metaAdsAccountId ??
     `Notion ${notionPageId.slice(0, 8)}`;
+  const clientRelationPageIds = getPropertyRelationIds(properties, ["Client", "client"]);
   const platform = getPropertyValue(properties, ["Platform", "platform"]);
   const reportType = getPropertyValue(properties, [
     "Platform Report Type",
@@ -215,6 +419,7 @@ function mapMonthlyReportAccount(row: unknown): MonthlyReportAccount | null {
     reportType,
     isValid,
     skipReason: isValid ? null : "Missing both Google Ads ID and Meta Ads ID.",
+    clientRelationPageIds,
   };
 }
 
@@ -246,6 +451,21 @@ function getBooleanPropertyValue(
   }
 
   return false;
+}
+
+function getPropertyRelationIds(
+  properties: Record<string, NotionPropertyValue | undefined>,
+  aliases: string[]
+): string[] {
+  for (const alias of aliases) {
+    const property = findProperty(properties, alias);
+    const ids = getNotionPropertyRelationIds(property);
+    if (ids.length > 0) {
+      return ids;
+    }
+  }
+
+  return [];
 }
 
 function findProperty(
@@ -318,6 +538,23 @@ function getNotionPropertyBoolean(property: NotionPropertyValue | undefined): bo
   }
 
   return null;
+}
+
+function getNotionPropertyRelationIds(property: NotionPropertyValue | undefined): string[] {
+  if (!property || typeof property !== "object" || !("type" in property) || property.type !== "relation") {
+    return [];
+  }
+
+  const relation = getObjectField(property, "relation");
+  if (!Array.isArray(relation)) {
+    return [];
+  }
+
+  return relation
+    .map((item) =>
+      item && typeof item === "object" && "id" in item ? getStringValue(item.id) : null
+    )
+    .filter((id): id is string => Boolean(id));
 }
 
 function asRichTextArray(value: unknown): Array<{ plain_text?: string | null }> | undefined {
@@ -476,6 +713,10 @@ type NotionPropertyValue =
   | {
       type?: "unique_id";
       unique_id?: { number?: number | null } | null;
+    }
+  | {
+      type?: "relation";
+      relation?: Array<{ id?: string | null }>;
     }
   | {
       type?: "formula";
