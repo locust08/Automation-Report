@@ -101,7 +101,7 @@ export function ReportLoadingScreen({
     <section
       className={cn(
         fullPage
-          ? "relative isolate flex h-dvh min-h-dvh items-center justify-center overflow-hidden bg-[url('/background.png'),url('/backround.png')] bg-cover bg-center bg-no-repeat px-3 py-3 sm:px-4 sm:py-4"
+          ? "relative isolate flex h-dvh min-h-dvh items-center justify-center overflow-hidden bg-[url('/background.png')] bg-cover bg-center bg-no-repeat px-3 py-3 sm:px-4 sm:py-4"
           : "px-5 py-8 sm:px-8 sm:py-10 lg:px-12 lg:py-12",
         fullPage
           ? "before:pointer-events-none before:absolute before:inset-0 before:bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.18),transparent_34%),linear-gradient(180deg,rgba(0,0,0,0.15),rgba(0,0,0,0.24))] before:content-['']"
@@ -295,7 +295,7 @@ export function ReportSuccessScreen({
     <section
       className={cn(
         fullPage
-          ? "relative isolate flex h-dvh min-h-dvh items-center justify-center overflow-hidden bg-[url('/background.png'),url('/backround.png')] bg-cover bg-center bg-no-repeat px-3 py-3 sm:px-4 sm:py-4"
+          ? "relative isolate flex h-dvh min-h-dvh items-center justify-center overflow-hidden bg-[url('/background.png')] bg-cover bg-center bg-no-repeat px-3 py-3 sm:px-4 sm:py-4"
           : "px-5 py-8 sm:px-8 sm:py-10 lg:px-12 lg:py-12",
         fullPage
           ? "before:pointer-events-none before:absolute before:inset-0 before:bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.18),transparent_34%),linear-gradient(180deg,rgba(0,0,0,0.15),rgba(0,0,0,0.24))] before:content-['']"
@@ -427,7 +427,7 @@ export function ReportErrorScreen({
     <section
       className={cn(
         fullPage
-          ? "relative isolate flex min-h-screen items-center justify-center overflow-hidden bg-[url('/background.png'),url('/backround.png')] bg-cover bg-center bg-no-repeat px-4 py-8"
+          ? "relative isolate flex min-h-screen items-center justify-center overflow-hidden bg-[url('/background.png')] bg-cover bg-center bg-no-repeat px-4 py-8"
           : "px-5 py-8 sm:px-8 sm:py-10 lg:px-12 lg:py-12",
         fullPage
           ? "before:pointer-events-none before:absolute before:inset-0 before:bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.18),transparent_34%),linear-gradient(180deg,rgba(0,0,0,0.15),rgba(0,0,0,0.24))] before:content-['']"

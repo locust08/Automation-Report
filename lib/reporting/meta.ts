@@ -6,7 +6,7 @@ import {
   normalizeAudienceLocationLabel,
   sortAudienceItems,
 } from "@/lib/reporting/audience-breakdown";
-import { emptyCampaignRow } from "@/lib/reporting/metrics";
+import { emptyCampaignRow, hasReportableCampaignSpend } from "@/lib/reporting/metrics";
 import {
   CampaignRow,
   MetaPreviewBlockDiagnostic,
@@ -26,7 +26,6 @@ interface MetaFetchInput {
   accessToken: string;
   startDate: string;
   endDate: string;
-  activeCampaignIds?: Set<string>;
 }
 
 interface MetaAccountNameInput {
@@ -281,35 +280,11 @@ const META_PREVIEW_DEMOGRAPHIC_FIELDS = [
   "cost_per_action_type",
 ] as const;
 
-export async function fetchMetaActiveCampaignIds({
-  accountId,
-  accessToken,
-}: MetaAccountNameInput): Promise<Set<string>> {
-  const params = new URLSearchParams({
-    access_token: accessToken,
-    limit: "200",
-    fields: ["id", "status", "effective_status"].join(","),
-  });
-
-  const rows = await fetchMetaCollection<MetaCampaignRow>(
-    `https://graph.facebook.com/v22.0/act_${accountId}/campaigns?${params.toString()}`
-  );
-
-  const activeCampaignIds = new Set<string>();
-  rows.forEach((item) => {
-    if (item.id && isActiveMetaCampaign(item)) {
-      activeCampaignIds.add(item.id);
-    }
-  });
-  return activeCampaignIds;
-}
-
 export async function fetchMetaCampaignRows({
   accountId,
   accessToken,
   startDate,
   endDate,
-  activeCampaignIds,
 }: MetaFetchInput): Promise<CampaignRow[]> {
   const params = new URLSearchParams({
     access_token: accessToken,
@@ -334,14 +309,9 @@ export async function fetchMetaCampaignRows({
   );
 
   const responseRows: CampaignRow[] = [];
-  const filterToActiveCampaigns = activeCampaignIds !== undefined;
 
   rows.forEach((item) => {
     const campaignId = item.campaign_id?.trim();
-    if (filterToActiveCampaigns && (!campaignId || !activeCampaignIds?.has(campaignId))) {
-      return;
-    }
-
     const impressions = toNumber(item.impressions);
     const clicks = toNumber(item.clicks);
     const spend = toNumber(item.spend);
@@ -366,7 +336,9 @@ export async function fetchMetaCampaignRows({
     row.avgCpc = clicks > 0 ? spend / clicks : 0;
     row.conversions = resultMetric.value;
 
-    responseRows.push(row);
+    if (hasReportableCampaignSpend(row)) {
+      responseRows.push(row);
+    }
   });
 
   return responseRows;
@@ -378,7 +350,7 @@ export async function fetchMetaAudienceBreakdown({
   startDate,
   endDate,
 }: MetaFetchInput): Promise<AudienceClickBreakdownResponse> {
-  const [age, gender, country, region, city] = await Promise.all([
+  const [age, gender, country, region] = await Promise.all([
     fetchMetaAudienceBreakdownDimension({
       accountId,
       accessToken,
@@ -407,13 +379,6 @@ export async function fetchMetaAudienceBreakdown({
       endDate,
       dimension: "region",
     }),
-    fetchMetaAudienceBreakdownDimension({
-      accountId,
-      accessToken,
-      startDate,
-      endDate,
-      dimension: "city",
-    }),
   ]);
 
   return {
@@ -422,7 +387,7 @@ export async function fetchMetaAudienceBreakdown({
     location: {
       country,
       region,
-      city,
+      city: [],
     },
   };
 }
@@ -916,7 +881,7 @@ async function fetchMetaAudienceBreakdownDimension(input: {
       startDate: input.startDate,
       endDate: input.endDate,
       breakdowns: [input.dimension],
-      fields: [input.dimension, "clicks"],
+      fields: ["clicks"],
     });
 
     const items = sortAudienceItems(
@@ -1475,10 +1440,6 @@ function extractPreviewUrl(body: string | undefined): string | null {
   }
 
   return null;
-}
-
-function isActiveMetaCampaign(item: MetaCampaignRow): boolean {
-  return item.status === "ACTIVE" || item.effective_status === "ACTIVE";
 }
 
 function normalizeCampaignType(objective: string | undefined, campaignName: string): string {

@@ -112,6 +112,14 @@ export function ReportFiltersBar({
     );
   }
 
+  function updateSearchRowAccountId(key: string, value: string) {
+    const detected = detectAccountIdInputPlatform(value);
+    updateSearchRow(key, {
+      accountId: detected?.accountId ?? value,
+      ...(detected?.platform ? { platform: detected.platform } : {}),
+    });
+  }
+
   function removeSearchRow(key: string) {
     setSearchEntries((prev) => {
       const filtered = prev.filter((entry) => entry.key !== key);
@@ -159,7 +167,7 @@ export function ReportFiltersBar({
               <IdCardIcon className="size-4 text-muted-foreground" />
               <Input
                 value={entry.accountId}
-                onChange={(event) => updateSearchRow(entry.key, { accountId: event.target.value })}
+                onChange={(event) => updateSearchRowAccountId(entry.key, event.target.value)}
                 className="h-10 border-0 shadow-none focus-visible:ring-0"
                 placeholder="Account ID"
               />
@@ -414,6 +422,42 @@ function classifyAccountIdToken(token: string): {
   }
 
   return { platform: "meta", accountId: trimmed };
+}
+
+function detectAccountIdInputPlatform(value: string): {
+  platform: SearchPlatform;
+  accountId: string;
+} | null {
+  const trimmed = value.trim();
+  const lowered = trimmed.toLowerCase();
+  const digitsOnly = trimmed.replace(/\D/g, "");
+  const prefixed = /^(meta|m|google|g)\s*:\s*(.+)$/i.exec(trimmed);
+
+  if (prefixed) {
+    const prefix = prefixed[1].toLowerCase();
+    return {
+      platform: prefix === "google" || prefix === "g" ? "google" : "meta",
+      accountId: prefixed[2].trim(),
+    };
+  }
+
+  if (lowered.startsWith("act_")) {
+    return { platform: "meta", accountId: trimmed };
+  }
+
+  if (/^\d{3}-\d{3}-\d{4}$/.test(trimmed)) {
+    return { platform: "google", accountId: trimmed };
+  }
+
+  if (/^[\d\s-]+$/.test(trimmed) && digitsOnly.length === 10) {
+    return { platform: "google", accountId: trimmed };
+  }
+
+  if (/^[\d\s-]+$/.test(trimmed) && digitsOnly.length >= 12) {
+    return { platform: "meta", accountId: trimmed };
+  }
+
+  return null;
 }
 
 function dedupeSearchEntries(

@@ -27,7 +27,7 @@ export function HomePageClient() {
   const previewHref = `/preview${accountId.trim() ? `?accountId=${encodeURIComponent(accountId.trim())}` : ""}`;
 
   return (
-    <main className="flex min-h-screen items-center justify-center bg-[url('/background.png'),url('/backround.png')] bg-cover bg-center bg-no-repeat px-4 py-8">
+    <main className="flex min-h-screen items-center justify-center bg-[url('/background.png')] bg-cover bg-center bg-no-repeat px-4 py-8">
       <div className="w-full max-w-2xl rounded-3xl border border-white/25 bg-black/40 p-6 text-white backdrop-blur-sm sm:p-8">
         <h1 className="text-3xl font-semibold sm:text-4xl md:text-5xl">
           META &amp; GOOGLE ADS

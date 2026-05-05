@@ -19,11 +19,16 @@ import {
   fetchGoogleTopKeywordRows,
   isGoogleAdsAccessPathError,
 } from "@/lib/reporting/google";
-import { buildGroups, computeDelta, emptyCampaignRow, mergeCampaignRows } from "@/lib/reporting/metrics";
+import {
+  MIN_REPORTING_CAMPAIGN_SPEND,
+  buildGroups,
+  computeDelta,
+  emptyCampaignRow,
+  mergeCampaignRows,
+} from "@/lib/reporting/metrics";
 import {
   fetchMetaAudienceBreakdown,
   fetchMetaAccountName,
-  fetchMetaActiveCampaignIds,
   fetchMetaCampaignRows,
   fetchMetaPreviewData,
 } from "@/lib/reporting/meta";
@@ -256,13 +261,15 @@ export async function getOverallReport(input: OverallInput): Promise<OverallRepo
     ...googleAudienceBreakdownResult.warnings
   );
 
-  if (
-    resolvedAccountIds.googleAccountIds.length > 0 &&
-    googleCurrentResult.rows.length === 0 &&
-    googlePreviousResult.rows.length === 0
-  ) {
+  if (resolvedAccountIds.metaAccountIds.length > 0 && metaCurrentResult.rows.length === 0) {
     warnings.push(
-      "Google Ads returned no campaign rows for the selected account and date range. If this account has active campaigns, verify that the selected Access Path can read them and that the campaigns are enabled."
+      `Meta Ads returned no campaign rows with spend greater than RM${MIN_REPORTING_CAMPAIGN_SPEND} for the selected account and date range. If this account spent during the period, verify the account ID and token permissions.`
+    );
+  }
+
+  if (resolvedAccountIds.googleAccountIds.length > 0 && googleCurrentResult.rows.length === 0) {
+    warnings.push(
+      `Google Ads returned no campaign rows with spend greater than RM${MIN_REPORTING_CAMPAIGN_SPEND} for the selected account and date range. If this account spent during the period, verify that the selected Access Path can read it.`
     );
   }
 
@@ -302,7 +309,7 @@ export async function getOverallReport(input: OverallInput): Promise<OverallRepo
 
   if (campaignGroups.length === 0 && warnings.length === 0) {
     warnings.push(
-      "No campaign rows were returned for the selected accounts and date range. Verify account IDs and API access permissions."
+      `No campaign rows with spend greater than RM${MIN_REPORTING_CAMPAIGN_SPEND} were returned for the selected accounts and date range. Verify account IDs and API access permissions.`
     );
   }
 
@@ -886,16 +893,11 @@ async function tryFetchMeta(
   }
 
   try {
-    const activeCampaignIds = await fetchMetaActiveCampaignIds({
-      accountId,
-      accessToken,
-    });
     const rows = await fetchMetaCampaignRows({
       accountId,
       accessToken,
       startDate,
       endDate,
-      activeCampaignIds,
     });
     return { rows, warnings: [] };
   } catch (error) {

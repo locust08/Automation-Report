@@ -6,7 +6,7 @@ import { ChevronDownIcon, ChevronLeftIcon, ChevronRightIcon, ExternalLinkIcon } 
 
 import { Button } from "@/components/ui/button";
 import { formatCompactNumber } from "@/lib/reporting/format";
-import { emptyCampaignRow, mergeCampaignRows } from "@/lib/reporting/metrics";
+import { emptyCampaignRow, hasReportableCampaignSpend, mergeCampaignRows } from "@/lib/reporting/metrics";
 import { CampaignGroup, CampaignRow, Platform } from "@/lib/reporting/types";
 
 const ROWS_PER_PAGE = 8;
@@ -346,7 +346,7 @@ function CampaignMobileCard({
 }
 
 function withPositiveSpend(rows: CampaignRow[]): CampaignRow[] {
-  return rows.filter((row) => row.spend > 0);
+  return rows.filter(hasReportableCampaignSpend);
 }
 
 function buildTotalsFromRows(rows: CampaignRow[], fallback: CampaignRow): CampaignRow {

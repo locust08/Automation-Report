@@ -1,4 +1,4 @@
-import { emptyCampaignRow } from "@/lib/reporting/metrics";
+import { emptyCampaignRow, hasReportableCampaignSpend } from "@/lib/reporting/metrics";
 import {
   addSourceToAudienceItems,
   aggregateAudienceItems,
@@ -539,7 +539,7 @@ export async function fetchGoogleCampaignRows({
       metrics.conversions,
       metrics.cost_micros
     FROM campaign
-    WHERE campaign.status = 'ENABLED'
+    WHERE campaign.status != 'REMOVED'
       AND segments.date BETWEEN '${startDate}' AND '${endDate}'
   `;
 
@@ -568,7 +568,7 @@ export async function fetchGoogleCampaignRows({
           metrics.engagements,
           metrics.interactions
         FROM campaign
-        WHERE campaign.status = 'ENABLED'
+        WHERE campaign.status != 'REMOVED'
           AND segments.date BETWEEN '${startDate}' AND '${endDate}'
       `,
       baseSelect,
@@ -576,7 +576,6 @@ export async function fetchGoogleCampaignRows({
   });
 
   return results
-    .filter((result) => result.campaign?.status === "ENABLED")
     .map((result) => {
       const campaignName = result.campaign?.name?.trim() || "Untitled Campaign";
       const channelType = result.campaign?.advertisingChannelType || "UNKNOWN";
@@ -608,7 +607,8 @@ export async function fetchGoogleCampaignRows({
       row.youtubeEarnedShares = toNumber(result.metrics?.interactions);
 
       return row;
-    });
+    })
+    .filter(hasReportableCampaignSpend);
 }
 
 export async function fetchGoogleAudienceClickBreakdown({
@@ -1261,22 +1261,6 @@ function buildGoogleSourceItems(input: {
       return left.label.localeCompare(right.label);
     });
 }
-
-function resolveGoogleGeoTargetLabel(
-  resourceName: string | null,
-  geoTargetsByResourceName: Map<string, GoogleAdsResult["geoTargetConstant"]>
-): string | null {
-  if (!resourceName) {
-    return null;
-  }
-
-  const target = geoTargetsByResourceName.get(resourceName);
-  return normalizeAudienceLocationLabel(
-    target?.name?.trim() || target?.canonicalName?.trim(),
-    "Unknown Location"
-  );
-}
-
 
 export async function fetchGooglePreviewHierarchy({
   customerId,

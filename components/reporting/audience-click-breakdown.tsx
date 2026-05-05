@@ -28,7 +28,7 @@ export function AudienceClickBreakdownSection({
 }: {
   breakdown: AudienceClickBreakdownResponse;
 }) {
-  const [activeLocationTab, setActiveLocationTab] = useState<LocationTabKey>("region");
+  const [selectedLocationTab, setSelectedLocationTab] = useState<LocationTabKey | null>(null);
   const [chartType, setChartType] = useState<ChartType>("bar");
   const [unknownFilterMode, setUnknownFilterMode] = useState<UnknownFilterMode>("include");
   const includeUnknown = unknownFilterMode === "include";
@@ -65,6 +65,9 @@ export function AudienceClickBreakdownSection({
       ),
     [breakdown.location.city, includeUnknown]
   );
+
+  const defaultLocationTab = shouldUseCityLocationTab(regionRows, cityRows) ? "city" : "region";
+  const activeLocationTab = selectedLocationTab ?? defaultLocationTab;
 
   const locationRows = useMemo(() => {
     if (activeLocationTab === "country") {
@@ -115,7 +118,7 @@ export function AudienceClickBreakdownSection({
                 <button
                   key={tab.key}
                   type="button"
-                  onClick={() => setActiveLocationTab(tab.key)}
+                  onClick={() => setSelectedLocationTab(tab.key)}
                   className={`rounded-xl border px-4 py-1.5 text-sm font-medium transition-colors ${
                     active
                       ? "border-[#e10600] bg-[#e10600] text-white"
@@ -472,6 +475,13 @@ function isUnknownAudienceLabel(label: string): boolean {
   return ["unknown", "not set", "unset", "undetermined", "unspecified", "n/a", "na"].includes(
     normalized
   );
+}
+
+function shouldUseCityLocationTab(
+  regionRows: AudienceBreakdownRow[],
+  cityRows: AudienceBreakdownRow[]
+): boolean {
+  return regionRows.length <= 1 && cityRows.length > 1;
 }
 
 function formatPercent(value: number, total: number): string {
