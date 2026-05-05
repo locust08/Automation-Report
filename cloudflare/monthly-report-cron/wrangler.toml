@@ -10,8 +10,17 @@ crons = []
 [browser]
 binding = "REPORT_BROWSER"
 
+[[durable_objects.bindings]]
+name = "BROWSER_LAUNCH_LIMITER"
+class_name = "BrowserLaunchLimiter"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["BrowserLaunchLimiter"]
+
 [vars]
 REPORT_EMAIL_DELIVERY_MODE = "attachment"
+BROWSER_LAUNCH_SPACING_MS = "7000"
 
 [[d1_databases]]
 binding = "REPORT_JOBS_DB"
@@ -31,7 +40,7 @@ queue = "monthly-report-queue"
 queue = "monthly-report-queue"
 max_batch_size = 1
 max_batch_timeout = 10
-max_concurrency = 1
-max_retries = 3
+max_concurrency = 8
+max_retries = 5
 retry_delay = 60
 dead_letter_queue = "monthly-report-dead-letter-queue"
