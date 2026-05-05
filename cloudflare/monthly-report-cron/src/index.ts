@@ -1,9 +1,11 @@
+import puppeteer from "@cloudflare/puppeteer";
+import type { BrowserWorker } from "@cloudflare/puppeteer";
+
 interface Env {
   REPORT_JOBS_DB: D1Database;
   REPORT_PDFS: R2Bucket;
   MONTHLY_REPORT_QUEUE: Queue<ReportQueueMessage>;
-  CLOUDFLARE_ACCOUNT_ID: string;
-  CLOUDFLARE_BROWSER_RENDERING_TOKEN: string;
+  REPORT_BROWSER: BrowserWorker;
   REPORT_AUTOMATION_SECRET: string;
   RESEND_API_KEY: string;
   RESEND_FROM_MONTHLY_REPORT?: string;
@@ -604,61 +606,53 @@ function resolveDateRange(input: CreateJobRequest): {
 }
 
 async function renderPdfWithBrowserRun(env: Env, reportUrl: string): Promise<ArrayBuffer> {
-  const accountId = readRequired(env.CLOUDFLARE_ACCOUNT_ID, "CLOUDFLARE_ACCOUNT_ID");
-  const token = readRequired(env.CLOUDFLARE_BROWSER_RENDERING_TOKEN, "CLOUDFLARE_BROWSER_RENDERING_TOKEN");
-  const endpoint = `https://api.cloudflare.com/client/v4/accounts/${accountId}/browser-rendering/pdf`;
-  const response = await fetch(endpoint, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${token}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      url: reportUrl,
-      viewport: {
-        width: 1440,
-        height: 2200,
-      },
-      gotoOptions: {
-        waitUntil: "networkidle0",
-        timeout: 45000,
-      },
-      addStyleTag: [
-        {
-          content: `
-            @page { margin: 0; }
-            html, body {
-              background: #f3f4f6 !important;
-              -webkit-print-color-adjust: exact !important;
-              print-color-adjust: exact !important;
-            }
-            [data-report-export-exclude='true'],
-            [data-report-download-overlay='true'] {
-              display: none !important;
-            }
-          `,
-        },
-      ],
-      pdfOptions: {
-        printBackground: true,
-        preferCSSPageSize: true,
-        scale: 1,
-        margin: {
-          top: "0px",
-          right: "0px",
-          bottom: "0px",
-          left: "0px",
-        },
-      },
-    }),
-  });
+  const browser = await puppeteer.launch(env.REPORT_BROWSER);
 
-  if (!response.ok) {
-    const text = await response.text().catch(() => "");
-    throw new Error(`Cloudflare Browser Run PDF failed status=${response.status} body=${truncate(text, 500)}`);
+  try {
+    const page = await browser.newPage();
+    await page.setViewport({
+      width: 1440,
+      height: 2200,
+      deviceScaleFactor: 1,
+    });
+    await page.goto(reportUrl, {
+      waitUntil: "networkidle0",
+      timeout: 45000,
+    });
+    await page.addStyleTag({
+      content: `
+        @page { margin: 0; }
+        html, body {
+          background: #f3f4f6 !important;
+          -webkit-print-color-adjust: exact !important;
+          print-color-adjust: exact !important;
+        }
+        [data-report-export-exclude='true'],
+        [data-report-download-overlay='true'] {
+          display: none !important;
+        }
+      `,
+    });
+    await page.waitForSelector("[data-report-capture-root='true']", {
+      visible: true,
+      timeout: 45000,
+    });
+    const pdf = await page.pdf({
+      printBackground: true,
+      preferCSSPageSize: true,
+      scale: 1,
+      margin: {
+        top: "0px",
+        right: "0px",
+        bottom: "0px",
+        left: "0px",
+      },
+    });
+
+    return toArrayBuffer(pdf);
+  } finally {
+    await browser.close();
   }
-
-  return response.arrayBuffer();
 }
 
 async function sendReportEmail(
@@ -857,6 +851,16 @@ function arrayBufferToBase64(buffer: ArrayBuffer): string {
   return btoa(binary);
 }
 
+function toArrayBuffer(value: ArrayBuffer | Uint8Array): ArrayBuffer {
+  if (value instanceof ArrayBuffer) {
+    return value;
+  }
+
+  const copy = new Uint8Array(value.byteLength);
+  copy.set(value);
+  return copy.buffer;
+}
+
 function isAuthorized(request: Request, env: Env): boolean {
   const expected = env.WORKER_API_SECRET?.trim() || env.REPORT_AUTOMATION_SECRET?.trim();
   if (!expected) {
@@ -911,11 +915,6 @@ function escapeHtml(value: string): string {
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;")
     .replace(/'/g, "&#39;");
-}
-
-function truncate(value: string, maxLength: number): string {
-  const trimmed = value.trim();
-  return trimmed.length > maxLength ? `${trimmed.slice(0, maxLength)}...` : trimmed;
 }
 
 function formatError(error: unknown): string {

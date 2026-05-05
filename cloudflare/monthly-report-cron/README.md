@@ -4,7 +4,7 @@ This Worker owns monthly report automation outside the Vercel app:
 
 - Creates monthly report jobs.
 - Queues one account per message.
-- Renders the Vercel `/overall` report page to PDF through Cloudflare Browser Run.
+- Renders the Vercel `/overall` report page to PDF through a Cloudflare Browser binding.
 - Stores PDFs in R2.
 - Sends each report through Resend.
 - Tracks progress and failures in D1.
@@ -19,10 +19,9 @@ Cloudflare cron uses UTC.
 - Runs on the 5th day of every month at `04:00 UTC`
 - Equivalent to `12:00 PM` Malaysia time (`UTC+08:00`)
 
-Current deployment note: the account already has 5 Cloudflare cron triggers, so
-`wrangler.toml` keeps `crons = []` to allow the Worker, queue consumer, D1, and
-R2 bindings to deploy. Free one cron slot or upgrade the account, then change
-`crons` back to `["0 4 5 * *"]` and redeploy.
+Current deployment note: Cloudflare still reports the account is at the 5-cron
+trigger limit, so `wrangler.toml` currently deploys with `crons = []`. Once the
+limit issue is cleared, set it to `["0 4 5 * *"]` and redeploy.
 
 ## Cloudflare Resources
 
@@ -38,8 +37,6 @@ Expected resource names:
 
 Set these as Worker secrets, preferably sourced from Doppler:
 
-- `CLOUDFLARE_ACCOUNT_ID`
-- `CLOUDFLARE_BROWSER_RENDERING_TOKEN`
 - `REPORT_AUTOMATION_SECRET`
 - `RESEND_API_KEY`
 - `RESEND_FROM_MONTHLY_REPORT`
@@ -114,8 +111,6 @@ doppler run -- npx wrangler deploy
 Set Worker secrets:
 
 ```bash
-doppler run -- npx wrangler secret put CLOUDFLARE_ACCOUNT_ID
-doppler run -- npx wrangler secret put CLOUDFLARE_BROWSER_RENDERING_TOKEN
 doppler run -- npx wrangler secret put REPORT_AUTOMATION_SECRET
 doppler run -- npx wrangler secret put RESEND_API_KEY
 doppler run -- npx wrangler secret put RESEND_FROM_MONTHLY_REPORT

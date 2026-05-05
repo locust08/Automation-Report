@@ -1,13 +1,14 @@
 name = "ads-dashboard-monthly-report-automation"
 main = "src/index.ts"
 compatibility_date = "2026-04-28"
+compatibility_flags = ["nodejs_compat"]
 
 # Cloudflare cron uses UTC. 04:00 UTC = 12:00 PM Malaysia time.
-# The intended schedule is ["0 4 5 * *"]. It is left unattached in this
-# deploy config because the current Cloudflare account is already at the
-# 5-cron trigger limit. Attach it after freeing one schedule slot or upgrading.
 [triggers]
 crons = []
+
+[browser]
+binding = "REPORT_BROWSER"
 
 [vars]
 REPORT_EMAIL_DELIVERY_MODE = "attachment"
