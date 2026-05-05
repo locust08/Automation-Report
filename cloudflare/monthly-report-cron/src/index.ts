@@ -11,6 +11,9 @@ interface Env {
   RESEND_FROM_MONTHLY_REPORT?: string;
   VERCEL_APP_BASE_URL: string;
   VERCEL_REPORT_TARGETS_ENDPOINT?: string;
+  NOTION_TOKEN?: string;
+  NOTION_DATABASE_ID?: string;
+  NOTION_AD_ACCOUNTS_DATABASE_ID?: string;
   WORKER_API_SECRET?: string;
   MONTHLY_REPORT_TEST_RECIPIENT?: string;
   REPORT_EMAIL_DELIVERY_MODE?: "attachment" | "link";
@@ -182,6 +185,7 @@ interface JobItemRow {
 const SERVICE_NAME = "ads-dashboard-monthly-report-automation";
 const MONTHLY_PRODUCTION_CRON = "0 4 5 * *";
 const TEST_RECIPIENT_FALLBACK = "eason@locus-t.com.my";
+const NOTION_API_VERSION = "2026-03-11";
 
 const worker = {
   async fetch(request: Request, env: Env): Promise<Response> {
@@ -580,10 +584,11 @@ async function resolveTargets(
       console.error("[monthly-report-automation] Vercel target enrichment failed", formatError(error));
       return { targets: input.accounts ?? [] };
     });
+    const enrichedTargets = await enrichTargetsFromNotion(env, payload.targets ?? input.accounts);
 
     return {
       ...range,
-      targets: normalizeTargets(payload.targets ?? []),
+      targets: normalizeTargets(enrichedTargets),
     };
   }
 
@@ -641,6 +646,262 @@ async function resolveTargetsFromVercel(
   }
 
   return payload;
+}
+
+async function enrichTargetsFromNotion(env: Env, targets: ReportTarget[]): Promise<ReportTarget[]> {
+  const notionToken = env.NOTION_TOKEN?.trim();
+  const databaseId = env.NOTION_AD_ACCOUNTS_DATABASE_ID?.trim() || env.NOTION_DATABASE_ID?.trim();
+
+  if (!notionToken || !databaseId || targets.length === 0) {
+    return targets;
+  }
+
+  try {
+    const rows = await fetchNotionAdAccountRows(notionToken, databaseId);
+    const rowsByGoogleId = new Map(rows.filter((row) => row.googleAccountId).map((row) => [row.googleAccountId as string, row]));
+    const rowsByMetaId = new Map(rows.filter((row) => row.metaAccountId).map((row) => [row.metaAccountId as string, row]));
+    const clientNameCache = new Map<string, Promise<string | null>>();
+
+    return Promise.all(
+      targets.map(async (target) => {
+        const googleAccountId = normalizeGoogleAccountId(target.googleAccountId);
+        const metaAccountId = normalizeMetaAccountId(target.metaAccountId);
+        const matchedRows = [
+          googleAccountId ? rowsByGoogleId.get(googleAccountId) : null,
+          metaAccountId ? rowsByMetaId.get(metaAccountId) : null,
+        ].filter((row): row is NotionAdAccountRow => Boolean(row));
+        const clientName = await resolveNotionClientName(notionToken, matchedRows, clientNameCache);
+
+        return {
+          ...target,
+          clientName: clientName ?? target.clientName,
+          googleAccountId: target.googleAccountId ?? matchedRows.find((row) => row.googleAccountId)?.googleAccountId ?? null,
+          metaAccountId: target.metaAccountId ?? matchedRows.find((row) => row.metaAccountId)?.metaAccountId ?? null,
+        };
+      })
+    );
+  } catch (error) {
+    console.error("[monthly-report-automation] Notion target enrichment failed", formatError(error));
+    return targets;
+  }
+}
+
+interface NotionAdAccountRow {
+  googleAccountId: string | null;
+  metaAccountId: string | null;
+  accountName: string | null;
+  clientRelationPageIds: string[];
+}
+
+async function fetchNotionAdAccountRows(
+  notionToken: string,
+  databaseId: string
+): Promise<NotionAdAccountRow[]> {
+  const database = (await notionRequest(notionToken, `/databases/${databaseId}`)) as {
+    data_sources?: Array<{ id?: string | null }>;
+  };
+  const dataSourceId = database.data_sources?.[0]?.id;
+
+  if (!dataSourceId) {
+    return [];
+  }
+
+  const rows: Array<{ properties?: Record<string, unknown> }> = [];
+  let startCursor: string | null = null;
+
+  do {
+    const response = (await notionRequest(notionToken, `/data_sources/${dataSourceId}/query`, {
+      start_cursor: startCursor ?? undefined,
+    })) as {
+      results?: Array<{ properties?: Record<string, unknown> }>;
+      has_more?: boolean;
+      next_cursor?: string | null;
+    };
+    rows.push(...(response.results ?? []));
+    startCursor = response.has_more ? response.next_cursor ?? null : null;
+  } while (startCursor);
+
+  return rows.map((row) => mapNotionAdAccountRow(row.properties ?? {}));
+}
+
+function mapNotionAdAccountRow(properties: Record<string, unknown>): NotionAdAccountRow {
+  const platform = getNotionText(properties, ["Platform"])?.toLowerCase() ?? "";
+  const rawId = getNotionText(properties, [
+    "ID",
+    "Account ID",
+    "Google Ads Account ID",
+    "Google Ads ID",
+    "Meta Ads Account ID",
+    "Meta Ads ID",
+  ]);
+  const googleAccountId =
+    platform.includes("google") || !platform ? normalizeGoogleAccountId(rawId) : null;
+  const metaAccountId = platform.includes("meta") || !platform ? normalizeMetaAccountId(rawId) : null;
+
+  return {
+    googleAccountId,
+    metaAccountId,
+    accountName: getNotionText(properties, ["Account Name", "Name", "Client Name"]),
+    clientRelationPageIds: getNotionRelationIds(properties, ["Client"]),
+  };
+}
+
+async function resolveNotionClientName(
+  notionToken: string,
+  rows: NotionAdAccountRow[],
+  cache: Map<string, Promise<string | null>>
+): Promise<string | null> {
+  const relationPageIds = Array.from(new Set(rows.flatMap((row) => row.clientRelationPageIds)));
+
+  if (relationPageIds.length > 0) {
+    const names = (
+      await Promise.all(
+        relationPageIds.map((pageId) => {
+          let pending = cache.get(pageId);
+          if (!pending) {
+            pending = fetchNotionClientPageName(notionToken, pageId);
+            cache.set(pageId, pending);
+          }
+          return pending;
+        })
+      )
+    ).filter((name): name is string => Boolean(name));
+
+    if (names.length > 0) {
+      return Array.from(new Set(names)).join(" / ");
+    }
+  }
+
+  const accountNames = rows.map((row) => row.accountName).filter((name): name is string => Boolean(name));
+  return accountNames.length > 0 ? Array.from(new Set(accountNames)).join(" / ") : null;
+}
+
+async function fetchNotionClientPageName(notionToken: string, pageId: string): Promise<string | null> {
+  const page = (await notionRequest(notionToken, `/pages/${pageId}`)) as {
+    properties?: Record<string, unknown>;
+  };
+
+  return page.properties
+    ? getNotionText(page.properties, ["Client Name", "Name", "Client", "Account Name"])
+    : null;
+}
+
+async function notionRequest(
+  notionToken: string,
+  path: string,
+  body?: Record<string, unknown>
+): Promise<unknown> {
+  const response = await fetch(`https://api.notion.com/v1${path}`, {
+    method: body ? "POST" : "GET",
+    headers: {
+      Authorization: `Bearer ${notionToken}`,
+      "Content-Type": "application/json",
+      "Notion-Version": NOTION_API_VERSION,
+    },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+
+  if (!response.ok) {
+    throw new Error(`Notion request failed status=${response.status}.`);
+  }
+
+  return response.json();
+}
+
+function getNotionText(properties: Record<string, unknown>, aliases: string[]): string | null {
+  for (const alias of aliases) {
+    const property = findNotionProperty(properties, alias);
+    const value = readNotionPropertyText(property);
+    if (value) {
+      return value;
+    }
+  }
+
+  return null;
+}
+
+function getNotionRelationIds(properties: Record<string, unknown>, aliases: string[]): string[] {
+  for (const alias of aliases) {
+    const property = findNotionProperty(properties, alias);
+    if (!property || typeof property !== "object" || !("type" in property) || property.type !== "relation") {
+      continue;
+    }
+
+    const relation = (property as { relation?: Array<{ id?: string | null }> }).relation;
+    const ids = (relation ?? []).map((item) => item.id?.trim()).filter((id): id is string => Boolean(id));
+    if (ids.length > 0) {
+      return ids;
+    }
+  }
+
+  return [];
+}
+
+function findNotionProperty(properties: Record<string, unknown>, alias: string): Record<string, unknown> | null {
+  const normalizedAlias = normalizePropertyName(alias);
+  const match = Object.entries(properties).find(([key]) => normalizePropertyName(key) === normalizedAlias)?.[1];
+  return match && typeof match === "object" ? (match as Record<string, unknown>) : null;
+}
+
+function readNotionPropertyText(property: Record<string, unknown> | null): string | null {
+  if (!property || typeof property.type !== "string") {
+    return null;
+  }
+
+  if (property.type === "title") {
+    return joinNotionRichText(property.title);
+  }
+
+  if (property.type === "rich_text") {
+    return joinNotionRichText(property.rich_text);
+  }
+
+  if (property.type === "select" || property.type === "status") {
+    const field = property[property.type];
+    return field && typeof field === "object" && "name" in field ? normalizeOptional(String(field.name ?? "")) : null;
+  }
+
+  if (property.type === "formula") {
+    const formula = property.formula as { string?: string | null; number?: number | null; boolean?: boolean | null } | undefined;
+    return normalizeOptional(formula?.string ?? (formula?.number === undefined || formula?.number === null ? null : String(formula.number)) ?? (formula?.boolean === undefined || formula?.boolean === null ? null : String(formula.boolean)));
+  }
+
+  if (property.type === "number") {
+    return property.number === undefined || property.number === null ? null : String(property.number);
+  }
+
+  if (property.type === "email" || property.type === "url" || property.type === "phone_number") {
+    return normalizeOptional(String(property[property.type] ?? ""));
+  }
+
+  return null;
+}
+
+function joinNotionRichText(value: unknown): string | null {
+  if (!Array.isArray(value)) {
+    return null;
+  }
+
+  return normalizeOptional(value.map((item) => (item && typeof item === "object" && "plain_text" in item ? item.plain_text : "")).join(""));
+}
+
+function normalizeGoogleAccountId(value: string | null | undefined): string | null {
+  const normalized = value?.replace(/\D/g, "") ?? "";
+  return normalized.length === 10 ? normalized : null;
+}
+
+function normalizeMetaAccountId(value: string | null | undefined): string | null {
+  const normalized = value?.replace(/\D/g, "") ?? "";
+  return normalized || null;
+}
+
+function normalizePropertyName(value: string): string {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 function resolveDateRange(input: CreateJobRequest): {
