@@ -1,5 +1,5 @@
 import puppeteer from "@cloudflare/puppeteer";
-import type { BrowserWorker } from "@cloudflare/puppeteer";
+import type { BrowserWorker, Page } from "@cloudflare/puppeteer";
 
 interface Env {
   REPORT_JOBS_DB: D1Database;
@@ -94,6 +94,10 @@ interface ReportTarget {
   ccEmail?: string | null;
   platform?: string | null;
   reportType?: string | null;
+}
+
+interface ReportSectionTarget extends ReportTarget {
+  sectionLabel: string;
 }
 
 interface CreateJobRequest {
@@ -399,9 +403,8 @@ async function processReportItem(env: Env, message: ReportQueueMessage): Promise
   await refreshJobStatus(env, message.jobId);
 
   try {
-    const reportUrl = buildReportUrl(env, message);
     const [pdf, emailStats] = await Promise.all([
-      renderPdfWithBrowserRun(env, reportUrl),
+      renderPdfForReportMessage(env, message),
       message.sendEmail ? fetchEmailSummaryStats(env, message) : Promise.resolve([]),
     ]);
     const r2Key = buildR2Key(message);
@@ -438,7 +441,7 @@ async function processReportItem(env: Env, message: ReportQueueMessage): Promise
        SET status = ?, r2_key = ?, report_url = ?, resend_email_id = ?, error_message = NULL, updated_at = ?
        WHERE id = ? AND job_id = ?`
     )
-      .bind("completed", r2Key, reportUrl, resendEmailId, new Date().toISOString(), message.itemId, message.jobId)
+      .bind("completed", r2Key, buildReportUrl(env, message), resendEmailId, new Date().toISOString(), message.itemId, message.jobId)
       .run();
     await refreshJobStatus(env, message.jobId);
   } catch (error) {
@@ -664,11 +667,15 @@ async function enrichTargetsFromNotion(env: Env, targets: ReportTarget[]): Promi
 
     return Promise.all(
       targets.map(async (target) => {
-        const googleAccountId = normalizeGoogleAccountId(target.googleAccountId);
-        const metaAccountId = normalizeMetaAccountId(target.metaAccountId);
+        const googleAccountIds = splitAccountIds(target.googleAccountId)
+          .map((accountId) => normalizeGoogleAccountId(accountId))
+          .filter((accountId): accountId is string => Boolean(accountId));
+        const metaAccountIds = splitAccountIds(target.metaAccountId)
+          .map((accountId) => normalizeMetaAccountId(accountId))
+          .filter((accountId): accountId is string => Boolean(accountId));
         const matchedRows = [
-          googleAccountId ? rowsByGoogleId.get(googleAccountId) : null,
-          metaAccountId ? rowsByMetaId.get(metaAccountId) : null,
+          ...googleAccountIds.map((accountId) => rowsByGoogleId.get(accountId) ?? null),
+          ...metaAccountIds.map((accountId) => rowsByMetaId.get(accountId) ?? null),
         ].filter((row): row is NotionAdAccountRow => Boolean(row));
         const clientName = await resolveNotionClientName(notionToken, matchedRows, clientNameCache);
 
@@ -1008,20 +1015,207 @@ async function renderPdfWithBrowserRun(env: Env, reportUrl: string): Promise<Arr
   }
 }
 
-async function fetchEmailSummaryStats(env: Env, message: ReportQueueMessage): Promise<EmailPlatformStats[]> {
+async function renderPdfForReportMessage(env: Env, message: ReportQueueMessage): Promise<ArrayBuffer> {
+  const sections = buildReportSections(message.target);
+
+  if (sections.length <= 1) {
+    return renderPdfWithBrowserRun(env, buildReportUrl(env, message, sections[0] ?? message.target));
+  }
+
+  return renderStackedReportSectionsPdf(env, message, sections);
+}
+
+async function renderStackedReportSectionsPdf(
+  env: Env,
+  message: ReportQueueMessage,
+  sections: ReportSectionTarget[]
+): Promise<ArrayBuffer> {
+  const browser = await puppeteer.launch(env.REPORT_BROWSER);
+
   try {
-    const response = await fetch(buildReportApiUrl(env, message), {
-      headers: {
-        accept: "application/json",
+    const captures = [];
+
+    for (const section of sections) {
+      const page = await browser.newPage();
+      try {
+        const reportUrl = buildReportUrl(env, message, section);
+        const capture = await captureReportSectionImage(page, reportUrl);
+        captures.push({
+          ...capture,
+          label: section.sectionLabel,
+        });
+      } finally {
+        await page.close();
+      }
+    }
+
+    const width = Math.max(...captures.map((capture) => capture.width), 1440);
+    const sectionGap = 36;
+    const totalHeight = captures.reduce(
+      (sum, capture) => sum + capture.height + sectionGap,
+      sectionGap
+    );
+    const page = await browser.newPage();
+    await page.setViewport({
+      width,
+      height: Math.min(Math.max(totalHeight, 1200), 6000),
+      deviceScaleFactor: 1,
+    });
+    await page.emulateMediaType("screen");
+    await page.setContent(buildStackedReportHtml(captures, width), {
+      waitUntil: "networkidle0",
+    });
+    await page.addStyleTag({
+      content: `
+        @page {
+          size: ${width}px ${totalHeight}px;
+          margin: 0;
+        }
+      `,
+    });
+    const pdf = await page.pdf({
+      width: `${width}px`,
+      height: `${totalHeight}px`,
+      printBackground: true,
+      scale: 1,
+      margin: {
+        top: "0px",
+        right: "0px",
+        bottom: "0px",
+        left: "0px",
       },
     });
 
-    if (!response.ok) {
-      throw new Error(`Report stats request failed with status ${response.status}.`);
-    }
+    return toArrayBuffer(pdf);
+  } finally {
+    await browser.close();
+  }
+}
 
-    const payload = (await response.json()) as ReportApiPayload;
-    return extractEmailSummaryStats(payload);
+async function captureReportSectionImage(
+  page: Page,
+  reportUrl: string
+): Promise<{ dataUrl: string; width: number; height: number }> {
+  await page.setViewport({
+    width: 1440,
+    height: 2200,
+    deviceScaleFactor: 1,
+  });
+  await page.emulateMediaType("screen");
+  await page.goto(reportUrl, {
+    waitUntil: "networkidle0",
+    timeout: 45000,
+  });
+  await page.addStyleTag({
+    content: `
+      html, body {
+        margin: 0 !important;
+        background: #f3f4f6 !important;
+        -webkit-print-color-adjust: exact !important;
+        print-color-adjust: exact !important;
+      }
+      [data-report-capture-root='true'] {
+        width: 1440px !important;
+        max-width: none !important;
+      }
+      [data-report-export-exclude='true'],
+      [data-report-download-overlay='true'] {
+        display: none !important;
+      }
+    `,
+  });
+  await page.waitForSelector("[data-report-capture-root='true']", {
+    visible: true,
+    timeout: 45000,
+  });
+  await page.evaluate(() => document.fonts.ready);
+  await page.waitForFunction(() => {
+    const root = document.querySelector<HTMLElement>("[data-report-capture-root='true']");
+    return Boolean(root && root.scrollHeight > 0 && root.scrollWidth > 0);
+  });
+  const clip = await page.$eval("[data-report-capture-root='true']", (element) => {
+    const target = element as HTMLElement;
+    const rect = target.getBoundingClientRect();
+    return {
+      x: Math.floor(rect.left + window.scrollX),
+      y: Math.floor(rect.top + window.scrollY),
+      width: Math.ceil(Math.max(rect.width, target.scrollWidth)),
+      height: Math.ceil(Math.max(rect.height, target.scrollHeight)),
+    };
+  });
+  const screenshot = await page.screenshot({
+    type: "png",
+    clip,
+    captureBeyondViewport: true,
+  });
+
+  return {
+    dataUrl: `data:image/png;base64,${toBase64(screenshot)}`,
+    width: clip.width,
+    height: clip.height,
+  };
+}
+
+function buildStackedReportHtml(
+  captures: Array<{ dataUrl: string; width: number; height: number; label: string }>,
+  width: number
+): string {
+  const body = captures
+    .map(
+      (capture, index) => `
+        <section style="width:${width}px;margin:0 0 36px 0;page-break-inside:avoid;break-inside:avoid;">
+          ${
+            index > 0
+              ? `<div style="height:36px;background:#f3f4f6;border-top:4px solid #ef0000;"></div>`
+              : ""
+          }
+          <img src="${capture.dataUrl}" width="${capture.width}" height="${capture.height}" alt="${escapeHtml(capture.label)}" style="display:block;width:${capture.width}px;height:${capture.height}px;margin:0 auto;" />
+        </section>
+      `
+    )
+    .join("");
+
+  return `
+    <!doctype html>
+    <html>
+      <head>
+        <meta charset="utf-8" />
+        <style>
+          html,
+          body {
+            margin: 0;
+            padding: 0;
+            width: ${width}px;
+            background: #f3f4f6;
+            -webkit-print-color-adjust: exact;
+            print-color-adjust: exact;
+          }
+        </style>
+      </head>
+      <body>${body}</body>
+    </html>
+  `;
+}
+
+async function fetchEmailSummaryStats(env: Env, message: ReportQueueMessage): Promise<EmailPlatformStats[]> {
+  try {
+    const stats = await Promise.all(
+      buildReportSections(message.target).map(async (section) => {
+        const response = await fetch(buildReportApiUrl(env, message, section), {
+          headers: {
+            accept: "application/json",
+          },
+        });
+
+        if (!response.ok) {
+          throw new Error(`Report stats request failed with status ${response.status}.`);
+        }
+
+        const payload = (await response.json()) as ReportApiPayload;
+        return extractEmailSummaryStats(payload);
+      })
+    );
+    return stats.flat();
   } catch (error) {
     console.error("[monthly-report-automation] email stats unavailable", formatError(error));
     return [];
@@ -1104,15 +1298,19 @@ async function refreshJobStatus(env: Env, jobId: string): Promise<void> {
     .run();
 }
 
-function buildReportUrl(env: Env, message: ReportQueueMessage): string {
+function buildReportUrl(
+  env: Env,
+  message: ReportQueueMessage,
+  target: ReportTarget = message.target
+): string {
   const url = new URL("/overall", trimTrailingSlash(env.VERCEL_APP_BASE_URL));
   url.searchParams.set("startDate", message.startDate);
   url.searchParams.set("endDate", message.endDate);
   url.searchParams.set("screenshot", "1");
   url.searchParams.set("exportToken", env.REPORT_AUTOMATION_SECRET);
 
-  const googleAccountId = normalizeOptional(message.target.googleAccountId);
-  const metaAccountId = normalizeOptional(message.target.metaAccountId);
+  const googleAccountId = normalizeOptional(target.googleAccountId);
+  const metaAccountId = normalizeOptional(target.metaAccountId);
 
   if (googleAccountId) {
     url.searchParams.set("googleAccountId", googleAccountId);
@@ -1129,13 +1327,17 @@ function buildReportUrl(env: Env, message: ReportQueueMessage): string {
   return url.toString();
 }
 
-function buildReportApiUrl(env: Env, message: ReportQueueMessage): string {
+function buildReportApiUrl(
+  env: Env,
+  message: ReportQueueMessage,
+  target: ReportTarget = message.target
+): string {
   const url = new URL("/api/reporting", trimTrailingSlash(env.VERCEL_APP_BASE_URL));
   url.searchParams.set("startDate", message.startDate);
   url.searchParams.set("endDate", message.endDate);
 
-  const googleAccountId = normalizeOptional(message.target.googleAccountId);
-  const metaAccountId = normalizeOptional(message.target.metaAccountId);
+  const googleAccountId = normalizeOptional(target.googleAccountId);
+  const metaAccountId = normalizeOptional(target.metaAccountId);
 
   if (googleAccountId) {
     url.searchParams.set("googleAccountId", googleAccountId);
@@ -1149,8 +1351,13 @@ function buildReportApiUrl(env: Env, message: ReportQueueMessage): string {
 }
 
 function buildR2Key(message: ReportQueueMessage): string {
-  const platform = inferPlatform(message.target).toLowerCase();
-  const accountId = normalizeOptional(message.target.googleAccountId) ?? normalizeOptional(message.target.metaAccountId) ?? "unknown";
+  const sections = buildReportSections(message.target);
+  const platform = sections.length > 1 ? "split" : inferPlatform(message.target).toLowerCase();
+  const accountId =
+    sections
+    .map((section) => normalizeOptional(section.googleAccountId) ?? normalizeOptional(section.metaAccountId))
+    .filter((id): id is string => Boolean(id))
+      .join("-") || "unknown";
   return `reports/${message.reportMonthKey}/${platform}/${accountId.replace(/[^a-z0-9-]+/gi, "")}/${message.jobId}/overall.pdf`;
 }
 
@@ -1163,6 +1370,54 @@ function buildDownloadUrl(env: Env, r2Key: string): string | null {
   const url = new URL(baseUrl);
   url.searchParams.set("key", r2Key);
   return url.toString();
+}
+
+function buildReportSections(target: ReportTarget): ReportSectionTarget[] {
+  const metaAccountIds = splitAccountIds(target.metaAccountId);
+  const googleAccountIds = splitAccountIds(target.googleAccountId);
+  const sections: ReportSectionTarget[] = [];
+
+  metaAccountIds.forEach((accountId) => {
+    sections.push({
+      ...target,
+      googleAccountId: null,
+      metaAccountId: accountId,
+      platform: "Meta",
+      sectionLabel: `${target.clientName} - Meta ${accountId}`,
+    });
+  });
+
+  googleAccountIds.forEach((accountId) => {
+    sections.push({
+      ...target,
+      googleAccountId: accountId,
+      metaAccountId: null,
+      platform: "Google",
+      sectionLabel: `${target.clientName} - Google ${accountId}`,
+    });
+  });
+
+  if (sections.length > 0) {
+    return sections;
+  }
+
+  return [
+    {
+      ...target,
+      sectionLabel: target.clientName,
+    },
+  ];
+}
+
+function splitAccountIds(value: string | null | undefined): string[] {
+  return Array.from(
+    new Set(
+      (value ?? "")
+        .split(/[,;\n]+/)
+        .map((item) => item.trim())
+        .filter(Boolean)
+    )
+  );
 }
 
 function normalizeTargets(targets: ReportTarget[]): ReportTarget[] {
@@ -1449,8 +1704,12 @@ function sanitizeFilenameSegment(value: string): string {
 }
 
 function arrayBufferToBase64(buffer: ArrayBuffer): string {
+  return toBase64(new Uint8Array(buffer));
+}
+
+function toBase64(value: ArrayBuffer | Uint8Array): string {
   let binary = "";
-  const bytes = new Uint8Array(buffer);
+  const bytes = value instanceof ArrayBuffer ? new Uint8Array(value) : value;
   const chunkSize = 0x8000;
   for (let index = 0; index < bytes.length; index += chunkSize) {
     binary += String.fromCharCode(...bytes.subarray(index, index + chunkSize));

@@ -123,14 +123,17 @@ export async function resolveMonthlyReportTargetsFromNotion(
   const relatedClientNameCache = new Map<string, Promise<string | null>>();
 
   return Promise.all(targets.map(async (target, index) => {
-    const googleAccountId = normalizeOptionalAccountId(
-      getStringValue(target.googleAccountId),
-      "google"
-    );
-    const metaAccountId = normalizeOptionalAccountId(getStringValue(target.metaAccountId), "meta");
+    const googleAccountIds = splitTargetAccountIds(target.googleAccountId)
+      .map((accountId) => normalizeOptionalAccountId(accountId, "google"))
+      .filter((accountId): accountId is string => Boolean(accountId));
+    const metaAccountIds = splitTargetAccountIds(target.metaAccountId)
+      .map((accountId) => normalizeOptionalAccountId(accountId, "meta"))
+      .filter((accountId): accountId is string => Boolean(accountId));
+    const googleAccountId = googleAccountIds.join(",") || null;
+    const metaAccountId = metaAccountIds.join(",") || null;
     const matchedAccounts = [
-      googleAccountId ? accountsByGoogleId.get(googleAccountId) : null,
-      metaAccountId ? accountsByMetaId.get(metaAccountId) : null,
+      ...googleAccountIds.map((accountId) => accountsByGoogleId.get(accountId) ?? null),
+      ...metaAccountIds.map((accountId) => accountsByMetaId.get(accountId) ?? null),
     ].filter((account): account is MonthlyReportAccount => Boolean(account));
     const matchedAccount = matchedAccounts[0] ?? null;
     const clientName =
@@ -220,6 +223,17 @@ function resolveClientNameFromMatches(accounts: MonthlyReportAccount[]): string 
   }
 
   return names.join(" / ");
+}
+
+function splitTargetAccountIds(value: string | null | undefined): string[] {
+  return Array.from(
+    new Set(
+      (value ?? "")
+        .split(/[,;\n]+/)
+        .map((item) => item.trim())
+        .filter(Boolean)
+    )
+  );
 }
 
 async function resolveClientNameFromRelations(
