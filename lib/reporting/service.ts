@@ -886,7 +886,7 @@ function buildMetaSummary(currentRows: CampaignRow[], previousRows: CampaignRow[
     metric("costPerResult", "Cost/Results", current.costPerResult, previous.costPerResult, "currency"),
     metric("clicks", "Clicks", current.clicks, previous.clicks, "number"),
     metric("ctr", "CTR (%)", current.ctr, previous.ctr, "percent"),
-    metric("cpm", "CPM (RM)", current.cpm, previous.cpm, "currency"),
+    metric("cpm", "CPM", current.cpm, previous.cpm, "currency"),
     metric("impressions", "Impression", current.impressions, previous.impressions, "number"),
     metric("spend", "Ads Spent", current.spend, previous.spend, "currency"),
   ];
@@ -898,12 +898,12 @@ function buildGoogleSummary(currentRows: CampaignRow[], previousRows: CampaignRo
 
   return [
     metric("conversions", "Conversions", current.conversions, previous.conversions, "number"),
-    metric("costPerConv", "Cost/Conv. (RM)", current.costPerResult, previous.costPerResult, "currency"),
+    metric("costPerConv", "Cost/Conv.", current.costPerResult, previous.costPerResult, "currency"),
     metric("clicks", "Clicks", current.clicks, previous.clicks, "number"),
-    metric("avgCpc", "Avg. CPC (RM)", current.avgCpc, previous.avgCpc, "currency"),
+    metric("avgCpc", "Avg. CPC", current.avgCpc, previous.avgCpc, "currency"),
     metric("ctr", "CTR", current.ctr, previous.ctr, "percent"),
     metric("impressions", "Impression", current.impressions, previous.impressions, "number"),
-    metric("spend", "Ads Spent (RM)", current.spend, previous.spend, "currency"),
+    metric("spend", "Ads Spent", current.spend, previous.spend, "currency"),
   ];
 }
 

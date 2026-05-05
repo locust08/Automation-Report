@@ -301,14 +301,12 @@ function toMonthValue(value: string): string {
     return value.slice(0, 7);
   }
 
-  const now = new Date();
-  return `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, "0")}`;
+  return getDefaultMonthValue();
 }
 
 function toMonthDateRange(monthValue: string): { startDate: string; endDate: string } {
   if (!/^\d{4}-\d{2}$/.test(monthValue)) {
-    const fallback = toMonthValue(new Date().toISOString().slice(0, 10));
-    return toMonthDateRange(fallback);
+    return toMonthDateRange(getDefaultMonthValue());
   }
 
   const [yearText, monthText] = monthValue.split("-");
@@ -328,6 +326,12 @@ function shiftMonth(monthValue: string, offset: number): string {
   const [yearText, monthText] = normalized.split("-");
   const monthDate = new Date(Date.UTC(Number(yearText), Number(monthText) - 1 + offset, 1));
   return `${monthDate.getUTCFullYear()}-${String(monthDate.getUTCMonth() + 1).padStart(2, "0")}`;
+}
+
+function getDefaultMonthValue(): string {
+  const now = new Date();
+  const lastMonth = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 1, 1));
+  return `${lastMonth.getUTCFullYear()}-${String(lastMonth.getUTCMonth() + 1).padStart(2, "0")}`;
 }
 
 function parseSearchEntries(filters: Pick<ReportFilters, "accountId" | "metaAccountId" | "googleAccountId">): Array<{

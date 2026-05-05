@@ -87,8 +87,8 @@ function setParam(searchParams: URLSearchParams, key: string, value: string) {
 
 function defaultDateRange(): { startDate: string; endDate: string } {
   const now = new Date();
-  const startDate = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
-  const endDate = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 0));
+  const startDate = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 1, 1));
+  const endDate = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 0));
   return {
     startDate: startDate.toISOString().slice(0, 10),
     endDate: endDate.toISOString().slice(0, 10),

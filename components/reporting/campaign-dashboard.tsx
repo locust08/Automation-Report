@@ -211,7 +211,7 @@ function buildSectionFromComparison(
         ),
         metric("clicks", "Clicks", selected.clicks, previous.clicks, "number"),
         metric("ctr", "CTR (%)", selected.ctr, previous.ctr, "percent"),
-        metric("cpm", "CPM (RM)", selected.cpm, previous.cpm, "currency"),
+        metric("cpm", "CPM", selected.cpm, previous.cpm, "currency"),
         metric(
           "impressions",
           "Impression",
@@ -245,7 +245,7 @@ function buildSectionFromComparison(
         ),
         metric(
           "costPerConv",
-          "Cost/Conv. (RM)",
+          "Cost/Conv.",
           selected.costPerResult,
           previous.costPerResult,
           "currency",
@@ -253,7 +253,7 @@ function buildSectionFromComparison(
         metric("clicks", "Clicks", selected.clicks, previous.clicks, "number"),
         metric(
           "avgCpc",
-          "Av. CPC (RM)",
+          "Av. CPC",
           selected.avgCpc,
           previous.avgCpc,
           "currency",
@@ -274,7 +274,7 @@ function buildSectionFromComparison(
         ),
         metric(
           "spend",
-          "Ads Spent (RM)",
+          "Ads Spent",
           selected.spend,
           previous.spend,
           "currency",
@@ -297,7 +297,7 @@ function buildSectionFromComparison(
       ),
       metric(
         "costPerConv",
-        "Cost/Conv. (RM)",
+        "Cost/Conv.",
         selected.costPerResult,
         previous.costPerResult,
         "currency",
@@ -305,7 +305,7 @@ function buildSectionFromComparison(
       metric("clicks", "Clicks", selected.clicks, previous.clicks, "number"),
       metric(
         "avgCpc",
-        "Avg. CPC (RM)",
+        "Avg. CPC",
         selected.avgCpc,
         previous.avgCpc,
         "currency",
@@ -320,7 +320,7 @@ function buildSectionFromComparison(
       ),
       metric(
         "spend",
-        "Ads Spent (RM)",
+        "Ads Spent",
         selected.spend,
         previous.spend,
         "currency",

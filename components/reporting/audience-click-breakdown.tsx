@@ -296,14 +296,18 @@ function VerticalBarChart({
 
   const maxValue = Math.max(...rows.map((row) => row.clicks), 1);
   const tickValues = [1, 0.75, 0.5, 0.25, 0].map((step) => Math.round(maxValue * step));
-  const compactSpacing = rows.length > 8;
+  const compactSpacing = rows.length > 10;
 
-  const columnGapClass = compactSpacing ? "gap-x-1.5 sm:gap-x-2" : "gap-x-2 sm:gap-x-3";
+  const columnGapClass = compactSpacing ? "gap-x-1.5 sm:gap-x-2" : "gap-x-2 sm:gap-x-4";
   const gridColumns = { gridTemplateColumns: `repeat(${rows.length}, minmax(0, 1fr))` };
-  const chartMinWidth = compactSpacing ? `${rows.length * 5.5}rem` : undefined;
+  const chartMinWidth = compactSpacing ? `${rows.length * 4.25}rem` : undefined;
+  const barMaxWidthRem = getAdaptiveBarMaxWidthRem(rows.length);
 
   return (
-    <div className="overflow-x-auto pb-1" onMouseLeave={() => setActiveIndex(null)}>
+    <div
+      className={cn(compactSpacing ? "overflow-x-auto" : "overflow-x-hidden", "pb-1")}
+      onMouseLeave={() => setActiveIndex(null)}
+    >
       <div
         className="grid min-h-[17rem] grid-cols-[2.25rem_minmax(0,1fr)] grid-rows-[14rem_auto] gap-x-2 gap-y-2 sm:gap-x-3"
         style={{ minWidth: chartMinWidth }}
@@ -342,8 +346,9 @@ function VerticalBarChart({
                   ) : null}
                   <div className="absolute bottom-0 left-0 right-0 top-8 flex items-end justify-center">
                     <div
-                      className="relative w-full max-w-[2.7rem] rounded-t-[2px] bg-[#f30707] transition-all duration-150"
+                      className="relative w-full rounded-t-[2px] bg-[#f30707] transition-all duration-150"
                       style={{
+                        maxWidth: `${barMaxWidthRem}rem`,
                         height:
                           row.clicks > 0
                             ? `max(${percent.toFixed(2)}%, ${minBarHeightPx}px)`
@@ -376,6 +381,22 @@ function VerticalBarChart({
       </div>
     </div>
   );
+}
+
+function getAdaptiveBarMaxWidthRem(rowCount: number): number {
+  if (rowCount <= 3) {
+    return 5.5;
+  }
+  if (rowCount <= 5) {
+    return 4.75;
+  }
+  if (rowCount <= 8) {
+    return 4;
+  }
+  if (rowCount <= 10) {
+    return 3.25;
+  }
+  return 2.7;
 }
 
 function PieChart({ rows }: { rows: AudienceBreakdownRow[] }) {

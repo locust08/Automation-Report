@@ -80,10 +80,10 @@ export function OverallCampaignGroupsTable({
                     <th className="px-1.5 py-2 text-center font-semibold leading-tight whitespace-normal break-words">Impression</th>
                     <th className="px-1.5 py-2 text-center font-semibold leading-tight whitespace-normal break-words">Clicks</th>
                     <th className="px-1.5 py-2 text-center font-semibold leading-tight whitespace-normal break-words">CTR (%)</th>
-                    <th className="px-1.5 py-2 text-center font-semibold leading-tight whitespace-normal break-words">CPM (RM)</th>
+                    <th className="px-1.5 py-2 text-center font-semibold leading-tight whitespace-normal break-words">CPM</th>
                     <th className="px-1.5 py-2 text-center font-semibold leading-tight whitespace-normal break-words">Results</th>
                     <th className="px-1.5 py-2 text-center font-semibold leading-tight whitespace-normal break-words">Cost/Results</th>
-                    <th className="px-1.5 py-2 text-center font-semibold leading-tight whitespace-normal break-words">Ads Spent (RM)</th>
+                    <th className="px-1.5 py-2 text-center font-semibold leading-tight whitespace-normal break-words">Ads Spent</th>
                     <th
                       className="px-1.5 py-2 text-center font-semibold leading-tight whitespace-normal break-words"
                       data-report-export-exclude="true"
@@ -219,10 +219,10 @@ export function CampaignComparisonTable({
               <th className="px-1.5 py-2 text-center font-semibold leading-tight whitespace-normal break-words">Impression</th>
               <th className="px-1.5 py-2 text-center font-semibold leading-tight whitespace-normal break-words">Clicks</th>
               <th className="px-1.5 py-2 text-center font-semibold leading-tight whitespace-normal break-words">CTR (%)</th>
-              <th className="px-1.5 py-2 text-center font-semibold leading-tight whitespace-normal break-words">CPM (RM)</th>
+              <th className="px-1.5 py-2 text-center font-semibold leading-tight whitespace-normal break-words">CPM</th>
               <th className="px-1.5 py-2 text-center font-semibold leading-tight whitespace-normal break-words">Results</th>
               <th className="px-1.5 py-2 text-center font-semibold leading-tight whitespace-normal break-words">Cost/Results</th>
-              <th className="px-1.5 py-2 text-center font-semibold leading-tight whitespace-normal break-words">Ads Spent (RM)</th>
+              <th className="px-1.5 py-2 text-center font-semibold leading-tight whitespace-normal break-words">Ads Spent</th>
             </tr>
           </thead>
           <tbody>
@@ -314,10 +314,10 @@ const CAMPAIGN_MOBILE_METRICS: Array<{
   { key: "impressions", label: "Impression", value: (row) => row.impressions },
   { key: "clicks", label: "Clicks", value: (row) => row.clicks },
   { key: "ctr", label: "CTR (%)", value: (row) => row.ctr },
-  { key: "cpm", label: "CPM (RM)", value: (row) => row.cpm },
+  { key: "cpm", label: "CPM", value: (row) => row.cpm },
   { key: "results", label: "Results", value: (row) => row.results },
   { key: "costPerResult", label: "Cost/Results", value: (row) => row.costPerResult },
-  { key: "spend", label: "Ads Spent (RM)", value: (row) => row.spend },
+  { key: "spend", label: "Ads Spent", value: (row) => row.spend },
 ];
 
 function CampaignMobileCard({
