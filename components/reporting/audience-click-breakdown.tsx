@@ -305,7 +305,11 @@ function VerticalBarChart({
 
   return (
     <div
-      className={cn(compactSpacing ? "overflow-x-auto" : "overflow-x-hidden", "pb-1")}
+      className={cn(
+        compactSpacing ? "overflow-x-auto" : "overflow-x-hidden",
+        "pb-1 [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden"
+      )}
+      data-report-audience-chart-scroller="true"
       onMouseLeave={() => setActiveIndex(null)}
     >
       <div
@@ -473,7 +477,7 @@ function PieChart({ rows }: { rows: AudienceBreakdownRow[] }) {
           </p>
         </div>
 
-        <div className="grid max-h-[12rem] gap-2 overflow-y-auto pr-1 sm:grid-cols-2">
+        <div className="grid max-h-[12rem] gap-2 overflow-y-auto pr-1 [scrollbar-width:none] [-ms-overflow-style:none] sm:grid-cols-2 [&::-webkit-scrollbar]:hidden">
           {rows.map((row, index) => {
             const active = activeIndex === index;
             return (

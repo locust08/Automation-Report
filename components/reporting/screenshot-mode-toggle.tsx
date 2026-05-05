@@ -48,6 +48,15 @@ const REPORT_EXPORT_CAPTURE_STYLE = `
     display: none !important;
   }
 
+  [data-report-audience-chart-scroller='true'] {
+    scrollbar-width: none !important;
+    -ms-overflow-style: none !important;
+  }
+
+  [data-report-audience-chart-scroller='true']::-webkit-scrollbar {
+    display: none !important;
+  }
+
   [data-report-export-header-panel='true'] {
     height: auto !important;
     min-height: 0 !important;
