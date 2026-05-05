@@ -150,11 +150,17 @@ interface MetaInsightRow {
   ctr?: string;
   cpc?: string;
   cpm?: string;
+  cpp?: string;
   spend?: string;
   optimization_goal?: string;
   objective_results?: MetaObjectiveResultMetricValue;
   cost_per_result?: MetaObjectiveResultMetricValue;
   cost_per_objective_result?: MetaObjectiveResultMetricValue;
+  reach?: string;
+  estimated_ad_recallers?: string;
+  cost_per_estimated_ad_recallers?: string;
+  video_thruplay_watched_actions?: MetaActionMetricValue;
+  cost_per_thruplay?: MetaActionMetricValue;
   age?: string;
   gender?: string;
   actions?: MetaActionMetric[];
@@ -166,8 +172,10 @@ interface MetaInsightRow {
 
 type MetaActionMetric = {
   action_type?: string;
-  value?: string;
+  value?: string | number;
 };
+
+type MetaActionMetricValue = MetaActionMetric | MetaActionMetric[] | string | number;
 
 type MetaObjectiveResultMetric = {
   id?: string;
@@ -268,14 +276,23 @@ const META_CAMPAIGN_INSIGHT_BASE_FIELDS = [
   "clicks",
   "ctr",
   "cpm",
+  "cpp",
   "spend",
 ] as const;
 
 const META_OBJECTIVE_RESULT_FIELDS = [
-  "optimization_goal",
   "objective_results",
   "cost_per_result",
   "cost_per_objective_result",
+] as const;
+
+const META_AWARENESS_RESULT_FIELDS = [
+  "optimization_goal",
+  "reach",
+  "estimated_ad_recallers",
+  "cost_per_estimated_ad_recallers",
+  "video_thruplay_watched_actions",
+  "cost_per_thruplay",
 ] as const;
 
 const META_LEGACY_RESULT_FIELDS = [
@@ -348,7 +365,9 @@ const META_PREVIEW_INSIGHT_FIELDS = [
   "ctr",
   "cpc",
   "cpm",
+  "cpp",
   "spend",
+  ...META_AWARENESS_RESULT_FIELDS,
   "objective_results",
   "cost_per_result",
   "cost_per_objective_result",
@@ -395,6 +414,12 @@ export async function fetchMetaCampaignRows({
       objectiveResults: item.objective_results,
       costPerResult: item.cost_per_result,
       costPerObjectiveResult: item.cost_per_objective_result,
+      reach: item.reach,
+      cpp: item.cpp,
+      estimatedAdRecallers: item.estimated_ad_recallers,
+      costPerEstimatedAdRecallers: item.cost_per_estimated_ad_recallers,
+      videoThruPlayWatchedActions: item.video_thruplay_watched_actions,
+      costPerThruPlay: item.cost_per_thruplay,
       actions: item.actions,
       costs: item.cost_per_action_type,
       objective: item.objective,
@@ -484,6 +509,7 @@ export async function fetchMetaAudienceBreakdown({
 async function fetchMetaCampaignInsightRows(input: MetaFetchInput): Promise<MetaInsightRow[]> {
   const primaryFields = [
     ...META_CAMPAIGN_INSIGHT_BASE_FIELDS,
+    ...META_AWARENESS_RESULT_FIELDS,
     ...META_OBJECTIVE_RESULT_FIELDS,
     ...META_LEGACY_RESULT_FIELDS,
   ];
@@ -501,6 +527,7 @@ async function fetchMetaCampaignInsightRows(input: MetaFetchInput): Promise<Meta
 
     return fetchMetaCampaignInsightRowsWithFields(input, [
       ...META_CAMPAIGN_INSIGHT_BASE_FIELDS,
+      ...META_AWARENESS_RESULT_FIELDS,
       ...META_LEGACY_RESULT_FIELDS,
     ]);
   }
@@ -1291,6 +1318,12 @@ function buildPerformanceMap(rows: MetaInsightRow[]): Map<string, PreviewPerform
       objectiveResults: row.objective_results,
       costPerResult: row.cost_per_result,
       costPerObjectiveResult: row.cost_per_objective_result,
+      reach: row.reach,
+      cpp: row.cpp,
+      estimatedAdRecallers: row.estimated_ad_recallers,
+      costPerEstimatedAdRecallers: row.cost_per_estimated_ad_recallers,
+      videoThruPlayWatchedActions: row.video_thruplay_watched_actions,
+      costPerThruPlay: row.cost_per_thruplay,
       actions: row.actions,
       costs: row.cost_per_action_type,
       objective: row.objective,
@@ -1362,6 +1395,12 @@ function buildDemographicMap(rows: MetaInsightRow[]): Map<string, PreviewDemogra
       objectiveResults: row.objective_results,
       costPerResult: row.cost_per_result,
       costPerObjectiveResult: row.cost_per_objective_result,
+      reach: row.reach,
+      cpp: row.cpp,
+      estimatedAdRecallers: row.estimated_ad_recallers,
+      costPerEstimatedAdRecallers: row.cost_per_estimated_ad_recallers,
+      videoThruPlayWatchedActions: row.video_thruplay_watched_actions,
+      costPerThruPlay: row.cost_per_thruplay,
       actions: row.actions,
       costs: row.cost_per_action_type,
       objective: row.objective,
@@ -1554,11 +1593,32 @@ function pickResultMetric(input: {
   objectiveResults?: MetaObjectiveResultMetricValue;
   costPerResult?: MetaObjectiveResultMetricValue;
   costPerObjectiveResult?: MetaObjectiveResultMetricValue;
+  reach?: string;
+  cpp?: string;
+  estimatedAdRecallers?: string;
+  costPerEstimatedAdRecallers?: string;
+  videoThruPlayWatchedActions?: MetaActionMetricValue;
+  costPerThruPlay?: MetaActionMetricValue;
   actions?: MetaActionMetric[];
   costs?: MetaActionMetric[];
   objective?: string;
   optimizationGoal?: string;
 }): { actionType: string; label: string; value: number; costPerResult: number | null } {
+  const awarenessResultMetric = pickAwarenessResultMetric(input);
+  if (awarenessResultMetric) {
+    return awarenessResultMetric;
+  }
+
+  const trafficResultMetric = pickTrafficResultMetric(input);
+  if (trafficResultMetric) {
+    return trafficResultMetric;
+  }
+
+  const salesResultMetric = pickSalesResultMetric(input);
+  if (salesResultMetric) {
+    return salesResultMetric;
+  }
+
   const objectiveResultMetric = pickObjectiveResultMetric(
     input.objectiveResults,
     input.costPerResult,
@@ -1602,6 +1662,131 @@ function pickResultMetric(input: {
     actionType: fallbackType,
     label: humanizeActionType(fallbackType),
     value: toNumber(fallback?.value),
+    costPerResult: null,
+  };
+}
+
+function pickAwarenessResultMetric(input: {
+  objective?: string;
+  optimizationGoal?: string;
+  reach?: string;
+  cpp?: string;
+  estimatedAdRecallers?: string;
+  costPerEstimatedAdRecallers?: string;
+  videoThruPlayWatchedActions?: MetaActionMetricValue;
+  costPerThruPlay?: MetaActionMetricValue;
+}): { actionType: string; label: string; value: number; costPerResult: number | null } | null {
+  const objective = input.objective?.trim().toUpperCase() ?? "";
+  const optimizationGoal = input.optimizationGoal?.trim().toUpperCase() ?? "";
+  const isAwarenessResult =
+    objective.includes("AWARENESS") ||
+    optimizationGoal.includes("THRUPLAY") ||
+    optimizationGoal.includes("AD_RECALL") ||
+    optimizationGoal.includes("REACH");
+
+  if (!isAwarenessResult) {
+    return null;
+  }
+
+  const thruPlayValue = readMetaActionMetricTotal(input.videoThruPlayWatchedActions);
+  if (thruPlayValue > 0) {
+    return {
+      actionType: "video_thruplay_watched_actions",
+      label: "ThruPlays",
+      value: thruPlayValue,
+      costPerResult: readMetaActionMetricFirstValue(input.costPerThruPlay),
+    };
+  }
+
+  const estimatedAdRecallers = toNumber(input.estimatedAdRecallers);
+  if (estimatedAdRecallers > 0) {
+    return {
+      actionType: "estimated_ad_recallers",
+      label: "Estimated ad recall lift",
+      value: estimatedAdRecallers,
+      costPerResult: toNumber(input.costPerEstimatedAdRecallers) || null,
+    };
+  }
+
+  const reach = toNumber(input.reach);
+  if (optimizationGoal.includes("REACH") && reach > 0) {
+    return {
+      actionType: "reach",
+      label: "Reach",
+      value: reach,
+      costPerResult: toNumber(input.cpp) || null,
+    };
+  }
+
+  return null;
+}
+
+function pickTrafficResultMetric(input: {
+  objective?: string;
+  optimizationGoal?: string;
+  actions?: MetaActionMetric[];
+  costs?: MetaActionMetric[];
+}): { actionType: string; label: string; value: number; costPerResult: number | null } | null {
+  const objective = input.objective?.trim().toUpperCase() ?? "";
+  const optimizationGoal = input.optimizationGoal?.trim().toUpperCase() ?? "";
+  const isTrafficResult =
+    objective.includes("TRAFFIC") ||
+    objective.includes("LINK_CLICKS") ||
+    optimizationGoal.includes("LANDING_PAGE") ||
+    optimizationGoal.includes("LINK_CLICK");
+
+  if (!isTrafficResult || !input.actions?.length) {
+    return null;
+  }
+
+  const preferredActionTypes =
+    optimizationGoal.includes("LINK_CLICK") && !optimizationGoal.includes("LANDING_PAGE")
+      ? ["link_click", "landing_page_view"]
+      : ["landing_page_view", "link_click"];
+
+  for (const actionType of preferredActionTypes) {
+    const matched = input.actions.find(
+      (action) => action.action_type === actionType && toNumber(action.value) > 0
+    );
+    if (matched) {
+      return createResultMetric(actionType, matched, input.costs);
+    }
+  }
+
+  return null;
+}
+
+function pickSalesResultMetric(input: {
+  objective?: string;
+  optimizationGoal?: string;
+  actions?: MetaActionMetric[];
+  costs?: MetaActionMetric[];
+}): { actionType: string; label: string; value: number; costPerResult: number | null } | null {
+  const objective = input.objective?.trim().toUpperCase() ?? "";
+  const optimizationGoal = input.optimizationGoal?.trim().toUpperCase() ?? "";
+  const isSalesResult =
+    objective.includes("SALES") ||
+    objective.includes("CONVERSION") ||
+    optimizationGoal.includes("PURCHASE") ||
+    optimizationGoal.includes("VALUE");
+
+  if (!isSalesResult) {
+    return null;
+  }
+
+  for (const actionType of META_SALES_RESULT_ACTION_PRIORITY) {
+    const matched = input.actions?.find(
+      (action) => action.action_type === actionType && toNumber(action.value) > 0
+    );
+    if (matched) {
+      return createResultMetric(actionType, matched, input.costs);
+    }
+  }
+
+  return {
+    actionType: "purchase",
+    label: "Purchase",
+    value: 0,
     costPerResult: null,
   };
 }
@@ -1701,6 +1886,34 @@ function normalizeMetaObjectiveResultMetrics(
   }
 
   return [value];
+}
+
+function normalizeMetaActionMetrics(value: MetaActionMetricValue | undefined): MetaActionMetric[] {
+  if (value === undefined || value === null) {
+    return [];
+  }
+
+  if (Array.isArray(value)) {
+    return value;
+  }
+
+  if (typeof value === "string" || typeof value === "number") {
+    return [{ value }];
+  }
+
+  return [value];
+}
+
+function readMetaActionMetricTotal(value: MetaActionMetricValue | undefined): number {
+  return normalizeMetaActionMetrics(value).reduce(
+    (total, metric) => total + toNumber(metric.value),
+    0
+  );
+}
+
+function readMetaActionMetricFirstValue(value: MetaActionMetricValue | undefined): number | null {
+  const metric = normalizeMetaActionMetrics(value).find((item) => toNumber(item.value) > 0);
+  return metric ? toNumber(metric.value) : null;
 }
 
 function readMetaObjectiveResultKey(result: MetaObjectiveResultMetric): string {
