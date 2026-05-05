@@ -4,6 +4,8 @@ import path from "node:path";
 import { jsPDF } from "jspdf";
 import { chromium } from "playwright";
 
+import { resolveMonthlyReportDateRange } from "@/src/lib/cron/monthly-report-date";
+
 export interface OverallReportCaptureTarget {
   clientName: string;
   googleAccountId: string | null;
@@ -21,9 +23,7 @@ export interface CapturedOverallReportPdf {
 export async function captureOverallReportPdf(
   target: OverallReportCaptureTarget
 ): Promise<CapturedOverallReportPdf> {
-  const reportMonthKey = resolvePreviousMonthKey(new Date());
-  const reportMonthLabel = resolvePreviousMonthLabel(new Date());
-  const { startDate, endDate } = resolvePreviousMonthRange(new Date());
+  const { startDate, endDate, reportMonthKey, reportMonthLabel } = resolveMonthlyReportDateRange();
   const query = new URLSearchParams({
     startDate,
     endDate,
@@ -179,39 +179,4 @@ function buildCaptureFileName(target: OverallReportCaptureTarget, reportMonthKey
     .replace(/(^-|-$)/g, "");
 
   return `${slug || "overall-report"}-${accountId.replace(/[^a-z0-9-]+/gi, "")}-${reportMonthKey}`;
-}
-
-function resolvePreviousMonthRange(referenceDate: Date): {
-  startDate: string;
-  endDate: string;
-} {
-  const year = referenceDate.getUTCFullYear();
-  const month = referenceDate.getUTCMonth();
-  const start = new Date(Date.UTC(year, month - 1, 1));
-  const end = new Date(Date.UTC(year, month, 0));
-
-  return {
-    startDate: start.toISOString().slice(0, 10),
-    endDate: end.toISOString().slice(0, 10),
-  };
-}
-
-function resolvePreviousMonthKey(referenceDate: Date): string {
-  const year = referenceDate.getUTCFullYear();
-  const month = referenceDate.getUTCMonth();
-  const start = new Date(Date.UTC(year, month - 1, 1));
-
-  return `${start.getUTCFullYear()}-${String(start.getUTCMonth() + 1).padStart(2, "0")}`;
-}
-
-function resolvePreviousMonthLabel(referenceDate: Date): string {
-  const year = referenceDate.getUTCFullYear();
-  const month = referenceDate.getUTCMonth();
-  const start = new Date(Date.UTC(year, month - 1, 1));
-
-  return new Intl.DateTimeFormat("en-US", {
-    month: "long",
-    year: "numeric",
-    timeZone: "UTC",
-  }).format(start);
 }

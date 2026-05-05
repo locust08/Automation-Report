@@ -13,7 +13,10 @@
     "lint": "eslint",
     "vercel:env:sync": "node scripts/sync-vercel-env.mjs",
     "vercel:deploy:preview": "vercel deploy",
-    "vercel:deploy:prod": "vercel deploy --prod"
+    "vercel:deploy:prod": "vercel deploy --prod",
+    "cf:monthly:dev": "cd cloudflare/monthly-report-cron && doppler run -- npx wrangler dev --test-scheduled",
+    "cf:monthly:migrate": "cd cloudflare/monthly-report-cron && doppler run -- npx wrangler d1 migrations apply automation-report-jobs --remote",
+    "cf:monthly:deploy": "cd cloudflare/monthly-report-cron && doppler run -- npx wrangler deploy"
   },
   "dependencies": {
     "@base-ui/react": "^1.2.0",

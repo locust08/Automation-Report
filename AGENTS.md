@@ -10,7 +10,7 @@ This repository is a Next.js reporting application for Meta Ads and Google Ads d
 - Notion is used for account metadata and Google Ads access-path resolution.
 - Playwright and `jspdf` are used by monthly report automation to capture `/overall` and convert a screenshot to PDF.
 - Resend sends monthly report emails.
-- Vercel hosts the Next.js app. A small Cloudflare Worker can trigger the Vercel monthly cron endpoint.
+- Vercel hosts the Next.js app. Cloudflare owns the newer monthly PDF automation layer with Worker, Queue, D1, R2, Browser Run, and Resend delivery.
 
 ## Main Directory Map
 
@@ -33,7 +33,7 @@ This repository is a Next.js reporting application for Meta Ads and Google Ads d
 - `src/lib/email/`: Resend email delivery for monthly reports.
 - `src/lib/notion/`: Notion account reader for monthly report account rows.
 - `scripts/`: manual smoke tests, workflow runners, Vercel env sync, and one-off monthly report utilities.
-- `cloudflare/monthly-report-cron/`: Cloudflare Worker that only calls the Vercel monthly report endpoint on schedule.
+- `cloudflare/monthly-report-cron/`: Cloudflare Worker for monthly PDF automation. It owns job creation, queue consumption, Browser Run PDF rendering, R2 PDF storage, Resend delivery, and D1 job status.
 - `public/`: static assets used by the UI, including logos and background images.
 
 ## Request And Data Flow
@@ -58,6 +58,7 @@ This repository is a Next.js reporting application for Meta Ads and Google Ads d
 - `GET /api/reporting/auction`: auction insights payload from `getAuctionInsightsReport`.
 - `GET /api/reporting/insights`: recommendations payload from `getInsightsReport`.
 - `POST /api/cron/monthly-report`: runs `runMonthlyReportJob`.
+- `POST /api/report-pdf/targets`: protected endpoint used by Cloudflare automation to resolve target accounts and previous-month dates.
 
 The reporting API routes are intentionally thin. Add report behavior in `lib/reporting/service.ts` or lower-level helpers, not in route handlers.
 
@@ -110,7 +111,7 @@ When adding a new report view, follow the existing pattern: App Router page wrap
 
 ## Monthly Report Automation
 
-The monthly report flow is separate from normal user browsing:
+The older Vercel monthly report flow is separate from normal user browsing:
 
 1. `POST /api/cron/monthly-report` calls `runMonthlyReportJob`.
 2. `src/lib/cron/monthly-report-targets.ts` resolves configured targets from `MONTHLY_REPORT_TARGETS_JSON` or test targets.
@@ -120,7 +121,16 @@ The monthly report flow is separate from normal user browsing:
 
 `src/lib/notion/get-monthly-report-accounts.ts` can read eligible monthly report accounts from Notion, but the current cron target path is environment-target based unless it is changed to call that reader.
 
-The Cloudflare Worker in `cloudflare/monthly-report-cron` does not generate reports. It only posts a scheduled payload to the Vercel cron endpoint.
+The newer Cloudflare automation flow is preferred for bulk sends:
+
+1. `POST /api/report-pdf/targets` on Vercel returns normalized monthly report targets and previous-month dates. It is protected by `REPORT_AUTOMATION_SECRET` or `CRON_SECRET`.
+2. `cloudflare/monthly-report-cron` creates a D1 job row and one D1 item row per account.
+3. The Worker sends one Queue message per account.
+4. The Queue consumer renders the Vercel `/overall?...&screenshot=1` page through Cloudflare Browser Run `/pdf`.
+5. The resulting PDF is stored in R2 and optionally emailed through Resend.
+6. Job and item status can be inspected through the Worker API.
+
+Cloudflare cron runs in UTC. The intended production schedule is `0 4 5 * *`, which is 12:00 PM Malaysia time on the 5th day of every month. The current Cloudflare account may need one cron slot freed before that trigger can be attached.
 
 ## Environment Variables
 
@@ -132,6 +142,7 @@ Important variables include:
 - Google Ads: `GOOGLE_ADS_DEVELOPER_TOKEN`, `GOOGLE_ADS_ACCESS_TOKEN`, `GOOGLE_ADS_REFRESH_TOKEN`, `GOOGLE_ADS_CLIENT_ID`, `GOOGLE_ADS_CLIENT_SECRET`, `GOOGLE_ADS_LOGIN_CUSTOMER_ID`, `GOOGLE_ADS_API_VERSION`.
 - Notion: `NOTION_TOKEN`, `NOTION_DATABASE_ID`, `NOTION_AD_ACCOUNTS_DATABASE_ID`, `NOTION_MONTHLY_REPORT_LOGS_DATABASE_ID`.
 - Cron/email: `CRON_SECRET`, `RESEND_API_KEY`, `RESEND_FROM_MONTHLY_REPORT`, `MONTHLY_REPORT_TEST_MODE`, `MONTHLY_REPORT_TEST_RECIPIENT`, `MONTHLY_REPORT_TARGETS_JSON`, `MONTHLY_REPORT_TEST_TARGETS_JSON`, `MONTHLY_REPORT_APP_BASE_URL`.
+- Cloudflare automation: `REPORT_AUTOMATION_SECRET`, `WORKER_API_SECRET`, `VERCEL_APP_BASE_URL`, `CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_BROWSER_RENDERING_TOKEN`.
 - Display/company: `REPORT_COMPANY_NAME`, `REPORT_COMPANY_NAME_MAP`.
 
 The Google OAuth aliases documented in `README.md` are also supported for existing Doppler naming.
@@ -148,6 +159,9 @@ The Google OAuth aliases documented in `README.md` are also supported for existi
 - `npm run vercel:env:sync -- <target>`: sync Doppler env values into Vercel target.
 - `npm run vercel:deploy:preview`: Vercel preview deploy.
 - `npm run vercel:deploy:prod`: Vercel production deploy.
+- `npm run cf:monthly:dev`: run the Cloudflare monthly automation Worker locally with Doppler.
+- `npm run cf:monthly:migrate`: apply the Cloudflare D1 migrations remotely.
+- `npm run cf:monthly:deploy`: deploy the Cloudflare monthly automation Worker.
 
 For real API work, prefer:
 
