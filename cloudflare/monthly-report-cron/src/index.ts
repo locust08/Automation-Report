@@ -1728,34 +1728,46 @@ function buildCompletionNotificationEmailHtml(input: {
 }): string {
   const completedCount = input.items.filter((item) => item.status === "completed").length;
   const failedCount = input.failedItems.length;
-  const itemRows = input.items
+  const failedRows = input.failedItems
     .map((item) => {
       const accountId = item.google_account_id ?? item.meta_account_id ?? "-";
-      const detail = item.status === "failed"
-        ? truncateForEmail(item.error_message ?? "Unknown error.", 240)
-        : item.resend_email_id
-          ? `Email ID: ${item.resend_email_id}`
-          : item.r2_key
-            ? "PDF generated"
-            : "-";
-      const statusColor = item.status === "completed" ? "#047857" : item.status === "failed" ? "#b91c1c" : "#6b7280";
-      const statusBackground = item.status === "completed" ? "#d1fae5" : item.status === "failed" ? "#fee2e2" : "#f3f4f6";
       return `
         <tr>
           <td style="padding:12px 10px;border-top:1px solid #e5e7eb;color:#111827;font-size:13px;line-height:1.45;">${escapeHtml(item.client_name)}</td>
           <td style="padding:12px 10px;border-top:1px solid #e5e7eb;color:#374151;font-size:13px;line-height:1.45;">${escapeHtml(item.platform ?? "-")}</td>
           <td style="padding:12px 10px;border-top:1px solid #e5e7eb;color:#374151;font-size:13px;line-height:1.45;">${escapeHtml(accountId)}</td>
           <td style="padding:12px 10px;border-top:1px solid #e5e7eb;color:#374151;font-size:13px;line-height:1.45;">${escapeHtml(item.recipient_email ?? "-")}</td>
-          <td align="center" style="padding:12px 10px;border-top:1px solid #e5e7eb;color:${statusColor};font-size:13px;line-height:1.45;font-weight:700;"><span style="display:inline-block;background:${statusBackground};border-radius:999px;padding:5px 9px;">${escapeHtml(item.status)}</span></td>
+          <td align="center" style="padding:12px 10px;border-top:1px solid #e5e7eb;color:#b91c1c;font-size:13px;line-height:1.45;font-weight:700;"><span style="display:inline-block;background:#fee2e2;border-radius:999px;padding:5px 9px;">Failed</span></td>
           <td align="center" style="padding:12px 10px;border-top:1px solid #e5e7eb;color:#374151;font-size:13px;line-height:1.45;">${item.attempts}</td>
-          <td style="padding:12px 10px;border-top:1px solid #e5e7eb;color:${item.status === "failed" ? "#991b1b" : "#374151"};font-size:13px;line-height:1.45;">${escapeHtml(detail)}</td>
+          <td style="padding:12px 10px;border-top:1px solid #e5e7eb;color:#991b1b;font-size:13px;line-height:1.45;">${escapeHtml(truncateForEmail(item.error_message ?? "Unknown error.", 240))}</td>
         </tr>
       `;
     })
     .join("");
   const summaryText = failedCount > 0
     ? "The monthly report automation has finished. Some reports failed after the retry limit and need review."
-    : "The monthly report automation has finished and all reports were generated successfully.";
+    : "All monthly report emails were generated and sent successfully.";
+  const failureTable = failedCount > 0
+    ? `
+              <tr>
+                <td style="padding:0 32px 30px;">
+                  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-collapse:collapse;border:1px solid #e5e7eb;border-radius:14px;overflow:hidden;">
+                    <thead>
+                      <tr>
+                        <th align="left" style="background:#f9fafb;color:#7f1d1d;padding:11px 10px;font-size:12px;text-transform:uppercase;letter-spacing:.04em;">Client</th>
+                        <th align="left" style="background:#f9fafb;color:#7f1d1d;padding:11px 10px;font-size:12px;text-transform:uppercase;letter-spacing:.04em;">Platform</th>
+                        <th align="left" style="background:#f9fafb;color:#7f1d1d;padding:11px 10px;font-size:12px;text-transform:uppercase;letter-spacing:.04em;">Account</th>
+                        <th align="left" style="background:#f9fafb;color:#7f1d1d;padding:11px 10px;font-size:12px;text-transform:uppercase;letter-spacing:.04em;">Recipient</th>
+                        <th align="center" style="background:#f9fafb;color:#7f1d1d;padding:11px 10px;font-size:12px;text-transform:uppercase;letter-spacing:.04em;">Status</th>
+                        <th align="center" style="background:#f9fafb;color:#7f1d1d;padding:11px 10px;font-size:12px;text-transform:uppercase;letter-spacing:.04em;">Attempts</th>
+                        <th align="left" style="background:#f9fafb;color:#7f1d1d;padding:11px 10px;font-size:12px;text-transform:uppercase;letter-spacing:.04em;">Final Error</th>
+                      </tr>
+                    </thead>
+                    <tbody>${failedRows}</tbody>
+                  </table>
+                </td>
+              </tr>`
+    : "";
 
   return `
     <div style="margin:0;padding:0;background:#f3f4f6;font-family:Arial,Helvetica,sans-serif;color:#111827;">
@@ -1803,24 +1815,7 @@ function buildCompletionNotificationEmailHtml(input: {
                   </table>
                 </td>
               </tr>
-              <tr>
-                <td style="padding:0 32px 30px;">
-                  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-collapse:collapse;border:1px solid #e5e7eb;border-radius:14px;overflow:hidden;">
-                    <thead>
-                      <tr>
-                        <th align="left" style="background:#f9fafb;color:#7f1d1d;padding:11px 10px;font-size:12px;text-transform:uppercase;letter-spacing:.04em;">Client</th>
-                        <th align="left" style="background:#f9fafb;color:#7f1d1d;padding:11px 10px;font-size:12px;text-transform:uppercase;letter-spacing:.04em;">Platform</th>
-                        <th align="left" style="background:#f9fafb;color:#7f1d1d;padding:11px 10px;font-size:12px;text-transform:uppercase;letter-spacing:.04em;">Account</th>
-                        <th align="left" style="background:#f9fafb;color:#7f1d1d;padding:11px 10px;font-size:12px;text-transform:uppercase;letter-spacing:.04em;">Recipient</th>
-                        <th align="center" style="background:#f9fafb;color:#7f1d1d;padding:11px 10px;font-size:12px;text-transform:uppercase;letter-spacing:.04em;">Status</th>
-                        <th align="center" style="background:#f9fafb;color:#7f1d1d;padding:11px 10px;font-size:12px;text-transform:uppercase;letter-spacing:.04em;">Attempts</th>
-                        <th align="left" style="background:#f9fafb;color:#7f1d1d;padding:11px 10px;font-size:12px;text-transform:uppercase;letter-spacing:.04em;">Delivery / Error</th>
-                      </tr>
-                    </thead>
-                    <tbody>${itemRows}</tbody>
-                  </table>
-                </td>
-              </tr>
+              ${failureTable}
               <tr>
                 <td style="padding:16px 32px;background:#f9fafb;border-top:1px solid #e5e7eb;color:#6b7280;font-size:12px;line-height:1.5;">
                   This internal notification was generated automatically from the LOCUS-T reporting dashboard.
