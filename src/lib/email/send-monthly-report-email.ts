@@ -3,8 +3,8 @@ import { Resend } from "resend";
 import type { MonthlyReportAccount } from "@/src/lib/notion/get-monthly-report-accounts";
 
 const DEFAULT_TEST_RECIPIENT = "ava@locus-t.com.my";
-const DEFAULT_FROM_ADDRESS = "Locus-T <no-reply@locus-t.com.my>";
-const DEFAULT_LOGO_PATH = "/locus-t-logo.png";
+const DEFAULT_FROM_ADDRESS = "LOCUS-T Reports <reports@locus-t.com.my>";
+const DEFAULT_LOGO_URL = "https://www.locus-t.com.my/wp-content/uploads/2024/09/LT-Logo-25.svg";
 
 let resendClient: Resend | null = null;
 
@@ -129,12 +129,7 @@ function resolveLogoUrl(): string {
     return configured;
   }
 
-  const baseUrl = readOptionalEnv("MONTHLY_REPORT_APP_BASE_URL") ?? readOptionalEnv("VERCEL_APP_BASE_URL");
-  if (baseUrl) {
-    return `${baseUrl.replace(/\/+$/g, "")}${DEFAULT_LOGO_PATH}`;
-  }
-
-  return DEFAULT_LOGO_PATH;
+  return DEFAULT_LOGO_URL;
 }
 
 function slugify(value: string): string {

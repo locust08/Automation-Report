@@ -195,7 +195,8 @@ const BROWSER_RATE_LIMIT_RETRY_JITTER_MS = 15000;
 const REPORT_ITEM_FINAL_FAILURE_ATTEMPTS = 6;
 const DEFAULT_COMPLETION_NOTIFICATION_TO = ["waiing@locus-t.com.my"];
 const DEFAULT_COMPLETION_NOTIFICATION_CC = ["eason@locus-t.com.my", "ava@locus-t.com.my"];
-const DEFAULT_EMAIL_LOGO_PATH = "/locus-t-logo.png";
+const DEFAULT_FROM_ADDRESS = "LOCUS-T Reports <reports@locus-t.com.my>";
+const DEFAULT_EMAIL_LOGO_URL = "https://www.locus-t.com.my/wp-content/uploads/2024/09/LT-Logo-25.svg";
 
 const worker = {
   async fetch(request: Request, env: Env): Promise<Response> {
@@ -1319,7 +1320,7 @@ async function sendReportEmail(
   const attachments: Array<Record<string, string>> = [];
 
   const body: Record<string, unknown> = {
-    from: env.RESEND_FROM_MONTHLY_REPORT?.trim() || "Locus-T <no-reply@locus-t.com.my>",
+    from: env.RESEND_FROM_MONTHLY_REPORT?.trim() || DEFAULT_FROM_ADDRESS,
     to: [recipientEmail],
     cc: normalizeOptional(input.target.ccEmail) ? [input.target.ccEmail] : undefined,
     subject: `Monthly Ads Report - ${input.target.clientName} - ${input.reportMonthLabel}`,
@@ -1380,7 +1381,7 @@ async function sendCompletionNotificationEmail(
   const failedCount = input.failedItems.length;
   const statusLabel = failedCount > 0 ? `${failedCount} failed` : "all completed";
   const body: Record<string, unknown> = {
-    from: env.RESEND_FROM_MONTHLY_REPORT?.trim() || "Locus-T <no-reply@locus-t.com.my>",
+    from: env.RESEND_FROM_MONTHLY_REPORT?.trim() || DEFAULT_FROM_ADDRESS,
     to: recipients,
     cc: cc.length > 0 ? cc : undefined,
     subject: `${subjectPrefix}[Report Automation] Finished - ${input.job.report_month_label} - ${completedCount}/${input.items.length} completed, ${statusLabel}`,
@@ -1650,7 +1651,7 @@ function buildEmailLogoUrl(env: Env): string {
     return configured;
   }
 
-  return `${trimTrailingSlash(env.VERCEL_APP_BASE_URL)}${DEFAULT_EMAIL_LOGO_PATH}`;
+  return DEFAULT_EMAIL_LOGO_URL;
 }
 
 function buildEmailHtml(input: {
