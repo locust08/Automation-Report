@@ -21,7 +21,8 @@ new_sqlite_classes = ["BrowserLaunchLimiter"]
 [vars]
 REPORT_EMAIL_DELIVERY_MODE = "attachment"
 BROWSER_LAUNCH_SPACING_MS = "7000"
-REPORT_FAILURE_ALERT_RECIPIENTS = "eason@locus-t.com.my,ava@locus-t.com.my"
+REPORT_COMPLETION_NOTIFICATION_TO = "waiing@locus-t.com.my"
+REPORT_COMPLETION_NOTIFICATION_CC = "eason@locus-t.com.my,ava@locus-t.com.my"
 
 [[d1_databases]]
 binding = "REPORT_JOBS_DB"

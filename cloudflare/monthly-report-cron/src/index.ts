@@ -20,8 +20,8 @@ interface Env {
   REPORT_EMAIL_DELIVERY_MODE?: "attachment" | "link";
   REPORT_DOWNLOAD_BASE_URL?: string;
   BROWSER_LAUNCH_SPACING_MS?: string;
-  REPORT_FAILURE_ALERT_RECIPIENTS?: string;
-  REPORT_FAILURE_ALERT_CC?: string;
+  REPORT_COMPLETION_NOTIFICATION_TO?: string;
+  REPORT_COMPLETION_NOTIFICATION_CC?: string;
 }
 
 interface ScheduledController {
@@ -159,6 +159,8 @@ interface JobRow {
   test_mode: number;
   failure_alert_sent_at: string | null;
   failure_alert_resend_email_id: string | null;
+  completion_notification_sent_at: string | null;
+  completion_notification_resend_email_id: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -190,7 +192,8 @@ const DEFAULT_BROWSER_LAUNCH_SPACING_MS = 7000;
 const BROWSER_RATE_LIMIT_RETRY_MS = 60000;
 const BROWSER_RATE_LIMIT_RETRY_JITTER_MS = 15000;
 const REPORT_ITEM_FINAL_FAILURE_ATTEMPTS = 6;
-const DEFAULT_FAILURE_ALERT_RECIPIENTS = ["eason@locus-t.com.my", "ava@locus-t.com.my"];
+const DEFAULT_COMPLETION_NOTIFICATION_TO = ["waiing@locus-t.com.my"];
+const DEFAULT_COMPLETION_NOTIFICATION_CC = ["eason@locus-t.com.my", "ava@locus-t.com.my"];
 const EMAIL_LOGO_CONTENT_ID = "locus-t-logo";
 const EMAIL_LOGO_PNG_BASE64 =
   "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";
@@ -481,7 +484,7 @@ async function processReportItem(env: Env, message: ReportQueueMessage): Promise
       .bind("completed", r2Key, buildReportUrl(env, message), resendEmailId, new Date().toISOString(), message.itemId, message.jobId)
       .run();
     await refreshJobStatus(env, message.jobId);
-    await maybeSendJobFailureAlert(env, message.jobId);
+    await maybeSendJobCompletionNotification(env, message.jobId);
   } catch (error) {
     const errorMessage = formatError(error);
     const attemptCount = existing.attempts + 1;
@@ -495,7 +498,7 @@ async function processReportItem(env: Env, message: ReportQueueMessage): Promise
       .run();
     await refreshJobStatus(env, message.jobId);
     if (finalFailure) {
-      await maybeSendJobFailureAlert(env, message.jobId);
+      await maybeSendJobCompletionNotification(env, message.jobId);
     }
     throw error;
   }
@@ -1362,7 +1365,7 @@ async function sendReportEmail(
   };
 }
 
-async function sendFailureAlertEmail(
+async function sendCompletionNotificationEmail(
   env: Env,
   input: {
     job: JobRow;
@@ -1370,19 +1373,22 @@ async function sendFailureAlertEmail(
     failedItems: JobItemRow[];
   }
 ): Promise<{ resendEmailId: string | null }> {
-  const recipients = parseEmailList(env.REPORT_FAILURE_ALERT_RECIPIENTS, DEFAULT_FAILURE_ALERT_RECIPIENTS);
+  const recipients = parseEmailList(env.REPORT_COMPLETION_NOTIFICATION_TO, DEFAULT_COMPLETION_NOTIFICATION_TO);
   if (recipients.length === 0) {
-    throw new Error("Missing failure alert recipients.");
+    throw new Error("Missing completion notification recipients.");
   }
 
-  const cc = parseEmailList(env.REPORT_FAILURE_ALERT_CC, []);
+  const cc = parseEmailList(env.REPORT_COMPLETION_NOTIFICATION_CC, DEFAULT_COMPLETION_NOTIFICATION_CC);
   const subjectPrefix = input.job.test_mode ? "[TEST] " : "";
+  const completedCount = input.items.filter((item) => item.status === "completed").length;
+  const failedCount = input.failedItems.length;
+  const statusLabel = failedCount > 0 ? `${failedCount} failed` : "all completed";
   const body: Record<string, unknown> = {
     from: env.RESEND_FROM_MONTHLY_REPORT?.trim() || "Locus-T <no-reply@locus-t.com.my>",
     to: recipients,
     cc: cc.length > 0 ? cc : undefined,
-    subject: `${subjectPrefix}[Report Automation Alert] ${input.failedItems.length} report${input.failedItems.length === 1 ? "" : "s"} failed - ${input.job.report_month_label}`,
-    html: buildFailureAlertEmailHtml({
+    subject: `${subjectPrefix}[Report Automation] Finished - ${input.job.report_month_label} - ${completedCount}/${input.items.length} completed, ${statusLabel}`,
+    html: buildCompletionNotificationEmailHtml({
       job: input.job,
       items: input.items,
       failedItems: input.failedItems,
@@ -1408,7 +1414,7 @@ async function sendFailureAlertEmail(
   const payload = (await response.json().catch(() => null)) as { id?: string; error?: { message?: string } } | null;
 
   if (!response.ok) {
-    throw new Error(payload?.error?.message ?? `Resend failure alert failed with status ${response.status}.`);
+    throw new Error(payload?.error?.message ?? `Resend completion notification failed with status ${response.status}.`);
   }
 
   return {
@@ -1436,12 +1442,12 @@ async function refreshJobStatus(env: Env, jobId: string): Promise<void> {
     .run();
 }
 
-async function maybeSendJobFailureAlert(env: Env, jobId: string): Promise<void> {
+async function maybeSendJobCompletionNotification(env: Env, jobId: string): Promise<void> {
   const job = await env.REPORT_JOBS_DB.prepare("SELECT * FROM report_jobs WHERE id = ?")
     .bind(jobId)
     .first<JobRow>();
 
-  if (!job || job.failure_alert_sent_at || !isTerminalFailureJobStatus(job.status)) {
+  if (!job || job.completion_notification_sent_at || !isTerminalJobStatus(job.status)) {
     return;
   }
 
@@ -1458,15 +1464,15 @@ async function maybeSendJobFailureAlert(env: Env, jobId: string): Promise<void> 
   const failedItems = items.filter((item) => item.status === "failed");
   const isTerminal = items.length > 0 && items.every((item) => item.status === "completed" || item.status === "failed");
 
-  if (!isTerminal || failedItems.length === 0) {
+  if (!isTerminal) {
     return;
   }
 
-  const alertSentAt = new Date().toISOString();
+  const notificationSentAt = new Date().toISOString();
   const claim = await env.REPORT_JOBS_DB.prepare(
-    "UPDATE report_jobs SET failure_alert_sent_at = ?, updated_at = ? WHERE id = ? AND failure_alert_sent_at IS NULL"
+    "UPDATE report_jobs SET completion_notification_sent_at = ?, updated_at = ? WHERE id = ? AND completion_notification_sent_at IS NULL"
   )
-    .bind(alertSentAt, alertSentAt, jobId)
+    .bind(notificationSentAt, notificationSentAt, jobId)
     .run();
 
   if (!hasD1Changes(claim)) {
@@ -1474,32 +1480,32 @@ async function maybeSendJobFailureAlert(env: Env, jobId: string): Promise<void> 
   }
 
   try {
-    const result = await sendFailureAlertEmail(env, {
+    const result = await sendCompletionNotificationEmail(env, {
       job: {
         ...job,
-        failure_alert_sent_at: alertSentAt,
+        completion_notification_sent_at: notificationSentAt,
       },
       items,
       failedItems,
     });
 
     await env.REPORT_JOBS_DB.prepare(
-      "UPDATE report_jobs SET failure_alert_resend_email_id = ?, updated_at = ? WHERE id = ?"
+      "UPDATE report_jobs SET completion_notification_resend_email_id = ?, updated_at = ? WHERE id = ?"
     )
       .bind(result.resendEmailId, new Date().toISOString(), jobId)
       .run();
   } catch (error) {
     await env.REPORT_JOBS_DB.prepare(
-      "UPDATE report_jobs SET failure_alert_sent_at = NULL, updated_at = ? WHERE id = ?"
+      "UPDATE report_jobs SET completion_notification_sent_at = NULL, updated_at = ? WHERE id = ?"
     )
       .bind(new Date().toISOString(), jobId)
       .run();
-    console.error("[monthly-report-automation] failure alert email failed", formatError(error));
+    console.error("[monthly-report-automation] completion notification email failed", formatError(error));
   }
 }
 
-function isTerminalFailureJobStatus(status: string): boolean {
-  return status === "failed" || status === "completed_with_failures";
+function isTerminalJobStatus(status: string): boolean {
+  return status === "completed" || status === "failed" || status === "completed_with_failures";
 }
 
 function buildReportUrl(
@@ -1715,7 +1721,7 @@ function buildEmailHtml(input: {
   `.trim();
 }
 
-function buildFailureAlertEmailHtml(input: {
+function buildCompletionNotificationEmailHtml(input: {
   job: JobRow;
   items: JobItemRow[];
   failedItems: JobItemRow[];
@@ -1723,20 +1729,34 @@ function buildFailureAlertEmailHtml(input: {
 }): string {
   const completedCount = input.items.filter((item) => item.status === "completed").length;
   const failedCount = input.failedItems.length;
-  const failedRows = input.failedItems
+  const itemRows = input.items
     .map((item) => {
       const accountId = item.google_account_id ?? item.meta_account_id ?? "-";
+      const detail = item.status === "failed"
+        ? truncateForEmail(item.error_message ?? "Unknown error.", 240)
+        : item.resend_email_id
+          ? `Email ID: ${item.resend_email_id}`
+          : item.r2_key
+            ? "PDF generated"
+            : "-";
+      const statusColor = item.status === "completed" ? "#047857" : item.status === "failed" ? "#b91c1c" : "#6b7280";
+      const statusBackground = item.status === "completed" ? "#d1fae5" : item.status === "failed" ? "#fee2e2" : "#f3f4f6";
       return `
         <tr>
-          <td style="padding:12px 10px;border-top:1px solid #fee2e2;color:#111827;font-size:13px;line-height:1.45;">${escapeHtml(item.client_name)}</td>
-          <td style="padding:12px 10px;border-top:1px solid #fee2e2;color:#374151;font-size:13px;line-height:1.45;">${escapeHtml(item.platform ?? "-")}</td>
-          <td style="padding:12px 10px;border-top:1px solid #fee2e2;color:#374151;font-size:13px;line-height:1.45;">${escapeHtml(accountId)}</td>
-          <td align="center" style="padding:12px 10px;border-top:1px solid #fee2e2;color:#374151;font-size:13px;line-height:1.45;">${item.attempts}</td>
-          <td style="padding:12px 10px;border-top:1px solid #fee2e2;color:#991b1b;font-size:13px;line-height:1.45;">${escapeHtml(truncateForEmail(item.error_message ?? "Unknown error.", 260))}</td>
+          <td style="padding:12px 10px;border-top:1px solid #e5e7eb;color:#111827;font-size:13px;line-height:1.45;">${escapeHtml(item.client_name)}</td>
+          <td style="padding:12px 10px;border-top:1px solid #e5e7eb;color:#374151;font-size:13px;line-height:1.45;">${escapeHtml(item.platform ?? "-")}</td>
+          <td style="padding:12px 10px;border-top:1px solid #e5e7eb;color:#374151;font-size:13px;line-height:1.45;">${escapeHtml(accountId)}</td>
+          <td style="padding:12px 10px;border-top:1px solid #e5e7eb;color:#374151;font-size:13px;line-height:1.45;">${escapeHtml(item.recipient_email ?? "-")}</td>
+          <td align="center" style="padding:12px 10px;border-top:1px solid #e5e7eb;color:${statusColor};font-size:13px;line-height:1.45;font-weight:700;"><span style="display:inline-block;background:${statusBackground};border-radius:999px;padding:5px 9px;">${escapeHtml(item.status)}</span></td>
+          <td align="center" style="padding:12px 10px;border-top:1px solid #e5e7eb;color:#374151;font-size:13px;line-height:1.45;">${item.attempts}</td>
+          <td style="padding:12px 10px;border-top:1px solid #e5e7eb;color:${item.status === "failed" ? "#991b1b" : "#374151"};font-size:13px;line-height:1.45;">${escapeHtml(detail)}</td>
         </tr>
       `;
     })
     .join("");
+  const summaryText = failedCount > 0
+    ? "The monthly report automation has finished. Some reports failed after the retry limit and need review."
+    : "The monthly report automation has finished and all reports were generated successfully.";
 
   return `
     <div style="margin:0;padding:0;background:#f3f4f6;font-family:Arial,Helvetica,sans-serif;color:#111827;">
@@ -1750,16 +1770,16 @@ function buildFailureAlertEmailHtml(input: {
                 </td>
               </tr>
               <tr>
-                <td style="background:#991b1b;background-image:linear-gradient(135deg,#7f1d1d 0%,#dc2626 100%);padding:28px 32px;color:#ffffff;">
-                  <div style="font-size:12px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;opacity:.9;">Monthly Report Automation Alert</div>
-                  <div style="font-size:26px;line-height:1.2;font-weight:800;margin-top:8px;">${failedCount} report${failedCount === 1 ? "" : "s"} failed after retries</div>
+                <td style="background:#b40012;background-image:linear-gradient(135deg,#8f0010 0%,#d7192a 100%);padding:28px 32px;color:#ffffff;">
+                  <div style="font-size:12px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;opacity:.9;">Monthly Report Automation Summary</div>
+                  <div style="font-size:26px;line-height:1.2;font-weight:800;margin-top:8px;">Report sending finished</div>
                   <div style="display:inline-block;margin-top:14px;background:rgba(255,255,255,.16);border:1px solid rgba(255,255,255,.28);border-radius:999px;padding:7px 12px;font-size:14px;font-weight:700;">${escapeHtml(input.job.report_month_label)}</div>
                 </td>
               </tr>
               <tr>
                 <td style="padding:26px 32px 10px;">
                   <p style="margin:0 0 14px;font-size:16px;line-height:1.65;color:#111827;">Dear Team,</p>
-                  <p style="margin:0;font-size:15px;line-height:1.65;color:#374151;">The monthly report automation completed with failures after the retry limit. Please review the failed items below and rerun them after the root cause is resolved.</p>
+                  <p style="margin:0;font-size:15px;line-height:1.65;color:#374151;">${escapeHtml(summaryText)}</p>
                 </td>
               </tr>
               <tr>
@@ -1786,23 +1806,25 @@ function buildFailureAlertEmailHtml(input: {
               </tr>
               <tr>
                 <td style="padding:0 32px 30px;">
-                  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-collapse:collapse;border:1px solid #fecaca;border-radius:14px;overflow:hidden;">
+                  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-collapse:collapse;border:1px solid #e5e7eb;border-radius:14px;overflow:hidden;">
                     <thead>
                       <tr>
-                        <th align="left" style="background:#fee2e2;color:#7f1d1d;padding:11px 10px;font-size:12px;text-transform:uppercase;letter-spacing:.04em;">Client</th>
-                        <th align="left" style="background:#fee2e2;color:#7f1d1d;padding:11px 10px;font-size:12px;text-transform:uppercase;letter-spacing:.04em;">Platform</th>
-                        <th align="left" style="background:#fee2e2;color:#7f1d1d;padding:11px 10px;font-size:12px;text-transform:uppercase;letter-spacing:.04em;">Account</th>
-                        <th align="center" style="background:#fee2e2;color:#7f1d1d;padding:11px 10px;font-size:12px;text-transform:uppercase;letter-spacing:.04em;">Attempts</th>
-                        <th align="left" style="background:#fee2e2;color:#7f1d1d;padding:11px 10px;font-size:12px;text-transform:uppercase;letter-spacing:.04em;">Final Error</th>
+                        <th align="left" style="background:#f9fafb;color:#7f1d1d;padding:11px 10px;font-size:12px;text-transform:uppercase;letter-spacing:.04em;">Client</th>
+                        <th align="left" style="background:#f9fafb;color:#7f1d1d;padding:11px 10px;font-size:12px;text-transform:uppercase;letter-spacing:.04em;">Platform</th>
+                        <th align="left" style="background:#f9fafb;color:#7f1d1d;padding:11px 10px;font-size:12px;text-transform:uppercase;letter-spacing:.04em;">Account</th>
+                        <th align="left" style="background:#f9fafb;color:#7f1d1d;padding:11px 10px;font-size:12px;text-transform:uppercase;letter-spacing:.04em;">Recipient</th>
+                        <th align="center" style="background:#f9fafb;color:#7f1d1d;padding:11px 10px;font-size:12px;text-transform:uppercase;letter-spacing:.04em;">Status</th>
+                        <th align="center" style="background:#f9fafb;color:#7f1d1d;padding:11px 10px;font-size:12px;text-transform:uppercase;letter-spacing:.04em;">Attempts</th>
+                        <th align="left" style="background:#f9fafb;color:#7f1d1d;padding:11px 10px;font-size:12px;text-transform:uppercase;letter-spacing:.04em;">Delivery / Error</th>
                       </tr>
                     </thead>
-                    <tbody>${failedRows}</tbody>
+                    <tbody>${itemRows}</tbody>
                   </table>
                 </td>
               </tr>
               <tr>
                 <td style="padding:16px 32px;background:#f9fafb;border-top:1px solid #e5e7eb;color:#6b7280;font-size:12px;line-height:1.5;">
-                  This internal alert was generated automatically from the LOCUS-T reporting dashboard.
+                  This internal notification was generated automatically from the LOCUS-T reporting dashboard.
                 </td>
               </tr>
             </table>
