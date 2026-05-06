@@ -1321,7 +1321,8 @@ async function sendReportEmail(
     {
       filename: "locus-t-logo.png",
       content: EMAIL_LOGO_PNG_BASE64,
-      contentId: EMAIL_LOGO_CONTENT_ID,
+      content_id: EMAIL_LOGO_CONTENT_ID,
+      content_type: "image/png",
     },
   ];
 
@@ -1398,7 +1399,8 @@ async function sendCompletionNotificationEmail(
       {
         filename: "locus-t-logo.png",
         content: EMAIL_LOGO_PNG_BASE64,
-        contentId: EMAIL_LOGO_CONTENT_ID,
+        content_id: EMAIL_LOGO_CONTENT_ID,
+        content_type: "image/png",
       },
     ],
   };
