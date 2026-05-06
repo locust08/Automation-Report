@@ -149,11 +149,11 @@ export function ReportShell({
           >
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
-              src="/locus-t-logo.png"
+              src="/locus-t-logo-25.png"
               alt="LOCUS-T logo"
-              width={180}
-              height={60}
-              className="h-9 w-auto object-contain"
+              width={220}
+              height={40}
+              className="h-10 w-auto max-w-[260px] object-contain"
               loading="eager"
               decoding="sync"
             />
