@@ -1,16 +1,12 @@
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
-
 import { Resend } from "resend";
 
 import type { MonthlyReportAccount } from "@/src/lib/notion/get-monthly-report-accounts";
 
 const DEFAULT_TEST_RECIPIENT = "ava@locus-t.com.my";
 const DEFAULT_FROM_ADDRESS = "Locus-T <no-reply@locus-t.com.my>";
-const EMAIL_LOGO_CONTENT_ID = "locus-t-logo";
+const DEFAULT_LOGO_PATH = "/locus-t-logo.png";
 
 let resendClient: Resend | null = null;
-let cachedLogoBase64: string | null | undefined;
 
 export interface SendMonthlyReportEmailInput {
   account: MonthlyReportAccount;
@@ -58,28 +54,19 @@ export async function sendMonthlyReportEmail(
   }
 
   try {
-    const attachments: Array<{ filename: string; content: string; contentId?: string }> = [
+    const attachments: Array<{ filename: string; content: string }> = [
       {
         filename: buildAttachmentFilename(input.account.clientName, input.reportMonthLabel),
         content: input.pdfBuffer.toString("base64"),
       },
     ];
-    const logoBase64 = readLogoBase64();
-
-    if (logoBase64) {
-      attachments.unshift({
-        filename: "locus-t-logo.png",
-        content: logoBase64,
-        contentId: EMAIL_LOGO_CONTENT_ID,
-      });
-    }
 
     const response = await resend.emails.send({
       from: fromAddress,
       to: [recipientEmail],
       cc: ccEmail ? [ccEmail] : undefined,
       subject,
-      html: buildEmailHtml(),
+      html: buildEmailHtml(resolveLogoUrl()),
       attachments,
     });
 
@@ -121,10 +108,10 @@ function buildAttachmentFilename(clientName: string, reportMonthLabel: string): 
   return `Monthly Report-${sanitizeFilenameSegment(clientName)}-${sanitizeFilenameSegment(reportMonthLabel)}.pdf`;
 }
 
-function buildEmailHtml(): string {
+function buildEmailHtml(logoUrl: string): string {
   return `
     <div style="font-family: Arial, sans-serif; color: #111827; line-height: 1.7; font-size: 15px;">
-      <div style="text-align:center;margin:0 0 22px;"><img src="cid:${EMAIL_LOGO_CONTENT_ID}" width="180" alt="LOCUS-T" style="display:inline-block;width:180px;max-width:70%;height:auto;border:0;outline:none;text-decoration:none;" /></div>
+      <div style="text-align:center;margin:0 0 22px;"><img src="${escapeHtml(logoUrl)}" width="180" alt="LOCUS-T" style="display:inline-block;width:180px;max-width:70%;height:auto;border:0;outline:none;text-decoration:none;" /></div>
       <p>Dear Valued Client,</p>
       <p>Please find your Digital Ads Campaign Performance Report for this month attached in the PDF below.</p>
       <p>Best regards,<br/><strong>LOCUS-T</strong></p>
@@ -136,18 +123,18 @@ function buildEmailHtml(): string {
   `.trim();
 }
 
-function readLogoBase64(): string | null {
-  if (cachedLogoBase64 !== undefined) {
-    return cachedLogoBase64;
+function resolveLogoUrl(): string {
+  const configured = readOptionalEnv("REPORT_EMAIL_LOGO_URL");
+  if (configured) {
+    return configured;
   }
 
-  try {
-    cachedLogoBase64 = readFileSync(join(process.cwd(), "public", "locus-t-logo.png")).toString("base64");
-  } catch {
-    cachedLogoBase64 = null;
+  const baseUrl = readOptionalEnv("MONTHLY_REPORT_APP_BASE_URL") ?? readOptionalEnv("VERCEL_APP_BASE_URL");
+  if (baseUrl) {
+    return `${baseUrl.replace(/\/+$/g, "")}${DEFAULT_LOGO_PATH}`;
   }
 
-  return cachedLogoBase64;
+  return DEFAULT_LOGO_PATH;
 }
 
 function slugify(value: string): string {
@@ -178,6 +165,15 @@ function readRequiredEnv(name: string): string {
 function readOptionalEnv(name: string): string | null {
   const value = process.env[name]?.trim();
   return value ? value : null;
+}
+
+function escapeHtml(value: string): string {
+  return value
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
 }
 
 function parseBooleanEnv(value: string | undefined): boolean {
