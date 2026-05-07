@@ -1141,70 +1141,33 @@ async function renderAdvancedPdfWithBrowserRun(env: Env, reportUrl: string): Pro
 
   try {
     const page = await browser.newPage();
+    const captures = await captureAdvancedReportImages(page, reportUrl);
+    const width = Math.max(...captures.map((capture) => capture.width), 1440);
+    const sectionGap = 36;
+    const totalHeight = captures.reduce(
+      (sum, capture) => sum + capture.height + sectionGap,
+      sectionGap
+    );
     await page.setViewport({
-      width: 1440,
-      height: 2200,
+      width,
+      height: Math.min(Math.max(totalHeight, 1200), 6000),
       deviceScaleFactor: 1,
     });
     await page.emulateMediaType("screen");
-    await page.goto(reportUrl, {
-      waitUntil: "domcontentloaded",
-      timeout: 60000,
+    await page.setContent(buildStackedReportHtml(captures, width), {
+      waitUntil: "networkidle0",
     });
     await page.addStyleTag({
       content: `
-        html, body {
-          margin: 0 !important;
-          background: #f3f4f6 !important;
-          -webkit-print-color-adjust: exact !important;
-          print-color-adjust: exact !important;
-        }
-        [data-report-capture-root='true'] {
-          width: 1440px !important;
-          max-width: none !important;
-        }
-        [data-report-export-exclude='true'],
-        [data-report-download-overlay='true'] {
-          display: none !important;
-        }
-        [data-advanced-report-section='true'],
-        [data-report-export-header-section='true'],
-        [data-report-export-footer='true'] {
-          break-inside: auto !important;
-          page-break-inside: auto !important;
-        }
-        [data-advanced-media-item='true'],
-        article,
-        tr {
-          break-inside: avoid !important;
-          page-break-inside: avoid !important;
-        }
-        textarea {
-          border: 0 !important;
-          background: #f7f7f7 !important;
-          resize: none !important;
-        }
         @page {
-          size: 1440px 2036px;
+          size: ${width}px ${totalHeight}px;
           margin: 0;
         }
       `,
     });
-    await page.waitForSelector("[data-report-capture-root='true']", {
-      visible: true,
-      timeout: 60000,
-    });
-    await page.waitForSelector("[data-advanced-report-ready='true']", {
-      visible: true,
-      timeout: 330000,
-    });
-    await page.evaluate(() => document.fonts.ready);
-    await scrollAdvancedReportForMedia(page);
-    await waitForPageImages(page, 30000);
-
     const pdf = await page.pdf({
-      width: "1440px",
-      height: "2036px",
+      width: `${width}px`,
+      height: `${totalHeight}px`,
       printBackground: true,
       scale: 1,
       margin: {
@@ -1482,6 +1445,103 @@ async function waitForPageImages(page: Page, timeoutMs: number): Promise<void> {
       timeout: timeoutMs,
     }
   ).catch(() => undefined);
+}
+
+async function captureAdvancedReportImages(
+  page: Page,
+  reportUrl: string
+): Promise<Array<{ dataUrl: string; width: number; height: number; label: string }>> {
+  await page.setViewport({
+    width: 1440,
+    height: 2200,
+    deviceScaleFactor: 1,
+  });
+  await page.emulateMediaType("screen");
+  await page.goto(reportUrl, {
+    waitUntil: "domcontentloaded",
+    timeout: 60000,
+  });
+  await page.addStyleTag({
+    content: `
+      html, body {
+        margin: 0 !important;
+        background: #f3f4f6 !important;
+        -webkit-print-color-adjust: exact !important;
+        print-color-adjust: exact !important;
+      }
+      [data-report-capture-root='true'] {
+        width: 1440px !important;
+        max-width: none !important;
+      }
+      [data-report-export-exclude='true'],
+      [data-report-download-overlay='true'] {
+        display: none !important;
+      }
+      textarea {
+        border: 0 !important;
+        background: #f7f7f7 !important;
+        resize: none !important;
+      }
+    `,
+  });
+  await page.waitForSelector("[data-report-capture-root='true']", {
+    visible: true,
+    timeout: 60000,
+  });
+  await page.waitForSelector("[data-advanced-report-ready='true']", {
+    visible: true,
+    timeout: 60000,
+  });
+  await page.evaluate(() => document.fonts.ready);
+  await scrollAdvancedReportForMedia(page);
+  await waitForPageImages(page, 30000);
+
+  const clips = await page.$$eval(
+    [
+      "[data-report-export-header-section='true']",
+      "[data-advanced-report-section='true']",
+      "[data-report-export-footer='true']",
+    ].join(","),
+    (elements) =>
+      elements.map((element, index) => {
+        const target = element as HTMLElement;
+        const rect = target.getBoundingClientRect();
+        return {
+          x: Math.floor(rect.left + window.scrollX),
+          y: Math.floor(rect.top + window.scrollY),
+          width: Math.ceil(Math.max(rect.width, target.scrollWidth)),
+          height: Math.ceil(Math.max(rect.height, target.scrollHeight)),
+          label: target.textContent?.trim().slice(0, 80) || `Advanced report section ${index + 1}`,
+        };
+      })
+  );
+
+  const captures = [];
+  for (const clip of clips.filter((item) => item.width > 0 && item.height > 0)) {
+    const screenshot = await page.screenshot({
+      type: "jpeg",
+      quality: 76,
+      clip: {
+        x: clip.x,
+        y: clip.y,
+        width: clip.width,
+        height: clip.height,
+      },
+      captureBeyondViewport: true,
+    });
+    captures.push({
+      dataUrl: `data:image/jpeg;base64,${toBase64(screenshot)}`,
+      width: clip.width,
+      height: clip.height,
+      label: clip.label,
+    });
+  }
+
+  if (captures.length === 0) {
+    throw new Error("Advanced report did not expose any sections for PDF capture.");
+  }
+
+  return captures;
 }
 
 function buildStackedReportHtml(
