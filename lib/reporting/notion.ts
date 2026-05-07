@@ -16,6 +16,8 @@ export interface NotionPageProperty {
   email?: string | null;
   phone_number?: string | null;
   checkbox?: boolean;
+  date?: { start?: string | null; end?: string | null } | null;
+  files?: Array<{ file?: { url?: string }; external?: { url?: string }; name?: string }>;
   formula?:
     | { type?: "string"; string?: string | null }
     | { type?: "number"; number?: number | null }

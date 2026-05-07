@@ -15,6 +15,7 @@ import {
   fetchGoogleAudienceBreakdown,
   fetchGoogleAuctionInsightRows,
   fetchGoogleCampaignRows,
+  fetchGoogleFinalUrlSpendRows,
   fetchGooglePreviewData,
   fetchGoogleTopKeywordRows,
   isGoogleAdsAccessPathError,
@@ -39,6 +40,7 @@ import {
   AuctionInsightsPayload,
   CampaignComparisonPayload,
   CampaignRow,
+  GoogleFinalUrlSpendRow,
   InsightsPayload,
   MetaPreviewBlockIssue,
   MetaPreviewDiagnostics,
@@ -100,6 +102,7 @@ const googlePreviewCache = new Map<
   MemoryCacheEntry<Awaited<ReturnType<typeof fetchGooglePreviewData>>>
 >();
 const googleTopKeywordRowsCache = new Map<string, MemoryCacheEntry<TopKeywordRow[]>>();
+const googleFinalUrlSpendRowsCache = new Map<string, MemoryCacheEntry<GoogleFinalUrlSpendRow[]>>();
 const googleAuctionInsightRowsCache = new Map<string, MemoryCacheEntry<AuctionInsightRow[]>>();
 const googleAccountNameCache = new Map<string, MemoryCacheEntry<string | null>>();
 
@@ -653,6 +656,56 @@ export async function getTopKeywordsReport(input: OverallInput): Promise<TopKeyw
     rows,
     totals,
     warnings: dedupeWarnings(warnings),
+  };
+}
+
+export async function getGoogleAdvancedAdUsageReport(input: OverallInput): Promise<{
+  keywordRows: TopKeywordRow[];
+  finalUrlRows: GoogleFinalUrlSpendRow[];
+  warnings: string[];
+}> {
+  const credentials = getCredentials();
+  const dateRange = buildDateRange(input.startDate, input.endDate);
+  const { resolvedAccountIds, googleManagerContext } = await resolveReportAccountContext(
+    input,
+    credentials
+  );
+
+  const [keywordResult, finalUrlResult] = await Promise.all([
+    tryFetchGoogleKeywordsForAccounts(
+      resolvedAccountIds.googleAccountIds,
+      credentials.googleAdsApiVersion,
+      credentials.googleDeveloperToken,
+      credentials.googleAccessToken,
+      credentials.googleRefreshToken,
+      credentials.googleClientId,
+      credentials.googleClientSecret,
+      googleManagerContext.loginCustomerIdByAccount,
+      googleManagerContext.accessPathByAccount,
+      credentials.googleLoginCustomerId,
+      dateRange.startDate,
+      dateRange.endDate
+    ),
+    tryFetchGoogleFinalUrlsForAccounts(
+      resolvedAccountIds.googleAccountIds,
+      credentials.googleAdsApiVersion,
+      credentials.googleDeveloperToken,
+      credentials.googleAccessToken,
+      credentials.googleRefreshToken,
+      credentials.googleClientId,
+      credentials.googleClientSecret,
+      googleManagerContext.loginCustomerIdByAccount,
+      googleManagerContext.accessPathByAccount,
+      credentials.googleLoginCustomerId,
+      dateRange.startDate,
+      dateRange.endDate
+    ),
+  ]);
+
+  return {
+    keywordRows: keywordResult.rows.filter((row) => row.cost > 1),
+    finalUrlRows: finalUrlResult.rows.filter((row) => row.cost > 1),
+    warnings: [...googleManagerContext.messages, ...keywordResult.warnings, ...finalUrlResult.warnings],
   };
 }
 
@@ -1429,6 +1482,87 @@ async function tryFetchGoogleKeywords(
   }
 }
 
+async function tryFetchGoogleFinalUrls(
+  customerId: string | null,
+  apiVersion: string,
+  developerToken: string | null,
+  accessToken: string | null,
+  refreshToken: string | null,
+  clientId: string | null,
+  clientSecret: string | null,
+  loginCustomerId: string | null,
+  accessPath: string | null,
+  fallbackLoginCustomerId: string | null,
+  startDate: string,
+  endDate: string
+): Promise<{ rows: GoogleFinalUrlSpendRow[]; warnings: string[] }> {
+  if (!customerId) {
+    return { rows: [], warnings: [] };
+  }
+
+  const credentialWarnings = getGoogleCredentialWarnings(
+    developerToken,
+    accessToken,
+    refreshToken,
+    clientId,
+    clientSecret
+  );
+  if (credentialWarnings.length > 0) {
+    return { rows: [], warnings: credentialWarnings };
+  }
+
+  const cacheKey = createGoogleFetchCacheKey("final-url-spend", {
+    customerId,
+    apiVersion,
+    loginCustomerId,
+    accessPath,
+    fallbackLoginCustomerId,
+    startDate,
+    endDate,
+    credentials: fingerprintGoogleCredentials(
+      developerToken,
+      accessToken,
+      refreshToken,
+      clientId,
+      clientSecret
+    ),
+  });
+
+  try {
+    const rows = await readThroughMemoryCache(
+      googleFinalUrlSpendRowsCache,
+      cacheKey,
+      () =>
+        fetchGoogleFinalUrlSpendRows({
+          customerId,
+          apiVersion,
+          developerToken: developerToken!,
+          accessToken,
+          refreshToken,
+          clientId,
+          clientSecret,
+          loginCustomerId,
+          accessPath,
+          fallbackLoginCustomerId,
+          startDate,
+          endDate,
+        }),
+      {
+        ttlMs: GOOGLE_FETCH_CACHE_TTL_MS,
+        maxEntries: GOOGLE_FETCH_CACHE_MAX_ENTRIES,
+      }
+    );
+
+    return { rows, warnings: [] };
+  } catch (error) {
+    if (isGoogleAdsAccessPathError(error)) {
+      throw error;
+    }
+    const message = error instanceof Error ? error.message : "Failed to load Google Ads final URL data.";
+    return { rows: [], warnings: [`Google Ads API: ${message}${googleErrorHint(message)}`] };
+  }
+}
+
 async function tryFetchGoogleAuctionInsights(
   customerId: string | null,
   apiVersion: string,
@@ -1839,6 +1973,54 @@ async function tryFetchGoogleKeywordsForAccounts(
 
   const mergedRows = mergeTopKeywordRows(rows);
   return { rows: mergedRows, warnings };
+}
+
+async function tryFetchGoogleFinalUrlsForAccounts(
+  accountIds: string[],
+  apiVersion: string,
+  developerToken: string | null,
+  accessToken: string | null,
+  refreshToken: string | null,
+  clientId: string | null,
+  clientSecret: string | null,
+  loginCustomerIdByAccount: GoogleLoginCustomerIdMap,
+  accessPathByAccount: Record<string, string | null>,
+  fallbackLoginCustomerId: string | null,
+  startDate: string,
+  endDate: string
+): Promise<{ rows: GoogleFinalUrlSpendRow[]; warnings: string[] }> {
+  if (accountIds.length === 0) {
+    return { rows: [], warnings: [] };
+  }
+
+  const rows: GoogleFinalUrlSpendRow[] = [];
+  const warnings: string[] = [];
+
+  for (const accountId of accountIds) {
+    const result = await tryFetchGoogleFinalUrls(
+      accountId,
+      apiVersion,
+      developerToken,
+      accessToken,
+      refreshToken,
+      clientId,
+      clientSecret,
+      loginCustomerIdByAccount[accountId] ?? null,
+      accessPathByAccount[accountId] ?? null,
+      fallbackLoginCustomerId,
+      startDate,
+      endDate
+    );
+
+    rows.push(...result.rows);
+    const accountWarnings = result.warnings.map((warning) =>
+      annotateWarningWithAccount(warning, "google", accountId)
+    );
+    logGoogleWarningsForTerminal(accountWarnings);
+    warnings.push(...accountWarnings);
+  }
+
+  return { rows: mergeGoogleFinalUrlSpendRows(rows), warnings };
 }
 
 async function tryFetchGoogleAuctionInsightsForAccounts(
@@ -2395,6 +2577,34 @@ function mergeTopKeywordRows(rows: TopKeywordRow[]): TopKeywordRow[] {
     }
     return b.impressions - a.impressions;
   });
+}
+
+function mergeGoogleFinalUrlSpendRows(rows: GoogleFinalUrlSpendRow[]): GoogleFinalUrlSpendRow[] {
+  const byUrl = new Map<string, GoogleFinalUrlSpendRow>();
+  rows.forEach((row) => {
+    const key = row.finalUrl.trim();
+    const existing = byUrl.get(key);
+    if (!existing) {
+      byUrl.set(key, { ...row, campaignNames: [...row.campaignNames], adGroupNames: [...row.adGroupNames] });
+      return;
+    }
+
+    existing.impressions += row.impressions;
+    existing.clicks += row.clicks;
+    existing.cost += row.cost;
+    row.campaignNames.forEach((name) => {
+      if (!existing.campaignNames.includes(name)) {
+        existing.campaignNames.push(name);
+      }
+    });
+    row.adGroupNames.forEach((name) => {
+      if (!existing.adGroupNames.includes(name)) {
+        existing.adGroupNames.push(name);
+      }
+    });
+  });
+
+  return Array.from(byUrl.values()).sort((a, b) => b.cost - a.cost);
 }
 
 function buildTopKeywordTotals(rows: TopKeywordRow[]): TopKeywordRow {

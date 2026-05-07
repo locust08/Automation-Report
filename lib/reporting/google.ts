@@ -19,6 +19,7 @@ import {
   GoogleAdsAccessPathErrorPayload,
   PreviewCampaignNode,
   PreviewDetailField,
+  GoogleFinalUrlSpendRow,
   GooglePreviewBlockDiagnostic,
   GooglePreviewDiagnostics,
   GooglePreviewFatalError,
@@ -2140,6 +2141,114 @@ export async function fetchGoogleTopKeywordRows({
     }
     return b.impressions - a.impressions;
   });
+}
+
+export async function fetchGoogleFinalUrlSpendRows({
+  customerId,
+  apiVersion,
+  developerToken,
+  accessToken,
+  refreshToken,
+  clientId,
+  clientSecret,
+  loginCustomerId,
+  accessPath,
+  fallbackLoginCustomerId,
+  startDate,
+  endDate,
+}: GoogleFetchInput): Promise<GoogleFinalUrlSpendRow[]> {
+  const context = await resolveVerifiedGoogleAdsContext({
+    customerId,
+    apiVersion,
+    developerToken,
+    accessToken,
+    refreshToken,
+    clientId,
+    clientSecret,
+    loginCustomerId,
+    accessPath: accessPath ?? null,
+    fallbackLoginCustomerId: fallbackLoginCustomerId ?? null,
+  });
+
+  const results = await fetchGoogleAdsResultsWithFallback({
+    customerId: context.customerId,
+    apiVersion,
+    developerToken,
+    accessToken,
+    refreshToken,
+    clientId,
+    clientSecret,
+    loginCustomerId: context.loginCustomerId,
+    queries: [
+      `
+        SELECT
+          campaign.id,
+          campaign.name,
+          campaign.status,
+          ad_group.id,
+          ad_group.name,
+          ad_group.status,
+          ad_group_ad.status,
+          ad_group_ad.ad.id,
+          ad_group_ad.ad.final_urls,
+          metrics.impressions,
+          metrics.clicks,
+          metrics.cost_micros
+        FROM ad_group_ad
+        WHERE campaign.status = 'ENABLED'
+          AND ad_group.status = 'ENABLED'
+          AND ad_group_ad.status = 'ENABLED'
+          AND segments.date BETWEEN '${startDate}' AND '${endDate}'
+      `,
+    ],
+  });
+
+  const byUrl = new Map<string, GoogleFinalUrlSpendRow>();
+  results.forEach((result, index) => {
+    const cost = microsToCurrency(result.metrics?.costMicros);
+    if (cost <= 1) {
+      return;
+    }
+
+    const urls = result.adGroupAd?.ad?.finalUrls ?? [];
+    urls.forEach((rawUrl) => {
+      const finalUrl = rawUrl?.trim();
+      if (!finalUrl) {
+        return;
+      }
+
+      const existing = byUrl.get(finalUrl);
+      const campaignName = result.campaign?.name?.trim();
+      const adGroupName = result.adGroup?.name?.trim();
+      const impressions = toNumber(result.metrics?.impressions);
+      const clicks = toNumber(result.metrics?.clicks);
+
+      if (!existing) {
+        byUrl.set(finalUrl, {
+          id: result.adGroupAd?.ad?.id ?? `${customerId}-final-url-${index}`,
+          finalUrl,
+          campaignNames: campaignName ? [campaignName] : [],
+          adGroupNames: adGroupName ? [adGroupName] : [],
+          impressions,
+          clicks,
+          cost,
+        });
+        return;
+      }
+
+      if (campaignName && !existing.campaignNames.includes(campaignName)) {
+        existing.campaignNames.push(campaignName);
+      }
+      if (adGroupName && !existing.adGroupNames.includes(adGroupName)) {
+        existing.adGroupNames.push(adGroupName);
+      }
+      existing.impressions += impressions;
+      existing.clicks += clicks;
+      existing.cost += cost;
+    });
+  });
+
+  return Array.from(byUrl.values()).sort((a, b) => b.cost - a.cost);
 }
 
 export async function fetchGoogleAuctionInsightRows({

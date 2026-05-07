@@ -119,6 +119,7 @@ interface ReportTarget {
   ccEmail?: string | null;
   platform?: string | null;
   reportType?: string | null;
+  country?: string | null;
 }
 
 interface ReportSectionTarget extends ReportTarget {
@@ -129,6 +130,8 @@ interface CreateJobRequest {
   accounts?: ReportTarget[];
   forceTestMode?: boolean;
   sendEmail?: boolean;
+  reportType?: string | null;
+  country?: string | null;
   startDate?: string;
   endDate?: string;
   reportMonthKey?: string;
@@ -172,6 +175,8 @@ interface JobItemRow {
   status: string;
   client_name: string;
   platform: string | null;
+  report_type: string | null;
+  country: string | null;
   google_account_id: string | null;
   meta_account_id: string | null;
   recipient_email: string | null;
@@ -335,7 +340,7 @@ async function createReportJob(
   const testMode = Boolean(input.forceTestMode);
   const sendEmail = input.sendEmail !== false;
   const resolved = await resolveTargets(env, input, testMode);
-  const targets = resolved.targets;
+  const targets = expandAdvancedTargets(resolved.targets);
 
   if (targets.length === 0) {
     return {
@@ -375,9 +380,9 @@ async function createReportJob(
     const itemId = crypto.randomUUID();
     await env.REPORT_JOBS_DB.prepare(
       `INSERT INTO report_job_items (
-        id, job_id, status, client_name, platform, google_account_id, meta_account_id,
+        id, job_id, status, client_name, platform, report_type, country, google_account_id, meta_account_id,
         recipient_email, cc_email, attempts, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     )
       .bind(
         itemId,
@@ -385,6 +390,8 @@ async function createReportJob(
         "queued",
         target.clientName,
         target.platform ?? inferPlatform(target),
+        normalizeReportType(target.reportType),
+        normalizeAdvancedCountry(target.country),
         normalizeOptional(target.googleAccountId),
         normalizeOptional(target.metaAccountId),
         resolveRecipientEmail(env, target, testMode),
@@ -449,7 +456,11 @@ async function processReportItem(env: Env, message: ReportQueueMessage): Promise
   try {
     const pdf = await renderPdfForReportMessage(env, message);
     const r2Key = buildR2Key(message);
-    const filename = buildPdfFilename(message.target.clientName, message.reportMonthLabel);
+    const filename = buildPdfFilename(
+      message.target.clientName,
+      message.reportMonthLabel,
+      normalizeReportType(message.target.reportType)
+    );
 
     await env.REPORT_PDFS.put(r2Key, pdf, {
       httpMetadata: {
@@ -460,6 +471,7 @@ async function processReportItem(env: Env, message: ReportQueueMessage): Promise
         jobId: message.jobId,
         itemId: message.itemId,
         clientName: message.target.clientName,
+        reportType: normalizeReportType(message.target.reportType),
         reportMonthKey: message.reportMonthKey,
       },
     });
@@ -469,6 +481,7 @@ async function processReportItem(env: Env, message: ReportQueueMessage): Promise
       const emailResult = await sendReportEmail(env, {
         target: message.target,
         reportMonthLabel: message.reportMonthLabel,
+        reportType: normalizeReportType(message.target.reportType),
         pdf,
         r2Key,
         filename,
@@ -515,7 +528,7 @@ async function getReportJob(env: Env, jobId: string): Promise<Record<string, unk
   }
 
   const itemsResult = await env.REPORT_JOBS_DB.prepare(
-    `SELECT id, job_id, status, client_name, platform, google_account_id, meta_account_id,
+    `SELECT id, job_id, status, client_name, platform, report_type, country, google_account_id, meta_account_id,
       recipient_email, cc_email, attempts, r2_key, report_url, resend_email_id, error_message, updated_at
      FROM report_job_items
      WHERE job_id = ?
@@ -544,7 +557,7 @@ async function retryFailedItems(env: Env, jobId: string): Promise<Record<string,
   }
 
   const failedResult = await env.REPORT_JOBS_DB.prepare(
-    `SELECT id, client_name, platform, google_account_id, meta_account_id, recipient_email, cc_email
+    `SELECT id, client_name, platform, report_type, country, google_account_id, meta_account_id, recipient_email, cc_email
      FROM report_job_items
      WHERE job_id = ? AND status = ?`
   )
@@ -565,6 +578,8 @@ async function retryFailedItems(env: Env, jobId: string): Promise<Record<string,
       target: {
         clientName: item.client_name,
         platform: item.platform,
+        reportType: item.report_type,
+        country: item.country,
         googleAccountId: item.google_account_id,
         metaAccountId: item.meta_account_id,
         recipientEmail: item.recipient_email,
@@ -607,7 +622,8 @@ async function downloadReportPdf(env: Env, jobId: string, itemId: string): Promi
     headers: {
       "content-type": object.httpMetadata?.contentType ?? "application/pdf",
       "content-disposition":
-        object.httpMetadata?.contentDisposition ?? `attachment; filename="${buildPdfFilename(item.client_name, "report")}"`,
+        object.httpMetadata?.contentDisposition ??
+          `attachment; filename="${buildPdfFilename(item.client_name, "report", normalizeReportType(item.report_type))}"`,
       "cache-control": "private, max-age=0, no-store",
     },
   });
@@ -637,7 +653,7 @@ async function resolveTargets(
 
     return {
       ...range,
-      targets: normalizeTargets(enrichedTargets),
+      targets: normalizeTargets(enrichedTargets, input),
     };
   }
 
@@ -650,7 +666,7 @@ async function resolveTargets(
     endDate: payload.endDate ?? resolveDateRange(input).endDate,
     reportMonthKey: payload.reportMonthKey ?? resolveDateRange(input).reportMonthKey,
     reportMonthLabel: payload.reportMonthLabel ?? resolveDateRange(input).reportMonthLabel,
-    targets: normalizeTargets(payload.targets ?? []),
+    targets: normalizeTargets(payload.targets ?? [], input),
   };
 }
 
@@ -1116,8 +1132,98 @@ async function renderPdfWithBrowserRun(env: Env, reportUrl: string): Promise<Arr
   }
 }
 
+async function renderAdvancedPdfWithBrowserRun(env: Env, reportUrl: string): Promise<ArrayBuffer> {
+  await waitForBrowserLaunchSlot(env);
+  const browser = await puppeteer.launch(env.REPORT_BROWSER);
+
+  try {
+    const page = await browser.newPage();
+    await page.setViewport({
+      width: 1440,
+      height: 2200,
+      deviceScaleFactor: 1,
+    });
+    await page.emulateMediaType("screen");
+    await page.goto(reportUrl, {
+      waitUntil: "domcontentloaded",
+      timeout: 60000,
+    });
+    await page.addStyleTag({
+      content: `
+        html, body {
+          margin: 0 !important;
+          background: #f3f4f6 !important;
+          -webkit-print-color-adjust: exact !important;
+          print-color-adjust: exact !important;
+        }
+        [data-report-capture-root='true'] {
+          width: 1440px !important;
+          max-width: none !important;
+        }
+        [data-report-export-exclude='true'],
+        [data-report-download-overlay='true'] {
+          display: none !important;
+        }
+        [data-advanced-report-section='true'],
+        [data-report-export-header-section='true'],
+        [data-report-export-footer='true'] {
+          break-inside: auto !important;
+          page-break-inside: auto !important;
+        }
+        [data-advanced-media-item='true'],
+        article,
+        tr {
+          break-inside: avoid !important;
+          page-break-inside: avoid !important;
+        }
+        textarea {
+          border: 0 !important;
+          background: #f7f7f7 !important;
+          resize: none !important;
+        }
+        @page {
+          size: 1440px 2036px;
+          margin: 0;
+        }
+      `,
+    });
+    await page.waitForSelector("[data-report-capture-root='true']", {
+      visible: true,
+      timeout: 60000,
+    });
+    await page.waitForSelector("[data-advanced-report-ready='true']", {
+      visible: true,
+      timeout: 330000,
+    });
+    await page.evaluate(() => document.fonts.ready);
+    await scrollAdvancedReportForMedia(page);
+    await waitForPageImages(page, 30000);
+
+    const pdf = await page.pdf({
+      width: "1440px",
+      height: "2036px",
+      printBackground: true,
+      scale: 1,
+      margin: {
+        top: "0px",
+        right: "0px",
+        bottom: "0px",
+        left: "0px",
+      },
+    });
+
+    return toArrayBuffer(pdf);
+  } finally {
+    await browser.close();
+  }
+}
+
 async function renderPdfForReportMessage(env: Env, message: ReportQueueMessage): Promise<ArrayBuffer> {
   return renderWithBrowserRateLimitRetry(async () => {
+    if (normalizeReportType(message.target.reportType) === "advanced") {
+      return renderAdvancedPdfWithBrowserRun(env, buildReportUrl(env, message));
+    }
+
     const sections = buildReportSections(message.target);
 
     if (sections.length <= 1) {
@@ -1260,6 +1366,31 @@ async function captureReportSectionImage(
   };
 }
 
+async function scrollAdvancedReportForMedia(page: Page): Promise<void> {
+  await page.evaluate(async () => {
+    const delay = (durationMs: number) => new Promise((resolve) => window.setTimeout(resolve, durationMs));
+    const height = Math.max(document.documentElement.scrollHeight, document.body.scrollHeight);
+    const viewportHeight = Math.max(window.innerHeight, 800);
+    for (let y = 0; y <= height; y += viewportHeight) {
+      window.scrollTo(0, y);
+      await delay(80);
+    }
+    window.scrollTo(0, 0);
+  });
+}
+
+async function waitForPageImages(page: Page, timeoutMs: number): Promise<void> {
+  await page.waitForFunction(
+    () =>
+      Array.from(document.images).every(
+        (image) => image.complete && image.naturalWidth > 0
+      ),
+    {
+      timeout: timeoutMs,
+    }
+  ).catch(() => undefined);
+}
+
 function buildStackedReportHtml(
   captures: Array<{ dataUrl: string; width: number; height: number; label: string }>,
   width: number
@@ -1306,6 +1437,7 @@ async function sendReportEmail(
   input: {
     target: ReportTarget;
     reportMonthLabel: string;
+    reportType: "overall" | "advanced";
     pdf: ArrayBuffer;
     r2Key: string;
     filename: string;
@@ -1323,7 +1455,7 @@ async function sendReportEmail(
     from: env.RESEND_FROM_MONTHLY_REPORT?.trim() || DEFAULT_FROM_ADDRESS,
     to: [recipientEmail],
     cc: normalizeOptional(input.target.ccEmail) ? [input.target.ccEmail] : undefined,
-    subject: `Monthly Ads Report - ${input.target.clientName} - ${input.reportMonthLabel}`,
+    subject: buildReportEmailSubject(input.reportType, input.target.clientName, input.reportMonthLabel),
     html: buildEmailHtml({
       clientName: input.target.clientName,
       reportMonthLabel: input.reportMonthLabel,
@@ -1442,7 +1574,7 @@ async function maybeSendJobCompletionNotification(env: Env, jobId: string): Prom
   }
 
   const itemsResult = await env.REPORT_JOBS_DB.prepare(
-    `SELECT id, job_id, status, client_name, platform, google_account_id, meta_account_id,
+    `SELECT id, job_id, status, client_name, platform, report_type, country, google_account_id, meta_account_id,
       recipient_email, cc_email, attempts, r2_key, report_url, resend_email_id, error_message, updated_at
      FROM report_job_items
      WHERE job_id = ?
@@ -1503,7 +1635,8 @@ function buildReportUrl(
   message: ReportQueueMessage,
   target: ReportTarget = message.target
 ): string {
-  const url = new URL("/overall", trimTrailingSlash(env.VERCEL_APP_BASE_URL));
+  const reportType = normalizeReportType(target.reportType ?? message.target.reportType);
+  const url = new URL(reportType === "advanced" ? "/advanced" : "/overall", trimTrailingSlash(env.VERCEL_APP_BASE_URL));
   url.searchParams.set("startDate", message.startDate);
   url.searchParams.set("endDate", message.endDate);
   url.searchParams.set("screenshot", "1");
@@ -1511,6 +1644,15 @@ function buildReportUrl(
 
   const googleAccountId = normalizeOptional(target.googleAccountId);
   const metaAccountId = normalizeOptional(target.metaAccountId);
+
+  if (reportType === "advanced") {
+    const accountId = googleAccountId ?? metaAccountId;
+    if (accountId) {
+      url.searchParams.set("accountId", accountId);
+    }
+    url.searchParams.set("country", normalizeAdvancedCountry(target.country ?? message.target.country));
+    return url.toString();
+  }
 
   if (googleAccountId) {
     url.searchParams.set("googleAccountId", googleAccountId);
@@ -1529,13 +1671,14 @@ function buildReportUrl(
 
 function buildR2Key(message: ReportQueueMessage): string {
   const sections = buildReportSections(message.target);
+  const reportType = normalizeReportType(message.target.reportType);
   const platform = sections.length > 1 ? "split" : inferPlatform(message.target).toLowerCase();
   const accountId =
     sections
     .map((section) => normalizeOptional(section.googleAccountId) ?? normalizeOptional(section.metaAccountId))
     .filter((id): id is string => Boolean(id))
       .join("-") || "unknown";
-  return `reports/${message.reportMonthKey}/${platform}/${accountId.replace(/[^a-z0-9-]+/gi, "")}/${message.jobId}/${message.itemId}/overall.pdf`;
+  return `reports/${message.reportMonthKey}/${reportType}/${platform}/${accountId.replace(/[^a-z0-9-]+/gi, "")}/${message.jobId}/${message.itemId}/${reportType}.pdf`;
 }
 
 function buildDownloadUrl(env: Env, r2Key: string): string | null {
@@ -1597,7 +1740,7 @@ function splitAccountIds(value: string | null | undefined): string[] {
   );
 }
 
-function normalizeTargets(targets: ReportTarget[]): ReportTarget[] {
+function normalizeTargets(targets: ReportTarget[], defaults: Pick<CreateJobRequest, "reportType" | "country"> = {}): ReportTarget[] {
   return targets
     .map((target) => ({
       ...target,
@@ -1606,9 +1749,38 @@ function normalizeTargets(targets: ReportTarget[]): ReportTarget[] {
       metaAccountId: normalizeOptional(target.metaAccountId),
       recipientEmail: normalizeOptional(target.recipientEmail),
       ccEmail: normalizeOptional(target.ccEmail),
+      reportType: normalizeReportType(target.reportType ?? defaults.reportType),
+      country: normalizeAdvancedCountry(target.country ?? defaults.country),
       platform: target.platform?.trim() || inferPlatform(target),
     }))
     .filter((target) => Boolean(target.clientName && (target.googleAccountId || target.metaAccountId)));
+}
+
+function expandAdvancedTargets(targets: ReportTarget[]): ReportTarget[] {
+  return targets.flatMap((target) => {
+    if (normalizeReportType(target.reportType) !== "advanced") {
+      return [target];
+    }
+
+    const googleAccountIds = splitAccountIds(target.googleAccountId);
+    const metaAccountIds = splitAccountIds(target.metaAccountId);
+    const splitTargets: ReportTarget[] = [
+      ...metaAccountIds.map((accountId) => ({
+        ...target,
+        googleAccountId: null,
+        metaAccountId: accountId,
+        platform: "Meta",
+      })),
+      ...googleAccountIds.map((accountId) => ({
+        ...target,
+        googleAccountId: accountId,
+        metaAccountId: null,
+        platform: "Google",
+      })),
+    ];
+
+    return splitTargets.length > 0 ? splitTargets : [target];
+  });
 }
 
 function resolveRecipientEmail(env: Env, target: ReportTarget, testMode: boolean): string | null {
@@ -1621,6 +1793,16 @@ function resolveRecipientEmail(env: Env, target: ReportTarget, testMode: boolean
 
 function inferPlatform(target: ReportTarget): string {
   return target.metaAccountId && !target.googleAccountId ? "Meta" : "Google";
+}
+
+function normalizeReportType(value: string | null | undefined): "overall" | "advanced" {
+  const normalized = value?.trim().toLowerCase() ?? "";
+  return normalized.includes("advance") ? "advanced" : "overall";
+}
+
+function normalizeAdvancedCountry(value: string | null | undefined): string {
+  const country = value?.trim().toUpperCase();
+  return country && /^[A-Z]{2}$/.test(country) ? country : "MY";
 }
 
 function summarizeItems(items: JobItemRow[]): Record<string, number> {
@@ -1857,8 +2039,22 @@ function truncateForEmail(value: string, maxLength: number): string {
   return value.length > maxLength ? `${value.slice(0, maxLength - 3)}...` : value;
 }
 
-function buildPdfFilename(clientName: string, reportMonthLabel: string): string {
-  return `Monthly Report-${sanitizeFilenameSegment(clientName)}-${sanitizeFilenameSegment(reportMonthLabel)}.pdf`;
+function buildReportEmailSubject(
+  reportType: "overall" | "advanced",
+  clientName: string,
+  reportMonthLabel: string
+): string {
+  const label = reportType === "advanced" ? "Monthly Advanced Report" : "Monthly Ads Report";
+  return `${label} - ${clientName} - ${reportMonthLabel}`;
+}
+
+function buildPdfFilename(
+  clientName: string,
+  reportMonthLabel: string,
+  reportType: "overall" | "advanced" = "overall"
+): string {
+  const label = reportType === "advanced" ? "Advanced Report" : "Monthly Report";
+  return `${label}-${sanitizeFilenameSegment(clientName)}-${sanitizeFilenameSegment(reportMonthLabel)}.pdf`;
 }
 
 function sanitizeFilenameSegment(value: string): string {

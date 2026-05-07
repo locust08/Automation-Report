@@ -152,11 +152,10 @@ export function ReportDownloadButton({ fileNamePrefix }: ReportDownloadButtonPro
     setDownloadingFormat(format);
     setOverlayState({ phase: "loading", kind: "download", format });
     try {
-      const dataUrl = await captureReportPng(root, format);
       const preparedDownload =
-        format === "pdf"
-          ? await preparePdfDownload(root, dataUrl, fileNamePrefix)
-          : preparePngDownload(dataUrl, fileNamePrefix);
+        format === "pdf" && isAdvancedReportRoot(root)
+          ? await prepareAdvancedPdfDownload(root, fileNamePrefix)
+          : await prepareStandardDownload(root, format, fileNamePrefix);
 
       setOverlayState({ phase: "success", kind: "download", format });
       await waitFor(DOWNLOAD_READY_DELAY_MS);
@@ -305,6 +304,28 @@ async function preparePdfDownload(
   };
 }
 
+async function prepareStandardDownload(
+  root: HTMLElement,
+  format: DownloadFormat,
+  fileNamePrefix: string | undefined
+): Promise<() => void> {
+  const dataUrl = await captureReportPng(root, format);
+  return format === "pdf"
+    ? preparePdfDownload(root, dataUrl, fileNamePrefix)
+    : preparePngDownload(dataUrl, fileNamePrefix);
+}
+
+async function prepareAdvancedPdfDownload(
+  root: HTMLElement,
+  fileNamePrefix: string | undefined
+): Promise<() => void> {
+  const pdfBlob = await createAdvancedPdfBlob(root);
+
+  return () => {
+    downloadBlob(pdfBlob, buildFileName("pdf", fileNamePrefix));
+  };
+}
+
 async function createPdfBlob(root: HTMLElement, dataUrl: string): Promise<Blob> {
   const { jsPDF } = await import("jspdf");
   const orientation = root.scrollWidth > root.scrollHeight ? "landscape" : "portrait";
@@ -320,6 +341,57 @@ async function createPdfBlob(root: HTMLElement, dataUrl: string): Promise<Blob> 
   return pdf.output("blob");
 }
 
+async function createAdvancedPdfBlob(root: HTMLElement): Promise<Blob> {
+  const exportStyle = installReportExportCaptureStyle();
+
+  try {
+    await waitForReportCaptureReady(root);
+    const elements = getAdvancedExportElements(root);
+    if (elements.length === 0) {
+      throw new Error("The advanced report did not expose export sections for PDF capture.");
+    }
+
+    const captures = [];
+    for (const element of elements) {
+      const width = Math.ceil(element.scrollWidth);
+      const height = Math.ceil(element.scrollHeight);
+      const dataUrl = await captureElementPng(element, "pdf");
+      captures.push({ dataUrl, width, height });
+    }
+
+    const { jsPDF } = await import("jspdf");
+    const first = captures[0];
+    const firstOrientation = first.width > first.height ? "landscape" : "portrait";
+    const pdf = new jsPDF({
+      orientation: firstOrientation,
+      unit: "px",
+      format: [first.width, first.height],
+      compress: true,
+    });
+
+    captures.forEach((capture, index) => {
+      const orientation = capture.width > capture.height ? "landscape" : "portrait";
+      if (index > 0) {
+        pdf.addPage([capture.width, capture.height], orientation);
+      }
+      pdf.addImage(
+        capture.dataUrl,
+        "PNG",
+        0,
+        0,
+        capture.width,
+        capture.height,
+        `advanced-report-section-${index}`,
+        "FAST"
+      );
+    });
+
+    return pdf.output("blob");
+  } finally {
+    exportStyle.remove();
+  }
+}
+
 function preparePngDownload(dataUrl: string, fileNamePrefix: string | undefined): () => void {
   return () => {
     downloadFile(dataUrl, buildFileName("png", fileNamePrefix));
@@ -332,30 +404,50 @@ async function captureReportPng(root: HTMLElement, format: DownloadFormat): Prom
   try {
     await waitForReportCaptureReady(root);
 
-    const width = Math.ceil(root.scrollWidth);
-    const height = Math.ceil(root.scrollHeight);
-
-    return toPng(root, {
-      cacheBust: false,
-      backgroundColor: "#f0f0f0",
-      imagePlaceholder: TRANSPARENT_IMAGE_PLACEHOLDER,
-      pixelRatio: resolveCapturePixelRatio(width, height, format),
-      width,
-      height,
-      filter: (node) => {
-        if (!(node instanceof HTMLElement)) {
-          return true;
-        }
-
-        return (
-          node.dataset.reportDownloadOverlay !== "true" &&
-          node.dataset.reportExportExclude !== "true"
-        );
-      },
-    });
+    return captureElementPng(root, format);
   } finally {
     exportStyle.remove();
   }
+}
+
+async function captureElementPng(element: HTMLElement, format: DownloadFormat): Promise<string> {
+  const width = Math.ceil(element.scrollWidth);
+  const height = Math.ceil(element.scrollHeight);
+
+  return toPng(element, {
+    cacheBust: false,
+    backgroundColor: "#f0f0f0",
+    imagePlaceholder: TRANSPARENT_IMAGE_PLACEHOLDER,
+    pixelRatio: resolveCapturePixelRatio(width, height, format),
+    width,
+    height,
+    filter: (node) => {
+      if (!(node instanceof HTMLElement)) {
+        return true;
+      }
+
+      return (
+        node.dataset.reportDownloadOverlay !== "true" &&
+        node.dataset.reportExportExclude !== "true"
+      );
+    },
+  });
+}
+
+function isAdvancedReportRoot(root: HTMLElement): boolean {
+  return Boolean(root.querySelector("[data-advanced-report-content='true']"));
+}
+
+function getAdvancedExportElements(root: HTMLElement): HTMLElement[] {
+  return Array.from(
+    root.querySelectorAll<HTMLElement>(
+      [
+        "[data-report-export-header-section='true']",
+        "[data-advanced-report-section='true']",
+        "[data-report-export-footer='true']",
+      ].join(",")
+    )
+  ).filter((element) => element.offsetWidth > 0 && element.offsetHeight > 0);
 }
 
 async function waitForReportCaptureReady(root: HTMLElement): Promise<void> {

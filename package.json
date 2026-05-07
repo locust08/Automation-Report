@@ -16,7 +16,9 @@
     "vercel:deploy:prod": "vercel deploy --prod",
     "cf:monthly:dev": "cd cloudflare/monthly-report-cron && doppler run -- npx wrangler dev --test-scheduled",
     "cf:monthly:migrate": "cd cloudflare/monthly-report-cron && doppler run -- npx wrangler d1 migrations apply automation-report-jobs --remote",
-    "cf:monthly:deploy": "cd cloudflare/monthly-report-cron && doppler run -- npx wrangler deploy"
+    "cf:monthly:deploy": "cd cloudflare/monthly-report-cron && doppler run -- npx wrangler deploy",
+    "cf:advanced-cache:migrate": "cd cloudflare/advanced-report-cache && doppler run -- npx wrangler d1 migrations apply automation-advanced-report-cache --remote",
+    "cf:advanced-cache:deploy": "cd cloudflare/advanced-report-cache && doppler run -- npx wrangler deploy"
   },
   "dependencies": {
     "@base-ui/react": "^1.2.0",

@@ -9,6 +9,7 @@ import {
   IdCardIcon,
   LightbulbIcon,
   SearchIcon,
+  SparklesIcon,
 } from "lucide-react";
 
 import { useScreenshotMode } from "@/components/reporting/use-screenshot-mode";
@@ -41,6 +42,7 @@ export function ReportShell({
     preview: withQuery("/preview", activeQuery),
     keywords: withQuery("/keywords", activeQuery),
     insights: withQuery("/insights", activeQuery),
+    advanced: withQuery("/advanced", activeQuery),
   };
 
   return (
@@ -113,6 +115,14 @@ export function ReportShell({
                   >
                     <LightbulbIcon className="size-5" />
                   </Link>
+                  <Link
+                    href={hrefs.advanced}
+                    title="Advanced Report"
+                    aria-label="Open Advanced Report page"
+                    className="inline-flex size-10 items-center justify-center rounded-md bg-white/10 hover:bg-white/20"
+                  >
+                    <SparklesIcon className="size-5" />
+                  </Link>
                 </nav>
               </div>
               {headerDateControl ? (
@@ -143,7 +153,10 @@ export function ReportShell({
           <div className={REPORT_INNER_CONTAINER_CLASS}>{children}</div>
         </section>
 
-        <footer className={`${screenshotMode ? "" : "mt-auto "}border-t-4 border-red-600 bg-[#f0f0f0]`}>
+        <footer
+          className={`${screenshotMode ? "" : "mt-auto "}border-t-4 border-red-600 bg-[#f0f0f0]`}
+          data-report-export-footer="true"
+        >
           <div
             className={`${REPORT_INNER_CONTAINER_CLASS} flex flex-col items-center gap-3 py-5 text-center text-base text-[#777] sm:flex-row sm:justify-between sm:text-left`}
           >
@@ -188,7 +201,10 @@ function ExportReportHeader({
   const accountItems = getExportAccountItems(activeQuery);
 
   return (
-    <section className="overflow-hidden rounded-[1.5rem] bg-[url('/headerbackground.png')] bg-cover bg-center bg-no-repeat shadow-sm">
+    <section
+      className="overflow-hidden rounded-[1.5rem] bg-[url('/headerbackground.png')] bg-cover bg-center bg-no-repeat shadow-sm"
+      data-report-export-header-section="true"
+    >
       <div className={`${REPORT_INNER_CONTAINER_CLASS} py-4 sm:py-5`}>
         <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_minmax(220px,360px)] md:items-start">
           <div className="min-w-0">

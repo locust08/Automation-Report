@@ -158,6 +158,16 @@ export interface TopKeywordRow {
   cost: number;
 }
 
+export interface GoogleFinalUrlSpendRow {
+  id: string;
+  finalUrl: string;
+  campaignNames: string[];
+  adGroupNames: string[];
+  impressions: number;
+  clicks: number;
+  cost: number;
+}
+
 export interface TopKeywordsPayload {
   companyName: string;
   dateRange: DateRangeConfig;
