@@ -24,21 +24,21 @@ export async function GET(request: Request): Promise<NextResponse> {
   }
 
   const cacheKey = resolveCacheKey(input);
-  const inFlight = inFlightAdvancedReports.get(cacheKey);
-  if (inFlight) {
-    return NextResponse.json({ status: "generating", cacheKey });
-  }
-
-  const failed = failedAdvancedReports.get(cacheKey);
-  if (failed) {
-    return NextResponse.json(
-      { status: "error", cacheKey, message: failed.message, failedAt: failed.failedAt },
-      { status: 500 }
-    );
-  }
-
   const cached = await readAdvancedReportCache(cacheKey);
   if (!cached) {
+    const inFlight = inFlightAdvancedReports.get(cacheKey);
+    if (inFlight) {
+      return NextResponse.json({ status: "generating", cacheKey });
+    }
+
+    const failed = failedAdvancedReports.get(cacheKey);
+    if (failed) {
+      return NextResponse.json(
+        { status: "error", cacheKey, message: failed.message, failedAt: failed.failedAt },
+        { status: 500 }
+      );
+    }
+
     return NextResponse.json({ status: "missing", cacheKey });
   }
 

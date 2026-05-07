@@ -198,6 +198,8 @@ const DEFAULT_BROWSER_LAUNCH_SPACING_MS = 7000;
 const BROWSER_RATE_LIMIT_RETRY_MS = 60000;
 const BROWSER_RATE_LIMIT_RETRY_JITTER_MS = 15000;
 const REPORT_ITEM_FINAL_FAILURE_ATTEMPTS = 6;
+const ADVANCED_REPORT_READY_TIMEOUT_MS = 8 * 60 * 1000;
+const ADVANCED_REPORT_READY_POLL_MS = 5000;
 const DEFAULT_COMPLETION_NOTIFICATION_TO = ["waiing@locus-t.com.my"];
 const DEFAULT_COMPLETION_NOTIFICATION_CC = ["eason@locus-t.com.my", "ava@locus-t.com.my"];
 const DEFAULT_FROM_ADDRESS = "LOCUS-T Reports <reports@locus-t.com.my>";
@@ -1133,6 +1135,7 @@ async function renderPdfWithBrowserRun(env: Env, reportUrl: string): Promise<Arr
 }
 
 async function renderAdvancedPdfWithBrowserRun(env: Env, reportUrl: string): Promise<ArrayBuffer> {
+  await ensureAdvancedReportReady(reportUrl);
   await waitForBrowserLaunchSlot(env);
   const browser = await puppeteer.launch(env.REPORT_BROWSER);
 
@@ -1215,6 +1218,96 @@ async function renderAdvancedPdfWithBrowserRun(env: Env, reportUrl: string): Pro
     return toArrayBuffer(pdf);
   } finally {
     await browser.close();
+  }
+}
+
+async function ensureAdvancedReportReady(reportUrl: string): Promise<void> {
+  const apiUrl = buildAdvancedReportApiUrl(reportUrl);
+  const startedAt = Date.now();
+  let generationStarted = false;
+  let lastStatus = "unknown";
+  let lastMessage: string | null = null;
+
+  while (Date.now() - startedAt < ADVANCED_REPORT_READY_TIMEOUT_MS) {
+    const ready = await readAdvancedReportReadyState(apiUrl);
+    lastStatus = ready.status;
+    lastMessage = ready.message;
+
+    if (ready.status === "ready") {
+      return;
+    }
+
+    if ((ready.status === "missing" || ready.status === "error") && !generationStarted) {
+      await startAdvancedReportGeneration(apiUrl);
+      generationStarted = true;
+    }
+
+    await sleep(ADVANCED_REPORT_READY_POLL_MS);
+  }
+
+  throw new Error(
+    `Advanced report was not ready after ${Math.round(ADVANCED_REPORT_READY_TIMEOUT_MS / 1000)}s. Last status=${lastStatus}${lastMessage ? ` message=${lastMessage}` : ""}`
+  );
+}
+
+function buildAdvancedReportApiUrl(reportUrl: string): string {
+  const url = new URL(reportUrl);
+  const apiUrl = new URL("/api/reporting/advanced", url.origin);
+  const accountId = url.searchParams.get("accountId");
+  const country = url.searchParams.get("country");
+  const startDate = url.searchParams.get("startDate");
+  const endDate = url.searchParams.get("endDate");
+
+  if (accountId) {
+    apiUrl.searchParams.set("accountId", accountId);
+  }
+  if (country) {
+    apiUrl.searchParams.set("country", country);
+  }
+  if (startDate) {
+    apiUrl.searchParams.set("startDate", startDate);
+  }
+  if (endDate) {
+    apiUrl.searchParams.set("endDate", endDate);
+  }
+
+  return apiUrl.toString();
+}
+
+async function readAdvancedReportReadyState(apiUrl: string): Promise<{ status: string; message: string | null }> {
+  const response = await fetch(apiUrl, { cache: "no-store" });
+  const payload = (await response.json().catch(() => null)) as {
+    status?: string;
+    message?: string;
+  } | null;
+
+  return {
+    status: payload?.status ?? (response.ok ? "unknown" : "error"),
+    message: payload?.message ?? (response.ok ? null : `Advanced report API returned ${response.status}`),
+  };
+}
+
+async function startAdvancedReportGeneration(apiUrl: string): Promise<void> {
+  const url = new URL(apiUrl);
+  const body = {
+    accountId: url.searchParams.get("accountId"),
+    country: url.searchParams.get("country") ?? "MY",
+    startDate: url.searchParams.get("startDate"),
+    endDate: url.searchParams.get("endDate"),
+  };
+
+  const response = await fetch(apiUrl, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(body),
+    cache: "no-store",
+  });
+
+  if (!response.ok) {
+    const payload = (await response.json().catch(() => null)) as { message?: string } | null;
+    throw new Error(payload?.message ?? `Advanced report generation start failed with status ${response.status}.`);
   }
 }
 
