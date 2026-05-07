@@ -748,6 +748,8 @@ async function enrichTargetsFromNotion(env: Env, targets: ReportTarget[]): Promi
           clientName: clientName ?? target.clientName,
           googleAccountId: target.googleAccountId ?? matchedRows.find((row) => row.googleAccountId)?.googleAccountId ?? null,
           metaAccountId: target.metaAccountId ?? matchedRows.find((row) => row.metaAccountId)?.metaAccountId ?? null,
+          recipientEmail: target.recipientEmail ?? matchedRows.find((row) => row.clientEmail)?.clientEmail ?? null,
+          ccEmail: target.ccEmail ?? matchedRows.find((row) => row.ccEmail)?.ccEmail ?? null,
         };
       })
     );
@@ -761,6 +763,8 @@ interface NotionAdAccountRow {
   googleAccountId: string | null;
   metaAccountId: string | null;
   accountName: string | null;
+  clientEmail: string | null;
+  ccEmail: string | null;
   clientRelationPageIds: string[];
 }
 
@@ -813,6 +817,12 @@ function mapNotionAdAccountRow(properties: Record<string, unknown>): NotionAdAcc
     googleAccountId,
     metaAccountId,
     accountName: getNotionText(properties, ["Account Name", "Name", "Client Name"]),
+    clientEmail: getNotionText(properties, ["Client Email", "Email"]),
+    ccEmail: getNotionText(properties, [
+      "Person in Charge Email",
+      "Person-In-Charge Email",
+      "PIC Email",
+    ]),
     clientRelationPageIds: getNotionRelationIds(properties, ["Client"]),
   };
 }
@@ -1596,18 +1606,19 @@ async function sendReportEmail(
     filename: string;
   }
 ): Promise<{ resendEmailId: string | null }> {
-  const recipientEmail = normalizeOptional(input.target.recipientEmail);
-  if (!recipientEmail) {
+  const recipientEmails = parseEmailList(input.target.recipientEmail);
+  if (recipientEmails.length === 0) {
     throw new Error(`Missing recipient email for ${input.target.clientName}.`);
   }
+  const ccEmails = parseEmailList(input.target.ccEmail);
 
   const deliveryMode = env.REPORT_EMAIL_DELIVERY_MODE ?? "attachment";
   const attachments: Array<Record<string, string>> = [];
 
   const body: Record<string, unknown> = {
     from: env.RESEND_FROM_MONTHLY_REPORT?.trim() || DEFAULT_FROM_ADDRESS,
-    to: [recipientEmail],
-    cc: normalizeOptional(input.target.ccEmail) ? [input.target.ccEmail] : undefined,
+    to: recipientEmails,
+    cc: ccEmails.length > 0 ? ccEmails : undefined,
     subject: buildReportEmailSubject(input.reportType, input.target.clientName, input.reportMonthLabel),
     html: buildEmailHtml({
       clientName: input.target.clientName,
@@ -1968,7 +1979,7 @@ function summarizeItems(items: JobItemRow[]): Record<string, number> {
   );
 }
 
-function parseEmailList(value: string | undefined, fallback: string[]): string[] {
+function parseEmailList(value: string | null | undefined, fallback: string[] = []): string[] {
   const source = value?.trim() ? value : fallback.join(",");
   return Array.from(
     new Set(

@@ -7,7 +7,10 @@ import {
   type MonthlyReportTargetConfig,
 } from "@/src/lib/cron/monthly-report-targets";
 import { resolveMonthlyReportDateRange } from "@/src/lib/cron/monthly-report-date";
-import { resolveMonthlyReportTargetsFromNotion } from "@/src/lib/notion/get-monthly-report-accounts";
+import {
+  getMonthlyReportAccounts,
+  resolveMonthlyReportTargetsFromNotion,
+} from "@/src/lib/notion/get-monthly-report-accounts";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -33,12 +36,10 @@ export async function POST(request: Request): Promise<NextResponse> {
       ? body.overrideTargets
       : parseTargetList(typeof body?.overrideTargetsJson === "string" ? body.overrideTargetsJson : undefined);
   const dateRange = resolveMonthlyReportDateRange();
-  const resolvedTargets =
-    overrideTargets.length > 0
-      ? await resolveMonthlyReportTargetsFromNotion(overrideTargets)
-      : getMonthlyReportTargets({
-          testModeOverride: forceTestMode,
-        });
+  const resolvedTargets = await resolveReportTargets({
+    overrideTargets,
+    forceTestMode,
+  });
   const targets = resolvedTargets
     .filter((target) => target.isValid)
     .map((target) => ({
@@ -60,6 +61,25 @@ export async function POST(request: Request): Promise<NextResponse> {
     testMode: forceTestMode,
     targets,
   });
+}
+
+async function resolveReportTargets(input: {
+  overrideTargets: MonthlyReportTargetConfig[];
+  forceTestMode: boolean;
+}) {
+  if (input.overrideTargets.length > 0) {
+    return resolveMonthlyReportTargetsFromNotion(input.overrideTargets);
+  }
+
+  const configuredTargets = getMonthlyReportTargets({
+    testModeOverride: input.forceTestMode,
+  });
+  if (configuredTargets.length > 0) {
+    return configuredTargets;
+  }
+
+  const notionResult = await getMonthlyReportAccounts();
+  return notionResult.accounts.filter((account) => Boolean(account.googleAdsAccountId));
 }
 
 function isAuthorized(request: Request): boolean {

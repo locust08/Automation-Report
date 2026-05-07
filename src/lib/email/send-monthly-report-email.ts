@@ -30,8 +30,10 @@ export async function sendMonthlyReportEmail(
   const testMode = parseBooleanEnv(process.env.MONTHLY_REPORT_TEST_MODE);
   const testRecipient = readOptionalEnv("MONTHLY_REPORT_TEST_RECIPIENT") ?? DEFAULT_TEST_RECIPIENT;
   const fromAddress = readOptionalEnv("RESEND_FROM_MONTHLY_REPORT") ?? DEFAULT_FROM_ADDRESS;
-  const recipientEmail = testMode ? testRecipient : input.account.clientEmail;
-  const ccEmail = testMode ? null : input.account.picEmail;
+  const recipientEmails = parseEmailList(testMode ? testRecipient : input.account.clientEmail);
+  const ccEmails = testMode ? [] : parseEmailList(input.account.picEmail);
+  const recipientEmail = recipientEmails.join(", ") || null;
+  const ccEmail = ccEmails.join(", ") || null;
   const subject = testMode
     ? `[TEST] Monthly Ads Report - ${input.account.clientName}`
     : `Monthly Ads Report - ${input.account.clientName} - ${input.reportMonthLabel}`;
@@ -41,7 +43,7 @@ export async function sendMonthlyReportEmail(
   );
   console.info(`[monthly-report] test mode status enabled=${testMode}`);
 
-  if (!recipientEmail) {
+  if (recipientEmails.length === 0) {
     const errorMessage = "Missing recipient email for monthly report.";
     console.error(`[monthly-report] email failed client=${input.account.clientName} error=${errorMessage}`);
     return {
@@ -63,8 +65,8 @@ export async function sendMonthlyReportEmail(
 
     const response = await resend.emails.send({
       from: fromAddress,
-      to: [recipientEmail],
-      cc: ccEmail ? [ccEmail] : undefined,
+      to: recipientEmails,
+      cc: ccEmails.length > 0 ? ccEmails : undefined,
       subject,
       html: buildEmailHtml(resolveLogoUrl()),
       attachments,
@@ -160,6 +162,21 @@ function readRequiredEnv(name: string): string {
 function readOptionalEnv(name: string): string | null {
   const value = process.env[name]?.trim();
   return value ? value : null;
+}
+
+export function parseEmailList(value: string | null | undefined): string[] {
+  if (!value?.trim()) {
+    return [];
+  }
+
+  return Array.from(
+    new Set(
+      value
+        .split(/[,;\n]+/)
+        .map((item) => item.trim())
+        .filter(Boolean)
+    )
+  );
 }
 
 function escapeHtml(value: string): string {

@@ -408,7 +408,7 @@ async function discoverMarket(input: {
       },
       competitorBrands: {
         type: "array",
-        description: "Competing brand names and competitor brand + product phrases.",
+        description: "Direct competing brand names only, plus brand + product/service phrases. Do not include vs, versus, compare, review, or generic category-only phrases.",
         items: { type: "string" },
         maxItems: 16,
       },
@@ -449,7 +449,12 @@ async function discoverMarket(input: {
           english: { type: "array", items: { type: "string" }, maxItems: 18 },
           malay: { type: "array", items: { type: "string" }, maxItems: 18 },
           chinese: { type: "array", items: { type: "string" }, maxItems: 18 },
-          competitor: { type: "array", items: { type: "string" }, maxItems: 20 },
+          competitor: {
+            type: "array",
+            description: "Brand-to-brand search comparison inputs only as direct brand and brand + product/service phrases, e.g. 'Brand A', 'Brand A massage chair', 'Brand A warranty'. Do not use 'Brand A vs Brand B' phrases.",
+            items: { type: "string" },
+            maxItems: 20,
+          },
       problemNeed: { type: "array", items: { type: "string" }, maxItems: 18 },
       offerPromotion: { type: "array", items: { type: "string" }, maxItems: 18 },
       locationAware: { type: "array", items: { type: "string" }, maxItems: 18 },
@@ -496,7 +501,7 @@ async function discoverMarket(input: {
         input.feedback.zeroVolumeSamples.length
           ? `Weak or zero-volume keyword samples to avoid repeating exactly: ${input.feedback.zeroVolumeSamples.join("; ")}`
           : "",
-        "Retry instruction: think beyond exact ad keywords. Add adjacent buyer-intent wording, synonyms, short generic category phrases, local-language phrases, competitor variants, problem-led phrases, and offer/comparison searches that a real user would type into Google.",
+        "Retry instruction: think beyond exact ad keywords. Add adjacent buyer-intent wording, synonyms, short generic category phrases, local-language phrases, competitor brand + product/service variants, problem-led phrases, and offer searches that a real user would type into Google. Do not add 'vs' competitor-comparison phrases.",
       ]
         .filter(Boolean)
         .join("\n")
@@ -538,7 +543,8 @@ async function discoverMarket(input: {
             finalUrlContext ? `Running ad final URLs with spend > RM1 last period: ${finalUrlContext}` : "",
             feedbackContext,
             "Task: infer the actual business category, likely competitors, own-brand terms, product/service categories, broad non-brand seed keywords, multilingual local terms, and recent customer questions.",
-            "Best-practice keyword rules: prefer 2-5 word phrases, include exact category terms, commercial modifiers, comparison terms, price/promo terms, problem/need terms, local intent terms, and competitor alternatives. Avoid slogans, full sentences, one-off campaign names, URLs, emojis, symbols, and phrases longer than 10 words.",
+            "Best-practice keyword rules: prefer 2-5 word phrases, include exact category terms, commercial modifiers, price/promo terms, problem/need terms, local intent terms, and competitor alternatives. Avoid slogans, full sentences, one-off campaign names, URLs, emojis, symbols, and phrases longer than 10 words.",
+            "Competitor rules: this report uses share-of-market by brand demand. Return competitor terms as direct brand demand only: competitor brand names, competitor brand + product/service, competitor brand + offer, and competitor brand + requirement. Do not return 'vs', 'versus', 'compare', 'comparison', or review-style competitor keywords because they distort brand share.",
             "For opportunity discovery, include recently discussed customer requirements, unresolved forum/review pains, seasonal next-month offers, promotion hooks, product features, and adjacent product/service needs that may not already be in ads.",
             "Group keywords clearly into general product/service, language buckets, competitor, problem/need, offer/promotion, and location-aware buckets. For Malay and Chinese, use natural local search wording, not direct word-for-word translations if locals would search differently.",
           ]
@@ -851,33 +857,40 @@ function buildMarketSection(
 function buildCompetitorSection(keywordData: DataForSeoKeywordResult[], discovery: MarketDiscovery, companyName: string) {
   const latestByKeyword = aggregateLatestKeywordVolumes(keywordData);
   const clientTerms = new Set(discovery.clientBrandTerms.map(normalizeKeyword));
-  const competitorTerms = new Set(discovery.competitorBrands.map(normalizeKeyword));
+  const directCompetitorTerms = dedupeStrings([
+    ...discovery.competitorBrands,
+    ...discovery.keywordGroups.competitor,
+  ]).filter((term) => !isComparisonKeyword(term));
+  const competitorTerms = new Set(directCompetitorTerms.map(normalizeKeyword));
+  const nonComparisonLatest = latestByKeyword.filter((item) => !isComparisonKeyword(item.keyword));
   const clientValue = latestByKeyword
     .filter((item) => includesAny(item.keyword, clientTerms))
     .reduce((sum, item) => sum + item.searchVolume, 0);
-  const competitorValue = latestByKeyword
+  const competitorValue = nonComparisonLatest
     .filter((item) => includesAny(item.keyword, competitorTerms))
     .reduce((sum, item) => sum + item.searchVolume, 0);
-  const total = clientValue + competitorValue;
-  const competitorKeywordDetails = latestByKeyword.filter((item) => includesAny(item.keyword, competitorTerms));
+  const competitorKeywordDetails = nonComparisonLatest.filter((item) => includesAny(item.keyword, competitorTerms));
+  const competitorGroups = buildMarketPlayerTermGroups(directCompetitorTerms, discovery.productCategories);
+  const competitorShares = Array.from(competitorGroups.entries())
+    .map(([label, terms]) => {
+      const value = nonComparisonLatest
+        .filter((item) => includesAny(item.keyword, terms))
+        .reduce((sum, item) => sum + item.searchVolume, 0);
+      return { label, type: "competitor" as const, value };
+    })
+    .filter((item) => item.value > 0)
+    .sort((a, b) => b.value - a.value)
+    .slice(0, 10);
   const marketPlayerShares = [
     { label: companyName, type: "client" as const, value: clientValue },
-    ...discovery.competitorBrands
-      .map((brand) => {
-        const brandTerms = new Set([normalizeKeyword(brand)]);
-        const value = latestByKeyword
-          .filter((item) => includesAny(item.keyword, brandTerms))
-          .reduce((sum, item) => sum + item.searchVolume, 0);
-        return { label: brand, type: "competitor" as const, value };
-      })
-      .filter((item) => item.value > 0)
-      .sort((a, b) => b.value - a.value)
-      .slice(0, 10),
+    ...competitorShares,
   ].filter((item) => item.value > 0);
+  const marketPlayerTotal = marketPlayerShares.reduce((sum, item) => sum + item.value, 0);
+  const total = clientValue + competitorValue;
 
   return {
     competitorDemandTrend: aggregateMonthlyTotals(
-      keywordData.filter((item) => includesAny(item.keyword, competitorTerms))
+      keywordData.filter((item) => !isComparisonKeyword(item.keyword) && includesAny(item.keyword, competitorTerms))
     ).slice(-12),
     demandShare:
       total > 0
@@ -888,7 +901,7 @@ function buildCompetitorSection(keywordData: DataForSeoKeywordResult[], discover
         : [],
     marketPlayerShares,
     competitorKeywordDetails,
-    clientSharePercent: total > 0 ? (clientValue / total) * 100 : null,
+    clientSharePercent: marketPlayerTotal > 0 ? (clientValue / marketPlayerTotal) * 100 : total > 0 ? (clientValue / total) * 100 : null,
   };
 }
 
@@ -1638,6 +1651,61 @@ function setSectionStatus(
 
 function normalizeKeyword(value: string): string {
   return value.trim().toLowerCase().replace(/\s+/g, " ");
+}
+
+function isComparisonKeyword(value: string): boolean {
+  return /\b(vs|versus|compare|comparison)\b/i.test(value);
+}
+
+function buildMarketPlayerTermGroups(
+  terms: string[],
+  productCategories: string[]
+): Map<string, Set<string>> {
+  const groups = new Map<string, Set<string>>();
+  terms.forEach((term) => {
+    const label = normalizeMarketPlayerLabel(term, productCategories);
+    if (!label) {
+      return;
+    }
+    const existing = groups.get(label) ?? new Set<string>();
+    existing.add(normalizeKeyword(label));
+    existing.add(normalizeKeyword(term));
+    groups.set(label, existing);
+  });
+  return groups;
+}
+
+function normalizeMarketPlayerLabel(term: string, productCategories: string[]): string {
+  const directTerm = term.split(/\b(?:vs|versus|compare|comparison)\b/i)[0] ?? term;
+  const cleaned = cleanDataForSeoKeyword(directTerm);
+  if (!cleaned) {
+    return "";
+  }
+  const genericWords = new Set(
+    [
+      "best",
+      "buy",
+      "price",
+      "promo",
+      "promotion",
+      "review",
+      "reviews",
+      "near",
+      "me",
+      "malaysia",
+      "singapore",
+      "australia",
+      "united",
+      "states",
+      ...productCategories.flatMap((category) => normalizeKeyword(category).split(/\s+/)),
+    ].filter((word) => word.length > 2)
+  );
+  const candidate = cleaned
+    .split(/\s+/)
+    .filter((word) => !genericWords.has(word))
+    .join(" ")
+    .trim();
+  return candidate || cleaned;
 }
 
 function includesAny(keyword: string, terms: Set<string>): boolean {

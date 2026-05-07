@@ -377,6 +377,22 @@ function AdvancedReportContent({
   regenerating: boolean;
   screenshotMode: boolean;
 }) {
+  const cpcLabel = getCpcLabel(payload.metadata.country.code);
+  const marketShareRows = (payload.competitors.marketPlayerShares ?? payload.competitors.demandShare)
+    .map((item) => {
+      const intent =
+        "type" in item && (item.type === "client" || item.type === "competitor")
+          ? item.type
+          : undefined;
+
+      return {
+        label: item.label,
+        value: item.value,
+        intent,
+      };
+    })
+    .sort((a, b) => b.value - a.value);
+
   return (
     <div
       className="space-y-5"
@@ -402,7 +418,7 @@ function AdvancedReportContent({
         <div className="grid gap-4 lg:grid-cols-[1.35fr_0.8fr]">
           <ChartPanel
             title="Overall Market Search Volume Trend"
-            action={<KeywordDetailsButton label="See All" title="Keywords Used for Overall Market Trend" rows={payload.market.trendKeywords ?? []} />}
+            action={<KeywordDetailsButton label="See All" title="Keywords Used for Overall Market Trend" rows={payload.market.trendKeywords ?? []} cpcLabel={cpcLabel} />}
           >
             <LineChart
               points={[
@@ -413,13 +429,12 @@ function AdvancedReportContent({
           </ChartPanel>
           <ChartPanel
             title="Language Share"
-            action={<LanguageDetailsButton rows={payload.market.languageBreakdown.keywordDetails ?? { English: [], Malay: [], Chinese: [] }} />}
+            action={<LanguageDetailsButton rows={payload.market.languageBreakdown.keywordDetails ?? { English: [], Malay: [], Chinese: [] }} cpcLabel={cpcLabel} />}
           >
             <PieChart
               rows={payload.market.languageBreakdown.share.map((item) => ({
                 label: item.language,
                 value: item.value,
-                intent: item.language === "English" ? "client" : item.language === "Malay" ? "competitor" : undefined,
               }))}
             />
           </ChartPanel>
@@ -428,14 +443,16 @@ function AdvancedReportContent({
           <KeywordList
             title="Top Keywords by Search Volume"
             rows={payload.market.topKeywords}
-            action={<KeywordDetailsButton label="View All Keywords" title="All DataForSEO Keywords" rows={payload.market.allKeywords ?? payload.market.topKeywords} />}
+            action={<KeywordDetailsButton label="See All" title="All DataForSEO Keywords" rows={payload.market.allKeywords ?? payload.market.topKeywords} cpcLabel={cpcLabel} />}
             variant="bar"
           />
           <KeywordList
             title="Unused High-Volume Keywords"
             rows={payload.market.unusedHighVolumeKeywords}
+            action={<KeywordDetailsButton label="See All" title="Unused High-Volume Keywords" rows={payload.market.unusedHighVolumeKeywords} cpcLabel={cpcLabel} />}
             emptyMessage="Google Ads account not provided, or no unused high-volume terms found."
             highlightUnused
+            variant="bar"
           />
         </div>
       </SectionCard>
@@ -450,18 +467,12 @@ function AdvancedReportContent({
         <div className="grid gap-4 lg:grid-cols-[1.35fr_0.8fr]">
           <ChartPanel
             title="Competitor Search Demand"
-            action={<KeywordDetailsButton label="See All" title="Competitor Keywords Used for Trend" rows={payload.competitors.competitorKeywordDetails ?? []} />}
+            action={<KeywordDetailsButton label="See All" title="Competitor Keywords Used for Trend" rows={payload.competitors.competitorKeywordDetails ?? []} cpcLabel={cpcLabel} />}
           >
             <LineChart points={payload.competitors.competitorDemandTrend} />
           </ChartPanel>
           <ChartPanel title="Share of Market">
-            <PieChart
-              rows={(payload.competitors.marketPlayerShares ?? payload.competitors.demandShare).map((item) => ({
-                label: item.label,
-                value: item.value,
-                intent: "type" in item ? item.type : undefined,
-              }))}
-            />
+            <PieChart rows={marketShareRows} />
             {payload.competitors.clientSharePercent !== null ? (
               <p className="mt-3 text-sm font-semibold text-[#9f0019]">
                 Client share: {payload.competitors.clientSharePercent.toFixed(1)}%
@@ -595,21 +606,27 @@ function LineChart({ points }: { points: AdvancedMonthlyPoint[] }) {
     return <p className="text-sm text-[#777]">No trend data available.</p>;
   }
   const max = Math.max(...rows.map((point) => point.value), 1);
+  const min = Math.min(...rows.map((point) => point.value));
+  const range = Math.max(1, max - min);
   const width = 720;
   const height = 250;
   const paddingX = 28;
   const paddingTop = 30;
   const paddingBottom = 44;
   const chartWidth = width - paddingX * 2;
-  const chartHeight = height - paddingTop - paddingBottom;
+  const availableHeight = height - paddingTop - paddingBottom;
+  const chartHeight = availableHeight * 0.8;
+  const chartTop = paddingTop + availableHeight * 0.1;
   const chartPoints = rows.map((point, index) => {
     const x = rows.length === 1 ? width / 2 : paddingX + (index / (rows.length - 1)) * chartWidth;
-    const y = paddingTop + chartHeight - (point.value / max) * chartHeight;
+    const y = chartTop + chartHeight - ((point.value - min) / range) * chartHeight;
     return { ...point, x, y };
   });
   const polyline = chartPoints.map((point) => `${point.x},${point.y}`).join(" ");
   const hovered = hoveredIndex === null ? null : chartPoints[hoveredIndex] ?? null;
   const first = chartPoints[0];
+  const tooltipHeight = 120;
+  const tooltipY = hovered ? Math.min(height - tooltipHeight - 6, Math.max(6, hovered.y - 72)) : 0;
 
   return (
     <div className="overflow-visible">
@@ -624,8 +641,8 @@ function LineChart({ points }: { points: AdvancedMonthlyPoint[] }) {
             key={ratio}
             x1={paddingX}
             x2={width - paddingX}
-            y1={paddingTop + ratio * chartHeight}
-            y2={paddingTop + ratio * chartHeight}
+            y1={chartTop + ratio * chartHeight}
+            y2={chartTop + ratio * chartHeight}
             stroke="#e6e6e6"
             strokeDasharray="6 6"
           />
@@ -635,12 +652,28 @@ function LineChart({ points }: { points: AdvancedMonthlyPoint[] }) {
           <line
             x1={hovered.x}
             x2={hovered.x}
-            y1={paddingTop}
-            y2={paddingTop + chartHeight}
+            y1={chartTop}
+            y2={chartTop + chartHeight}
             stroke="#475569"
             strokeDasharray="5 5"
           />
         ) : null}
+        {chartPoints.map((point, index) => (
+          <rect
+            key={`${point.month}-hit`}
+            x={index === 0 ? 0 : (chartPoints[index - 1].x + point.x) / 2}
+            y="0"
+            width={
+              index === chartPoints.length - 1
+                ? width - ((chartPoints[index - 1]?.x ?? 0) + point.x) / 2
+                : (chartPoints[index + 1].x + point.x) / 2 - (index === 0 ? 0 : (chartPoints[index - 1].x + point.x) / 2)
+            }
+            height={height}
+            fill="transparent"
+            onMouseEnter={() => setHoveredIndex(index)}
+            onMouseMove={() => setHoveredIndex(index)}
+          />
+        ))}
         {chartPoints.map((point, index) =>
           index === 0 || index === chartPoints.length - 1 ? (
             <g key={`${point.month}-${point.value}`}>
@@ -668,9 +701,10 @@ function LineChart({ points }: { points: AdvancedMonthlyPoint[] }) {
         {hovered ? (
           <foreignObject
             x={Math.min(width - 220, Math.max(12, hovered.x + 10))}
-            y={Math.max(8, hovered.y - 72)}
+            y={tooltipY}
             width="210"
-            height="88"
+            height={tooltipHeight}
+            pointerEvents="none"
           >
             <div className="rounded-xl bg-[#111827] p-2 text-xs leading-relaxed text-white shadow-xl">
               <div className="font-semibold">{hovered.month}</div>
@@ -680,22 +714,6 @@ function LineChart({ points }: { points: AdvancedMonthlyPoint[] }) {
             </div>
           </foreignObject>
         ) : null}
-        {chartPoints.map((point, index) => (
-          <rect
-            key={`${point.month}-hit`}
-            x={index === 0 ? 0 : (chartPoints[index - 1].x + point.x) / 2}
-            y="0"
-            width={
-              index === chartPoints.length - 1
-                ? width - ((chartPoints[index - 1]?.x ?? 0) + point.x) / 2
-                : (chartPoints[index + 1].x + point.x) / 2 - (index === 0 ? 0 : (chartPoints[index - 1].x + point.x) / 2)
-            }
-            height={height}
-            fill="transparent"
-            onMouseEnter={() => setHoveredIndex(index)}
-            onMouseMove={() => setHoveredIndex(index)}
-          />
-        ))}
       </svg>
     </div>
   );
@@ -706,14 +724,15 @@ function PieChart({
 }: {
   rows: Array<{ label: string; value: number; intent?: "client" | "competitor" }>;
 }) {
+  const [hoveredSlice, setHoveredSlice] = useState<string | null>(null);
   const total = rows.reduce((sum, row) => sum + row.value, 0);
   if (!total) {
     return <p className="text-sm text-[#777]">No share data available.</p>;
   }
-  const colors = ["#e10600", "#475569", "#0ea5e9", "#f59e0b", "#009b7a", "#7c3aed", "#db2777", "#64748b"];
+  const colors = ["#e10600", "#9f0019", "#c2410c", "#f97316", "#be123c", "#7f1d1d", "#fb7185", "#64748b", "#f59e0b", "#b45309"];
   const slices = rows.reduce<{
     cumulative: number;
-    items: Array<(typeof rows)[number] & { color: string; path: string }>;
+    items: Array<(typeof rows)[number] & { color: string; path: string; percent: number }>;
   }>(
     (accumulator, row, index) => {
       const start = accumulator.cumulative / total;
@@ -731,31 +750,79 @@ function PieChart({
                 : row.intent === "competitor"
                   ? colors[(index % (colors.length - 1)) + 1]
                   : colors[index % colors.length],
-            path: describeArc(74, 74, 62, start * 360, end * 360),
+            path: describeArc(80, 80, 52, start * 360, end * 360),
+            percent: (row.value / total) * 100,
           },
         ],
       };
     },
     { cumulative: 0, items: [] }
   ).items;
+  const activeSlice = slices.find((slice) => slice.label === hoveredSlice) ?? null;
 
   return (
-    <div className="grid gap-4 sm:grid-cols-[160px_1fr] sm:items-center">
-      <svg viewBox="0 0 148 148" className="mx-auto size-40" role="img">
-        {slices.map((slice) => (
-          <path key={slice.label} d={slice.path} fill="none" stroke={slice.color} strokeWidth="28" />
-        ))}
-      </svg>
-      <div className="space-y-2">
-        {slices.map((slice) => (
-          <div key={slice.label} className="flex items-center justify-between gap-3 text-sm">
-            <div className="flex min-w-0 items-center gap-2">
-              <span className="size-3 shrink-0 rounded-full" style={{ backgroundColor: slice.color }} />
-              <span className="truncate font-medium text-[#333]" title={slice.label}>{slice.label}</span>
-            </div>
-            <span className="text-[#666]">{((slice.value / total) * 100).toFixed(1)}%</span>
+    <div className="grid min-w-0 gap-4 sm:grid-cols-[minmax(120px,170px)_minmax(0,1fr)] sm:items-center">
+      <div className="relative mx-auto aspect-square w-full max-w-[170px] min-w-0">
+        <svg viewBox="0 0 160 160" className="size-full overflow-visible" role="img" onMouseLeave={() => setHoveredSlice(null)}>
+          {slices.map((slice) => {
+            const isHovered = hoveredSlice === slice.label;
+            const isDimmed = hoveredSlice !== null && !isHovered;
+            return (
+              <path
+                key={slice.label}
+                d={slice.path}
+                fill="none"
+                stroke={slice.color}
+                strokeWidth={isHovered ? "32" : "24"}
+                opacity={isDimmed ? 0.35 : 1}
+                className="transition-all"
+              />
+            );
+          })}
+          {slices.map((slice) => (
+            <path
+              key={`${slice.label}-hit`}
+              d={slice.path}
+              fill="none"
+              stroke="transparent"
+              strokeWidth="46"
+              className="cursor-pointer"
+              pointerEvents="stroke"
+              onMouseEnter={() => setHoveredSlice(slice.label)}
+              onMouseMove={() => setHoveredSlice(slice.label)}
+            />
+          ))}
+        </svg>
+        {activeSlice ? (
+          <div className="absolute left-1/2 top-1/2 z-10 min-w-40 -translate-x-1/2 -translate-y-1/2 rounded-xl bg-[#111827] p-2 text-xs text-white shadow-xl">
+            <div className="font-semibold">{activeSlice.label}</div>
+            <div>{formatNumber(activeSlice.value)} searches</div>
+            <div>{activeSlice.percent.toFixed(1)}%</div>
           </div>
-        ))}
+        ) : null}
+      </div>
+      <div className="min-w-0 space-y-2">
+        {slices.map((slice) => {
+          const isHovered = hoveredSlice === slice.label;
+          return (
+            <div
+              key={slice.label}
+              className={`flex items-center justify-between gap-3 rounded-xl px-2 py-1 text-sm transition ${
+                isHovered ? "bg-[#eeeeee]" : slice.intent === "client" ? "bg-red-50" : ""
+              }`}
+              onMouseEnter={() => setHoveredSlice(slice.label)}
+              onMouseLeave={() => setHoveredSlice(null)}
+            >
+              <div className="flex min-w-0 items-center gap-2">
+                <span className="size-3 shrink-0 rounded-full" style={{ backgroundColor: slice.color }} />
+                <span className="truncate font-medium text-[#333]" title={slice.label}>
+                  {slice.label}
+                </span>
+              </div>
+              <span className="text-[#666]">{slice.percent.toFixed(1)}%</span>
+            </div>
+          );
+        })}
       </div>
     </div>
   );
@@ -834,24 +901,14 @@ function KeywordList({
 }
 
 function KeywordVolumeBars({ rows }: { rows: AdvancedKeywordMetric[] }) {
-  const max = Math.max(...rows.map((row) => row.searchVolume), 1);
   return (
-    <div className="space-y-2">
-      {rows.map((row) => (
-        <div key={row.keyword} className="relative h-10 overflow-hidden rounded-xl bg-[#f3f3f3]">
-          <div
-            className="absolute inset-y-0 left-0 rounded-xl bg-[#e10600]"
-            style={{ width: `${Math.max(12, (row.searchVolume / max) * 100)}%` }}
-          />
-          <div className="relative z-10 flex h-full items-center justify-between gap-3 px-3 text-sm">
-            <span className="min-w-0 truncate font-semibold text-white mix-blend-difference" title={row.keyword}>
-              {row.keyword}
-            </span>
-            <span className="shrink-0 font-bold text-[#9f0019]">{formatNumber(row.searchVolume)}</span>
-          </div>
-        </div>
-      ))}
-    </div>
+    <HorizontalBarChart
+      rows={rows.map((row) => ({
+        label: row.keyword,
+        value: row.searchVolume,
+        flagged: row.isUnusedInGoogleAds,
+      }))}
+    />
   );
 }
 
@@ -859,10 +916,12 @@ function KeywordDetailsButton({
   label,
   title,
   rows,
+  cpcLabel = "CPC",
 }: {
   label: string;
   title: string;
   rows: AdvancedKeywordMetric[];
+  cpcLabel?: string;
 }) {
   const [open, setOpen] = useState(false);
   if (!rows.length) {
@@ -873,15 +932,17 @@ function KeywordDetailsButton({
       <Button type="button" variant="outline" size="sm" onClick={() => setOpen(true)}>
         {label}
       </Button>
-      {open ? <KeywordDetailsModal title={title} rows={rows} onClose={() => setOpen(false)} /> : null}
+      {open ? <KeywordDetailsModal title={title} rows={rows} cpcLabel={cpcLabel} onClose={() => setOpen(false)} /> : null}
     </>
   );
 }
 
 function LanguageDetailsButton({
   rows,
+  cpcLabel = "CPC",
 }: {
   rows: Record<"English" | "Malay" | "Chinese", AdvancedKeywordMetric[]>;
+  cpcLabel?: string;
 }) {
   const [open, setOpen] = useState(false);
   const allRows = [...rows.English, ...rows.Malay, ...rows.Chinese];
@@ -897,6 +958,7 @@ function LanguageDetailsButton({
         <KeywordDetailsModal
           title="Language Keyword Details"
           rows={allRows}
+          cpcLabel={cpcLabel}
           onClose={() => setOpen(false)}
           groupedRows={rows}
         />
@@ -908,19 +970,25 @@ function LanguageDetailsButton({
 function KeywordDetailsModal({
   title,
   rows,
+  cpcLabel = "CPC",
   groupedRows,
   onClose,
 }: {
   title: string;
   rows: AdvancedKeywordMetric[];
+  cpcLabel?: string;
   groupedRows?: Record<"English" | "Malay" | "Chinese", AdvancedKeywordMetric[]>;
   onClose: () => void;
 }) {
+  const [selectedLanguage, setSelectedLanguage] = useState<"All" | "English" | "Malay" | "Chinese">("All");
   const normalizedRows = groupedRows
     ? (Object.entries(groupedRows) as Array<["English" | "Malay" | "Chinese", AdvancedKeywordMetric[]]>).flatMap(
         ([language, items]) => items.map((item) => ({ ...item, language }))
       )
     : rows;
+  const visibleRows = groupedRows && selectedLanguage !== "All"
+    ? normalizedRows.filter((row) => row.language === selectedLanguage)
+    : normalizedRows;
   const text = normalizedRows
     .map((row) => `${row.keyword}\t${row.language ?? ""}\t${row.searchVolume}\t${row.cpc ?? ""}`)
     .join("\n");
@@ -942,7 +1010,9 @@ function KeywordDetailsModal({
         <div className="flex items-center justify-between gap-3 border-b border-[#eeeeee] px-5 py-4">
           <div>
             <h2 className="text-lg font-semibold text-[#333]">{title}</h2>
-            <p className="text-sm text-[#777]">Keyword, language, search volume, and CPC from DataForSEO where available.</p>
+            <p className="text-sm text-[#777]">
+              Keyword, language, search volume, and {cpcLabel} from DataForSEO where available.
+            </p>
           </div>
           <div className="flex items-center gap-2">
             <Button type="button" variant="outline" onClick={() => void navigator.clipboard.writeText(text)}>
@@ -955,24 +1025,55 @@ function KeywordDetailsModal({
           </div>
         </div>
         <div className="max-h-[72vh] overflow-auto p-5">
+          {groupedRows ? (
+            <div className="mb-4 flex flex-wrap gap-2">
+              {(["All", "English", "Malay", "Chinese"] as const).map((language) => (
+                <button
+                  key={language}
+                  type="button"
+                  className={`rounded-full border px-3 py-1 text-sm font-semibold transition ${
+                    selectedLanguage === language
+                      ? "border-[#e10600] bg-[#e10600] text-white"
+                      : "border-[#dddddd] bg-white text-[#333] hover:border-[#e10600]"
+                  }`}
+                  onClick={() => setSelectedLanguage(language)}
+                >
+                  {language}
+                </button>
+              ))}
+            </div>
+          ) : null}
           <table className="w-full text-left text-sm">
             <thead className="sticky top-0 bg-white text-[#333]">
               <tr>
                 <th className="border-b border-[#eeeeee] px-3 py-2">Keyword</th>
                 <th className="border-b border-[#eeeeee] px-3 py-2">Language</th>
                 <th className="border-b border-[#eeeeee] px-3 py-2 text-right">Search Volume</th>
-                <th className="border-b border-[#eeeeee] px-3 py-2 text-right">CPC</th>
+                <th className="border-b border-[#eeeeee] px-3 py-2 text-right">{cpcLabel}</th>
               </tr>
             </thead>
             <tbody>
-              {normalizedRows.map((row, index) => (
-                <tr key={`${row.keyword}-${row.language}-${index}`} className="border-b border-[#f1f1f1]">
-                  <td className="px-3 py-2 font-medium text-[#333]">{row.keyword}</td>
+              {visibleRows.map((row, index) => {
+                const showLanguageHeader =
+                  groupedRows &&
+                  selectedLanguage === "All" &&
+                  (index === 0 || visibleRows[index - 1]?.language !== row.language);
+                return (
+                  <tr key={`${row.keyword}-${row.language}-${index}`} className="border-b border-[#f1f1f1]">
+                  <td className="px-3 py-2 font-medium text-[#333]">
+                    {showLanguageHeader ? (
+                      <div className="mb-1 text-xs font-bold uppercase tracking-wide text-[#9f0019]">
+                        {row.language}
+                      </div>
+                    ) : null}
+                    {row.keyword}
+                  </td>
                   <td className="px-3 py-2 text-[#666]">{row.language ?? "-"}</td>
                   <td className="px-3 py-2 text-right font-semibold text-[#9f0019]">{formatNumber(row.searchVolume)}</td>
                   <td className="px-3 py-2 text-right text-[#666]">{row.cpc === null || row.cpc === undefined ? "-" : row.cpc.toFixed(2)}</td>
                 </tr>
-              ))}
+                );
+              })}
             </tbody>
           </table>
         </div>
@@ -1015,7 +1116,7 @@ function OpportunityList({
               {formatNumber(row.previousVolume)} → {formatNumber(row.currentVolume)}
               {row.growthPercent === null ? " · New growth" : ` · ${formatPercentChange(row.currentVolume, row.previousVolume)}`}
             </p>
-            <p className="mt-1 text-sm text-[#666]">{row.reason}</p>
+            <CollapsibleReason text={row.reason} />
             {row.history.length > 1 ? (
               <div className="mt-3">
                 <MiniLineChart points={row.history.slice(-12)} />
@@ -1053,7 +1154,7 @@ function RisingKeywordList({
             <p className="mt-1 font-semibold text-[#009b7a]">
               {row.growthPercent === null ? "New growth" : `+${row.growthPercent.toFixed(1)}%`}
             </p>
-            <p className="mt-1 text-sm text-[#666]">{row.reason}</p>
+            <CollapsibleReason text={row.reason} />
             {row.history.length > 1 ? <MiniLineChart points={row.history.slice(-12)} /> : null}
           </div>
         ))}
@@ -1091,7 +1192,7 @@ function SeasonalList({
           <div key={`${row.keyword}-${row.upcomingMonth}`} className="rounded-xl bg-[#f7f7f7] p-3">
             <p className="font-semibold text-[#333]">{row.keyword}</p>
             <p className="text-sm text-[#666]">{row.upcomingMonth} · {formatNumber(row.previousYearVolume)}</p>
-            <p className="mt-1 text-sm text-[#666]">{row.reason}</p>
+            <CollapsibleReason text={row.reason} />
             {showCharts && row.history.length > 1 ? <MiniLineChart points={row.history.slice(-12)} /> : null}
           </div>
         ))}
@@ -1101,21 +1202,59 @@ function SeasonalList({
   );
 }
 
+function CollapsibleReason({ text }: { text: string }) {
+  const [open, setOpen] = useState(false);
+  if (!text) {
+    return null;
+  }
+  return (
+    <div className="mt-2">
+      <button
+        type="button"
+        className="inline-flex items-center gap-1 rounded-full border border-[#dddddd] bg-white px-2 py-1 text-xs font-semibold text-[#666] transition hover:border-[#e10600] hover:text-[#9f0019]"
+        aria-expanded={open}
+        onClick={() => setOpen((value) => !value)}
+      >
+        {open ? <EyeOffIcon className="size-3.5" /> : <EyeIcon className="size-3.5" />}
+        {open ? "Hide description" : "Show description"}
+      </button>
+      {open ? <p className="mt-1 text-sm text-[#666]">{text}</p> : null}
+    </div>
+  );
+}
+
 function MiniLineChart({ points }: { points: AdvancedMonthlyPoint[] }) {
+  const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
   const rows = points.filter((point) => Number.isFinite(point.value));
   if (rows.length < 2) {
     return null;
   }
-  const max = Math.max(...rows.map((point) => point.value), 1);
+  const values = rows.map((point) => point.value);
+  const max = Math.max(...values, 1);
+  const min = Math.min(...values, 0);
+  const range = Math.max(max - min, 1);
   const width = 260;
-  const height = 72;
+  const height = 92;
+  const paddingX = 8;
+  const paddingTop = 8;
+  const chartHeight = 52;
   const chartPoints = rows.map((point, index) => ({
     ...point,
-    x: rows.length === 1 ? width / 2 : (index / (rows.length - 1)) * width,
-    y: height - (point.value / max) * (height - 10) - 5,
+    x: rows.length === 1 ? width / 2 : paddingX + (index / (rows.length - 1)) * (width - paddingX * 2),
+    y: paddingTop + chartHeight - ((point.value - min) / range) * chartHeight,
   }));
+  const hoveredPoint = hoveredIndex === null ? null : chartPoints[hoveredIndex] ?? null;
+  const hitWidth = (width - paddingX * 2) / Math.max(chartPoints.length - 1, 1);
+  const tooltipX = hoveredPoint ? Math.min(width - 96, Math.max(0, hoveredPoint.x - 48)) : 0;
+  const tooltipY = hoveredPoint ? Math.max(0, hoveredPoint.y - 38) : 0;
+
   return (
-    <svg viewBox={`0 0 ${width} ${height + 18}`} className="mt-3 h-24 w-full" role="img">
+    <svg
+      viewBox={`0 0 ${width} ${height}`}
+      className="mt-3 h-24 w-full overflow-visible"
+      role="img"
+      onMouseLeave={() => setHoveredIndex(null)}
+    >
       <polyline
         fill="none"
         stroke="#e10600"
@@ -1124,14 +1263,48 @@ function MiniLineChart({ points }: { points: AdvancedMonthlyPoint[] }) {
         points={chartPoints.map((point) => `${point.x},${point.y}`).join(" ")}
       />
       {chartPoints.map((point, index) => (
-        <circle key={`${point.month}-${index}`} cx={point.x} cy={point.y} r="3" fill="#e10600">
-          <title>{`${point.month}: ${formatNumber(point.value)}`}</title>
-        </circle>
+        <rect
+          key={`${point.month}-${index}-hit`}
+          x={Math.max(0, point.x - hitWidth / 2)}
+          y="0"
+          width={hitWidth}
+          height={height}
+          fill="transparent"
+          onMouseEnter={() => setHoveredIndex(index)}
+          onMouseMove={() => setHoveredIndex(index)}
+        />
       ))}
-      <text x="0" y={height + 14} className="fill-[#777] text-[10px]">
+      {hoveredPoint ? (
+        <line
+          x1={hoveredPoint.x}
+          x2={hoveredPoint.x}
+          y1={paddingTop}
+          y2={paddingTop + chartHeight}
+          stroke="#9ca3af"
+          strokeDasharray="3 3"
+        />
+      ) : null}
+      {chartPoints.map((point, index) => (
+        <circle
+          key={`${point.month}-${index}`}
+          cx={point.x}
+          cy={point.y}
+          r={hoveredIndex === index ? "4" : "3"}
+          fill="#e10600"
+        />
+      ))}
+      {hoveredPoint ? (
+        <foreignObject x={tooltipX} y={tooltipY} width="96" height="36" pointerEvents="none">
+          <div className="rounded-md bg-[#111827] px-2 py-1 text-[9px] leading-tight text-white shadow-lg">
+            <div className="font-semibold">{hoveredPoint.month}</div>
+            <div>{formatNumber(hoveredPoint.value)}</div>
+          </div>
+        </foreignObject>
+      ) : null}
+      <text x={paddingX} y={height - 4} className="fill-[#777] text-[10px]">
         {rows[0].month}
       </text>
-      <text x={width} y={height + 14} textAnchor="end" className="fill-[#777] text-[10px]">
+      <text x={width - paddingX} y={height - 4} textAnchor="end" className="fill-[#777] text-[10px]">
         {rows.at(-1)?.month}
       </text>
     </svg>
@@ -1197,12 +1370,15 @@ function SocialPoster({
   const mediaUrls = getPosterMediaUrls(item);
   return (
     <article className="overflow-hidden rounded-2xl bg-white shadow-sm">
-      <div className="flex items-center gap-2 border-b border-[#eeeeee] p-3">
-        <div className="size-10 shrink-0 rounded-full bg-[#e10600]" />
-        <div className="min-w-0">
-          <p className="font-semibold text-[#333]">{companyName}</p>
-          <p className="text-xs text-[#777]">{item.title}</p>
+      <div className="flex items-start justify-between gap-2 border-b border-[#eeeeee] p-3">
+        <div className="flex min-w-0 items-start gap-2">
+          <div className="size-10 shrink-0 rounded-full bg-[#e10600]" />
+          <div className="min-w-0">
+            <p className="font-semibold text-[#333]">{companyName}</p>
+            <p className="text-xs text-[#777]">{item.title}</p>
+          </div>
         </div>
+        <DatePill date={item.date} />
       </div>
       {mediaUrls.length > 0 ? (
         <MediaCarousel
@@ -1216,7 +1392,6 @@ function SocialPoster({
           No reference image
         </div>
       )}
-      <DateTag date={item.date} />
       <CollapsibleEditableText
         title="Ad Copy"
         text={item.captionTemplate ?? ""}
@@ -1241,12 +1416,15 @@ function SocialStory({
   const mediaUrls = getStoryMediaUrls(item);
   return (
     <article className="overflow-hidden rounded-2xl bg-white shadow-sm">
-      <div className="flex items-center gap-2 border-b border-[#eeeeee] p-4">
-        <div className="size-10 shrink-0 rounded-full bg-[#e10600]" />
-        <div className="min-w-0">
-          <p className="font-semibold text-[#333]">{companyName}</p>
-          <h3 className="mt-1 text-sm font-medium text-[#777]">{item.title}</h3>
+      <div className="flex items-start justify-between gap-2 border-b border-[#eeeeee] p-4">
+        <div className="flex min-w-0 items-start gap-2">
+          <div className="size-10 shrink-0 rounded-full bg-[#e10600]" />
+          <div className="min-w-0">
+            <p className="font-semibold text-[#333]">{companyName}</p>
+            <h3 className="mt-1 text-sm font-medium text-[#777]">{item.title}</h3>
+          </div>
         </div>
+        <DatePill date={item.date} />
       </div>
       {mediaUrls.length > 0 ? (
         <MediaCarousel
@@ -1265,7 +1443,6 @@ function SocialStory({
       ) : (
         <div className="m-4 rounded-xl bg-[#f7f7f7] p-3 text-sm text-[#777]">No storyboard found.</div>
       )}
-      <DateTag date={item.date} />
       <CollapsibleEditableText
         title="Video Storyboard Notes"
         text={item.videoStoryboardNotes ?? ""}
@@ -1276,17 +1453,15 @@ function SocialStory({
   );
 }
 
-function DateTag({ date }: { date: string | null | undefined }) {
+function DatePill({ date }: { date: string | null | undefined }) {
   if (!date) {
     return null;
   }
 
   return (
-    <div className="px-3 pt-3">
-      <span className="inline-flex rounded-full bg-[#ffe8e8] px-3 py-1 text-xs font-semibold uppercase tracking-wide text-[#9f1d35]">
-        Date: {formatDateTag(date)}
-      </span>
-    </div>
+    <span className="shrink-0 rounded-full bg-[#ffe8e8] px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wide text-[#9f1d35] sm:text-xs">
+      {formatDateTag(date)}
+    </span>
   );
 }
 
@@ -1693,6 +1868,17 @@ function usePersistentJson<T>(storageKey: string, fallback: T): [T, (next: T) =>
 
 function formatNumber(value: number): string {
   return new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 }).format(value);
+}
+
+function getCpcLabel(countryCode: string): string {
+  const currencyByCountry: Record<string, string> = {
+    MY: "RM",
+    SG: "SGD",
+    AU: "AUD",
+    US: "USD",
+  };
+  const currency = currencyByCountry[countryCode.toUpperCase()] ?? "local currency";
+  return `CPC (${currency})`;
 }
 
 function formatCompact(value: number): string {

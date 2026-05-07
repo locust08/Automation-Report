@@ -5,7 +5,7 @@ import { extractNotionDatabaseId } from "@/lib/reporting/notion";
 import { getCredentials } from "@/lib/reporting/env";
 import { getOverallReport } from "@/lib/reporting/service";
 import type { CampaignGroup, OverallReportPayload, SummaryMetric } from "@/lib/reporting/types";
-import { sendMonthlyReportEmail } from "@/src/lib/email/send-monthly-report-email";
+import { parseEmailList, sendMonthlyReportEmail } from "@/src/lib/email/send-monthly-report-email";
 import {
   getMonthlyReportAccounts,
   type MonthlyReportAccount,
@@ -237,11 +237,11 @@ function resolveRecipients(
   input: { testMode: boolean; testRecipient: string }
 ): string[] {
   if (input.testMode) {
-    return [input.testRecipient];
+    return parseEmailList(input.testRecipient);
   }
 
   return Array.from(
-    new Set([account.clientEmail, account.picEmail].filter((email): email is string => Boolean(email)))
+    new Set([...parseEmailList(account.clientEmail), ...parseEmailList(account.picEmail)])
   );
 }
 

@@ -1,11 +1,14 @@
 import { captureOverallReportPdf } from "@/src/lib/cron/capture-overall-report-pdf";
 import {
-  buildMonthlyReportTargets,
   getMonthlyReportTargets,
   parseBooleanEnv,
   type MonthlyReportTargetConfig,
 } from "@/src/lib/cron/monthly-report-targets";
 import { sendMonthlyReportEmail } from "@/src/lib/email/send-monthly-report-email";
+import {
+  getMonthlyReportAccounts,
+  resolveMonthlyReportTargetsFromNotion,
+} from "@/src/lib/notion/get-monthly-report-accounts";
 
 const TEST_RECIPIENT = "ava@locus-t.com.my";
 
@@ -17,10 +20,14 @@ export async function runMonthlyReportJob(input?: {
 
   try {
     const testMode = input?.forceTestMode ?? parseBooleanEnv(process.env.MONTHLY_REPORT_TEST_MODE);
-    const result =
+    const configuredTargets =
       input?.overrideTargets && input.overrideTargets.length > 0
-        ? buildMonthlyReportTargets(input.overrideTargets, testMode)
+        ? await resolveMonthlyReportTargetsFromNotion(input.overrideTargets)
         : getMonthlyReportTargets({ testModeOverride: testMode });
+    const result =
+      configuredTargets.length > 0
+        ? configuredTargets
+        : (await getMonthlyReportAccounts()).accounts.filter((account) => Boolean(account.googleAdsAccountId));
     const accountsToProcess = testMode ? result.slice(0, 1) : result;
     const skippedFromTestMode = Math.max(result.length - accountsToProcess.length, 0);
 
