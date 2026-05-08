@@ -328,6 +328,8 @@ const META_PREVIEW_ADSET_FIELDS = [
   "end_time",
   "bid_strategy",
   "destination_type",
+  "pacing_type",
+  "targeting",
 ] as const;
 
 const META_PREVIEW_AD_FIELDS = [
@@ -384,6 +386,37 @@ const META_PREVIEW_DEMOGRAPHIC_FIELDS = [
   "spend",
   "actions",
   "cost_per_action_type",
+] as const;
+
+const META_PREVIEW_LINK_FORMATS = [
+  {
+    adFormat: "DESKTOP_FEED_STANDARD",
+    label: "Desktop Feed Preview",
+    placementKey: "facebookFeed",
+    placementLabel: "Facebook Feed",
+    device: "desktop",
+  },
+  {
+    adFormat: "MOBILE_FEED_STANDARD",
+    label: "Mobile Feed Preview",
+    placementKey: "mobile",
+    placementLabel: "Mobile Feed",
+    device: "mobile",
+  },
+  {
+    adFormat: "INSTAGRAM_STANDARD",
+    label: "Instagram Placement Preview",
+    placementKey: "instagramFeed",
+    placementLabel: "Instagram Feed",
+    device: "mobile",
+  },
+  {
+    adFormat: "INSTAGRAM_STORY",
+    label: "Instagram Story Preview",
+    placementKey: "story",
+    placementLabel: "Story",
+    device: "mobile",
+  },
 ] as const;
 
 export async function fetchMetaCampaignRows({
@@ -950,45 +983,53 @@ async function fetchMetaPreviewLinks(input: {
   const linksByAdId = new Map<string, PreviewLinkAsset[]>();
 
   for (const adId of input.adIds.filter(Boolean)) {
-    const params = new URLSearchParams({
-      access_token: input.accessToken,
-      ad_format: "DESKTOP_FEED_STANDARD",
-      fields: "body",
-    });
+    const linkAssets: PreviewLinkAsset[] = [];
+    const seenKeys = new Set<string>();
 
-    const response = await fetch(
-      `${META_GRAPH_API_BASE_URL}/${adId}/previews?${params.toString()}`,
-      { cache: "no-store" }
-    );
-    const parsed = await parseMetaResponse<MetaGraphResponse<{ body?: string }>>(response);
+    for (const format of META_PREVIEW_LINK_FORMATS) {
+      const params = new URLSearchParams({
+        access_token: input.accessToken,
+        ad_format: format.adFormat,
+        fields: "body",
+      });
 
-    if (parsed.parseError) {
-      throw new MetaApiError(
-        `Meta API returned non-JSON response (status ${parsed.status}, content-type ${parsed.contentType || "unknown"}). ${parsed.parseError}. Response starts with: ${parsed.textSnippet}`
+      const response = await fetch(
+        `${META_GRAPH_API_BASE_URL}/${adId}/previews?${params.toString()}`,
+        { cache: "no-store" }
       );
-    }
+      const parsed = await parseMetaResponse<MetaGraphResponse<{ body?: string }>>(response);
 
-    const json = parsed.json ?? {};
-    if (!parsed.ok || json.error) {
-      throw new MetaApiError(
-        json.error?.message ?? `Meta API request failed with status ${parsed.status}.`,
-        json.error?.code,
-        json.error?.error_subcode
-      );
-    }
+      if (parsed.parseError) {
+        throw new MetaApiError(
+          `Meta API returned non-JSON response (status ${parsed.status}, content-type ${parsed.contentType || "unknown"}). ${parsed.parseError}. Response starts with: ${parsed.textSnippet}`
+        );
+      }
 
-    const linkAssets = (json.data ?? [])
-      .map((item, index) => {
-        const url = extractPreviewUrl(item.body);
-        if (!url) {
-          return null;
-        }
-        return {
-          label: index === 0 ? "Desktop feed preview" : `Preview ${index + 1}`,
-          url,
-        } satisfies PreviewLinkAsset;
-      })
-      .filter((item): item is PreviewLinkAsset => Boolean(item));
+      const json = parsed.json ?? {};
+      if (!parsed.ok || json.error) {
+        continue;
+      }
+
+      const url = extractPreviewUrl(json.data?.[0]?.body);
+      if (!url) {
+        continue;
+      }
+
+      const uniqueKey = `${format.placementKey}:${url}`;
+      if (seenKeys.has(uniqueKey)) {
+        continue;
+      }
+
+      seenKeys.add(uniqueKey);
+      linkAssets.push({
+        label: format.label,
+        url,
+        placementKey: format.placementKey,
+        placementLabel: format.placementLabel,
+        device: format.device,
+        adFormat: format.adFormat,
+      });
+    }
 
     if (linkAssets.length > 0) {
       linksByAdId.set(adId, linkAssets);
@@ -1463,6 +1504,7 @@ function mapCreativeAsset(row: MetaCreativeRow): PreviewCreativeAsset {
       row.object_story_spec?.link_data?.message?.trim() ||
       row.object_story_spec?.video_data?.message?.trim() ||
       null,
+    description: row.object_story_spec?.link_data?.description?.trim() || null,
     imageUrl,
     thumbnailUrl: row.thumbnail_url?.trim() || null,
     linkUrl: storyLink || videoLink || null,

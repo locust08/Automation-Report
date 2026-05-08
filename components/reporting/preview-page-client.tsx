@@ -228,6 +228,7 @@ export function PreviewPageClient() {
                 key={`${previewResolution.section.platform}:${previewResolution.campaign.id}`}
                 section={previewResolution.section}
                 initialCampaignId={previewResolution.campaign.id}
+                companyName={data.companyName}
                 onCampaignChange={handleCampaignChange}
               />
             ) : null}

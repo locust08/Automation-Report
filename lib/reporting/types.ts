@@ -281,6 +281,7 @@ export interface PreviewCreativeAsset {
   name?: string | null;
   title?: string | null;
   body?: string | null;
+  description?: string | null;
   imageUrl?: string | null;
   thumbnailUrl?: string | null;
   linkUrl?: string | null;
@@ -291,6 +292,10 @@ export interface PreviewCreativeAsset {
 export interface PreviewLinkAsset {
   label: string;
   url: string;
+  placementKey?: "facebookFeed" | "instagramFeed" | "story" | "reels" | "mobile" | null;
+  placementLabel?: string | null;
+  device?: "desktop" | "mobile" | null;
+  adFormat?: string | null;
 }
 
 export interface PreviewImageAsset {
