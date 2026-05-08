@@ -5,6 +5,7 @@ import {
   buildAdvancedReportCacheKey,
   generateAdvancedReport,
   getAdvancedReportCountry,
+  refreshAdvancedReportVolatileMedia,
 } from "@/lib/reporting/advanced-report";
 import { buildDateRange } from "@/lib/reporting/date";
 
@@ -42,7 +43,11 @@ export async function GET(request: Request): Promise<NextResponse> {
     return NextResponse.json({ status: "missing", cacheKey });
   }
 
-  return NextResponse.json({ status: "ready", cacheKey, payload: cached });
+  const payload = await refreshAdvancedReportVolatileMedia(cached);
+  if (payload !== cached) {
+    await writeAdvancedReportCache(cacheKey, payload);
+  }
+  return NextResponse.json({ status: "ready", cacheKey, payload });
 }
 
 export async function POST(request: Request): Promise<NextResponse> {
@@ -69,7 +74,11 @@ export async function POST(request: Request): Promise<NextResponse> {
   if (!force) {
     const cached = await readAdvancedReportCache(cacheKey);
     if (cached) {
-      return NextResponse.json({ status: "ready", cacheKey, payload: cached });
+      const payload = await refreshAdvancedReportVolatileMedia(cached);
+      if (payload !== cached) {
+        await writeAdvancedReportCache(cacheKey, payload);
+      }
+      return NextResponse.json({ status: "ready", cacheKey, payload });
     }
   }
 

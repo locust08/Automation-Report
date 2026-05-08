@@ -323,6 +323,39 @@ export async function generateAdvancedReport(input: AdvancedGenerationInput): Pr
   };
 }
 
+export async function refreshAdvancedReportVolatileMedia(
+  payload: AdvancedReportPayload
+): Promise<AdvancedReportPayload> {
+  if (!hasExpiredOrExpiringMediaUrls(payload)) {
+    return payload;
+  }
+
+  const warnings: string[] = [];
+  const refreshedSocialCalendar = await fetchSocialCalendar(payload.metadata.companyName, warnings).catch(
+    (error: unknown) => {
+      warnings.push(toWarning("Notion social content refresh", error));
+      return null;
+    }
+  );
+
+  if (
+    !refreshedSocialCalendar ||
+    (refreshedSocialCalendar.posters.length === 0 && refreshedSocialCalendar.stories.length === 0)
+  ) {
+    return payload;
+  }
+
+  return {
+    ...payload,
+    socialCalendar: refreshedSocialCalendar,
+    sectionStatuses: {
+      ...payload.sectionStatuses,
+      socialCalendar: { status: "success", message: null },
+    },
+    warnings: dedupeStrings([...payload.warnings, ...warnings]),
+  };
+}
+
 async function resolveAdvancedCompanyName(
   accountId: string,
   accountPlatform: "google" | "meta" | "unknown",
@@ -1627,6 +1660,46 @@ function readNotionFileUrls(
     }
   }
   return [];
+}
+
+function hasExpiredOrExpiringMediaUrls(payload: AdvancedReportPayload): boolean {
+  const mediaUrls = [
+    ...payload.socialCalendar.posters.flatMap((item) => item.referenceImageUrls),
+    ...payload.socialCalendar.stories.flatMap((item) => item.referenceVideoStoryboardUrls),
+  ];
+  return mediaUrls.some((url) => isExpiredOrExpiringSignedUrl(url));
+}
+
+function isExpiredOrExpiringSignedUrl(value: string): boolean {
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    return false;
+  }
+
+  const signedAt = url.searchParams.get("X-Amz-Date");
+  const expiresSeconds = Number(url.searchParams.get("X-Amz-Expires"));
+  if (!signedAt || !Number.isFinite(expiresSeconds)) {
+    return false;
+  }
+
+  const match = /^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z$/.exec(signedAt);
+  if (!match) {
+    return false;
+  }
+
+  const [, year, month, day, hour, minute, second] = match;
+  const signedAtMs = Date.UTC(
+    Number(year),
+    Number(month) - 1,
+    Number(day),
+    Number(hour),
+    Number(minute),
+    Number(second)
+  );
+  const expiresAtMs = signedAtMs + expiresSeconds * 1000;
+  return expiresAtMs - Date.now() <= 10 * 60 * 1000;
 }
 
 function createDefaultSectionStatuses(): Record<AdvancedReportSectionKey, SectionState> {

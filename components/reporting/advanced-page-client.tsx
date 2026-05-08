@@ -257,6 +257,11 @@ export function AdvancedPageClient({
           screenshotMode={screenshotMode}
         />
       ) : null}
+      {payload ? (
+        <div className="fixed bottom-5 right-5 z-40" data-report-export-exclude="true">
+          <ReportDownloadButton fileNamePrefix={title} />
+        </div>
+      ) : null}
       {debugModalOpen ? (
         <TroubleshootingModal payload={diagnosticsPayload} onClose={() => setDebugModalOpen(false)} />
       ) : null}
@@ -471,7 +476,16 @@ function AdvancedReportContent({
           >
             <LineChart points={payload.competitors.competitorDemandTrend} />
           </ChartPanel>
-          <ChartPanel title="Share of Market">
+          <ChartPanel
+            title="Share of Market"
+            action={
+              <MarketShareDetailsButton
+                marketRows={marketShareRows}
+                rows={payload.competitors.competitorKeywordDetails ?? []}
+                cpcLabel={cpcLabel}
+              />
+            }
+          >
             <PieChart rows={marketShareRows} />
             {payload.competitors.clientSharePercent !== null ? (
               <p className="mt-3 text-sm font-semibold text-[#9f0019]">
@@ -625,8 +639,20 @@ function LineChart({ points }: { points: AdvancedMonthlyPoint[] }) {
   const polyline = chartPoints.map((point) => `${point.x},${point.y}`).join(" ");
   const hovered = hoveredIndex === null ? null : chartPoints[hoveredIndex] ?? null;
   const first = chartPoints[0];
+  const tooltipWidth = 210;
   const tooltipHeight = 120;
-  const tooltipY = hovered ? Math.min(height - tooltipHeight - 6, Math.max(6, hovered.y - 72)) : 0;
+  const tooltipX = hovered
+    ? Math.min(
+        width - tooltipWidth - 10,
+        Math.max(10, hovered.x > width * 0.62 ? hovered.x - tooltipWidth - 14 : hovered.x + 14)
+      )
+    : 0;
+  const tooltipY = hovered
+    ? Math.min(
+        height - tooltipHeight - 10,
+        Math.max(10, hovered.y > height * 0.48 ? hovered.y - tooltipHeight - 12 : hovered.y + 12)
+      )
+    : 0;
 
   return (
     <div className="overflow-visible">
@@ -679,8 +705,8 @@ function LineChart({ points }: { points: AdvancedMonthlyPoint[] }) {
             <g key={`${point.month}-${point.value}`}>
               <circle cx={point.x} cy={point.y} r="5" fill="#e10600" />
               <text
-                x={index === 0 ? point.x + 8 : point.x - 8}
-                y={point.y - 12}
+                x={index === 0 ? Math.max(point.x + 8, 38) : Math.min(point.x - 8, width - 38)}
+                y={point.y < chartTop + 24 ? point.y + 24 : point.y - 14}
                 textAnchor={index === 0 ? "start" : "end"}
                 className="fill-[#333] text-[16px] font-semibold"
               >
@@ -700,9 +726,9 @@ function LineChart({ points }: { points: AdvancedMonthlyPoint[] }) {
         )}
         {hovered ? (
           <foreignObject
-            x={Math.min(width - 220, Math.max(12, hovered.x + 10))}
+            x={tooltipX}
             y={tooltipY}
-            width="210"
+            width={tooltipWidth}
             height={tooltipHeight}
             pointerEvents="none"
           >
@@ -840,7 +866,10 @@ function HorizontalBarChart({
   return (
     <div className="space-y-2">
       {rows.map((row) => (
-        <div key={row.label} className="grid grid-cols-[minmax(110px,220px)_1fr_auto] items-center gap-3 text-sm">
+        <div
+          key={row.label}
+          className="grid grid-cols-[minmax(110px,220px)_1fr_auto] items-center gap-3 rounded-xl px-2 py-1 text-sm transition hover:bg-[#f3f3f3]"
+        >
           <span className="min-w-0 truncate font-medium text-[#333]" title={row.label}>
             {row.label}
           </span>
@@ -912,6 +941,42 @@ function KeywordVolumeBars({ rows }: { rows: AdvancedKeywordMetric[] }) {
   );
 }
 
+function MarketShareDetailsButton({
+  marketRows,
+  rows,
+  cpcLabel = "CPC",
+}: {
+  marketRows: Array<{ label: string; value: number; intent?: "client" | "competitor" }>;
+  rows: AdvancedKeywordMetric[];
+  cpcLabel?: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const competitorFilters = buildCompetitorKeywordFilters(marketRows);
+  if (!rows.length) {
+    return null;
+  }
+
+  return (
+    <>
+      <Button type="button" variant="outline" size="sm" onClick={() => setOpen(true)}>
+        See All
+      </Button>
+      {open ? (
+        <KeywordDetailsModal
+          title="Share of Market Keywords"
+          rows={rows}
+          cpcLabel={cpcLabel}
+          onClose={() => setOpen(false)}
+          filterOptions={competitorFilters}
+          filterRows={(row, selectedFilter) =>
+            selectedFilter === "All" || normalizeKeywordText(row.keyword).includes(selectedFilter)
+          }
+        />
+      ) : null}
+    </>
+  );
+}
+
 function KeywordDetailsButton({
   label,
   title,
@@ -972,24 +1037,32 @@ function KeywordDetailsModal({
   rows,
   cpcLabel = "CPC",
   groupedRows,
+  filterOptions,
+  filterRows,
   onClose,
 }: {
   title: string;
   rows: AdvancedKeywordMetric[];
   cpcLabel?: string;
   groupedRows?: Record<"English" | "Malay" | "Chinese", AdvancedKeywordMetric[]>;
+  filterOptions?: Array<{ value: string; label: string }>;
+  filterRows?: (row: AdvancedKeywordMetric & { language?: string }, selectedFilter: string) => boolean;
   onClose: () => void;
 }) {
   const [selectedLanguage, setSelectedLanguage] = useState<"All" | "English" | "Malay" | "Chinese">("All");
+  const [selectedFilter, setSelectedFilter] = useState("All");
   const normalizedRows = groupedRows
     ? (Object.entries(groupedRows) as Array<["English" | "Malay" | "Chinese", AdvancedKeywordMetric[]]>).flatMap(
         ([language, items]) => items.map((item) => ({ ...item, language }))
       )
     : rows;
-  const visibleRows = groupedRows && selectedLanguage !== "All"
+  const languageRows = groupedRows && selectedLanguage !== "All"
     ? normalizedRows.filter((row) => row.language === selectedLanguage)
     : normalizedRows;
-  const text = normalizedRows
+  const visibleRows = filterRows
+    ? languageRows.filter((row) => filterRows(row, selectedFilter))
+    : languageRows;
+  const text = visibleRows
     .map((row) => `${row.keyword}\t${row.language ?? ""}\t${row.searchVolume}\t${row.cpc ?? ""}`)
     .join("\n");
 
@@ -1025,6 +1098,24 @@ function KeywordDetailsModal({
           </div>
         </div>
         <div className="max-h-[72vh] overflow-auto p-5">
+          {filterOptions?.length ? (
+            <div className="mb-4 flex flex-wrap gap-2">
+              {[{ value: "All", label: "All" }, ...filterOptions].map((filter) => (
+                <button
+                  key={filter.value}
+                  type="button"
+                  className={`rounded-full border px-3 py-1 text-sm font-semibold transition ${
+                    selectedFilter === filter.value
+                      ? "border-[#e10600] bg-[#e10600] text-white"
+                      : "border-[#dddddd] bg-white text-[#333] hover:border-[#e10600]"
+                  }`}
+                  onClick={() => setSelectedFilter(filter.value)}
+                >
+                  {filter.label}
+                </button>
+              ))}
+            </div>
+          ) : null}
           {groupedRows ? (
             <div className="mb-4 flex flex-wrap gap-2">
               {(["All", "English", "Malay", "Chinese"] as const).map((language) => (
@@ -1076,10 +1167,44 @@ function KeywordDetailsModal({
               })}
             </tbody>
           </table>
+          {!visibleRows.length ? (
+            <p className="py-6 text-center text-sm text-[#777]">No keywords found for this filter.</p>
+          ) : null}
         </div>
       </div>
     </div>
   );
+}
+
+function buildCompetitorKeywordFilters(
+  marketRows: Array<{ label: string; value: number; intent?: "client" | "competitor" }>
+): Array<{ value: string; label: string }> {
+  const filters = new Map<string, string>();
+  marketRows
+    .filter((row) => row.intent === "competitor")
+    .forEach((row) => {
+      const key = extractCompetitorKey(row.label);
+      if (key && !filters.has(key)) {
+        filters.set(key, toTitleCase(key));
+      }
+    });
+  return Array.from(filters.entries()).map(([value, label]) => ({ value, label }));
+}
+
+function extractCompetitorKey(label: string): string | null {
+  const [firstToken] = normalizeKeywordText(label).split(" ");
+  if (!firstToken || ["best", "chair", "home", "massage", "price", "promotion"].includes(firstToken)) {
+    return null;
+  }
+  return firstToken;
+}
+
+function normalizeKeywordText(value: string): string {
+  return value.trim().toLowerCase().replace(/\s+/g, " ");
+}
+
+function toTitleCase(value: string): string {
+  return value.replace(/\b\w/g, (match) => match.toUpperCase());
 }
 
 function OpportunityList({
@@ -1100,7 +1225,7 @@ function OpportunityList({
 }) {
   return (
     <ChartPanel title={title}>
-      <div className="grid gap-3 lg:grid-cols-2">
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-3">
         {rows.slice(0, 8).map((row) => (
           <div key={`${row.category}-${row.keyword}`} className="rounded-xl bg-[#f7f7f7] p-3">
             <div className="flex flex-wrap items-start justify-between gap-2">
@@ -1124,7 +1249,7 @@ function OpportunityList({
             ) : null}
           </div>
         ))}
-        {!rows.length ? <p className="text-sm text-[#777]">No keyword gaps found.</p> : null}
+        {!rows.length ? <p className="col-span-full text-sm text-[#777]">No keyword gaps found.</p> : null}
       </div>
     </ChartPanel>
   );
@@ -1144,7 +1269,7 @@ function RisingKeywordList({
 }) {
   return (
     <ChartPanel title="Rising Keyword Opportunities">
-      <div className="grid gap-3 lg:grid-cols-2">
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-3">
         {rows.map((row) => (
           <div key={row.keyword} className="rounded-xl bg-[#f7f7f7] p-3">
             <p className="font-semibold text-[#333]">{row.keyword}</p>
@@ -1158,7 +1283,7 @@ function RisingKeywordList({
             {row.history.length > 1 ? <MiniLineChart points={row.history.slice(-12)} /> : null}
           </div>
         ))}
-        {!rows.length ? <p className="text-sm text-[#777]">No rising keywords found.</p> : null}
+        {!rows.length ? <p className="col-span-full text-sm text-[#777]">No rising keywords found.</p> : null}
       </div>
     </ChartPanel>
   );
@@ -1187,7 +1312,7 @@ function SeasonalList({
         ) : null
       }
     >
-      <div className="grid gap-3 lg:grid-cols-2">
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-3">
         {rows.map((row) => (
           <div key={`${row.keyword}-${row.upcomingMonth}`} className="rounded-xl bg-[#f7f7f7] p-3">
             <p className="font-semibold text-[#333]">{row.keyword}</p>
@@ -1196,7 +1321,7 @@ function SeasonalList({
             {showCharts && row.history.length > 1 ? <MiniLineChart points={row.history.slice(-12)} /> : null}
           </div>
         ))}
-        {!rows.length ? <p className="text-sm text-[#777]">No seasonal pattern found.</p> : null}
+        {!rows.length ? <p className="col-span-full text-sm text-[#777]">No seasonal pattern found.</p> : null}
       </div>
     </ChartPanel>
   );
@@ -1794,7 +1919,7 @@ function DecisionTable({ payload }: { payload: AdvancedReportPayload }) {
                       [row.id]: { ...draft, clientInput: event.target.value },
                     });
                   }}
-                  className="mt-1 min-h-40 w-full resize-y rounded-xl border border-[#d8d8d8] px-3 py-2 outline-none focus:border-[#e10600] lg:mt-0"
+                  className="mt-1 min-h-20 w-full resize-y rounded-xl border border-[#d8d8d8] px-3 py-2 outline-none focus:border-[#e10600] lg:mt-0"
                   placeholder="Client selection / input"
                 />
               </label>
@@ -1808,7 +1933,7 @@ function DecisionTable({ payload }: { payload: AdvancedReportPayload }) {
                       [row.id]: { ...draft, reasoning: event.target.value },
                     });
                   }}
-                  className="mt-1 min-h-40 w-full resize-y rounded-xl border border-[#d8d8d8] px-3 py-2 text-[#333] outline-none placeholder:text-[#999] focus:border-[#e10600] lg:mt-0"
+                  className="mt-1 min-h-20 w-full resize-y rounded-xl border border-[#d8d8d8] px-3 py-2 text-[#333] outline-none placeholder:text-[#999] focus:border-[#e10600] lg:mt-0"
                   placeholder={row.recommendation}
                 />
               </label>
