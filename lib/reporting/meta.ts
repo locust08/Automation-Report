@@ -361,7 +361,6 @@ const META_PREVIEW_INSIGHT_FIELDS = [
   "ad_id",
   "ad_name",
   "objective",
-  "optimization_goal",
   "impressions",
   "clicks",
   "ctr",
