@@ -1,24 +1,345 @@
-import { jsPDF } from "jspdf";
+import { mkdir, writeFile } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 
-import { getOverallReport } from "@/lib/reporting/service";
-import { summarizeAudienceItemsForChart } from "@/lib/reporting/audience-breakdown";
-import type { CampaignGroup, OverallReportPayload, SummaryMetric } from "@/lib/reporting/types";
+import { chromium, type Browser, type Page } from "playwright";
+
+import {
+  resolveMonthlyReportDateRange,
+  type MonthlyReportDateRange,
+} from "@/src/lib/cron/monthly-report-date";
+import { parseBooleanEnv } from "@/src/lib/cron/monthly-report-targets";
 import type { MonthlyReportAccount } from "@/src/lib/notion/get-monthly-report-accounts";
 
-type MonthlyReportType = "overall" | "google" | "meta";
+const DEFAULT_CONCURRENCY = 3;
+const PDF_RENDER_TIMEOUT_MS = 180000;
+const TEN_MINUTES_MS = 10 * 60 * 1000;
 
-export async function generateMonthlyReportPdfForAccount(account: MonthlyReportAccount): Promise<Buffer> {
-  const previousMonth = resolvePreviousMonthRange(new Date());
-  const reportPayload = await buildReportPayload(account, previousMonth.startDate, previousMonth.endDate);
-
-  return generateMonthlyReportPdf({
-    account,
-    reportPayload,
-    reportMonth: previousMonth.reportMonthLabel,
-  });
+export interface MonthlyReportPdfResult {
+  status: "generated" | "failed" | "skipped";
+  account: MonthlyReportAccount;
+  accountId: string | null;
+  accountName: string;
+  reportMonthKey: string;
+  reportMonthLabel: string;
+  pdfBuffer: Buffer | null;
+  pdfPath: string | null;
+  pdfSizeBytes: number;
+  durationMs: number;
+  startedAt: string;
+  endedAt: string;
+  errorMessage: string | null;
 }
 
-function normalizeReportType(value: string | null): MonthlyReportType {
+export interface MonthlyReportPdfBatchResult {
+  totalAccounts: number;
+  processed: number;
+  generated: number;
+  failed: number;
+  skipped: number;
+  totalDurationMs: number;
+  withinTenMinutes: boolean;
+  warning: string | null;
+  slowestAccounts: Array<{
+    accountId: string | null;
+    accountName: string;
+    durationMs: number;
+    status: MonthlyReportPdfResult["status"];
+    errorMessage: string | null;
+  }>;
+  results: MonthlyReportPdfResult[];
+}
+
+export async function generateMonthlyReportPdfForAccount(
+  account: MonthlyReportAccount,
+  input?: {
+    browser?: Browser;
+    dateRange?: MonthlyReportDateRange;
+    outputDir?: string;
+  }
+): Promise<MonthlyReportPdfResult> {
+  const dateRange = input?.dateRange ?? resolveMonthlyReportDateRange();
+  const browser = input?.browser ?? (await launchPdfBrowser());
+  const ownsBrowser = !input?.browser;
+
+  try {
+    return await generateMonthlyReportPdfWithBrowser(account, browser, {
+      dateRange,
+      outputDir: input?.outputDir,
+    });
+  } finally {
+    if (ownsBrowser) {
+      await browser.close();
+    }
+  }
+}
+
+export async function generateMonthlyReportPdfBatch(input: {
+  accounts: MonthlyReportAccount[];
+  dateRange?: MonthlyReportDateRange;
+  concurrency?: number;
+  outputDir?: string;
+}): Promise<MonthlyReportPdfBatchResult> {
+  const startedAt = Date.now();
+  const concurrency = resolvePdfGenerationConcurrency(input.concurrency);
+  const dateRange = input.dateRange ?? resolveMonthlyReportDateRange();
+  let browser: Browser;
+
+  try {
+    browser = await launchPdfBrowser();
+  } catch (error) {
+    const message = toErrorMessage(error, "Browser launch failure.");
+    const results = input.accounts.map((account) =>
+      buildSkippedOrFailedResult(account, dateRange, "failed", message)
+    );
+
+    return summarizePdfResults(results, Date.now() - startedAt);
+  }
+
+  try {
+    const results = await mapWithConcurrency(input.accounts, concurrency, (account) =>
+      generateMonthlyReportPdfWithBrowser(account, browser, {
+        dateRange,
+        outputDir: input.outputDir,
+      })
+    );
+
+    return summarizePdfResults(results, Date.now() - startedAt);
+  } finally {
+    await browser.close();
+  }
+}
+
+async function generateMonthlyReportPdfWithBrowser(
+  account: MonthlyReportAccount,
+  browser: Browser,
+  input: {
+    dateRange: MonthlyReportDateRange;
+    outputDir?: string;
+  }
+): Promise<MonthlyReportPdfResult> {
+  const startedAtMs = Date.now();
+  const startedAt = new Date(startedAtMs).toISOString();
+  const accountId = resolvePrimaryAccountId(account);
+  const accountName = account.clientName || accountId || "Unknown account";
+
+  console.info(
+    `[monthly-report] pdf start account_id=${accountId ?? "missing"} account_name=${accountName} started_at=${startedAt}`
+  );
+
+  if (!accountId || !account.isValid) {
+    return buildSkippedOrFailedResult(
+      account,
+      input.dateRange,
+      "skipped",
+      account.skipReason ?? "Account data missing."
+    );
+  }
+
+  const page = await browser.newPage({
+    viewport: { width: 1240, height: 1754 },
+    deviceScaleFactor: 1,
+  });
+
+  try {
+    const pageUrl = buildPrintReportUrl(account, input.dateRange);
+    const response = await page.goto(pageUrl, {
+      waitUntil: "domcontentloaded",
+      timeout: PDF_RENDER_TIMEOUT_MS,
+    });
+
+    if (!response) {
+      throw new Error("Print route failed: no response was returned.");
+    }
+    if (!response.ok()) {
+      throw new Error(`Print route failed: HTTP ${response.status()} ${response.statusText()}.`);
+    }
+
+    await waitForReportReadyMarker(page);
+    await waitForPrintReadiness(page);
+
+    const pdfBuffer = await page.pdf({
+      format: "A4",
+      printBackground: true,
+      preferCSSPageSize: true,
+      margin: {
+        top: "12mm",
+        right: "12mm",
+        bottom: "12mm",
+        left: "12mm",
+      },
+    });
+    const pdfPath = await saveMonthlyReportPdf({
+      account,
+      buffer: pdfBuffer,
+      dateRange: input.dateRange,
+      outputDir: input.outputDir,
+    });
+    const endedAtMs = Date.now();
+    const result: MonthlyReportPdfResult = {
+      status: "generated",
+      account,
+      accountId,
+      accountName,
+      reportMonthKey: input.dateRange.reportMonthKey,
+      reportMonthLabel: input.dateRange.reportMonthLabel,
+      pdfBuffer,
+      pdfPath,
+      pdfSizeBytes: pdfBuffer.byteLength,
+      durationMs: endedAtMs - startedAtMs,
+      startedAt,
+      endedAt: new Date(endedAtMs).toISOString(),
+      errorMessage: null,
+    };
+
+    logPdfResult(result);
+    return result;
+  } catch (error) {
+    const endedAtMs = Date.now();
+    const result: MonthlyReportPdfResult = {
+      status: "failed",
+      account,
+      accountId,
+      accountName,
+      reportMonthKey: input.dateRange.reportMonthKey,
+      reportMonthLabel: input.dateRange.reportMonthLabel,
+      pdfBuffer: null,
+      pdfPath: null,
+      pdfSizeBytes: 0,
+      durationMs: endedAtMs - startedAtMs,
+      startedAt,
+      endedAt: new Date(endedAtMs).toISOString(),
+      errorMessage: classifyPdfError(error),
+    };
+
+    logPdfResult(result);
+    return result;
+  } finally {
+    await page.close().catch((error: unknown) => {
+      console.warn(`[monthly-report] pdf page close failed ${toErrorMessage(error)}`);
+    });
+  }
+}
+
+async function waitForPrintReadiness(page: Page) {
+  await page
+    .waitForLoadState("networkidle", { timeout: 30000 })
+    .catch(() => undefined);
+  await page.evaluate(() => document.fonts.ready);
+}
+
+async function waitForReportReadyMarker(page: Page) {
+  try {
+    await page.locator("[data-report-ready='true']").waitFor({
+      state: "attached",
+      timeout: PDF_RENDER_TIMEOUT_MS,
+    });
+  } catch (error) {
+    const bodyText = await page
+      .locator("body")
+      .innerText({ timeout: 5000 })
+      .catch(() => "");
+    const pageMessage = bodyText.trim().replace(/\s+/g, " ").slice(0, 500);
+    throw new Error(
+      `Report data failed: print page did not expose data-report-ready marker.${
+        pageMessage ? ` Page text: ${pageMessage}` : ""
+      } ${toErrorMessage(error)}`
+    );
+  }
+}
+
+async function launchPdfBrowser(): Promise<Browser> {
+  try {
+    return await chromium.launch({
+      headless: true,
+      executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH?.trim() || undefined,
+    });
+  } catch (error) {
+    throw new Error(`Browser launch failure: ${toErrorMessage(error)}`);
+  }
+}
+
+async function saveMonthlyReportPdf(input: {
+  account: MonthlyReportAccount;
+  buffer: Buffer;
+  dateRange: MonthlyReportDateRange;
+  outputDir?: string;
+}): Promise<string> {
+  const outputDir = input.outputDir ?? resolveMonthlyReportPdfOutputDir();
+  const filename = buildPdfFileName(input.account, input.dateRange.reportMonthKey);
+  const pdfPath = path.join(outputDir, filename);
+
+  try {
+    await mkdir(outputDir, { recursive: true });
+    await writeFile(pdfPath, input.buffer);
+    return pdfPath;
+  } catch (error) {
+    throw new Error(`PDF upload/save failure: ${toErrorMessage(error)}`);
+  }
+}
+
+function buildPrintReportUrl(account: MonthlyReportAccount, dateRange: MonthlyReportDateRange): string {
+  const accountId = resolvePrimaryAccountId(account);
+  if (!accountId) {
+    throw new Error("Account data missing.");
+  }
+
+  const query = new URLSearchParams({
+    startDate: dateRange.startDate,
+    endDate: dateRange.endDate,
+  });
+
+  const reportType = normalizeReportType(account.reportType ?? account.platform);
+  if (account.googleAdsAccountId && reportType !== "meta") {
+    query.set("googleAccountId", account.googleAdsAccountId);
+  }
+  if (account.metaAdsAccountId && reportType !== "google") {
+    query.set("metaAccountId", account.metaAdsAccountId);
+  }
+
+  if (reportType !== "overall") {
+    query.set("platform", reportType);
+  }
+
+  return `${resolveMonthlyReportAppBaseUrl()}/reports/print/monthly/${encodeURIComponent(
+    accountId
+  )}?${query.toString()}`;
+}
+
+function resolveMonthlyReportAppBaseUrl(): string {
+  const configured =
+    process.env.MONTHLY_REPORT_APP_BASE_URL?.trim() ||
+    process.env.NEXT_PUBLIC_APP_URL?.trim() ||
+    process.env.VERCEL_PROJECT_PRODUCTION_URL?.trim() ||
+    process.env.VERCEL_URL?.trim();
+
+  if (!configured) {
+    return "http://127.0.0.1:3000";
+  }
+
+  return configured.startsWith("http://") || configured.startsWith("https://")
+    ? configured.replace(/\/$/, "")
+    : `https://${configured.replace(/\/$/, "")}`;
+}
+
+function resolveMonthlyReportPdfOutputDir(): string {
+  const configured = process.env.MONTHLY_REPORT_PDF_OUTPUT_DIR?.trim();
+  if (configured) {
+    return configured;
+  }
+
+  if (process.env.VERCEL) {
+    return path.join(os.tmpdir(), "monthly-report-pdfs");
+  }
+
+  return path.join(process.cwd(), "artifacts", "monthly-report-pdfs");
+}
+
+function resolvePrimaryAccountId(account: MonthlyReportAccount): string | null {
+  return account.googleAdsAccountId ?? account.metaAdsAccountId ?? null;
+}
+
+function normalizeReportType(value: string | null | undefined): "overall" | "google" | "meta" {
   const normalized = value?.trim().toLowerCase() ?? "";
   const mentionsGoogle = normalized.includes("google");
   const mentionsMeta = normalized.includes("meta");
@@ -34,225 +355,142 @@ function normalizeReportType(value: string | null): MonthlyReportType {
   return "overall";
 }
 
-function resolveAccountReportType(account: MonthlyReportAccount): MonthlyReportType {
-  return normalizeReportType(account.reportType ?? account.platform);
+function resolvePdfGenerationConcurrency(override?: number): number {
+  const raw = override ?? Number.parseInt(process.env.PDF_GENERATION_CONCURRENCY ?? "", 10);
+  return Number.isFinite(raw) && raw > 0 ? Math.floor(raw) : DEFAULT_CONCURRENCY;
 }
 
-function formatAccountReportLabel(account: MonthlyReportAccount): string {
-  return account.reportType ?? account.platform ?? resolveAccountReportType(account);
-}
+async function mapWithConcurrency<TInput, TOutput>(
+  items: TInput[],
+  concurrency: number,
+  worker: (item: TInput) => Promise<TOutput>
+): Promise<TOutput[]> {
+  const results = new Array<TOutput>(items.length);
+  let nextIndex = 0;
 
-async function buildReportPayload(
-  account: MonthlyReportAccount,
-  startDate: string,
-  endDate: string
-): Promise<OverallReportPayload> {
-  const reportType = resolveAccountReportType(account);
-
-  return getOverallReport({
-    accountId: null,
-    googleAccountId: reportType === "meta" ? null : account.googleAdsAccountId,
-    metaAccountId: reportType === "google" ? null : account.metaAdsAccountId,
-    startDate,
-    endDate,
-  });
-}
-
-async function generateMonthlyReportPdf(input: {
-  account: MonthlyReportAccount;
-  reportPayload: OverallReportPayload;
-  reportMonth: string;
-}): Promise<Buffer> {
-  const pdf = new jsPDF({ orientation: "portrait", unit: "pt", format: "a4" });
-  const pageWidth = pdf.internal.pageSize.getWidth();
-  const pageHeight = pdf.internal.pageSize.getHeight();
-  const marginX = 40;
-  const marginBottom = 44;
-  let cursorY = 54;
-
-  const ensureSpace = (requiredHeight: number) => {
-    if (cursorY + requiredHeight <= pageHeight - marginBottom) {
-      return;
+  async function runWorker() {
+    while (nextIndex < items.length) {
+      const currentIndex = nextIndex;
+      nextIndex += 1;
+      results[currentIndex] = await worker(items[currentIndex]);
     }
-    pdf.addPage();
-    cursorY = 54;
-  };
-
-  const writeLine = (text: string, options?: { bold?: boolean; size?: number; indent?: number }) => {
-    const fontSize = options?.size ?? 11;
-    const indent = options?.indent ?? 0;
-    pdf.setFont("helvetica", options?.bold ? "bold" : "normal");
-    pdf.setFontSize(fontSize);
-    const wrapped = pdf.splitTextToSize(text, pageWidth - marginX * 2 - indent);
-    const height = wrapped.length * (fontSize + 3);
-    ensureSpace(height + 4);
-    pdf.text(wrapped, marginX + indent, cursorY);
-    cursorY += height + 4;
-  };
-
-  writeLine(`${input.account.clientName} Monthly Report`, { bold: true, size: 18 });
-  writeLine(`Report type: ${formatAccountReportLabel(input.account)}`, { size: 11 });
-  writeLine(`Reporting period: ${input.reportPayload.dateRange.currentLabel}`, { size: 11 });
-  writeLine("", { size: 6 });
-
-  writeLine("Summary", { bold: true, size: 14 });
-  input.reportPayload.summaries.forEach((section) => {
-    writeLine(section.title, { bold: true, size: 12 });
-    section.metrics.forEach((metric) => {
-      writeLine(formatSummaryMetric(metric), { indent: 14 });
-    });
-  });
-
-  writeLine("", { size: 6 });
-  writeLine("Campaign Breakdown", { bold: true, size: 14 });
-  input.reportPayload.campaignGroups.forEach((group) => {
-    renderCampaignGroup(pdf, group, writeLine);
-  });
-
-  writeLine("", { size: 6 });
-  writeLine("Audience Click Breakdown", { bold: true, size: 14 });
-  renderAudienceBreakdown(writeLine, input.reportPayload);
-
-  if (input.reportPayload.warnings.length > 0) {
-    writeLine("", { size: 6 });
-    writeLine("Warnings", { bold: true, size: 14 });
-    input.reportPayload.warnings.forEach((warning) => {
-      writeLine(`- ${warning}`, { indent: 14 });
-    });
   }
 
-  const pdfBuffer = pdf.output("arraybuffer");
-  return Buffer.from(pdfBuffer);
-}
-
-function renderCampaignGroup(
-  pdf: jsPDF,
-  group: CampaignGroup,
-  writeLine: (text: string, options?: { bold?: boolean; size?: number; indent?: number }) => void
-) {
-  writeLine(`${group.campaignType} (${group.platform})`, { bold: true, size: 12 });
-  writeLine(
-    `Totals: Spend ${formatCurrency(group.totals.spend)} | Impr. ${formatInteger(group.totals.impressions)} | Clicks ${formatInteger(group.totals.clicks)} | Results ${formatInteger(group.totals.results)}`,
-    { indent: 14 }
+  await Promise.all(
+    Array.from({ length: Math.min(concurrency, items.length) }, () => runWorker())
   );
-
-  group.rows.slice(0, 8).forEach((row) => {
-    writeLine(
-      `${row.campaignName}: Spend ${formatCurrency(row.spend)} | Impr. ${formatInteger(row.impressions)} | Clicks ${formatInteger(row.clicks)} | Results ${formatInteger(row.results)}`,
-      { indent: 14 }
-    );
-  });
+  return results;
 }
 
-function renderAudienceBreakdown(
-  writeLine: (text: string, options?: { bold?: boolean; size?: number; indent?: number }) => void,
-  reportPayload: OverallReportPayload
-) {
-  const ageRows = summarizeAudienceItemsForChart(reportPayload.audienceClickBreakdown.age, "age");
-  const genderRows = summarizeAudienceItemsForChart(reportPayload.audienceClickBreakdown.gender, "gender");
-  const countryRows = summarizeAudienceItemsForChart(
-    reportPayload.audienceClickBreakdown.location.country,
-    "country"
-  );
-  const regionRows = summarizeAudienceItemsForChart(
-    reportPayload.audienceClickBreakdown.location.region,
-    "region"
-  );
-  const cityRows = summarizeAudienceItemsForChart(reportPayload.audienceClickBreakdown.location.city, "city");
-
-  writeAudienceBreakdownRows(writeLine, "Age", ageRows);
-  writeAudienceBreakdownRows(writeLine, "Gender", genderRows);
-  writeAudienceBreakdownRows(writeLine, "Country", countryRows);
-  writeAudienceBreakdownRows(writeLine, "State / Region", regionRows);
-  writeAudienceBreakdownRows(writeLine, "City", cityRows);
-}
-
-function writeAudienceBreakdownRows(
-  writeLine: (text: string, options?: { bold?: boolean; size?: number; indent?: number }) => void,
-  heading: string,
-  rows: Array<{ label: string; clicks: number }>
-) {
-  writeLine(heading, { bold: true, size: 12 });
-  if (rows.length === 0) {
-    writeLine("No audience click data available for this breakdown.", { indent: 14 });
-    return;
-  }
-
-  rows.forEach((row) => {
-    writeLine(`${row.label}: ${formatInteger(row.clicks)} clicks`, { indent: 14 });
-  });
-}
-
-function resolvePreviousMonthRange(referenceDate: Date): {
-  startDate: string;
-  endDate: string;
-  reportMonthLabel: string;
-} {
-  const year = referenceDate.getUTCFullYear();
-  const month = referenceDate.getUTCMonth();
-  const start = new Date(Date.UTC(year, month - 1, 1));
-  const end = new Date(Date.UTC(year, month, 0));
+function summarizePdfResults(
+  results: MonthlyReportPdfResult[],
+  totalDurationMs: number
+): MonthlyReportPdfBatchResult {
+  const withinTenMinutes = totalDurationMs <= TEN_MINUTES_MS;
+  const slowestAccounts = [...results]
+    .sort((left, right) => right.durationMs - left.durationMs)
+    .slice(0, 5)
+    .map((result) => ({
+      accountId: result.accountId,
+      accountName: result.accountName,
+      durationMs: result.durationMs,
+      status: result.status,
+      errorMessage: result.errorMessage,
+    }));
 
   return {
-    startDate: toIsoDate(start),
-    endDate: toIsoDate(end),
-    reportMonthLabel: new Intl.DateTimeFormat("en-US", {
-      month: "long",
-      year: "numeric",
-      timeZone: "UTC",
-    }).format(start),
+    totalAccounts: results.length,
+    processed: results.filter((result) => result.status !== "skipped").length,
+    generated: results.filter((result) => result.status === "generated").length,
+    failed: results.filter((result) => result.status === "failed").length,
+    skipped: results.filter((result) => result.status === "skipped").length,
+    totalDurationMs,
+    withinTenMinutes,
+    warning: withinTenMinutes
+      ? null
+      : `PDF batch exceeded the 10 minute target (${totalDurationMs}ms).`,
+    slowestAccounts,
+    results,
   };
 }
 
-function toIsoDate(date: Date): string {
-  return date.toISOString().slice(0, 10);
+function buildSkippedOrFailedResult(
+  account: MonthlyReportAccount,
+  dateRange: MonthlyReportDateRange,
+  status: "failed" | "skipped",
+  errorMessage: string
+): MonthlyReportPdfResult {
+  const now = new Date().toISOString();
+  return {
+    status,
+    account,
+    accountId: resolvePrimaryAccountId(account),
+    accountName: account.clientName || resolvePrimaryAccountId(account) || "Unknown account",
+    reportMonthKey: dateRange.reportMonthKey,
+    reportMonthLabel: dateRange.reportMonthLabel,
+    pdfBuffer: null,
+    pdfPath: null,
+    pdfSizeBytes: 0,
+    durationMs: 0,
+    startedAt: now,
+    endedAt: now,
+    errorMessage,
+  };
 }
 
-function formatSummaryMetric(metric: SummaryMetric): string {
-  return `${metric.label}: ${formatMetricValue(metric)}${formatMetricDelta(metric)}`;
-}
+function logPdfResult(result: MonthlyReportPdfResult) {
+  const log =
+    `[monthly-report] pdf ${result.status}` +
+    ` account_id=${result.accountId ?? "missing"}` +
+    ` account_name=${result.accountName}` +
+    ` started_at=${result.startedAt}` +
+    ` ended_at=${result.endedAt}` +
+    ` duration_ms=${result.durationMs}` +
+    ` size_bytes=${result.pdfSizeBytes}` +
+    ` reason=${result.errorMessage ?? "ok"}`;
 
-function formatMetricValue(metric: SummaryMetric): string {
-  const value = metric.value ?? 0;
-  if (metric.format === "currency") {
-    return formatCurrency(value);
+  if (result.status === "generated") {
+    console.info(log);
+  } else {
+    console.error(log);
   }
-  if (metric.format === "percent") {
-    return `${value.toFixed(2)}%`;
-  }
-  return formatNumber(value);
 }
 
-function formatMetricDelta(metric: SummaryMetric): string {
-  if (metric.delta === null) {
-    return "";
+function classifyPdfError(error: unknown): string {
+  const message = toErrorMessage(error);
+  if (/timeout/i.test(message)) {
+    return `PDF render timeout: ${message}`;
   }
-  const sign = metric.delta > 0 ? "+" : "";
-  if (metric.format === "currency") {
-    return ` (${sign}${formatCurrency(metric.delta)})`;
+  if (/print route failed/i.test(message)) {
+    return message;
   }
-  if (metric.format === "percent") {
-    return ` (${sign}${metric.delta.toFixed(2)} pts)`;
+  if (/PDF upload\/save failure/i.test(message)) {
+    return message;
   }
-  return ` (${sign}${formatNumber(metric.delta)})`;
+  if (/report data failed/i.test(message)) {
+    return message;
+  }
+  if (/account data missing/i.test(message)) {
+    return "Account data missing.";
+  }
+  return `Report data failed or PDF render failed: ${message}`;
 }
 
-function formatCurrency(value: number): string {
-  return new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency: "USD",
-    maximumFractionDigits: 2,
-  }).format(value);
+function buildPdfFileName(account: MonthlyReportAccount, reportMonthKey: string): string {
+  const accountId = resolvePrimaryAccountId(account) ?? "unknown-account";
+  const slug = account.clientName
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/(^-|-$)/g, "");
+
+  return `${slug || "monthly-report"}-${accountId.replace(/[^a-z0-9-]+/gi, "")}-${reportMonthKey}.pdf`;
 }
 
-function formatNumber(value: number): string {
-  return new Intl.NumberFormat("en-US", {
-    maximumFractionDigits: 2,
-  }).format(value);
+function toErrorMessage(error: unknown, fallback = "Unknown error."): string {
+  return error instanceof Error ? error.message : fallback;
 }
 
-function formatInteger(value: number): string {
-  return new Intl.NumberFormat("en-US", {
-    maximumFractionDigits: 0,
-  }).format(value);
+export function isMonthlyReportDryRun(): boolean {
+  return parseBooleanEnv(process.env.MONTHLY_REPORT_DRY_RUN);
 }

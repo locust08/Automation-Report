@@ -190,7 +190,10 @@ interface JobItemRow {
 }
 
 const SERVICE_NAME = "ads-dashboard-monthly-report-automation";
-const MONTHLY_PRODUCTION_CRON = "0 4 5 * *";
+const MONTHLY_OVERALL_CRON = "0 4 7 * *";
+const BIWEEKLY_OVERALL_CRON = "0 4 15 * *";
+const MONTHLY_ADVANCED_CRON = "0 4 10 * *";
+const PRODUCTION_CRON = "0 4 7,10,15 * *";
 const TEST_RECIPIENT_FALLBACK = "eason@locus-t.com.my";
 const NOTION_API_VERSION = "2026-03-11";
 const BROWSER_LAUNCH_LIMITER_NAME = "global-browser-launch-limiter";
@@ -211,17 +214,16 @@ const worker = {
   },
 
   async scheduled(controller: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
+    const scheduledJob = resolveScheduledJob(controller);
     ctx.waitUntil(
       createReportJob(
         env,
-        {
-          sendEmail: true,
-          forceTestMode: false,
-        },
+        scheduledJob.input,
         {
           source: "scheduled",
           scheduledCron: controller.cron,
           scheduledTime: new Date(controller.scheduledTime).toISOString(),
+          scheduleName: scheduledJob.name,
         }
       )
     );
@@ -286,9 +288,14 @@ async function handleFetch(request: Request, env: Env): Promise<Response> {
     return jsonResponse({
       ok: true,
       service: SERVICE_NAME,
-      schedule: MONTHLY_PRODUCTION_CRON,
+      schedules: {
+        production: PRODUCTION_CRON,
+        monthlyOverall: "day 7",
+        monthlyAdvanced: "day 10",
+        biweeklyOverall: "day 15",
+      },
       timezone: "UTC",
-      malaysiaTime: "12:00 on day 5",
+      malaysiaTime: "12:00 on days 7, 10, and 15",
     });
   }
 
@@ -662,12 +669,13 @@ async function resolveTargets(
   const payload = await resolveTargetsFromVercel(env, {
     forceTestMode: testMode,
   });
+  const inputRange = resolveDateRange(input);
 
   return {
-    startDate: payload.startDate ?? resolveDateRange(input).startDate,
-    endDate: payload.endDate ?? resolveDateRange(input).endDate,
-    reportMonthKey: payload.reportMonthKey ?? resolveDateRange(input).reportMonthKey,
-    reportMonthLabel: payload.reportMonthLabel ?? resolveDateRange(input).reportMonthLabel,
+    startDate: input.startDate ?? payload.startDate ?? inputRange.startDate,
+    endDate: input.endDate ?? payload.endDate ?? inputRange.endDate,
+    reportMonthKey: input.reportMonthKey ?? payload.reportMonthKey ?? inputRange.reportMonthKey,
+    reportMonthLabel: input.reportMonthLabel ?? payload.reportMonthLabel ?? inputRange.reportMonthLabel,
     targets: normalizeTargets(payload.targets ?? [], input),
   };
 }
@@ -1009,6 +1017,100 @@ function resolveDateRange(input: CreateJobRequest): {
         year: "numeric",
         timeZone: "UTC",
       }).format(start),
+  };
+}
+
+function resolveScheduledJob(controller: ScheduledController): {
+  name: string;
+  input: CreateJobRequest;
+} {
+  const scheduledAt = new Date(controller.scheduledTime);
+
+  if (scheduledAt.getUTCDate() === 15) {
+    return {
+      name: "biweekly-overall",
+      input: {
+        sendEmail: true,
+        forceTestMode: false,
+        reportType: "overall",
+        ...resolveCurrentMonthFirstHalfRange(scheduledAt),
+      },
+    };
+  }
+
+  if (scheduledAt.getUTCDate() === 10) {
+    return {
+      name: "monthly-advanced",
+      input: {
+        sendEmail: true,
+        forceTestMode: false,
+        reportType: "advanced",
+        ...resolvePreviousMonthRange(scheduledAt),
+      },
+    };
+  }
+
+  return {
+    name: "monthly-overall",
+    input: {
+      sendEmail: true,
+      forceTestMode: false,
+      reportType: "overall",
+      ...resolvePreviousMonthRange(scheduledAt),
+    },
+  };
+}
+
+function resolvePreviousMonthRange(referenceDate: Date): {
+  startDate: string;
+  endDate: string;
+  reportMonthKey: string;
+  reportMonthLabel: string;
+} {
+  const year = referenceDate.getUTCFullYear();
+  const month = referenceDate.getUTCMonth();
+  const start = new Date(Date.UTC(year, month - 1, 1));
+  const end = new Date(Date.UTC(year, month, 0));
+
+  return formatDateRange(start, end);
+}
+
+function resolveCurrentMonthFirstHalfRange(referenceDate: Date): {
+  startDate: string;
+  endDate: string;
+  reportMonthKey: string;
+  reportMonthLabel: string;
+} {
+  const year = referenceDate.getUTCFullYear();
+  const month = referenceDate.getUTCMonth();
+  const start = new Date(Date.UTC(year, month, 1));
+  const end = new Date(Date.UTC(year, month, 14));
+
+  return {
+    ...formatDateRange(start, end),
+    reportMonthLabel: `${new Intl.DateTimeFormat("en-US", {
+      month: "long",
+      year: "numeric",
+      timeZone: "UTC",
+    }).format(start)} 1-14`,
+  };
+}
+
+function formatDateRange(start: Date, end: Date): {
+  startDate: string;
+  endDate: string;
+  reportMonthKey: string;
+  reportMonthLabel: string;
+} {
+  return {
+    startDate: start.toISOString().slice(0, 10),
+    endDate: end.toISOString().slice(0, 10),
+    reportMonthKey: `${start.getUTCFullYear()}-${String(start.getUTCMonth() + 1).padStart(2, "0")}`,
+    reportMonthLabel: new Intl.DateTimeFormat("en-US", {
+      month: "long",
+      year: "numeric",
+      timeZone: "UTC",
+    }).format(start),
   };
 }
 

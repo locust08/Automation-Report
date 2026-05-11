@@ -1,6 +1,3 @@
-import { mkdir, writeFile } from "node:fs/promises";
-import path from "node:path";
-
 import { generateMonthlyReportPdfForAccount } from "@/src/lib/cron/generate-monthly-report-pdf";
 import { sendMonthlyReportEmail } from "@/src/lib/email/send-monthly-report-email";
 import type { MonthlyReportAccount } from "@/src/lib/notion/get-monthly-report-accounts";
@@ -23,49 +20,25 @@ async function main() {
     skipReason: null,
   };
 
-  const pdfBuffer = await generateMonthlyReportPdfForAccount(account);
-  const reportMonthKey = resolvePreviousMonthKey(new Date());
-  const reportMonthLabel = resolvePreviousMonthLabel(new Date());
-  const outputDir = path.join(process.cwd(), "artifacts", "monthly-report-tests");
-  const outputPath = path.join(outputDir, `overall-report-183-160-3281-${reportMonthKey}.pdf`);
+  const pdfResult = await generateMonthlyReportPdfForAccount(account);
+  if (pdfResult.status !== "generated" || !pdfResult.pdfBuffer) {
+    throw new Error(pdfResult.errorMessage ?? "PDF generation failed.");
+  }
 
-  await mkdir(outputDir, { recursive: true });
-  await writeFile(outputPath, pdfBuffer);
-
-  console.log(`PDF_SAVED=${outputPath}`);
-  console.log(`PDF_BYTES=${pdfBuffer.byteLength}`);
+  console.log(`PDF_SAVED=${pdfResult.pdfPath ?? ""}`);
+  console.log(`PDF_BYTES=${pdfResult.pdfSizeBytes}`);
 
   const emailResult = await sendMonthlyReportEmail({
     account,
-    pdfBuffer,
-    reportMonthKey,
-    reportMonthLabel,
+    pdfBuffer: pdfResult.pdfBuffer,
+    reportMonthKey: pdfResult.reportMonthKey,
+    reportMonthLabel: pdfResult.reportMonthLabel,
   });
 
   console.log(`EMAIL_SUCCESS=${emailResult.success}`);
   console.log(`EMAIL_RECIPIENT=${emailResult.recipientEmail ?? ""}`);
   console.log(`EMAIL_RESEND_ID=${emailResult.resendEmailId ?? ""}`);
   console.log(`EMAIL_ERROR=${emailResult.errorMessage ?? ""}`);
-}
-
-function resolvePreviousMonthKey(referenceDate: Date): string {
-  const year = referenceDate.getUTCFullYear();
-  const month = referenceDate.getUTCMonth();
-  const start = new Date(Date.UTC(year, month - 1, 1));
-
-  return `${start.getUTCFullYear()}-${String(start.getUTCMonth() + 1).padStart(2, "0")}`;
-}
-
-function resolvePreviousMonthLabel(referenceDate: Date): string {
-  const year = referenceDate.getUTCFullYear();
-  const month = referenceDate.getUTCMonth();
-  const start = new Date(Date.UTC(year, month - 1, 1));
-
-  return new Intl.DateTimeFormat("en-US", {
-    month: "long",
-    year: "numeric",
-    timeZone: "UTC",
-  }).format(start);
 }
 
 main().catch((error) => {

@@ -15,13 +15,18 @@ The Vercel app remains the report UI and data source.
 
 Cloudflare cron uses UTC.
 
-- Cron: `0 4 5 * *`
-- Runs on the 5th day of every month at `04:00 UTC`
-- Equivalent to `12:00 PM` Malaysia time (`UTC+08:00`)
-
-Current deployment note: Cloudflare still reports the account is at the 5-cron
-trigger limit, so `wrangler.toml` currently deploys with `crons = []`. Once the
-limit issue is cleared, set it to `["0 4 5 * *"]` and redeploy.
+- Production cron: `0 4 7,10,15 * *`
+  - Uses one Cloudflare cron trigger slot.
+  - Runs at `04:00 UTC`, equivalent to `12:00 PM` Malaysia time (`UTC+08:00`).
+- Monthly Overall: day 7
+  - Runs on the 7th day of every month at `04:00 UTC`
+  - Generates last month data.
+- Monthly Advanced: day 10
+  - Runs on the 10th day of every month at `04:00 UTC`
+  - Generates last month data.
+- Bi-Weekly Overall: day 15
+  - Runs on the 15th day of every month at `04:00 UTC`
+  - Generates current-month data from the 1st through the 14th.
 
 ## Cloudflare Resources
 

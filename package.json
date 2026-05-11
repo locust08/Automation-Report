@@ -7,6 +7,7 @@
     "dev:doppler": "doppler run -- npm run dev",
     "notion:smoke": "node scripts/notion-smoke.mjs",
     "send:drive-pdf-emails": "node --import jiti/register scripts/send-drive-pdf-report-emails.mjs",
+    "monthly:pdf:benchmark": "tsx scripts/monthly-report-pdf-benchmark.ts",
     "typecheck": "tsc --noEmit",
     "build": "npm run typecheck && next build",
     "build:doppler": "doppler run -- npm run build",
@@ -48,6 +49,7 @@
     "eslint-config-next": "16.1.6",
     "playwright": "^1.59.1",
     "tailwindcss": "^4",
+    "tsx": "^4.21.0",
     "typescript": "^5"
   }
 }

@@ -17,15 +17,14 @@ export async function POST(request: Request) {
     const body = (await safeReadJson(request)) as
       | {
           forceTestMode?: boolean | string;
+          forceDryRun?: boolean | string;
           overrideTargets?: MonthlyReportTargetConfig[];
           overrideTargetsJson?: string;
         }
       | null;
     const result = await runMonthlyReportJob({
-      forceTestMode:
-        typeof body?.forceTestMode === "boolean"
-          ? body.forceTestMode
-          : parseBooleanEnv(typeof body?.forceTestMode === "string" ? body.forceTestMode : undefined),
+      forceTestMode: parseOptionalBoolean(body?.forceTestMode),
+      forceDryRun: parseOptionalBoolean(body?.forceDryRun),
       overrideTargets:
         Array.isArray(body?.overrideTargets)
           ? body.overrideTargets
@@ -48,6 +47,16 @@ export async function POST(request: Request) {
       { status: 500 }
     );
   }
+}
+
+function parseOptionalBoolean(value: boolean | string | undefined): boolean | undefined {
+  if (typeof value === "boolean") {
+    return value;
+  }
+  if (typeof value === "string") {
+    return parseBooleanEnv(value);
+  }
+  return undefined;
 }
 
 async function safeReadJson(request: Request): Promise<unknown> {

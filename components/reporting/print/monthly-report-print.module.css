@@ -1,0 +1,236 @@
+.monthly-print {
+  color: #171717;
+  font-family: Arial, Helvetica, sans-serif;
+  font-size: 10.5pt;
+  line-height: 1.45;
+  margin: 0 auto;
+  max-width: 190mm;
+  -webkit-print-color-adjust: exact;
+  print-color-adjust: exact;
+}
+
+.monthly-print *,
+.monthly-print *::before,
+.monthly-print *::after {
+  box-sizing: border-box;
+}
+
+.monthly-print__section {
+  margin: 0 0 12mm;
+}
+
+.monthly-print__cover {
+  align-items: flex-end;
+  background: #f7f7f7;
+  border: 1px solid #d9d9d9;
+  display: grid;
+  gap: 14mm;
+  grid-template-columns: minmax(0, 1fr) 70mm;
+  min-height: 94mm;
+  padding: 14mm;
+}
+
+.monthly-print__eyebrow,
+.monthly-print__section-header p {
+  color: #b30000;
+  font-size: 8.5pt;
+  font-weight: 700;
+  letter-spacing: 0;
+  margin: 0 0 3mm;
+  text-transform: uppercase;
+}
+
+.monthly-print h1 {
+  font-size: 28pt;
+  line-height: 1.05;
+  margin: 0;
+}
+
+.monthly-print__period {
+  color: #4b4b4b;
+  font-size: 14pt;
+  margin: 5mm 0 0;
+}
+
+.monthly-print__meta {
+  background: #ffffff;
+  border: 1px solid #dedede;
+  margin: 0;
+  padding: 5mm;
+}
+
+.monthly-print__meta div + div {
+  border-top: 1px solid #eeeeee;
+  margin-top: 3mm;
+  padding-top: 3mm;
+}
+
+.monthly-print dt {
+  color: #666666;
+  font-size: 8.5pt;
+  font-weight: 700;
+  margin: 0 0 1mm;
+}
+
+.monthly-print dd {
+  margin: 0;
+}
+
+.monthly-print__section-header {
+  border-bottom: 2px solid #111111;
+  margin-bottom: 5mm;
+  padding-bottom: 2.5mm;
+}
+
+.monthly-print__section-header h2 {
+  font-size: 18pt;
+  line-height: 1.15;
+  margin: 0;
+}
+
+.monthly-print__summary-grid {
+  display: grid;
+  gap: 5mm;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.monthly-print__panel,
+.monthly-print__table-panel {
+  background: #ffffff;
+  border: 1px solid #d9d9d9;
+  padding: 5mm;
+}
+
+.monthly-print__panel h3,
+.monthly-print__table-panel h3 {
+  font-size: 12pt;
+  margin: 0 0 4mm;
+}
+
+.monthly-print__metric-grid {
+  display: grid;
+  gap: 3mm;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.monthly-print__metric-card {
+  background: #f8f8f8;
+  border: 1px solid #e4e4e4;
+  padding: 3.5mm;
+}
+
+.monthly-print__metric-card dd {
+  font-size: 16pt;
+  font-weight: 700;
+  line-height: 1.1;
+}
+
+.monthly-print__metric-card span {
+  color: #555555;
+  display: block;
+  font-size: 8.5pt;
+  margin-top: 1.5mm;
+}
+
+.monthly-print__stack {
+  display: grid;
+  gap: 5mm;
+}
+
+.monthly-print table {
+  border-collapse: collapse;
+  table-layout: fixed;
+  width: 100%;
+}
+
+.monthly-print th,
+.monthly-print td {
+  border-bottom: 1px solid #e7e7e7;
+  overflow-wrap: anywhere;
+  padding: 2.2mm 1.5mm;
+  text-align: right;
+  vertical-align: top;
+}
+
+.monthly-print th {
+  background: #f0f0f0;
+  color: #333333;
+  font-size: 8.5pt;
+  font-weight: 700;
+}
+
+.monthly-print th:first-child,
+.monthly-print td:first-child {
+  text-align: left;
+  width: 33%;
+}
+
+.monthly-print__total-row td {
+  background: #fafafa;
+  font-weight: 700;
+}
+
+.monthly-print__audience-grid {
+  display: grid;
+  gap: 5mm;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.monthly-print__warnings {
+  background: #fff8e6;
+  border: 1px solid #e8cf86;
+  margin: 0;
+  padding: 5mm 6mm;
+}
+
+.monthly-print__warnings li + li {
+  margin-top: 2mm;
+}
+
+.monthly-print__empty {
+  background: #f8f8f8;
+  border: 1px dashed #cfcfcf;
+  color: #555555;
+  padding: 5mm;
+}
+
+@page {
+  margin: 12mm;
+  size: A4;
+}
+
+@media print {
+  :global(html),
+  :global(body) {
+    background: #ffffff !important;
+    margin: 0 !important;
+  }
+
+  .monthly-print {
+    max-width: none;
+    width: 100%;
+  }
+
+  .monthly-print__page-break {
+    break-before: page;
+    page-break-before: always;
+  }
+
+  .monthly-print__section,
+  .monthly-print__panel,
+  .monthly-print__table-panel,
+  .monthly-print__metric-card,
+  .monthly-print__avoid-break {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+
+  .monthly-print tr {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+
+  .monthly-print thead {
+    display: table-header-group;
+  }
+}
