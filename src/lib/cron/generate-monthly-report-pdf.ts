@@ -56,6 +56,7 @@ export async function generateMonthlyReportPdfForAccount(
     browser?: Browser;
     dateRange?: MonthlyReportDateRange;
     outputDir?: string;
+    saveToDisk?: boolean;
   }
 ): Promise<MonthlyReportPdfResult> {
   const dateRange = input?.dateRange ?? resolveMonthlyReportDateRange();
@@ -66,6 +67,7 @@ export async function generateMonthlyReportPdfForAccount(
     return await generateMonthlyReportPdfWithBrowser(account, browser, {
       dateRange,
       outputDir: input?.outputDir,
+      saveToDisk: input?.saveToDisk,
     });
   } finally {
     if (ownsBrowser) {
@@ -116,6 +118,7 @@ async function generateMonthlyReportPdfWithBrowser(
   input: {
     dateRange: MonthlyReportDateRange;
     outputDir?: string;
+    saveToDisk?: boolean;
   }
 ): Promise<MonthlyReportPdfResult> {
   const startedAtMs = Date.now();
@@ -137,7 +140,7 @@ async function generateMonthlyReportPdfWithBrowser(
   }
 
   const page = await browser.newPage({
-    viewport: { width: 1240, height: 1754 },
+    viewport: { width: 794, height: 1123 },
     deviceScaleFactor: 1,
   });
 
@@ -163,18 +166,21 @@ async function generateMonthlyReportPdfWithBrowser(
       printBackground: true,
       preferCSSPageSize: true,
       margin: {
-        top: "12mm",
-        right: "12mm",
-        bottom: "12mm",
-        left: "12mm",
+        top: "0",
+        right: "0",
+        bottom: "0",
+        left: "0",
       },
     });
-    const pdfPath = await saveMonthlyReportPdf({
-      account,
-      buffer: pdfBuffer,
-      dateRange: input.dateRange,
-      outputDir: input.outputDir,
-    });
+    const pdfPath =
+      input.saveToDisk === false
+        ? null
+        : await saveMonthlyReportPdf({
+            account,
+            buffer: pdfBuffer,
+            dateRange: input.dateRange,
+            outputDir: input.outputDir,
+          });
     const endedAtMs = Date.now();
     const result: MonthlyReportPdfResult = {
       status: "generated",

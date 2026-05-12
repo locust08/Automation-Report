@@ -139,6 +139,30 @@ export function ReportDownloadButton({ fileNamePrefix }: ReportDownloadButtonPro
   const [overlayState, setOverlayState] = useState<ExportOverlayState>({ phase: "idle" });
 
   const runDownload = useCallback(async (format: DownloadFormat) => {
+    if (format === "pdf" && canUseServerPrintPdfDownload()) {
+      setDownloadingFormat(format);
+      setOverlayState({ phase: "loading", kind: "download", format });
+      try {
+        const preparedDownload = await prepareServerPrintPdfDownload(fileNamePrefix);
+        setOverlayState({ phase: "success", kind: "download", format });
+        await waitFor(DOWNLOAD_READY_DELAY_MS);
+        preparedDownload();
+        setOverlayState({ phase: "idle" });
+      } catch (error) {
+        setOverlayState({
+          phase: "error",
+          format,
+          message:
+            error instanceof Error
+              ? error.message
+              : "The export could not be completed. Please try again.",
+        });
+      } finally {
+        setDownloadingFormat(null);
+      }
+      return;
+    }
+
     const root = document.querySelector<HTMLElement>("[data-report-capture-root='true']");
     if (!root) {
       setOverlayState({
@@ -200,6 +224,11 @@ export function ReportDownloadButton({ fileNamePrefix }: ReportDownloadButtonPro
     }
 
     setOverlayState({ phase: "loading", kind: "download", format });
+
+    if (format === "pdf" && canUseServerPrintPdfDownload()) {
+      await runDownload(format);
+      return;
+    }
 
     if (!screenshotMode) {
       setRestoreModeAfterDownload(true);
@@ -302,6 +331,60 @@ async function preparePdfDownload(
   return () => {
     downloadBlob(pdfBlob, buildFileName("pdf", fileNamePrefix));
   };
+}
+
+async function prepareServerPrintPdfDownload(
+  fileNamePrefix: string | undefined
+): Promise<() => void> {
+  const endpoint = buildServerPrintPdfEndpoint(fileNamePrefix);
+  const response = await fetch(endpoint, {
+    method: "GET",
+    cache: "no-store",
+  });
+
+  if (!response.ok) {
+    const errorMessage = await readPdfErrorMessage(response);
+    throw new Error(errorMessage || `The PDF export failed with status ${response.status}.`);
+  }
+
+  const pdfBlob = await response.blob();
+  const contentDisposition = response.headers.get("content-disposition");
+  const filename = parseContentDispositionFilename(contentDisposition) ?? buildFileName("pdf", fileNamePrefix);
+
+  return () => {
+    downloadBlob(pdfBlob, filename);
+  };
+}
+
+function canUseServerPrintPdfDownload(): boolean {
+  return typeof window !== "undefined" && window.location.pathname === "/overall";
+}
+
+function buildServerPrintPdfEndpoint(fileNamePrefix: string | undefined): string {
+  const params = new URLSearchParams(window.location.search);
+  params.delete("screenshot");
+  if (fileNamePrefix?.trim()) {
+    params.set("clientName", fileNamePrefix.trim());
+  }
+
+  return `/api/report-pdf/monthly?${params.toString()}`;
+}
+
+async function readPdfErrorMessage(response: Response): Promise<string | null> {
+  try {
+    const payload = (await response.json()) as { error?: string };
+    return payload.error ?? null;
+  } catch {
+    return null;
+  }
+}
+
+function parseContentDispositionFilename(value: string | null): string | null {
+  if (!value) {
+    return null;
+  }
+  const match = /filename="([^"]+)"/i.exec(value);
+  return match?.[1] ?? null;
 }
 
 async function prepareStandardDownload(
