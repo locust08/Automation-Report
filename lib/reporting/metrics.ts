@@ -1,5 +1,11 @@
 import { CampaignGroup, CampaignRow } from "@/lib/reporting/types";
 
+export const MIN_REPORTING_CAMPAIGN_SPEND = 1;
+
+export function hasReportableCampaignSpend(row: Pick<CampaignRow, "spend">): boolean {
+  return row.spend > MIN_REPORTING_CAMPAIGN_SPEND;
+}
+
 export function safeDivide(numerator: number, denominator: number): number {
   if (!Number.isFinite(numerator) || !Number.isFinite(denominator) || denominator === 0) {
     return 0;

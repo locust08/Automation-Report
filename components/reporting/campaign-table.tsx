@@ -1,12 +1,12 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import Link from "next/link";
 import { ChevronDownIcon, ChevronLeftIcon, ChevronRightIcon, ExternalLinkIcon } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { formatCompactNumber } from "@/lib/reporting/format";
-import { emptyCampaignRow, mergeCampaignRows } from "@/lib/reporting/metrics";
+import { emptyCampaignRow, hasReportableCampaignSpend, mergeCampaignRows } from "@/lib/reporting/metrics";
 import { CampaignGroup, CampaignRow, Platform } from "@/lib/reporting/types";
 
 const ROWS_PER_PAGE = 8;
@@ -56,6 +56,7 @@ export function OverallCampaignGroupsTable({
                   key={row.id}
                   row={row}
                   actionHref={`/campaign/${encodeURIComponent(group.campaignType)}?platform=${group.platform}${queryString}`}
+                  previewHref={buildPreviewHref(row, queryString)}
                 />
               ))}
               <CampaignMobileCard row={group.totals} forceTitle="Grand Total" />
@@ -64,7 +65,7 @@ export function OverallCampaignGroupsTable({
               <table className="w-full table-fixed text-left text-xs sm:text-sm">
                 <colgroup>
                   <col className="w-[30%]" />
-                  <col className="w-[8%]" />
+                  <col className="w-[8%]" data-report-export-exclude="true" />
                   <col className="w-[8%]" />
                   <col className="w-[8%]" />
                   <col className="w-[10%]" />
@@ -79,18 +80,32 @@ export function OverallCampaignGroupsTable({
                     <th className="px-1.5 py-2 text-center font-semibold leading-tight whitespace-normal break-words">Impression</th>
                     <th className="px-1.5 py-2 text-center font-semibold leading-tight whitespace-normal break-words">Clicks</th>
                     <th className="px-1.5 py-2 text-center font-semibold leading-tight whitespace-normal break-words">CTR (%)</th>
-                    <th className="px-1.5 py-2 text-center font-semibold leading-tight whitespace-normal break-words">CPM (RM)</th>
+                    <th className="px-1.5 py-2 text-center font-semibold leading-tight whitespace-normal break-words">CPM</th>
                     <th className="px-1.5 py-2 text-center font-semibold leading-tight whitespace-normal break-words">Results</th>
                     <th className="px-1.5 py-2 text-center font-semibold leading-tight whitespace-normal break-words">Cost/Results</th>
-                    <th className="px-1.5 py-2 text-center font-semibold leading-tight whitespace-normal break-words">Ads Spent (RM)</th>
-                    <th className="px-1.5 py-2 text-center font-semibold leading-tight whitespace-normal break-words">Actions</th>
+                    <th className="px-1.5 py-2 text-center font-semibold leading-tight whitespace-normal break-words">Ads Spent</th>
+                    <th
+                      className="px-1.5 py-2 text-center font-semibold leading-tight whitespace-normal break-words"
+                      data-report-export-exclude="true"
+                    >
+                      Actions
+                    </th>
                   </tr>
                 </thead>
                 <tbody>
                   {group.rows.map((row) => (
                     <tr key={row.id} className="border-b border-border/40 hover:bg-muted/20">
                       <td className="px-1.5 py-2 align-top whitespace-normal break-words leading-5">
-                        {row.campaignName}
+                        {buildPreviewHref(row, queryString) ? (
+                          <Link
+                            className="font-medium text-[#9f0019] hover:underline"
+                            href={buildPreviewHref(row, queryString)!}
+                          >
+                            {row.campaignName}
+                          </Link>
+                        ) : (
+                          row.campaignName
+                        )}
                       </td>
                       <td className="px-1.5 py-2 text-center tabular-nums whitespace-nowrap">{formatCompactNumber(row.impressions)}</td>
                       <td className="px-1.5 py-2 text-center tabular-nums whitespace-nowrap">{formatCompactNumber(row.clicks)}</td>
@@ -99,7 +114,10 @@ export function OverallCampaignGroupsTable({
                       <td className="px-1.5 py-2 text-center tabular-nums whitespace-nowrap">{formatCompactNumber(row.results)}</td>
                       <td className="px-1.5 py-2 text-center tabular-nums whitespace-nowrap">{formatCompactNumber(row.costPerResult)}</td>
                       <td className="px-1.5 py-2 text-center tabular-nums whitespace-nowrap">{formatCompactNumber(row.spend)}</td>
-                      <td className="px-1.5 py-2 text-center whitespace-nowrap">
+                      <td
+                        className="px-1.5 py-2 text-center whitespace-nowrap"
+                        data-report-export-exclude="true"
+                      >
                         <Link
                           className="inline-flex items-center gap-1 text-red-700 hover:underline"
                           href={`/campaign/${encodeURIComponent(group.campaignType)}?platform=${group.platform}${queryString}`}
@@ -119,7 +137,12 @@ export function OverallCampaignGroupsTable({
                     <td className="px-1.5 py-2 text-center tabular-nums whitespace-nowrap">{formatCompactNumber(group.totals.results)}</td>
                     <td className="px-1.5 py-2 text-center tabular-nums whitespace-nowrap">{formatCompactNumber(group.totals.costPerResult)}</td>
                     <td className="px-1.5 py-2 text-center tabular-nums whitespace-nowrap">{formatCompactNumber(group.totals.spend)}</td>
-                    <td className="px-1.5 py-2 text-center whitespace-nowrap">-</td>
+                    <td
+                      className="px-1.5 py-2 text-center whitespace-nowrap"
+                      data-report-export-exclude="true"
+                    >
+                      -
+                    </td>
                   </tr>
                 </tbody>
               </table>
@@ -142,12 +165,18 @@ export function CampaignComparisonTable({
   totals: CampaignRow;
   showAllRows?: boolean;
 }) {
-  const [page, setPage] = useState(1);
+  const [paginationState, setPaginationState] = useState({ page: 1, signature: "" });
   const rowsWithSpend = useMemo(() => withPositiveSpend(rows), [rows]);
   const totalsWithSpend = useMemo(() => buildTotalsFromRows(rowsWithSpend, totals), [rowsWithSpend, totals]);
   const totalPages = showAllRows ? 1 : Math.max(1, Math.ceil(rowsWithSpend.length / ROWS_PER_PAGE));
-  const rowsSignature = useMemo(() => rowsWithSpend.map((row) => row.id).join("|"), [rowsWithSpend]);
-  const safePage = Math.min(page, totalPages);
+  const paginationSignature = useMemo(
+    () => `${heading}::${rowsWithSpend.map((row) => row.id).join("|")}`,
+    [heading, rowsWithSpend]
+  );
+  const safePage =
+    showAllRows || paginationState.signature !== paginationSignature
+      ? 1
+      : Math.min(paginationState.page, totalPages);
   const startIndex = showAllRows ? 0 : (safePage - 1) * ROWS_PER_PAGE;
   const visibleRows = showAllRows
     ? rowsWithSpend
@@ -156,10 +185,6 @@ export function CampaignComparisonTable({
   const fromCount = rowsWithSpend.length === 0 ? 0 : startIndex + 1;
   const toCount =
     rowsWithSpend.length === 0 ? 0 : Math.min(startIndex + visibleRows.length, rowsWithSpend.length);
-
-  useEffect(() => {
-    setPage(1);
-  }, [heading, rowsSignature]);
 
   if (rowsWithSpend.length === 0) {
     return null;
@@ -194,10 +219,10 @@ export function CampaignComparisonTable({
               <th className="px-1.5 py-2 text-center font-semibold leading-tight whitespace-normal break-words">Impression</th>
               <th className="px-1.5 py-2 text-center font-semibold leading-tight whitespace-normal break-words">Clicks</th>
               <th className="px-1.5 py-2 text-center font-semibold leading-tight whitespace-normal break-words">CTR (%)</th>
-              <th className="px-1.5 py-2 text-center font-semibold leading-tight whitespace-normal break-words">CPM (RM)</th>
+              <th className="px-1.5 py-2 text-center font-semibold leading-tight whitespace-normal break-words">CPM</th>
               <th className="px-1.5 py-2 text-center font-semibold leading-tight whitespace-normal break-words">Results</th>
               <th className="px-1.5 py-2 text-center font-semibold leading-tight whitespace-normal break-words">Cost/Results</th>
-              <th className="px-1.5 py-2 text-center font-semibold leading-tight whitespace-normal break-words">Ads Spent (RM)</th>
+              <th className="px-1.5 py-2 text-center font-semibold leading-tight whitespace-normal break-words">Ads Spent</th>
             </tr>
           </thead>
           <tbody>
@@ -238,7 +263,12 @@ export function CampaignComparisonTable({
             variant="ghost"
             size="icon-xs"
             className="h-6 w-6"
-            onClick={() => setPage((prev) => Math.max(1, prev - 1))}
+            onClick={() =>
+              setPaginationState({
+                page: Math.max(1, safePage - 1),
+                signature: paginationSignature,
+              })
+            }
             disabled={safePage <= 1}
             aria-label="Previous table page"
           >
@@ -249,7 +279,12 @@ export function CampaignComparisonTable({
             variant="ghost"
             size="icon-xs"
             className="h-6 w-6"
-            onClick={() => setPage((prev) => Math.min(totalPages, prev + 1))}
+            onClick={() =>
+              setPaginationState({
+                page: Math.min(totalPages, safePage + 1),
+                signature: paginationSignature,
+              })
+            }
             disabled={safePage >= totalPages}
             aria-label="Next table page"
           >
@@ -279,24 +314,32 @@ const CAMPAIGN_MOBILE_METRICS: Array<{
   { key: "impressions", label: "Impression", value: (row) => row.impressions },
   { key: "clicks", label: "Clicks", value: (row) => row.clicks },
   { key: "ctr", label: "CTR (%)", value: (row) => row.ctr },
-  { key: "cpm", label: "CPM (RM)", value: (row) => row.cpm },
+  { key: "cpm", label: "CPM", value: (row) => row.cpm },
   { key: "results", label: "Results", value: (row) => row.results },
   { key: "costPerResult", label: "Cost/Results", value: (row) => row.costPerResult },
-  { key: "spend", label: "Ads Spent (RM)", value: (row) => row.spend },
+  { key: "spend", label: "Ads Spent", value: (row) => row.spend },
 ];
 
 function CampaignMobileCard({
   row,
   forceTitle,
   actionHref,
+  previewHref,
 }: {
   row: CampaignRow;
   forceTitle?: string;
   actionHref?: string;
+  previewHref?: string | null;
 }) {
   return (
     <article className="rounded-lg border border-border/50 bg-[#f9f9f9] p-3 shadow-sm">
-      <p className="text-sm font-semibold text-[#454545]">{forceTitle ?? row.campaignName}</p>
+      {previewHref && !forceTitle ? (
+        <Link className="text-sm font-semibold text-[#9f0019] hover:underline" href={previewHref}>
+          {row.campaignName}
+        </Link>
+      ) : (
+        <p className="text-sm font-semibold text-[#454545]">{forceTitle ?? row.campaignName}</p>
+      )}
       <dl className="mt-2 grid grid-cols-2 gap-x-3 gap-y-2 text-xs">
         {CAMPAIGN_MOBILE_METRICS.map((metric) => (
           <div key={`${row.id}-${metric.key}`} className="space-y-0.5">
@@ -316,7 +359,7 @@ function CampaignMobileCard({
 }
 
 function withPositiveSpend(rows: CampaignRow[]): CampaignRow[] {
-  return rows.filter((row) => row.spend > 0);
+  return rows.filter(hasReportableCampaignSpend);
 }
 
 function buildTotalsFromRows(rows: CampaignRow[], fallback: CampaignRow): CampaignRow {
@@ -329,4 +372,17 @@ function buildTotalsFromRows(rows: CampaignRow[], fallback: CampaignRow): Campai
       "Grand Total"
     )
   );
+}
+
+function buildPreviewHref(row: CampaignRow, queryString: string): string | null {
+  if (row.platform !== "meta" && row.platform !== "google") {
+    return null;
+  }
+
+  const params = new URLSearchParams(queryString.startsWith("&") ? queryString.slice(1) : queryString);
+  params.set("platform", row.platform);
+  params.set("campaignId", row.id);
+  params.set("campaignName", row.campaignName);
+  const query = params.toString();
+  return query ? `/preview?${query}` : "/preview";
 }

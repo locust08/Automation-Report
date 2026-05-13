@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo } from "react";
+import { useMemo } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 
 export interface ReportFilters {
@@ -13,9 +13,8 @@ export interface ReportFilters {
 }
 
 const DEFAULT_PLATFORM: ReportFilters["platform"] = "meta";
-const REPORT_FILTERS_STORAGE_KEY = "reporting:filters";
 
-export function useReportFilters(): {
+export function useReportFilters(initialFilters?: Partial<ReportFilters>): {
   filters: ReportFilters;
   hasAccountId: boolean;
   setFilters: (next: Partial<ReportFilters>, options?: { push?: boolean }) => void;
@@ -26,25 +25,26 @@ export function useReportFilters(): {
 
   const filters = useMemo<ReportFilters>(() => {
     const defaults = defaultDateRange();
-    const persistedFilters = readPersistedFilters();
-    const platform = searchParams.get("platform") ?? persistedFilters?.platform;
+    const platform =
+      searchParams.get("platform") ?? initialFilters?.platform;
 
     return {
-      accountId: searchParams.get("accountId") ?? persistedFilters?.accountId ?? "",
-      metaAccountId: searchParams.get("metaAccountId") ?? persistedFilters?.metaAccountId ?? "",
-      googleAccountId: searchParams.get("googleAccountId") ?? persistedFilters?.googleAccountId ?? "",
-      startDate: searchParams.get("startDate") ?? persistedFilters?.startDate ?? defaults.startDate,
-      endDate: searchParams.get("endDate") ?? persistedFilters?.endDate ?? defaults.endDate,
+      accountId:
+        searchParams.get("accountId") ?? initialFilters?.accountId ?? "",
+      metaAccountId:
+        searchParams.get("metaAccountId") ?? initialFilters?.metaAccountId ?? "",
+      googleAccountId:
+        searchParams.get("googleAccountId") ?? initialFilters?.googleAccountId ?? "",
+      startDate:
+        searchParams.get("startDate") ?? initialFilters?.startDate ?? defaults.startDate,
+      endDate:
+        searchParams.get("endDate") ?? initialFilters?.endDate ?? defaults.endDate,
       platform:
         platform === "meta" || platform === "google" || platform === "googleYoutube"
           ? platform
           : DEFAULT_PLATFORM,
     };
-  }, [searchParams]);
-
-  useEffect(() => {
-    persistFilters(filters);
-  }, [filters]);
+  }, [initialFilters, searchParams]);
 
   const hasAccountId = Boolean(
     filters.accountId || filters.metaAccountId || filters.googleAccountId
@@ -52,7 +52,6 @@ export function useReportFilters(): {
 
   function setFilters(next: Partial<ReportFilters>, options?: { push?: boolean }) {
     const merged = { ...filters, ...next };
-    persistFilters(merged);
     const params = new URLSearchParams(searchParams.toString());
 
     setParam(params, "accountId", merged.accountId);
@@ -88,50 +87,10 @@ function setParam(searchParams: URLSearchParams, key: string, value: string) {
 
 function defaultDateRange(): { startDate: string; endDate: string } {
   const now = new Date();
-  const startDate = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
-  const endDate = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 0));
+  const startDate = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 1, 1));
+  const endDate = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 0));
   return {
     startDate: startDate.toISOString().slice(0, 10),
     endDate: endDate.toISOString().slice(0, 10),
   };
-}
-
-function readPersistedFilters(): ReportFilters | null {
-  if (typeof window === "undefined") {
-    return null;
-  }
-
-  try {
-    const storedValue = window.localStorage.getItem(REPORT_FILTERS_STORAGE_KEY);
-    if (!storedValue) {
-      return null;
-    }
-
-    const parsed = JSON.parse(storedValue) as Partial<ReportFilters>;
-    return {
-      accountId: typeof parsed.accountId === "string" ? parsed.accountId : "",
-      metaAccountId: typeof parsed.metaAccountId === "string" ? parsed.metaAccountId : "",
-      googleAccountId: typeof parsed.googleAccountId === "string" ? parsed.googleAccountId : "",
-      startDate: typeof parsed.startDate === "string" ? parsed.startDate : "",
-      endDate: typeof parsed.endDate === "string" ? parsed.endDate : "",
-      platform:
-        parsed.platform === "meta" || parsed.platform === "google" || parsed.platform === "googleYoutube"
-          ? parsed.platform
-          : DEFAULT_PLATFORM,
-    };
-  } catch {
-    return null;
-  }
-}
-
-function persistFilters(filters: ReportFilters) {
-  if (typeof window === "undefined") {
-    return;
-  }
-
-  try {
-    window.localStorage.setItem(REPORT_FILTERS_STORAGE_KEY, JSON.stringify(filters));
-  } catch {
-    // Ignore storage write failures and continue using URL state.
-  }
 }
