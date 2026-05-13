@@ -1,0 +1,543 @@
+
+> automated-report@0.1.0 dev
+> next dev
+
+▲ Next.js 16.1.6 (Turbopack)
+- Local:         http://localhost:3000
+- Network:       http://192.168.0.170:3000
+
+✓ Starting...
+Creating turbopack project {
+  dir: 'C:\\Users\\User\\Desktop\\looker_template\\automated-report',
+  testMode: true
+}
+✓ Ready in 12.4s
+○ Compiling /api/cron/monthly-report ...
+ GET /api/cron/monthly-report 200 in 16.1s (compile: 16.1s, render: 23ms)
+○ Compiling /reports/print/monthly/[accountId] ...
+[notion] config token_present=true token_length=50 token_fingerprint=ntn_...b7zY database_id=2cc4fcc4f7018009a090cb6208a601d3
+[notion] resolving_data_source database_id=2cc4fcc4f7018009a090cb6208a601d3 endpoint=https://api.notion.com/v1/databases/2cc4fcc4f7018009a090cb6208a601d3
+[notion] resolved_data_source database_id=2cc4fcc4f7018009a090cb6208a601d3 data_source_id=2cc4fcc4-f701-8027-a722-000b53047031
+[notion] query database_id=2cc4fcc4f7018009a090cb6208a601d3 data_source_id=2cc4fcc4-f701-8027-a722-000b53047031 endpoint=https://api.notion.com/v1/data_sources/2cc4fcc4-f701-8027-a722-000b53047031/query
+[notion] POST endpoint=https://api.notion.com/v1/data_sources/2cc4fcc4-f701-8027-a722-000b53047031/query token_present=true database_id=2cc4fcc4f7018009a090cb6208a601d3
+[notion] query database_id=2cc4fcc4f7018009a090cb6208a601d3 data_source_id=2cc4fcc4-f701-8027-a722-000b53047031 endpoint=https://api.notion.com/v1/data_sources/2cc4fcc4-f701-8027-a722-000b53047031/query
+[notion] POST endpoint=https://api.notion.com/v1/data_sources/2cc4fcc4-f701-8027-a722-000b53047031/query token_present=true database_id=2cc4fcc4f7018009a090cb6208a601d3
+[notion] query database_id=2cc4fcc4f7018009a090cb6208a601d3 data_source_id=2cc4fcc4-f701-8027-a722-000b53047031 endpoint=https://api.notion.com/v1/data_sources/2cc4fcc4-f701-8027-a722-000b53047031/query
+[notion] POST endpoint=https://api.notion.com/v1/data_sources/2cc4fcc4-f701-8027-a722-000b53047031/query token_present=true database_id=2cc4fcc4f7018009a090cb6208a601d3
+[google-routing] target_customer_id=1831603281 original_access_path=Personal resolved_access_path=Personal fallback_used=false mode=direct login_customer_id=(none)
+[audience-breakdown][google][age][gaql] customerId=1831603281 loginCustomerId=(none) gaql="SELECT ad_group_criterion.age_range.type, metrics.clicks FROM age_range_view WHERE segments.date BETWEEN '2026-04-01' AND '2026-04-30'"
+[audience-breakdown][google][gender][gaql] customerId=1831603281 loginCustomerId=(none) gaql="SELECT ad_group_criterion.gender.type, metrics.clicks FROM gender_view WHERE segments.date BETWEEN '2026-04-01' AND '2026-04-30'"
+[audience-breakdown][google][location-region][gaql] customerId=1831603281 loginCustomerId=(none) gaql="SELECT segments.geo_target_region, metrics.clicks FROM geographic_view WHERE segments.date BETWEEN '2026-04-01' AND '2026-04-30'"
+[audience-breakdown][google][location-city][gaql] customerId=1831603281 loginCustomerId=(none) gaql="SELECT segments.geo_target_city, metrics.clicks FROM geographic_view WHERE segments.date BETWEEN '2026-04-01' AND '2026-04-30'"
+[audience-breakdown][google][age] customerId=1831603281 rows=7
+[audience-breakdown][google][location-city][geo-resolver] customerId=1831603281 requested=26 resolved=26
+[audience-breakdown][google][location-city] customerId=1831603281 rows=42 resources=26 items=11
+[audience-breakdown][google][location-region][geo-resolver] customerId=1831603281 requested=3 resolved=3
+[audience-breakdown][google][location-region] customerId=1831603281 rows=6 resources=3 items=3
+[audience-breakdown][google][location] customerId=1831603281 country=1 region=3 city=11
+[audience-breakdown][google][gender] customerId=1831603281 rows=3
+ GET /reports/print/monthly/183-160-3281?startDate=2026-04-01&endDate=2026-04-30&googleAccountId=183-160-3281 200 in 43s (compile: 6.9s, render: 36.4s)
+[notion] config token_present=true token_length=50 token_fingerprint=ntn_...b7zY database_id=2cc4fcc4f7018009a090cb6208a601d3
+[notion] config token_present=true token_length=50 token_fingerprint=ntn_...b7zY database_id=2cc4fcc4f7018009a090cb6208a601d3
+[notion] config token_present=true token_length=50 token_fingerprint=ntn_...b7zY database_id=2cc4fcc4f7018009a090cb6208a601d3
+ GET /reports/print/monthly/26081194298131611?startDate=2026-04-01&endDate=2026-04-30&googleAccountId=26081194298131611&metaAccountId=26081194298131611 200 in 706ms (compile: 30ms, render: 676ms)
+ GET /reports/print/monthly/1458920562401266?startDate=2026-04-01&endDate=2026-04-30&googleAccountId=1458920562401266&metaAccountId=1458920562401266 200 in 578ms (compile: 10ms, render: 567ms)
+ GET /reports/print/monthly/1075348557259245?startDate=2026-04-01&endDate=2026-04-30&googleAccountId=1075348557259245&metaAccountId=1075348557259245 200 in 579ms (compile: 50ms, render: 529ms)
+[notion] config token_present=true token_length=50 token_fingerprint=ntn_...b7zY database_id=2cc4fcc4f7018009a090cb6208a601d3
+[notion] resolving_data_source database_id=2cc4fcc4f7018009a090cb6208a601d3 endpoint=https://api.notion.com/v1/databases/2cc4fcc4f7018009a090cb6208a601d3
+[notion] config token_present=true token_length=50 token_fingerprint=ntn_...b7zY database_id=2cc4fcc4f7018009a090cb6208a601d3
+[notion] config token_present=true token_length=50 token_fingerprint=ntn_...b7zY database_id=2cc4fcc4f7018009a090cb6208a601d3
+[notion] resolved_data_source database_id=2cc4fcc4f7018009a090cb6208a601d3 data_source_id=2cc4fcc4-f701-8027-a722-000b53047031
+[notion] query database_id=2cc4fcc4f7018009a090cb6208a601d3 data_source_id=2cc4fcc4-f701-8027-a722-000b53047031 endpoint=https://api.notion.com/v1/data_sources/2cc4fcc4-f701-8027-a722-000b53047031/query
+[notion] POST endpoint=https://api.notion.com/v1/data_sources/2cc4fcc4-f701-8027-a722-000b53047031/query token_present=true database_id=2cc4fcc4f7018009a090cb6208a601d3
+[notion] query database_id=2cc4fcc4f7018009a090cb6208a601d3 data_source_id=2cc4fcc4-f701-8027-a722-000b53047031 endpoint=https://api.notion.com/v1/data_sources/2cc4fcc4-f701-8027-a722-000b53047031/query
+[notion] POST endpoint=https://api.notion.com/v1/data_sources/2cc4fcc4-f701-8027-a722-000b53047031/query token_present=true database_id=2cc4fcc4f7018009a090cb6208a601d3
+[notion] query database_id=2cc4fcc4f7018009a090cb6208a601d3 data_source_id=2cc4fcc4-f701-8027-a722-000b53047031 endpoint=https://api.notion.com/v1/data_sources/2cc4fcc4-f701-8027-a722-000b53047031/query
+[notion] POST endpoint=https://api.notion.com/v1/data_sources/2cc4fcc4-f701-8027-a722-000b53047031/query token_present=true database_id=2cc4fcc4f7018009a090cb6208a601d3
+[google-routing] target_customer_id=9755563282 original_access_path=411-468-5827 resolved_access_path=411-468-5827 fallback_used=false mode=manager login_customer_id=4114685827
+[google-routing] target_customer_id=8853285260 original_access_path=411-468-5827 resolved_access_path=411-468-5827 fallback_used=false mode=manager login_customer_id=4114685827
+[google-routing] target_customer_id=5836264160 original_access_path=411-468-5827 resolved_access_path=411-468-5827 fallback_used=false mode=manager login_customer_id=4114685827
+[audience-breakdown][google][age][gaql] customerId=8853285260 loginCustomerId=4114685827 gaql="SELECT ad_group_criterion.age_range.type, metrics.clicks FROM age_range_view WHERE segments.date BETWEEN '2026-04-01' AND '2026-04-30'"
+[audience-breakdown][google][gender][gaql] customerId=8853285260 loginCustomerId=4114685827 gaql="SELECT ad_group_criterion.gender.type, metrics.clicks FROM gender_view WHERE segments.date BETWEEN '2026-04-01' AND '2026-04-30'"
+[audience-breakdown][google][location-region][gaql] customerId=8853285260 loginCustomerId=4114685827 gaql="SELECT segments.geo_target_region, metrics.clicks FROM geographic_view WHERE segments.date BETWEEN '2026-04-01' AND '2026-04-30'"
+[audience-breakdown][google][location-city][gaql] customerId=8853285260 loginCustomerId=4114685827 gaql="SELECT segments.geo_target_city, metrics.clicks FROM geographic_view WHERE segments.date BETWEEN '2026-04-01' AND '2026-04-30'"
+[audience-breakdown][google][age][gaql] customerId=9755563282 loginCustomerId=4114685827 gaql="SELECT ad_group_criterion.age_range.type, metrics.clicks FROM age_range_view WHERE segments.date BETWEEN '2026-04-01' AND '2026-04-30'"
+[audience-breakdown][google][gender][gaql] customerId=9755563282 loginCustomerId=4114685827 gaql="SELECT ad_group_criterion.gender.type, metrics.clicks FROM gender_view WHERE segments.date BETWEEN '2026-04-01' AND '2026-04-30'"
+[audience-breakdown][google][location-region][gaql] customerId=9755563282 loginCustomerId=4114685827 gaql="SELECT segments.geo_target_region, metrics.clicks FROM geographic_view WHERE segments.date BETWEEN '2026-04-01' AND '2026-04-30'"
+[audience-breakdown][google][location-city][gaql] customerId=9755563282 loginCustomerId=4114685827 gaql="SELECT segments.geo_target_city, metrics.clicks FROM geographic_view WHERE segments.date BETWEEN '2026-04-01' AND '2026-04-30'"
+[audience-breakdown][google][age][gaql] customerId=5836264160 loginCustomerId=4114685827 gaql="SELECT ad_group_criterion.age_range.type, metrics.clicks FROM age_range_view WHERE segments.date BETWEEN '2026-04-01' AND '2026-04-30'"
+[audience-breakdown][google][gender][gaql] customerId=5836264160 loginCustomerId=4114685827 gaql="SELECT ad_group_criterion.gender.type, metrics.clicks FROM gender_view WHERE segments.date BETWEEN '2026-04-01' AND '2026-04-30'"
+[audience-breakdown][google][location-region][gaql] customerId=5836264160 loginCustomerId=4114685827 gaql="SELECT segments.geo_target_region, metrics.clicks FROM geographic_view WHERE segments.date BETWEEN '2026-04-01' AND '2026-04-30'"
+[audience-breakdown][google][location-city][gaql] customerId=5836264160 loginCustomerId=4114685827 gaql="SELECT segments.geo_target_city, metrics.clicks FROM geographic_view WHERE segments.date BETWEEN '2026-04-01' AND '2026-04-30'"
+[audience-breakdown][google][gender] customerId=8853285260 rows=3
+[audience-breakdown][google][age] customerId=5836264160 rows=7
+[audience-breakdown][google][age] customerId=8853285260 rows=7
+[audience-breakdown][google][gender] customerId=9755563282 rows=3
+[audience-breakdown][google][gender] customerId=5836264160 rows=3
+[audience-breakdown][google][age] customerId=9755563282 rows=7
+[audience-breakdown][google][location-region][geo-resolver] customerId=8853285260 requested=5 resolved=5
+[audience-breakdown][google][location-region] customerId=8853285260 rows=5 resources=5 items=5
+[audience-breakdown][google][location-city][geo-resolver] customerId=8853285260 requested=55 resolved=55
+[audience-breakdown][google][location-city] customerId=8853285260 rows=55 resources=55 items=11
+[audience-breakdown][google][location] customerId=8853285260 country=1 region=5 city=11
+[audience-breakdown][google][location-region][geo-resolver] customerId=5836264160 requested=4 resolved=4
+[audience-breakdown][google][location-region] customerId=5836264160 rows=6 resources=4 items=4
+[audience-breakdown][google][location-region][geo-resolver] customerId=9755563282 requested=2 resolved=2
+[audience-breakdown][google][location-region] customerId=9755563282 rows=2 resources=2 items=2
+[audience-breakdown][google][location-city][geo-resolver] customerId=5836264160 requested=22 resolved=22
+[audience-breakdown][google][location-city] customerId=5836264160 rows=26 resources=22 items=11
+[audience-breakdown][google][location] customerId=5836264160 country=1 region=4 city=11
+[audience-breakdown][google][location-city][geo-resolver] customerId=9755563282 requested=32 resolved=32
+[audience-breakdown][google][location-city] customerId=9755563282 rows=32 resources=32 items=11
+[audience-breakdown][google][location] customerId=9755563282 country=1 region=2 city=11
+ GET /reports/print/monthly/8853285260?startDate=2026-04-01&endDate=2026-04-30&googleAccountId=8853285260&metaAccountId=8853285260 200 in 28.9s (compile: 6ms, render: 28.8s)
+[notion] config token_present=true token_length=50 token_fingerprint=ntn_...b7zY database_id=2cc4fcc4f7018009a090cb6208a601d3
+[google-routing] target_customer_id=1998676917 original_access_path=366-613-7525 resolved_access_path=366-613-7525 fallback_used=false mode=manager login_customer_id=3666137525
+ GET /reports/print/monthly/5836264160?startDate=2026-04-01&endDate=2026-04-30&googleAccountId=5836264160&metaAccountId=5836264160 200 in 31.8s (compile: 29ms, render: 31.8s)
+ GET /reports/print/monthly/9755563282?startDate=2026-04-01&endDate=2026-04-30&googleAccountId=9755563282&metaAccountId=9755563282 200 in 32.0s (compile: 27ms, render: 31.9s)
+[notion] config token_present=true token_length=50 token_fingerprint=ntn_...b7zY database_id=2cc4fcc4f7018009a090cb6208a601d3
+[google-routing] target_customer_id=3145754127 original_access_path=366-613-7525 resolved_access_path=366-613-7525 fallback_used=false mode=manager login_customer_id=3666137525
+[notion] config token_present=true token_length=50 token_fingerprint=ntn_...b7zY database_id=2cc4fcc4f7018009a090cb6208a601d3
+[google-routing] target_customer_id=5504733537 original_access_path=366-613-7525 resolved_access_path=366-613-7525 fallback_used=false mode=manager login_customer_id=3666137525
+[audience-breakdown][google][age][gaql] customerId=1998676917 loginCustomerId=3666137525 gaql="SELECT ad_group_criterion.age_range.type, metrics.clicks FROM age_range_view WHERE segments.date BETWEEN '2026-04-01' AND '2026-04-30'"
+[audience-breakdown][google][gender][gaql] customerId=1998676917 loginCustomerId=3666137525 gaql="SELECT ad_group_criterion.gender.type, metrics.clicks FROM gender_view WHERE segments.date BETWEEN '2026-04-01' AND '2026-04-30'"
+[audience-breakdown][google][location-region][gaql] customerId=1998676917 loginCustomerId=3666137525 gaql="SELECT segments.geo_target_region, metrics.clicks FROM geographic_view WHERE segments.date BETWEEN '2026-04-01' AND '2026-04-30'"
+[audience-breakdown][google][location-city][gaql] customerId=1998676917 loginCustomerId=3666137525 gaql="SELECT segments.geo_target_city, metrics.clicks FROM geographic_view WHERE segments.date BETWEEN '2026-04-01' AND '2026-04-30'"
+[audience-breakdown][google][age] customerId=1998676917 rows=7
+[audience-breakdown][google][age][gaql] customerId=3145754127 loginCustomerId=3666137525 gaql="SELECT ad_group_criterion.age_range.type, metrics.clicks FROM age_range_view WHERE segments.date BETWEEN '2026-04-01' AND '2026-04-30'"
+[audience-breakdown][google][gender][gaql] customerId=3145754127 loginCustomerId=3666137525 gaql="SELECT ad_group_criterion.gender.type, metrics.clicks FROM gender_view WHERE segments.date BETWEEN '2026-04-01' AND '2026-04-30'"
+[audience-breakdown][google][location-region][gaql] customerId=3145754127 loginCustomerId=3666137525 gaql="SELECT segments.geo_target_region, metrics.clicks FROM geographic_view WHERE segments.date BETWEEN '2026-04-01' AND '2026-04-30'"
+[audience-breakdown][google][location-city][gaql] customerId=3145754127 loginCustomerId=3666137525 gaql="SELECT segments.geo_target_city, metrics.clicks FROM geographic_view WHERE segments.date BETWEEN '2026-04-01' AND '2026-04-30'"
+[audience-breakdown][google][gender] customerId=1998676917 rows=3
+[audience-breakdown][google][age][gaql] customerId=5504733537 loginCustomerId=3666137525 gaql="SELECT ad_group_criterion.age_range.type, metrics.clicks FROM age_range_view WHERE segments.date BETWEEN '2026-04-01' AND '2026-04-30'"
+[audience-breakdown][google][gender][gaql] customerId=5504733537 loginCustomerId=3666137525 gaql="SELECT ad_group_criterion.gender.type, metrics.clicks FROM gender_view WHERE segments.date BETWEEN '2026-04-01' AND '2026-04-30'"
+[audience-breakdown][google][location-region][gaql] customerId=5504733537 loginCustomerId=3666137525 gaql="SELECT segments.geo_target_region, metrics.clicks FROM geographic_view WHERE segments.date BETWEEN '2026-04-01' AND '2026-04-30'"
+[audience-breakdown][google][location-city][gaql] customerId=5504733537 loginCustomerId=3666137525 gaql="SELECT segments.geo_target_city, metrics.clicks FROM geographic_view WHERE segments.date BETWEEN '2026-04-01' AND '2026-04-30'"
+[audience-breakdown][google][location-region][geo-resolver] customerId=1998676917 requested=16 resolved=16
+[audience-breakdown][google][location-region] customerId=1998676917 rows=16 resources=16 items=11
+[audience-breakdown][google][gender] customerId=5504733537 rows=3
+[audience-breakdown][google][age] customerId=5504733537 rows=7
+[audience-breakdown][google][age] customerId=3145754127 rows=5
+[audience-breakdown][google][location-city][geo-resolver] customerId=1998676917 requested=152 resolved=152
+[audience-breakdown][google][location-city] customerId=1998676917 rows=152 resources=152 items=11
+[audience-breakdown][google][location] customerId=1998676917 country=1 region=11 city=11
+[audience-breakdown][google][location-city][geo-resolver] customerId=3145754127 requested=6 resolved=6
+[audience-breakdown][google][location-city] customerId=3145754127 rows=6 resources=6 items=6
+[audience-breakdown][google][location-region][geo-resolver] customerId=3145754127 requested=3 resolved=3
+[audience-breakdown][google][location-region] customerId=3145754127 rows=3 resources=3 items=3
+[audience-breakdown][google][location] customerId=3145754127 country=1 region=3 city=6
+[audience-breakdown][google][gender] customerId=3145754127 rows=3
+[audience-breakdown][google][location-city][geo-resolver] customerId=5504733537 requested=57 resolved=57
+[audience-breakdown][google][location-city] customerId=5504733537 rows=61 resources=57 items=11
+[audience-breakdown][google][location-region][geo-resolver] customerId=5504733537 requested=13 resolved=13
+[audience-breakdown][google][location-region] customerId=5504733537 rows=22 resources=13 items=11
+[audience-breakdown][google][location] customerId=5504733537 country=1 region=11 city=11
+ GET /reports/print/monthly/3145754127?startDate=2026-04-01&endDate=2026-04-30&googleAccountId=3145754127&metaAccountId=3145754127 200 in 20.6s (compile: 32ms, render: 20.6s)
+ GET /reports/print/monthly/5504733537?startDate=2026-04-01&endDate=2026-04-30&googleAccountId=5504733537&metaAccountId=5504733537 200 in 20.4s (compile: 21ms, render: 20.4s)
+ GET /reports/print/monthly/1998676917?startDate=2026-04-01&endDate=2026-04-30&googleAccountId=1998676917&metaAccountId=1998676917 200 in 24.1s (compile: 44ms, render: 24.1s)
+[notion] config token_present=true token_length=50 token_fingerprint=ntn_...b7zY database_id=2cc4fcc4f7018009a090cb6208a601d3
+[google-routing] target_customer_id=3101998300 original_access_path=366-613-7525 resolved_access_path=366-613-7525 fallback_used=false mode=manager login_customer_id=3666137525
+[audience-breakdown][google][age][gaql] customerId=3101998300 loginCustomerId=3666137525 gaql="SELECT ad_group_criterion.age_range.type, metrics.clicks FROM age_range_view WHERE segments.date BETWEEN '2026-04-01' AND '2026-04-30'"
+[audience-breakdown][google][gender][gaql] customerId=3101998300 loginCustomerId=3666137525 gaql="SELECT ad_group_criterion.gender.type, metrics.clicks FROM gender_view WHERE segments.date BETWEEN '2026-04-01' AND '2026-04-30'"
+[audience-breakdown][google][location-region][gaql] customerId=3101998300 loginCustomerId=3666137525 gaql="SELECT segments.geo_target_region, metrics.clicks FROM geographic_view WHERE segments.date BETWEEN '2026-04-01' AND '2026-04-30'"
+[audience-breakdown][google][location-city][gaql] customerId=3101998300 loginCustomerId=3666137525 gaql="SELECT segments.geo_target_city, metrics.clicks FROM geographic_view WHERE segments.date BETWEEN '2026-04-01' AND '2026-04-30'"
+[audience-breakdown][google][age] customerId=3101998300 rows=7
+[audience-breakdown][google][gender] customerId=3101998300 rows=3
+[audience-breakdown][google][location-city][geo-resolver] customerId=3101998300 requested=31 resolved=31
+[audience-breakdown][google][location-city] customerId=3101998300 rows=50 resources=31 items=11
+[audience-breakdown][google][location-region][geo-resolver] customerId=3101998300 requested=2 resolved=2
+[audience-breakdown][google][location-region] customerId=3101998300 rows=4 resources=2 items=2
+[audience-breakdown][google][location] customerId=3101998300 country=1 region=2 city=11
+ GET /reports/print/monthly/3101998300?startDate=2026-04-01&endDate=2026-04-30&googleAccountId=3101998300&metaAccountId=3101998300 200 in 18.4s (compile: 50ms, render: 18.3s)
+Monthly report cron triggered
+Monthly job started
+NOTION_TOKEN exists: true
+DB ID: 2cc4fcc4f7018009a090cb6208a601d3
+Raw results count: 100
+Properties keys: [
+  'Status',          'Access Path',
+  'Google PDF Link', 'Client Status',
+  'Access',          'GA4',
+  'Monthly Email',   'Last edited time',
+  'Dashboard Link',  'PIC',
+  'Platform',        'Email',
+  'ID',              'Note',
+  'Channel',         'GTM',
+  'Meta PDF Link',   'Client',
+  'Pixel ID',        'Account Name'
+]
+Status select
+Access Path select
+Google PDF Link url
+Client Status rollup
+Access rich_text
+GA4 select
+Monthly Email checkbox
+Last edited time last_edited_time
+Dashboard Link formula
+PIC select
+Platform select
+Email rich_text
+ID rich_text
+Note rich_text
+Channel select
+GTM select
+Meta PDF Link url
+Client relation
+Pixel ID rich_text
+Account Name title
+Monthly accounts mapped valid=96
+Monthly accounts mapped skipped=4
+Monthly report configured targets=0
+Monthly report test mode enabled=false
+Monthly report dry run enabled=true
+[monthly-report] dry run enabled; email send skipped
+[monthly-report] summary total=0 processed=0 generated=0 emailed=0 failed=0 skipped=0 total_duration_ms=2070 within_ten_minutes=true
+ POST /api/cron/monthly-report 200 in 2.1s (compile: 10ms, render: 2.1s)
+[notion] config token_present=true token_length=50 token_fingerprint=ntn_...b7zY database_id=2cc4fcc4f7018009a090cb6208a601d3
+ GET /reports/print/monthly/26081194298131611?startDate=2026-04-01&endDate=2026-04-30&googleAccountId=26081194298131611&platform=google 200 in 233ms (compile: 22ms, render: 211ms)
+[notion] config token_present=true token_length=50 token_fingerprint=ntn_...b7zY database_id=2cc4fcc4f7018009a090cb6208a601d3
+[notion] resolving_data_source database_id=2cc4fcc4f7018009a090cb6208a601d3 endpoint=https://api.notion.com/v1/databases/2cc4fcc4f7018009a090cb6208a601d3
+[notion] resolved_data_source database_id=2cc4fcc4f7018009a090cb6208a601d3 data_source_id=2cc4fcc4-f701-8027-a722-000b53047031
+[notion] query database_id=2cc4fcc4f7018009a090cb6208a601d3 data_source_id=2cc4fcc4-f701-8027-a722-000b53047031 endpoint=https://api.notion.com/v1/data_sources/2cc4fcc4-f701-8027-a722-000b53047031/query
+[notion] POST endpoint=https://api.notion.com/v1/data_sources/2cc4fcc4-f701-8027-a722-000b53047031/query token_present=true database_id=2cc4fcc4f7018009a090cb6208a601d3
+[notion] query database_id=2cc4fcc4f7018009a090cb6208a601d3 data_source_id=2cc4fcc4-f701-8027-a722-000b53047031 endpoint=https://api.notion.com/v1/data_sources/2cc4fcc4-f701-8027-a722-000b53047031/query
+[notion] POST endpoint=https://api.notion.com/v1/data_sources/2cc4fcc4-f701-8027-a722-000b53047031/query token_present=true database_id=2cc4fcc4f7018009a090cb6208a601d3
+[notion] query database_id=2cc4fcc4f7018009a090cb6208a601d3 data_source_id=2cc4fcc4-f701-8027-a722-000b53047031 endpoint=https://api.notion.com/v1/data_sources/2cc4fcc4-f701-8027-a722-000b53047031/query
+[notion] POST endpoint=https://api.notion.com/v1/data_sources/2cc4fcc4-f701-8027-a722-000b53047031/query token_present=true database_id=2cc4fcc4f7018009a090cb6208a601d3
+ GET /reports/print/monthly/1458920562401266?startDate=2026-04-01&endDate=2026-04-30&googleAccountId=1458920562401266&platform=google 200 in 4.9s (compile: 17ms, render: 4.9s)
+ GET /overall?accountId=697-252-8848&startDate=2026-04-01&endDate=2026-04-30 200 in 2.3s (compile: 1917ms, render: 347ms)
+[notion] config token_present=true token_length=50 token_fingerprint=ntn_...b7zY database_id=2cc4fcc4f7018009a090cb6208a601d3
+[notion] resolving_data_source database_id=2cc4fcc4f7018009a090cb6208a601d3 endpoint=https://api.notion.com/v1/databases/2cc4fcc4f7018009a090cb6208a601d3
+[notion] resolved_data_source database_id=2cc4fcc4f7018009a090cb6208a601d3 data_source_id=2cc4fcc4-f701-8027-a722-000b53047031
+[notion] query database_id=2cc4fcc4f7018009a090cb6208a601d3 data_source_id=2cc4fcc4-f701-8027-a722-000b53047031 endpoint=https://api.notion.com/v1/data_sources/2cc4fcc4-f701-8027-a722-000b53047031/query
+[notion] POST endpoint=https://api.notion.com/v1/data_sources/2cc4fcc4-f701-8027-a722-000b53047031/query token_present=true database_id=2cc4fcc4f7018009a090cb6208a601d3
+[notion] query database_id=2cc4fcc4f7018009a090cb6208a601d3 data_source_id=2cc4fcc4-f701-8027-a722-000b53047031 endpoint=https://api.notion.com/v1/data_sources/2cc4fcc4-f701-8027-a722-000b53047031/query
+[notion] POST endpoint=https://api.notion.com/v1/data_sources/2cc4fcc4-f701-8027-a722-000b53047031/query token_present=true database_id=2cc4fcc4f7018009a090cb6208a601d3
+[notion] query database_id=2cc4fcc4f7018009a090cb6208a601d3 data_source_id=2cc4fcc4-f701-8027-a722-000b53047031 endpoint=https://api.notion.com/v1/data_sources/2cc4fcc4-f701-8027-a722-000b53047031/query
+[notion] POST endpoint=https://api.notion.com/v1/data_sources/2cc4fcc4-f701-8027-a722-000b53047031/query token_present=true database_id=2cc4fcc4f7018009a090cb6208a601d3
+[google-routing] target_customer_id=6972528848 original_access_path=411-468-5827 resolved_access_path=411-468-5827 fallback_used=false mode=manager login_customer_id=4114685827
+[audience-breakdown][google][age][gaql] customerId=6972528848 loginCustomerId=4114685827 gaql="SELECT ad_group_criterion.age_range.type, metrics.clicks FROM age_range_view WHERE segments.date BETWEEN '2026-04-01' AND '2026-04-30'"
+[audience-breakdown][google][gender][gaql] customerId=6972528848 loginCustomerId=4114685827 gaql="SELECT ad_group_criterion.gender.type, metrics.clicks FROM gender_view WHERE segments.date BETWEEN '2026-04-01' AND '2026-04-30'"
+[audience-breakdown][google][location-region][gaql] customerId=6972528848 loginCustomerId=4114685827 gaql="SELECT segments.geo_target_region, metrics.clicks FROM geographic_view WHERE segments.date BETWEEN '2026-04-01' AND '2026-04-30'"
+[audience-breakdown][google][location-city][gaql] customerId=6972528848 loginCustomerId=4114685827 gaql="SELECT segments.geo_target_city, metrics.clicks FROM geographic_view WHERE segments.date BETWEEN '2026-04-01' AND '2026-04-30'"
+[audience-breakdown][google][gender] customerId=6972528848 rows=3
+[audience-breakdown][google][age] customerId=6972528848 rows=7
+[audience-breakdown][google][location-city][geo-resolver] customerId=6972528848 requested=93 resolved=93
+[audience-breakdown][google][location-city] customerId=6972528848 rows=114 resources=93 items=11
+[audience-breakdown][google][location-region][geo-resolver] customerId=6972528848 requested=6 resolved=6
+[audience-breakdown][google][location-region] customerId=6972528848 rows=12 resources=6 items=6
+[audience-breakdown][google][location] customerId=6972528848 country=1 region=6 city=11
+ GET /api/reporting?accountId=697-252-8848&startDate=2026-04-01&endDate=2026-04-30 200 in 15.0s (compile: 553ms, render: 14.4s)
+[notion] config token_present=true token_length=50 token_fingerprint=ntn_...b7zY database_id=2cc4fcc4f7018009a090cb6208a601d3
+ GET /reports/print/monthly/1075348557259245?startDate=2026-04-01&endDate=2026-04-30&googleAccountId=1075348557259245&platform=google 200 in 310ms (compile: 17ms, render: 293ms)
+[notion] config token_present=true token_length=50 token_fingerprint=ntn_...b7zY database_id=2cc4fcc4f7018009a090cb6208a601d3
+[notion] resolving_data_source database_id=2cc4fcc4f7018009a090cb6208a601d3 endpoint=https://api.notion.com/v1/databases/2cc4fcc4f7018009a090cb6208a601d3
+[notion] resolved_data_source database_id=2cc4fcc4f7018009a090cb6208a601d3 data_source_id=2cc4fcc4-f701-8027-a722-000b53047031
+[notion] query database_id=2cc4fcc4f7018009a090cb6208a601d3 data_source_id=2cc4fcc4-f701-8027-a722-000b53047031 endpoint=https://api.notion.com/v1/data_sources/2cc4fcc4-f701-8027-a722-000b53047031/query
+[notion] POST endpoint=https://api.notion.com/v1/data_sources/2cc4fcc4-f701-8027-a722-000b53047031/query token_present=true database_id=2cc4fcc4f7018009a090cb6208a601d3
+[notion] query database_id=2cc4fcc4f7018009a090cb6208a601d3 data_source_id=2cc4fcc4-f701-8027-a722-000b53047031 endpoint=https://api.notion.com/v1/data_sources/2cc4fcc4-f701-8027-a722-000b53047031/query
+[notion] POST endpoint=https://api.notion.com/v1/data_sources/2cc4fcc4-f701-8027-a722-000b53047031/query token_present=true database_id=2cc4fcc4f7018009a090cb6208a601d3
+[notion] query database_id=2cc4fcc4f7018009a090cb6208a601d3 data_source_id=2cc4fcc4-f701-8027-a722-000b53047031 endpoint=https://api.notion.com/v1/data_sources/2cc4fcc4-f701-8027-a722-000b53047031/query
+[notion] POST endpoint=https://api.notion.com/v1/data_sources/2cc4fcc4-f701-8027-a722-000b53047031/query token_present=true database_id=2cc4fcc4f7018009a090cb6208a601d3
+[google-routing] target_customer_id=9755563282 original_access_path=411-468-5827 resolved_access_path=411-468-5827 fallback_used=false mode=manager login_customer_id=4114685827
+[audience-breakdown][google][age][gaql] customerId=9755563282 loginCustomerId=4114685827 gaql="SELECT ad_group_criterion.age_range.type, metrics.clicks FROM age_range_view WHERE segments.date BETWEEN '2026-04-01' AND '2026-04-30'"
+[audience-breakdown][google][gender][gaql] customerId=9755563282 loginCustomerId=4114685827 gaql="SELECT ad_group_criterion.gender.type, metrics.clicks FROM gender_view WHERE segments.date BETWEEN '2026-04-01' AND '2026-04-30'"
+[audience-breakdown][google][location-region][gaql] customerId=9755563282 loginCustomerId=4114685827 gaql="SELECT segments.geo_target_region, metrics.clicks FROM geographic_view WHERE segments.date BETWEEN '2026-04-01' AND '2026-04-30'"
+[audience-breakdown][google][location-city][gaql] customerId=9755563282 loginCustomerId=4114685827 gaql="SELECT segments.geo_target_city, metrics.clicks FROM geographic_view WHERE segments.date BETWEEN '2026-04-01' AND '2026-04-30'"
+[audience-breakdown][google][gender] customerId=9755563282 rows=3
+[audience-breakdown][google][age] customerId=9755563282 rows=7
+[audience-breakdown][google][location-region][geo-resolver] customerId=9755563282 requested=2 resolved=2
+[audience-breakdown][google][location-region] customerId=9755563282 rows=2 resources=2 items=2
+[audience-breakdown][google][location-city][geo-resolver] customerId=9755563282 requested=32 resolved=32
+[audience-breakdown][google][location-city] customerId=9755563282 rows=32 resources=32 items=11
+[audience-breakdown][google][location] customerId=9755563282 country=1 region=2 city=11
+ GET /reports/print/monthly/9755563282?startDate=2026-04-01&endDate=2026-04-30&googleAccountId=9755563282&platform=google 200 in 20.2s (compile: 19ms, render: 20.2s)
+[notion] config token_present=true token_length=50 token_fingerprint=ntn_...b7zY database_id=2cc4fcc4f7018009a090cb6208a601d3
+[google-routing] target_customer_id=8853285260 original_access_path=411-468-5827 resolved_access_path=411-468-5827 fallback_used=false mode=manager login_customer_id=4114685827
+[audience-breakdown][google][age][gaql] customerId=8853285260 loginCustomerId=4114685827 gaql="SELECT ad_group_criterion.age_range.type, metrics.clicks FROM age_range_view WHERE segments.date BETWEEN '2026-04-01' AND '2026-04-30'"
+[audience-breakdown][google][gender][gaql] customerId=8853285260 loginCustomerId=4114685827 gaql="SELECT ad_group_criterion.gender.type, metrics.clicks FROM gender_view WHERE segments.date BETWEEN '2026-04-01' AND '2026-04-30'"
+[audience-breakdown][google][location-region][gaql] customerId=8853285260 loginCustomerId=4114685827 gaql="SELECT segments.geo_target_region, metrics.clicks FROM geographic_view WHERE segments.date BETWEEN '2026-04-01' AND '2026-04-30'"
+[audience-breakdown][google][location-city][gaql] customerId=8853285260 loginCustomerId=4114685827 gaql="SELECT segments.geo_target_city, metrics.clicks FROM geographic_view WHERE segments.date BETWEEN '2026-04-01' AND '2026-04-30'"
+[audience-breakdown][google][age] customerId=8853285260 rows=7
+[audience-breakdown][google][location-region][geo-resolver] customerId=8853285260 requested=5 resolved=5
+[audience-breakdown][google][location-region] customerId=8853285260 rows=5 resources=5 items=5
+[audience-breakdown][google][location-city][geo-resolver] customerId=8853285260 requested=55 resolved=55
+[audience-breakdown][google][location-city] customerId=8853285260 rows=55 resources=55 items=11
+[audience-breakdown][google][location] customerId=8853285260 country=1 region=5 city=11
+[audience-breakdown][google][gender] customerId=8853285260 rows=3
+ GET /reports/print/monthly/8853285260?startDate=2026-04-01&endDate=2026-04-30&googleAccountId=8853285260&platform=google 200 in 15.0s (compile: 21ms, render: 15.0s)
+[notion] config token_present=true token_length=50 token_fingerprint=ntn_...b7zY database_id=2cc4fcc4f7018009a090cb6208a601d3
+[google-routing] target_customer_id=5836264160 original_access_path=411-468-5827 resolved_access_path=411-468-5827 fallback_used=false mode=manager login_customer_id=4114685827
+[audience-breakdown][google][age][gaql] customerId=5836264160 loginCustomerId=4114685827 gaql="SELECT ad_group_criterion.age_range.type, metrics.clicks FROM age_range_view WHERE segments.date BETWEEN '2026-04-01' AND '2026-04-30'"
+[audience-breakdown][google][gender][gaql] customerId=5836264160 loginCustomerId=4114685827 gaql="SELECT ad_group_criterion.gender.type, metrics.clicks FROM gender_view WHERE segments.date BETWEEN '2026-04-01' AND '2026-04-30'"
+[audience-breakdown][google][location-region][gaql] customerId=5836264160 loginCustomerId=4114685827 gaql="SELECT segments.geo_target_region, metrics.clicks FROM geographic_view WHERE segments.date BETWEEN '2026-04-01' AND '2026-04-30'"
+[audience-breakdown][google][location-city][gaql] customerId=5836264160 loginCustomerId=4114685827 gaql="SELECT segments.geo_target_city, metrics.clicks FROM geographic_view WHERE segments.date BETWEEN '2026-04-01' AND '2026-04-30'"
+[audience-breakdown][google][gender] customerId=5836264160 rows=3
+[audience-breakdown][google][age] customerId=5836264160 rows=7
+[audience-breakdown][google][location-city][geo-resolver] customerId=5836264160 requested=22 resolved=22
+[audience-breakdown][google][location-city] customerId=5836264160 rows=26 resources=22 items=11
+[audience-breakdown][google][location-region][geo-resolver] customerId=5836264160 requested=4 resolved=4
+[audience-breakdown][google][location-region] customerId=5836264160 rows=6 resources=4 items=4
+[audience-breakdown][google][location] customerId=5836264160 country=1 region=4 city=11
+ GET /reports/print/monthly/5836264160?startDate=2026-04-01&endDate=2026-04-30&googleAccountId=5836264160&platform=google 200 in 12.6s (compile: 21ms, render: 12.5s)
+[notion] config token_present=true token_length=50 token_fingerprint=ntn_...b7zY database_id=2cc4fcc4f7018009a090cb6208a601d3
+[google-routing] target_customer_id=1998676917 original_access_path=366-613-7525 resolved_access_path=366-613-7525 fallback_used=false mode=manager login_customer_id=3666137525
+[audience-breakdown][google][age][gaql] customerId=1998676917 loginCustomerId=3666137525 gaql="SELECT ad_group_criterion.age_range.type, metrics.clicks FROM age_range_view WHERE segments.date BETWEEN '2026-04-01' AND '2026-04-30'"
+[audience-breakdown][google][gender][gaql] customerId=1998676917 loginCustomerId=3666137525 gaql="SELECT ad_group_criterion.gender.type, metrics.clicks FROM gender_view WHERE segments.date BETWEEN '2026-04-01' AND '2026-04-30'"
+[audience-breakdown][google][location-region][gaql] customerId=1998676917 loginCustomerId=3666137525 gaql="SELECT segments.geo_target_region, metrics.clicks FROM geographic_view WHERE segments.date BETWEEN '2026-04-01' AND '2026-04-30'"
+[audience-breakdown][google][location-city][gaql] customerId=1998676917 loginCustomerId=3666137525 gaql="SELECT segments.geo_target_city, metrics.clicks FROM geographic_view WHERE segments.date BETWEEN '2026-04-01' AND '2026-04-30'"
+[audience-breakdown][google][age] customerId=1998676917 rows=7
+[audience-breakdown][google][gender] customerId=1998676917 rows=3
+[audience-breakdown][google][location-region][geo-resolver] customerId=1998676917 requested=16 resolved=16
+[audience-breakdown][google][location-region] customerId=1998676917 rows=16 resources=16 items=11
+[audience-breakdown][google][location-city][geo-resolver] customerId=1998676917 requested=152 resolved=152
+[audience-breakdown][google][location-city] customerId=1998676917 rows=152 resources=152 items=11
+[audience-breakdown][google][location] customerId=1998676917 country=1 region=11 city=11
+ GET /reports/print/monthly/1998676917?startDate=2026-04-01&endDate=2026-04-30&googleAccountId=1998676917&platform=google 200 in 15.2s (compile: 25ms, render: 15.2s)
+[notion] config token_present=true token_length=50 token_fingerprint=ntn_...b7zY database_id=2cc4fcc4f7018009a090cb6208a601d3
+[google-routing] target_customer_id=5504733537 original_access_path=366-613-7525 resolved_access_path=366-613-7525 fallback_used=false mode=manager login_customer_id=3666137525
+[audience-breakdown][google][age][gaql] customerId=5504733537 loginCustomerId=3666137525 gaql="SELECT ad_group_criterion.age_range.type, metrics.clicks FROM age_range_view WHERE segments.date BETWEEN '2026-04-01' AND '2026-04-30'"
+[audience-breakdown][google][gender][gaql] customerId=5504733537 loginCustomerId=3666137525 gaql="SELECT ad_group_criterion.gender.type, metrics.clicks FROM gender_view WHERE segments.date BETWEEN '2026-04-01' AND '2026-04-30'"
+[audience-breakdown][google][location-region][gaql] customerId=5504733537 loginCustomerId=3666137525 gaql="SELECT segments.geo_target_region, metrics.clicks FROM geographic_view WHERE segments.date BETWEEN '2026-04-01' AND '2026-04-30'"
+[audience-breakdown][google][location-city][gaql] customerId=5504733537 loginCustomerId=3666137525 gaql="SELECT segments.geo_target_city, metrics.clicks FROM geographic_view WHERE segments.date BETWEEN '2026-04-01' AND '2026-04-30'"
+[audience-breakdown][google][gender] customerId=5504733537 rows=3
+[audience-breakdown][google][age] customerId=5504733537 rows=7
+[audience-breakdown][google][location-city][geo-resolver] customerId=5504733537 requested=57 resolved=57
+[audience-breakdown][google][location-city] customerId=5504733537 rows=61 resources=57 items=11
+[audience-breakdown][google][location-region][geo-resolver] customerId=5504733537 requested=13 resolved=13
+[audience-breakdown][google][location-region] customerId=5504733537 rows=22 resources=13 items=11
+[audience-breakdown][google][location] customerId=5504733537 country=1 region=11 city=11
+ GET /reports/print/monthly/5504733537?startDate=2026-04-01&endDate=2026-04-30&googleAccountId=5504733537&platform=google 200 in 17.2s (compile: 20ms, render: 17.2s)
+[notion] config token_present=true token_length=50 token_fingerprint=ntn_...b7zY database_id=2cc4fcc4f7018009a090cb6208a601d3
+[google-routing] target_customer_id=3145754127 original_access_path=366-613-7525 resolved_access_path=366-613-7525 fallback_used=false mode=manager login_customer_id=3666137525
+[audience-breakdown][google][age][gaql] customerId=3145754127 loginCustomerId=3666137525 gaql="SELECT ad_group_criterion.age_range.type, metrics.clicks FROM age_range_view WHERE segments.date BETWEEN '2026-04-01' AND '2026-04-30'"
+[audience-breakdown][google][gender][gaql] customerId=3145754127 loginCustomerId=3666137525 gaql="SELECT ad_group_criterion.gender.type, metrics.clicks FROM gender_view WHERE segments.date BETWEEN '2026-04-01' AND '2026-04-30'"
+[audience-breakdown][google][location-region][gaql] customerId=3145754127 loginCustomerId=3666137525 gaql="SELECT segments.geo_target_region, metrics.clicks FROM geographic_view WHERE segments.date BETWEEN '2026-04-01' AND '2026-04-30'"
+[audience-breakdown][google][location-city][gaql] customerId=3145754127 loginCustomerId=3666137525 gaql="SELECT segments.geo_target_city, metrics.clicks FROM geographic_view WHERE segments.date BETWEEN '2026-04-01' AND '2026-04-30'"
+[audience-breakdown][google][gender] customerId=3145754127 rows=3
+[audience-breakdown][google][age] customerId=3145754127 rows=5
+[audience-breakdown][google][location-region][geo-resolver] customerId=3145754127 requested=3 resolved=3
+[audience-breakdown][google][location-region] customerId=3145754127 rows=3 resources=3 items=3
+[audience-breakdown][google][location-city][geo-resolver] customerId=3145754127 requested=6 resolved=6
+[audience-breakdown][google][location-city] customerId=3145754127 rows=6 resources=6 items=6
+[audience-breakdown][google][location] customerId=3145754127 country=1 region=3 city=6
+ GET /reports/print/monthly/3145754127?startDate=2026-04-01&endDate=2026-04-30&googleAccountId=3145754127&platform=google 200 in 17.4s (compile: 47ms, render: 17.3s)
+[notion] config token_present=true token_length=50 token_fingerprint=ntn_...b7zY database_id=2cc4fcc4f7018009a090cb6208a601d3
+[google-routing] target_customer_id=3101998300 original_access_path=366-613-7525 resolved_access_path=366-613-7525 fallback_used=false mode=manager login_customer_id=3666137525
+[audience-breakdown][google][age][gaql] customerId=3101998300 loginCustomerId=3666137525 gaql="SELECT ad_group_criterion.age_range.type, metrics.clicks FROM age_range_view WHERE segments.date BETWEEN '2026-04-01' AND '2026-04-30'"
+[audience-breakdown][google][gender][gaql] customerId=3101998300 loginCustomerId=3666137525 gaql="SELECT ad_group_criterion.gender.type, metrics.clicks FROM gender_view WHERE segments.date BETWEEN '2026-04-01' AND '2026-04-30'"
+[audience-breakdown][google][location-region][gaql] customerId=3101998300 loginCustomerId=3666137525 gaql="SELECT segments.geo_target_region, metrics.clicks FROM geographic_view WHERE segments.date BETWEEN '2026-04-01' AND '2026-04-30'"
+[audience-breakdown][google][location-city][gaql] customerId=3101998300 loginCustomerId=3666137525 gaql="SELECT segments.geo_target_city, metrics.clicks FROM geographic_view WHERE segments.date BETWEEN '2026-04-01' AND '2026-04-30'"
+[audience-breakdown][google][age] customerId=3101998300 rows=7
+[audience-breakdown][google][gender] customerId=3101998300 rows=3
+[audience-breakdown][google][location-region][geo-resolver] customerId=3101998300 requested=2 resolved=2
+[audience-breakdown][google][location-region] customerId=3101998300 rows=4 resources=2 items=2
+[audience-breakdown][google][location-city][geo-resolver] customerId=3101998300 requested=31 resolved=31
+[audience-breakdown][google][location-city] customerId=3101998300 rows=50 resources=31 items=11
+[audience-breakdown][google][location] customerId=3101998300 country=1 region=2 city=11
+ GET /reports/print/monthly/3101998300?startDate=2026-04-01&endDate=2026-04-30&googleAccountId=3101998300&platform=google 200 in 15.0s (compile: 42ms, render: 15.0s)
+[notion] config token_present=true token_length=50 token_fingerprint=ntn_...b7zY database_id=2cc4fcc4f7018009a090cb6208a601d3
+[notion] config token_present=true token_length=50 token_fingerprint=ntn_...b7zY database_id=2cc4fcc4f7018009a090cb6208a601d3
+[notion] config token_present=true token_length=50 token_fingerprint=ntn_...b7zY database_id=2cc4fcc4f7018009a090cb6208a601d3
+ GET /reports/print/monthly/26081194298131611?startDate=2026-04-01&endDate=2026-04-30&googleAccountId=26081194298131611&platform=google 200 in 811ms (compile: 43ms, render: 767ms)
+ GET /reports/print/monthly/1075348557259245?startDate=2026-04-01&endDate=2026-04-30&googleAccountId=1075348557259245&platform=google 200 in 817ms (compile: 93ms, render: 724ms)
+ GET /reports/print/monthly/1458920562401266?startDate=2026-04-01&endDate=2026-04-30&googleAccountId=1458920562401266&platform=google 200 in 536ms (compile: 65ms, render: 471ms)
+[notion] config token_present=true token_length=50 token_fingerprint=ntn_...b7zY database_id=2cc4fcc4f7018009a090cb6208a601d3
+[notion] resolving_data_source database_id=2cc4fcc4f7018009a090cb6208a601d3 endpoint=https://api.notion.com/v1/databases/2cc4fcc4f7018009a090cb6208a601d3
+[notion] config token_present=true token_length=50 token_fingerprint=ntn_...b7zY database_id=2cc4fcc4f7018009a090cb6208a601d3
+[notion] config token_present=true token_length=50 token_fingerprint=ntn_...b7zY database_id=2cc4fcc4f7018009a090cb6208a601d3
+[notion] resolved_data_source database_id=2cc4fcc4f7018009a090cb6208a601d3 data_source_id=2cc4fcc4-f701-8027-a722-000b53047031
+[notion] query database_id=2cc4fcc4f7018009a090cb6208a601d3 data_source_id=2cc4fcc4-f701-8027-a722-000b53047031 endpoint=https://api.notion.com/v1/data_sources/2cc4fcc4-f701-8027-a722-000b53047031/query
+[notion] POST endpoint=https://api.notion.com/v1/data_sources/2cc4fcc4-f701-8027-a722-000b53047031/query token_present=true database_id=2cc4fcc4f7018009a090cb6208a601d3
+[notion] query database_id=2cc4fcc4f7018009a090cb6208a601d3 data_source_id=2cc4fcc4-f701-8027-a722-000b53047031 endpoint=https://api.notion.com/v1/data_sources/2cc4fcc4-f701-8027-a722-000b53047031/query
+[notion] POST endpoint=https://api.notion.com/v1/data_sources/2cc4fcc4-f701-8027-a722-000b53047031/query token_present=true database_id=2cc4fcc4f7018009a090cb6208a601d3
+[notion] query database_id=2cc4fcc4f7018009a090cb6208a601d3 data_source_id=2cc4fcc4-f701-8027-a722-000b53047031 endpoint=https://api.notion.com/v1/data_sources/2cc4fcc4-f701-8027-a722-000b53047031/query
+[notion] POST endpoint=https://api.notion.com/v1/data_sources/2cc4fcc4-f701-8027-a722-000b53047031/query token_present=true database_id=2cc4fcc4f7018009a090cb6208a601d3
+[google-routing] target_customer_id=9755563282 original_access_path=411-468-5827 resolved_access_path=411-468-5827 fallback_used=false mode=manager login_customer_id=4114685827
+[google-routing] target_customer_id=8853285260 original_access_path=411-468-5827 resolved_access_path=411-468-5827 fallback_used=false mode=manager login_customer_id=4114685827
+[google-routing] target_customer_id=5836264160 original_access_path=411-468-5827 resolved_access_path=411-468-5827 fallback_used=false mode=manager login_customer_id=4114685827
+ GET /reports/print/monthly/8853285260?startDate=2026-04-01&endDate=2026-04-30&googleAccountId=8853285260&platform=google 200 in 5.7s (compile: 11ms, render: 5.7s)
+ GET /reports/print/monthly/5836264160?startDate=2026-04-01&endDate=2026-04-30&googleAccountId=5836264160&platform=google 200 in 5.7s (compile: 33ms, render: 5.7s)
+[notion] config token_present=true token_length=50 token_fingerprint=ntn_...b7zY database_id=2cc4fcc4f7018009a090cb6208a601d3
+[google-routing] target_customer_id=5504733537 original_access_path=366-613-7525 resolved_access_path=366-613-7525 fallback_used=false mode=manager login_customer_id=3666137525
+[notion] config token_present=true token_length=50 token_fingerprint=ntn_...b7zY database_id=2cc4fcc4f7018009a090cb6208a601d3
+[google-routing] target_customer_id=1998676917 original_access_path=366-613-7525 resolved_access_path=366-613-7525 fallback_used=false mode=manager login_customer_id=3666137525
+ GET /reports/print/monthly/5504733537?startDate=2026-04-01&endDate=2026-04-30&googleAccountId=5504733537&platform=google 200 in 2.1s (compile: 28ms, render: 2.1s)
+ GET /reports/print/monthly/1998676917?startDate=2026-04-01&endDate=2026-04-30&googleAccountId=1998676917&platform=google 200 in 2.1s (compile: 95ms, render: 2.0s)
+[notion] config token_present=true token_length=50 token_fingerprint=ntn_...b7zY database_id=2cc4fcc4f7018009a090cb6208a601d3
+[google-routing] target_customer_id=3145754127 original_access_path=366-613-7525 resolved_access_path=366-613-7525 fallback_used=false mode=manager login_customer_id=3666137525
+[notion] config token_present=true token_length=50 token_fingerprint=ntn_...b7zY database_id=2cc4fcc4f7018009a090cb6208a601d3
+[google-routing] target_customer_id=3101998300 original_access_path=366-613-7525 resolved_access_path=366-613-7525 fallback_used=false mode=manager login_customer_id=3666137525
+ GET /reports/print/monthly/3145754127?startDate=2026-04-01&endDate=2026-04-30&googleAccountId=3145754127&platform=google 200 in 4.0s (compile: 66ms, render: 3.9s)
+ GET /reports/print/monthly/3101998300?startDate=2026-04-01&endDate=2026-04-30&googleAccountId=3101998300&platform=google 200 in 3.4s (compile: 259ms, render: 3.2s)
+[audience-breakdown][google][age][gaql] customerId=9755563282 loginCustomerId=4114685827 gaql="SELECT ad_group_criterion.age_range.type, metrics.clicks FROM age_range_view WHERE segments.date BETWEEN '2026-04-01' AND '2026-04-30'"
+[audience-breakdown][google][gender][gaql] customerId=9755563282 loginCustomerId=4114685827 gaql="SELECT ad_group_criterion.gender.type, metrics.clicks FROM gender_view WHERE segments.date BETWEEN '2026-04-01' AND '2026-04-30'"
+[audience-breakdown][google][location-region][gaql] customerId=9755563282 loginCustomerId=4114685827 gaql="SELECT segments.geo_target_region, metrics.clicks FROM geographic_view WHERE segments.date BETWEEN '2026-04-01' AND '2026-04-30'"
+[audience-breakdown][google][location-city][gaql] customerId=9755563282 loginCustomerId=4114685827 gaql="SELECT segments.geo_target_city, metrics.clicks FROM geographic_view WHERE segments.date BETWEEN '2026-04-01' AND '2026-04-30'"
+[audience-breakdown][google][age] customerId=9755563282 rows=7
+[audience-breakdown][google][gender] customerId=9755563282 rows=3
+[audience-breakdown][google][location-region][geo-resolver] customerId=9755563282 requested=2 resolved=2
+[audience-breakdown][google][location-region] customerId=9755563282 rows=2 resources=2 items=2
+[audience-breakdown][google][location-city][geo-resolver] customerId=9755563282 requested=32 resolved=32
+[audience-breakdown][google][location-city] customerId=9755563282 rows=32 resources=32 items=11
+[audience-breakdown][google][location] customerId=9755563282 country=1 region=2 city=11
+ GET /reports/print/monthly/9755563282?startDate=2026-04-01&endDate=2026-04-30&googleAccountId=9755563282&platform=google 200 in 25.0s (compile: 26ms, render: 25.0s)
+[notion] config token_present=true token_length=50 token_fingerprint=ntn_...b7zY database_id=2cc4fcc4f7018009a090cb6208a601d3
+[notion] config token_present=true token_length=50 token_fingerprint=ntn_...b7zY database_id=2cc4fcc4f7018009a090cb6208a601d3
+[notion] config token_present=true token_length=50 token_fingerprint=ntn_...b7zY database_id=2cc4fcc4f7018009a090cb6208a601d3
+[notion] config token_present=true token_length=50 token_fingerprint=ntn_...b7zY database_id=2cc4fcc4f7018009a090cb6208a601d3
+[google-routing] target_customer_id=9755563282 original_access_path=411-468-5827 resolved_access_path=411-468-5827 fallback_used=false mode=manager login_customer_id=4114685827
+[notion] config token_present=true token_length=50 token_fingerprint=ntn_...b7zY database_id=2cc4fcc4f7018009a090cb6208a601d3
+[google-routing] target_customer_id=8853285260 original_access_path=411-468-5827 resolved_access_path=411-468-5827 fallback_used=false mode=manager login_customer_id=4114685827
+ GET /reports/print/monthly/1458920562401266?startDate=2026-04-01&endDate=2026-04-30&googleAccountId=1458920562401266&platform=google 200 in 954ms (compile: 117ms, render: 837ms)
+ GET /reports/print/monthly/26081194298131611?startDate=2026-04-01&endDate=2026-04-30&googleAccountId=26081194298131611&platform=google 200 in 982ms (compile: 32ms, render: 950ms)
+ GET /reports/print/monthly/1075348557259245?startDate=2026-04-01&endDate=2026-04-30&googleAccountId=1075348557259245&platform=google 200 in 757ms (compile: 24ms, render: 733ms)
+ GET /reports/print/monthly/9755563282?startDate=2026-04-01&endDate=2026-04-30&googleAccountId=9755563282&platform=google 200 in 1933ms (compile: 17ms, render: 1916ms)
+[notion] config token_present=true token_length=50 token_fingerprint=ntn_...b7zY database_id=2cc4fcc4f7018009a090cb6208a601d3
+[google-routing] target_customer_id=5836264160 original_access_path=411-468-5827 resolved_access_path=411-468-5827 fallback_used=false mode=manager login_customer_id=4114685827
+[audience-breakdown][google][age][gaql] customerId=8853285260 loginCustomerId=4114685827 gaql="SELECT ad_group_criterion.age_range.type, metrics.clicks FROM age_range_view WHERE segments.date BETWEEN '2026-04-01' AND '2026-04-30'"
+[audience-breakdown][google][gender][gaql] customerId=8853285260 loginCustomerId=4114685827 gaql="SELECT ad_group_criterion.gender.type, metrics.clicks FROM gender_view WHERE segments.date BETWEEN '2026-04-01' AND '2026-04-30'"
+[audience-breakdown][google][location-region][gaql] customerId=8853285260 loginCustomerId=4114685827 gaql="SELECT segments.geo_target_region, metrics.clicks FROM geographic_view WHERE segments.date BETWEEN '2026-04-01' AND '2026-04-30'"
+[audience-breakdown][google][location-city][gaql] customerId=8853285260 loginCustomerId=4114685827 gaql="SELECT segments.geo_target_city, metrics.clicks FROM geographic_view WHERE segments.date BETWEEN '2026-04-01' AND '2026-04-30'"
+[audience-breakdown][google][gender] customerId=8853285260 rows=3
+[audience-breakdown][google][age] customerId=8853285260 rows=7
+[audience-breakdown][google][location-city][geo-resolver] customerId=8853285260 requested=55 resolved=55
+[audience-breakdown][google][location-city] customerId=8853285260 rows=55 resources=55 items=11
+[audience-breakdown][google][location-region][geo-resolver] customerId=8853285260 requested=5 resolved=5
+[audience-breakdown][google][location-region] customerId=8853285260 rows=5 resources=5 items=5
+[audience-breakdown][google][location] customerId=8853285260 country=1 region=5 city=11
+[audience-breakdown][google][age][gaql] customerId=5836264160 loginCustomerId=4114685827 gaql="SELECT ad_group_criterion.age_range.type, metrics.clicks FROM age_range_view WHERE segments.date BETWEEN '2026-04-01' AND '2026-04-30'"
+[audience-breakdown][google][gender][gaql] customerId=5836264160 loginCustomerId=4114685827 gaql="SELECT ad_group_criterion.gender.type, metrics.clicks FROM gender_view WHERE segments.date BETWEEN '2026-04-01' AND '2026-04-30'"
+[audience-breakdown][google][location-region][gaql] customerId=5836264160 loginCustomerId=4114685827 gaql="SELECT segments.geo_target_region, metrics.clicks FROM geographic_view WHERE segments.date BETWEEN '2026-04-01' AND '2026-04-30'"
+[audience-breakdown][google][location-city][gaql] customerId=5836264160 loginCustomerId=4114685827 gaql="SELECT segments.geo_target_city, metrics.clicks FROM geographic_view WHERE segments.date BETWEEN '2026-04-01' AND '2026-04-30'"
+ GET /reports/print/monthly/8853285260?startDate=2026-04-01&endDate=2026-04-30&googleAccountId=8853285260&platform=google 200 in 23.8s (compile: 50ms, render: 23.7s)
+[notion] config token_present=true token_length=50 token_fingerprint=ntn_...b7zY database_id=2cc4fcc4f7018009a090cb6208a601d3
+[google-routing] target_customer_id=1998676917 original_access_path=366-613-7525 resolved_access_path=366-613-7525 fallback_used=false mode=manager login_customer_id=3666137525
+[audience-breakdown][google][age] customerId=5836264160 rows=7
+[audience-breakdown][google][gender] customerId=5836264160 rows=3
+[audience-breakdown][google][location-region][geo-resolver] customerId=5836264160 requested=4 resolved=4
+[audience-breakdown][google][location-region] customerId=5836264160 rows=6 resources=4 items=4
+[audience-breakdown][google][location-city][geo-resolver] customerId=5836264160 requested=22 resolved=22
+[audience-breakdown][google][location-city] customerId=5836264160 rows=26 resources=22 items=11
+[audience-breakdown][google][location] customerId=5836264160 country=1 region=4 city=11
+ GET /reports/print/monthly/5836264160?startDate=2026-04-01&endDate=2026-04-30&googleAccountId=5836264160&platform=google 200 in 34.4s (compile: 29ms, render: 34.3s)
+[audience-breakdown][google][age][gaql] customerId=1998676917 loginCustomerId=3666137525 gaql="SELECT ad_group_criterion.age_range.type, metrics.clicks FROM age_range_view WHERE segments.date BETWEEN '2026-04-01' AND '2026-04-30'"
+[audience-breakdown][google][gender][gaql] customerId=1998676917 loginCustomerId=3666137525 gaql="SELECT ad_group_criterion.gender.type, metrics.clicks FROM gender_view WHERE segments.date BETWEEN '2026-04-01' AND '2026-04-30'"
+[audience-breakdown][google][location-region][gaql] customerId=1998676917 loginCustomerId=3666137525 gaql="SELECT segments.geo_target_region, metrics.clicks FROM geographic_view WHERE segments.date BETWEEN '2026-04-01' AND '2026-04-30'"
+[audience-breakdown][google][location-city][gaql] customerId=1998676917 loginCustomerId=3666137525 gaql="SELECT segments.geo_target_city, metrics.clicks FROM geographic_view WHERE segments.date BETWEEN '2026-04-01' AND '2026-04-30'"
+[audience-breakdown][google][age] customerId=1998676917 rows=7
+[notion] config token_present=true token_length=50 token_fingerprint=ntn_...b7zY database_id=2cc4fcc4f7018009a090cb6208a601d3
+[google-routing] target_customer_id=5504733537 original_access_path=366-613-7525 resolved_access_path=366-613-7525 fallback_used=false mode=manager login_customer_id=3666137525
+[audience-breakdown][google][gender] customerId=1998676917 rows=3
+[audience-breakdown][google][location-region][geo-resolver] customerId=1998676917 requested=16 resolved=16
+[audience-breakdown][google][location-region] customerId=1998676917 rows=16 resources=16 items=11
+[audience-breakdown][google][location-city][geo-resolver] customerId=1998676917 requested=152 resolved=152
+[audience-breakdown][google][location-city] customerId=1998676917 rows=152 resources=152 items=11
+[audience-breakdown][google][location] customerId=1998676917 country=1 region=11 city=11
+ GET /reports/print/monthly/1998676917?startDate=2026-04-01&endDate=2026-04-30&googleAccountId=1998676917&platform=google 200 in 19.8s (compile: 58ms, render: 19.7s)
+[notion] config token_present=true token_length=50 token_fingerprint=ntn_...b7zY database_id=2cc4fcc4f7018009a090cb6208a601d3
+[google-routing] target_customer_id=3145754127 original_access_path=366-613-7525 resolved_access_path=366-613-7525 fallback_used=false mode=manager login_customer_id=3666137525
+ GET /reports/print/monthly/3145754127?startDate=2026-04-01&endDate=2026-04-30&googleAccountId=3145754127&platform=google 200 in 1542ms (compile: 61ms, render: 1482ms)
+[audience-breakdown][google][age][gaql] customerId=5504733537 loginCustomerId=3666137525 gaql="SELECT ad_group_criterion.age_range.type, metrics.clicks FROM age_range_view WHERE segments.date BETWEEN '2026-04-01' AND '2026-04-30'"
+[audience-breakdown][google][gender][gaql] customerId=5504733537 loginCustomerId=3666137525 gaql="SELECT ad_group_criterion.gender.type, metrics.clicks FROM gender_view WHERE segments.date BETWEEN '2026-04-01' AND '2026-04-30'"
+[audience-breakdown][google][location-region][gaql] customerId=5504733537 loginCustomerId=3666137525 gaql="SELECT segments.geo_target_region, metrics.clicks FROM geographic_view WHERE segments.date BETWEEN '2026-04-01' AND '2026-04-30'"
+[audience-breakdown][google][location-city][gaql] customerId=5504733537 loginCustomerId=3666137525 gaql="SELECT segments.geo_target_city, metrics.clicks FROM geographic_view WHERE segments.date BETWEEN '2026-04-01' AND '2026-04-30'"
+[notion] config token_present=true token_length=50 token_fingerprint=ntn_...b7zY database_id=2cc4fcc4f7018009a090cb6208a601d3
+[google-routing] target_customer_id=3101998300 original_access_path=366-613-7525 resolved_access_path=366-613-7525 fallback_used=false mode=manager login_customer_id=3666137525
+[audience-breakdown][google][age] customerId=5504733537 rows=7
+[audience-breakdown][google][gender] customerId=5504733537 rows=3
+ GET /reports/print/monthly/3101998300?startDate=2026-04-01&endDate=2026-04-30&googleAccountId=3101998300&platform=google 200 in 1776ms (compile: 56ms, render: 1720ms)
+[audience-breakdown][google][location-region][geo-resolver] customerId=5504733537 requested=13 resolved=13
+[audience-breakdown][google][location-region] customerId=5504733537 rows=22 resources=13 items=11
+[audience-breakdown][google][location-city][geo-resolver] customerId=5504733537 requested=57 resolved=57
+[audience-breakdown][google][location-city] customerId=5504733537 rows=61 resources=57 items=11
+[audience-breakdown][google][location] customerId=5504733537 country=1 region=11 city=11
+ GET /reports/print/monthly/5504733537?startDate=2026-04-01&endDate=2026-04-30&googleAccountId=5504733537&platform=google 200 in 30.6s (compile: 34ms, render: 30.6s)
+ GET /api/cron/monthly-report 200 in 40ms (compile: 18ms, render: 22ms)
+[notion] config token_present=true token_length=50 token_fingerprint=ntn_...b7zY database_id=2cc4fcc4f7018009a090cb6208a601d3
+[notion] resolving_data_source database_id=2cc4fcc4f7018009a090cb6208a601d3 endpoint=https://api.notion.com/v1/databases/2cc4fcc4f7018009a090cb6208a601d3
+[notion] config token_present=true token_length=50 token_fingerprint=ntn_...b7zY database_id=2cc4fcc4f7018009a090cb6208a601d3
+[notion] resolved_data_source database_id=2cc4fcc4f7018009a090cb6208a601d3 data_source_id=2cc4fcc4-f701-8027-a722-000b53047031
+[notion] query database_id=2cc4fcc4f7018009a090cb6208a601d3 data_source_id=2cc4fcc4-f701-8027-a722-000b53047031 endpoint=https://api.notion.com/v1/data_sources/2cc4fcc4-f701-8027-a722-000b53047031/query
+[notion] POST endpoint=https://api.notion.com/v1/data_sources/2cc4fcc4-f701-8027-a722-000b53047031/query token_present=true database_id=2cc4fcc4f7018009a090cb6208a601d3
+[notion] query database_id=2cc4fcc4f7018009a090cb6208a601d3 data_source_id=2cc4fcc4-f701-8027-a722-000b53047031 endpoint=https://api.notion.com/v1/data_sources/2cc4fcc4-f701-8027-a722-000b53047031/query
+[notion] POST endpoint=https://api.notion.com/v1/data_sources/2cc4fcc4-f701-8027-a722-000b53047031/query token_present=true database_id=2cc4fcc4f7018009a090cb6208a601d3
+[notion] query database_id=2cc4fcc4f7018009a090cb6208a601d3 data_source_id=2cc4fcc4-f701-8027-a722-000b53047031 endpoint=https://api.notion.com/v1/data_sources/2cc4fcc4-f701-8027-a722-000b53047031/query
+[notion] POST endpoint=https://api.notion.com/v1/data_sources/2cc4fcc4-f701-8027-a722-000b53047031/query token_present=true database_id=2cc4fcc4f7018009a090cb6208a601d3
+[google-routing] target_customer_id=6972528848 original_access_path=411-468-5827 resolved_access_path=411-468-5827 fallback_used=false mode=manager login_customer_id=4114685827
+[google-routing] target_customer_id=8190531049 original_access_path=411-468-5827 resolved_access_path=411-468-5827 fallback_used=false mode=manager login_customer_id=4114685827
+[audience-breakdown][meta][gender] accountId=283341217383189 rows=3
+[audience-breakdown][meta][country] accountId=283341217383189 rows=1
+[audience-breakdown][meta][age] accountId=283341217383189 rows=6
+[audience-breakdown][meta][region] accountId=283341217383189 rows=7
+[meta-campaigns] accountId=283341217383189 startDate=2026-03-01 endDate=2026-03-31 rawRows=48 reportableRows=7 minSpend=1 totalSpend=3564.79 maxSpend=940.54
+[audience-breakdown][google][age][gaql] customerId=8190531049 loginCustomerId=4114685827 gaql="SELECT ad_group_criterion.age_range.type, metrics.clicks FROM age_range_view WHERE segments.date BETWEEN '2026-04-01' AND '2026-04-30'"
+[audience-breakdown][google][gender][gaql] customerId=8190531049 loginCustomerId=4114685827 gaql="SELECT ad_group_criterion.gender.type, metrics.clicks FROM gender_view WHERE segments.date BETWEEN '2026-04-01' AND '2026-04-30'"
+[audience-breakdown][google][location-region][gaql] customerId=8190531049 loginCustomerId=4114685827 gaql="SELECT segments.geo_target_region, metrics.clicks FROM geographic_view WHERE segments.date BETWEEN '2026-04-01' AND '2026-04-30'"
+[audience-breakdown][google][location-city][gaql] customerId=8190531049 loginCustomerId=4114685827 gaql="SELECT segments.geo_target_city, metrics.clicks FROM geographic_view WHERE segments.date BETWEEN '2026-04-01' AND '2026-04-30'"
+[audience-breakdown][google][age] customerId=8190531049 rows=7
+[audience-breakdown][google][gender] customerId=8190531049 rows=3
+[audience-breakdown][google][location-region][geo-resolver] customerId=8190531049 requested=145 resolved=145
+[audience-breakdown][google][location-region] customerId=8190531049 rows=184 resources=145 items=11
+[meta-campaigns] accountId=283341217383189 startDate=2026-04-01 endDate=2026-04-30 rawRows=47 reportableRows=5 minSpend=1 totalSpend=7743.40 maxSpend=3847.68
+[audience-breakdown][google][location-city][geo-resolver] customerId=8190531049 requested=424 resolved=424
+[audience-breakdown][google][location-city] customerId=8190531049 rows=524 resources=424 items=11
+[audience-breakdown][google][location] customerId=8190531049 country=11 region=11 city=11
+ GET /reports/print/monthly/819-053-1049?startDate=2026-04-01&endDate=2026-04-30&googleAccountId=819-053-1049&platform=google 200 in 27.7s (compile: 14ms, render: 27.7s)
+[audience-breakdown][google][age][gaql] customerId=6972528848 loginCustomerId=4114685827 gaql="SELECT ad_group_criterion.age_range.type, metrics.clicks FROM age_range_view WHERE segments.date BETWEEN '2026-04-01' AND '2026-04-30'"
+[audience-breakdown][google][gender][gaql] customerId=6972528848 loginCustomerId=4114685827 gaql="SELECT ad_group_criterion.gender.type, metrics.clicks FROM gender_view WHERE segments.date BETWEEN '2026-04-01' AND '2026-04-30'"
+[audience-breakdown][google][location-region][gaql] customerId=6972528848 loginCustomerId=4114685827 gaql="SELECT segments.geo_target_region, metrics.clicks FROM geographic_view WHERE segments.date BETWEEN '2026-04-01' AND '2026-04-30'"
+[audience-breakdown][google][location-city][gaql] customerId=6972528848 loginCustomerId=4114685827 gaql="SELECT segments.geo_target_city, metrics.clicks FROM geographic_view WHERE segments.date BETWEEN '2026-04-01' AND '2026-04-30'"
+[audience-breakdown][google][age] customerId=6972528848 rows=7
+[audience-breakdown][google][gender] customerId=6972528848 rows=3
+[audience-breakdown][google][location-city][geo-resolver] customerId=6972528848 requested=93 resolved=93
+[audience-breakdown][google][location-city] customerId=6972528848 rows=114 resources=93 items=11
+[audience-breakdown][google][location-region][geo-resolver] customerId=6972528848 requested=6 resolved=6
+[audience-breakdown][google][location-region] customerId=6972528848 rows=12 resources=6 items=6
+[audience-breakdown][google][location] customerId=6972528848 country=1 region=6 city=11
+ GET /reports/print/monthly/697-252-8848?startDate=2026-04-01&endDate=2026-04-30&googleAccountId=697-252-8848&metaAccountId=283341217383189 200 in 34.8s (compile: 36ms, render: 34.7s)
+ GET /api/cron/monthly-report 200 in 619ms (compile: 604ms, render: 15ms)
+[notion] config token_present=true token_length=50 token_fingerprint=ntn_...b7zY database_id=2cc4fcc4f7018009a090cb6208a601d3
+[notion] resolving_data_source database_id=2cc4fcc4f7018009a090cb6208a601d3 endpoint=https://api.notion.com/v1/databases/2cc4fcc4f7018009a090cb6208a601d3
+[notion] config token_present=true token_length=50 token_fingerprint=ntn_...b7zY database_id=2cc4fcc4f7018009a090cb6208a601d3
+[notion] resolved_data_source database_id=2cc4fcc4f7018009a090cb6208a601d3 data_source_id=2cc4fcc4-f701-8027-a722-000b53047031
+[notion] query database_id=2cc4fcc4f7018009a090cb6208a601d3 data_source_id=2cc4fcc4-f701-8027-a722-000b53047031 endpoint=https://api.notion.com/v1/data_sources/2cc4fcc4-f701-8027-a722-000b53047031/query
+[notion] POST endpoint=https://api.notion.com/v1/data_sources/2cc4fcc4-f701-8027-a722-000b53047031/query token_present=true database_id=2cc4fcc4f7018009a090cb6208a601d3
+[audience-breakdown][meta][age] accountId=283341217383189 rows=6
+[audience-breakdown][meta][gender] accountId=283341217383189 rows=3
+[meta-campaigns] accountId=283341217383189 startDate=2026-03-01 endDate=2026-03-31 rawRows=48 reportableRows=7 minSpend=1 totalSpend=3564.79 maxSpend=940.54
+[audience-breakdown][meta][region] accountId=283341217383189 rows=7
+[notion] query database_id=2cc4fcc4f7018009a090cb6208a601d3 data_source_id=2cc4fcc4-f701-8027-a722-000b53047031 endpoint=https://api.notion.com/v1/data_sources/2cc4fcc4-f701-8027-a722-000b53047031/query
+[notion] POST endpoint=https://api.notion.com/v1/data_sources/2cc4fcc4-f701-8027-a722-000b53047031/query token_present=true database_id=2cc4fcc4f7018009a090cb6208a601d3
+[audience-breakdown][meta][country] accountId=283341217383189 rows=1
+[meta-campaigns] accountId=283341217383189 startDate=2026-04-01 endDate=2026-04-30 rawRows=47 reportableRows=5 minSpend=1 totalSpend=7743.40 maxSpend=3847.68
+[notion] query database_id=2cc4fcc4f7018009a090cb6208a601d3 data_source_id=2cc4fcc4-f701-8027-a722-000b53047031 endpoint=https://api.notion.com/v1/data_sources/2cc4fcc4-f701-8027-a722-000b53047031/query
+[notion] POST endpoint=https://api.notion.com/v1/data_sources/2cc4fcc4-f701-8027-a722-000b53047031/query token_present=true database_id=2cc4fcc4f7018009a090cb6208a601d3
+ GET /reports/print/monthly/283341217383189?startDate=2026-04-01&endDate=2026-04-30&metaAccountId=283341217383189&platform=meta 200 in 3.7s (compile: 139ms, render: 3.5s)
+[google-routing] target_customer_id=8190531049 original_access_path=411-468-5827 resolved_access_path=411-468-5827 fallback_used=false mode=manager login_customer_id=4114685827
+[google-routing] target_customer_id=6972528848 original_access_path=411-468-5827 resolved_access_path=411-468-5827 fallback_used=false mode=manager login_customer_id=4114685827
+[audience-breakdown][google][age][gaql] customerId=6972528848 loginCustomerId=4114685827 gaql="SELECT ad_group_criterion.age_range.type, metrics.clicks FROM age_range_view WHERE segments.date BETWEEN '2026-04-01' AND '2026-04-30'"
+[audience-breakdown][google][gender][gaql] customerId=6972528848 loginCustomerId=4114685827 gaql="SELECT ad_group_criterion.gender.type, metrics.clicks FROM gender_view WHERE segments.date BETWEEN '2026-04-01' AND '2026-04-30'"
+[audience-breakdown][google][location-region][gaql] customerId=6972528848 loginCustomerId=4114685827 gaql="SELECT segments.geo_target_region, metrics.clicks FROM geographic_view WHERE segments.date BETWEEN '2026-04-01' AND '2026-04-30'"
+[audience-breakdown][google][location-city][gaql] customerId=6972528848 loginCustomerId=4114685827 gaql="SELECT segments.geo_target_city, metrics.clicks FROM geographic_view WHERE segments.date BETWEEN '2026-04-01' AND '2026-04-30'"
+[audience-breakdown][google][age] customerId=6972528848 rows=7
+[audience-breakdown][google][gender] customerId=6972528848 rows=3
+[audience-breakdown][google][age][gaql] customerId=8190531049 loginCustomerId=4114685827 gaql="SELECT ad_group_criterion.age_range.type, metrics.clicks FROM age_range_view WHERE segments.date BETWEEN '2026-04-01' AND '2026-04-30'"
+[audience-breakdown][google][gender][gaql] customerId=8190531049 loginCustomerId=4114685827 gaql="SELECT ad_group_criterion.gender.type, metrics.clicks FROM gender_view WHERE segments.date BETWEEN '2026-04-01' AND '2026-04-30'"
+[audience-breakdown][google][location-region][gaql] customerId=8190531049 loginCustomerId=4114685827 gaql="SELECT segments.geo_target_region, metrics.clicks FROM geographic_view WHERE segments.date BETWEEN '2026-04-01' AND '2026-04-30'"
+[audience-breakdown][google][location-city][gaql] customerId=8190531049 loginCustomerId=4114685827 gaql="SELECT segments.geo_target_city, metrics.clicks FROM geographic_view WHERE segments.date BETWEEN '2026-04-01' AND '2026-04-30'"
+[audience-breakdown][google][location-city][geo-resolver] customerId=6972528848 requested=93 resolved=93
+[audience-breakdown][google][location-city] customerId=6972528848 rows=114 resources=93 items=11
+[audience-breakdown][google][gender] customerId=8190531049 rows=3
+[audience-breakdown][google][age] customerId=8190531049 rows=7
+[audience-breakdown][google][location-region][geo-resolver] customerId=8190531049 requested=145 resolved=145
+[audience-breakdown][google][location-region] customerId=8190531049 rows=184 resources=145 items=11
+[audience-breakdown][google][location-city][geo-resolver] customerId=8190531049 requested=424 resolved=424
+[audience-breakdown][google][location-city] customerId=8190531049 rows=524 resources=424 items=11
+[audience-breakdown][google][location] customerId=8190531049 country=11 region=11 city=11
+ GET /reports/print/monthly/819-053-1049?startDate=2026-04-01&endDate=2026-04-30&googleAccountId=819-053-1049&platform=google 200 in 30.5s (compile: 25ms, render: 30.5s)
+[audience-breakdown][google][location-region][geo-resolver] customerId=6972528848 requested=6 resolved=6
+[audience-breakdown][google][location-region] customerId=6972528848 rows=12 resources=6 items=6
+[audience-breakdown][google][location] customerId=6972528848 country=1 region=6 city=11
+ GET /reports/print/monthly/697-252-8848?startDate=2026-04-01&endDate=2026-04-30&googleAccountId=697-252-8848&platform=google 200 in 44s (compile: 176ms, render: 44s)

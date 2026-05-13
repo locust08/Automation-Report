@@ -68,7 +68,11 @@ export async function sendMonthlyReportEmail(
       to: recipientEmails,
       cc: ccEmails.length > 0 ? ccEmails : undefined,
       subject,
-      html: buildEmailHtml(resolveLogoUrl()),
+      html: buildEmailHtml({
+        logoUrl: resolveLogoUrl(),
+        clientName: input.account.clientName,
+        reportMonthLabel: input.reportMonthLabel,
+      }),
       attachments,
     });
 
@@ -110,19 +114,63 @@ function buildAttachmentFilename(clientName: string, reportMonthLabel: string): 
   return `Monthly Report-${sanitizeFilenameSegment(clientName)}-${sanitizeFilenameSegment(reportMonthLabel)}.pdf`;
 }
 
-function buildEmailHtml(logoUrl: string): string {
+function buildEmailHtml(input: {
+  logoUrl: string;
+  clientName: string;
+  reportMonthLabel: string;
+}): string {
+  const clientName = formatClientNameForEmail(input.clientName);
+  const reportMonthLabel = input.reportMonthLabel;
+
   return `
-    <div style="font-family: Arial, sans-serif; color: #111827; line-height: 1.7; font-size: 15px;">
-      <div style="text-align:center;margin:0 0 22px;"><img src="${escapeHtml(logoUrl)}" width="180" alt="LOCUS-T" style="display:inline-block;width:180px;max-width:70%;height:auto;border:0;outline:none;text-decoration:none;" /></div>
-      <p>Dear Valued Client,</p>
-      <p>Please find your Digital Ads Campaign Performance Report for this month attached in the PDF below.</p>
-      <p>Best regards,<br/><strong>LOCUS-T</strong></p>
-      <p style="margin-top:24px;color:#6b7280;font-size:12px;line-height:1.5;">
-        This report was generated automatically from the LOCUS-T reporting dashboard.<br/>
-        You received this email because LOCUS-T scheduled it to be sent to you regularly.
-      </p>
+    <div style="margin:0;padding:0;background:#f3f4f6;font-family:Arial,Helvetica,sans-serif;color:#111827;">
+      <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="width:100%;border-collapse:collapse;background:#f3f4f6;">
+        <tr>
+          <td align="center" style="padding:0 12px;">
+            <table role="presentation" width="600" cellspacing="0" cellpadding="0" style="width:600px;max-width:100%;border-collapse:separate;border-spacing:0;background:#ffffff;border:1px solid #e5e7eb;border-radius:16px;overflow:hidden;">
+              <tr>
+                <td align="center" style="padding:28px 24px 18px;background:#ffffff;">
+                  <img src="${escapeHtml(input.logoUrl)}" width="190" alt="LOCUS-T" style="display:block;width:190px;max-width:70%;height:auto;border:0;outline:none;text-decoration:none;" />
+                </td>
+              </tr>
+              <tr>
+                <td style="background:#b40012;background-image:linear-gradient(135deg,#8f0010 0%,#b40012 45%,#d7192a 100%);padding:30px 32px 28px;color:#ffffff;">
+                  <div style="font-size:12px;line-height:1.3;font-weight:700;letter-spacing:1.2px;color:#ffffff;text-transform:uppercase;margin:0 0 10px;">
+                    Monthly Performance Report
+                  </div>
+                  <h1 style="font-size:29px;line-height:1.12;font-weight:800;color:#ffffff;margin:0 0 16px;letter-spacing:0;">
+                    ${escapeHtml(clientName)}
+                  </h1>
+                  <span style="display:inline-block;border:1px solid rgba(255,255,255,0.45);border-radius:999px;background:rgba(255,255,255,0.12);color:#ffffff;font-size:14px;line-height:1;font-weight:700;padding:9px 13px;">
+                    ${escapeHtml(reportMonthLabel)}
+                  </span>
+                </td>
+              </tr>
+              <tr>
+                <td style="padding:28px 30px 30px;background:#ffffff;color:#1f2937;font-size:15px;line-height:1.55;">
+                  <p style="margin:0 0 18px;">Dear Valued Client,</p>
+                  <p style="margin:0 0 14px;">Please find your Digital Ads Campaign Performance Report for this month attached in the PDF below.</p>
+                  <p style="margin:0;">Best regards,<br/><strong style="font-weight:800;color:#111827;">LOCUS-T</strong></p>
+                </td>
+              </tr>
+              <tr>
+                <td style="padding:15px 30px 16px;background:#f9fafb;border-top:1px solid #e5e7eb;color:#6b7280;font-size:11px;line-height:1.55;">
+                  This report was generated automatically from the LOCUS-T reporting dashboard.<br/>
+                  You received this email because LOCUS-T scheduled it to be sent to you regularly.
+                </td>
+              </tr>
+            </table>
+          </td>
+        </tr>
+      </table>
     </div>
   `.trim();
+}
+
+function formatClientNameForEmail(clientName: string): string {
+  return clientName
+    .replace(/\s+-\s+(Google Ads|Meta Ads|Google|Meta)$/i, "")
+    .trim() || clientName;
 }
 
 function resolveLogoUrl(): string {

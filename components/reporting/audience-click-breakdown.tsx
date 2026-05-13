@@ -223,11 +223,12 @@ function AudienceChartControls({
         </Label>
         <Switch
           id="audience-hide-unknown"
+          aria-label="Hide unknown audience values"
           checked={unknownFilterMode === "exclude"}
           onCheckedChange={(checked) =>
             onUnknownFilterModeChange(checked ? "exclude" : "include")
           }
-          className="data-[state=checked]:bg-[#e10600]"
+          className="audience-hide-unknown-switch focus-visible:!border-[#f30707] focus-visible:!ring-[#f30707]/20"
         />
       </div>
     </div>

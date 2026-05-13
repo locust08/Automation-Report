@@ -1,0 +1,18 @@
+
+> automated-report@0.1.0 dev
+> next dev --port 3001
+
+▲ Next.js 16.1.6 (Turbopack)
+- Local:         http://localhost:3001
+- Network:       http://192.168.0.200:3001
+
+✓ Starting...
+Creating turbopack project {
+  dir: 'C:\\Users\\User\\Desktop\\looker_template\\automated-report',
+  testMode: true
+}
+✓ Ready in 7.4s
+Monthly report API triggered
+ GET /api/cron/monthly-report 200 in 3.5s (compile: 3.4s, render: 31ms)
+Monthly report API triggered
+ POST /api/cron/monthly-report 200 in 10ms (compile: 3ms, render: 7ms)

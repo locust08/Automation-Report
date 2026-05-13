@@ -148,22 +148,40 @@
   }
 }
 
-@layer components {
-  [data-slot="switch"] {
-    background-color: var(--input);
-  }
+.audience-hide-unknown-switch {
+  position: relative;
+  height: 28px !important;
+  width: 48px !important;
+  overflow: hidden;
+  background-color: #efefef !important;
+}
 
-  [data-slot="switch"][data-state="checked"] {
-    background-color: #e10600 !important;
-  }
+.audience-hide-unknown-switch[data-state="checked"] {
+  background-color: #f30707 !important;
+}
 
-  [data-slot="switch-thumb"][data-state="checked"] {
-    transform: translateX(1.25rem) !important;
-  }
+.audience-hide-unknown-switch [data-slot="switch-thumb"] {
+  opacity: 0;
+}
 
-  [data-slot="switch"][data-size="sm"] [data-slot="switch-thumb"][data-state="checked"] {
-    transform: translateX(1rem) !important;
-  }
+.audience-hide-unknown-switch::before {
+  content: "";
+  position: absolute;
+  left: 2px;
+  top: 2px;
+  z-index: 10;
+  height: 24px;
+  width: 24px;
+  border: 1px solid #cfcfcf;
+  border-radius: 9999px;
+  background-color: #ffffff;
+  box-shadow: 0 1px 3px rgba(17, 24, 39, 0.18);
+  transition: transform 150ms ease, border-color 150ms ease;
+}
+
+.audience-hide-unknown-switch[data-state="checked"]::before {
+  border-color: #f30707;
+  transform: translateX(20px);
 }
 
 @keyframes report-loading-orbit {

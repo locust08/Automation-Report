@@ -1,0 +1,305 @@
+⚠ Cross origin request detected from 127.0.0.1 to /_next/* resource. In a future major version of Next.js, you will need to explicitly configure "allowedDevOrigins" in next.config to allow this.
+Read more: https://nextjs.org/docs/app/api-reference/config/next-config-js/allowedDevOrigins
+⨯ Error [NotionIntegrationError]: Google Ads routing could not be resolved for lookup "26081194298131611" because no matching row was found in Notion DB | Ad Accounts.
+    at createGoogleAdsRoutingError (lib\reporting\notion.ts:124:10)
+    at <unknown> (lib\reporting\notion.ts:242:13)
+    at Array.forEach (<anonymous>)
+    at resolveGoogleAccountsFromNotion (lib\reporting\notion.ts:196:17)
+    at async resolveReportAccountContext (lib\reporting\service.ts:2192:32)
+    at async getOverallReport (lib\reporting\service.ts:236:56)
+    at async MonthlyReportPrintPage (app\reports\print\monthly\[accountId]\page.tsx:26:18)
+  122 |
+  123 | function createGoogleAdsRoutingError(message: string): NotionIntegrationError {
+> 124 |   return new NotionIntegrationError(
+      |          ^
+  125 |     {
+  126 |       success: false,
+  127 |       stage: "google_ads_routing", {
+  payload: [Object],
+  httpStatus: 500,
+  digest: '3378486638'
+}
+⨯ Error [NotionIntegrationError]: Google Ads routing could not be resolved for lookup "1458920562401266" because no matching row was found in Notion DB | Ad Accounts.
+    at createGoogleAdsRoutingError (lib\reporting\notion.ts:124:10)
+    at <unknown> (lib\reporting\notion.ts:242:13)
+    at Array.forEach (<anonymous>)
+    at resolveGoogleAccountsFromNotion (lib\reporting\notion.ts:196:17)
+    at async resolveReportAccountContext (lib\reporting\service.ts:2192:32)
+    at async getOverallReport (lib\reporting\service.ts:236:56)
+    at async MonthlyReportPrintPage (app\reports\print\monthly\[accountId]\page.tsx:26:18)
+  122 |
+  123 | function createGoogleAdsRoutingError(message: string): NotionIntegrationError {
+> 124 |   return new NotionIntegrationError(
+      |          ^
+  125 |     {
+  126 |       success: false,
+  127 |       stage: "google_ads_routing", {
+  payload: [Object],
+  httpStatus: 500,
+  digest: '2736430094'
+}
+⨯ Error [NotionIntegrationError]: Google Ads routing could not be resolved for lookup "1075348557259245" because no matching row was found in Notion DB | Ad Accounts.
+    at createGoogleAdsRoutingError (lib\reporting\notion.ts:124:10)
+    at <unknown> (lib\reporting\notion.ts:242:13)
+    at Array.forEach (<anonymous>)
+    at resolveGoogleAccountsFromNotion (lib\reporting\notion.ts:196:17)
+    at async resolveReportAccountContext (lib\reporting\service.ts:2192:32)
+    at async getOverallReport (lib\reporting\service.ts:236:56)
+    at async MonthlyReportPrintPage (app\reports\print\monthly\[accountId]\page.tsx:26:18)
+  122 |
+  123 | function createGoogleAdsRoutingError(message: string): NotionIntegrationError {
+> 124 |   return new NotionIntegrationError(
+      |          ^
+  125 |     {
+  126 |       success: false,
+  127 |       stage: "google_ads_routing", {
+  payload: [Object],
+  httpStatus: 500,
+  digest: '2140149198'
+}
+[audience-breakdown][meta][age] accountId=8853285260 message="(#200) Ad account owner has NOT grant ads_management or ads_read permission, refer to https://developers.facebook.com/docs/marketing-api/get-started/authorization/#permissions-and-features for details."
+[audience-breakdown][meta][country] accountId=8853285260 message="(#200) Ad account owner has NOT grant ads_management or ads_read permission, refer to https://developers.facebook.com/docs/marketing-api/get-started/authorization/#permissions-and-features for details."
+[audience-breakdown][meta][gender] accountId=8853285260 message="(#200) Ad account owner has NOT grant ads_management or ads_read permission, refer to https://developers.facebook.com/docs/marketing-api/get-started/authorization/#permissions-and-features for details."
+[audience-breakdown][meta][region] accountId=8853285260 message="(#200) Ad account owner has NOT grant ads_management or ads_read permission, refer to https://developers.facebook.com/docs/marketing-api/get-started/authorization/#permissions-and-features for details."
+[audience-breakdown][meta][gender] accountId=9755563282 message="(#200) Ad account owner has NOT grant ads_management or ads_read permission, refer to https://developers.facebook.com/docs/marketing-api/get-started/authorization/#permissions-and-features for details."
+[audience-breakdown][meta][country] accountId=9755563282 message="(#200) Ad account owner has NOT grant ads_management or ads_read permission, refer to https://developers.facebook.com/docs/marketing-api/get-started/authorization/#permissions-and-features for details."
+[audience-breakdown][meta][region] accountId=9755563282 message="(#200) Ad account owner has NOT grant ads_management or ads_read permission, refer to https://developers.facebook.com/docs/marketing-api/get-started/authorization/#permissions-and-features for details."
+[audience-breakdown][meta][age] accountId=9755563282 message="(#200) Ad account owner has NOT grant ads_management or ads_read permission, refer to https://developers.facebook.com/docs/marketing-api/get-started/authorization/#permissions-and-features for details."
+[audience-breakdown][meta][age] accountId=5836264160 message="(#200) Ad account owner has NOT grant ads_management or ads_read permission, refer to https://developers.facebook.com/docs/marketing-api/get-started/authorization/#permissions-and-features for details."
+[audience-breakdown][meta][gender] accountId=5836264160 message="(#200) Ad account owner has NOT grant ads_management or ads_read permission, refer to https://developers.facebook.com/docs/marketing-api/get-started/authorization/#permissions-and-features for details."
+[audience-breakdown][meta][region] accountId=5836264160 message="(#200) Ad account owner has NOT grant ads_management or ads_read permission, refer to https://developers.facebook.com/docs/marketing-api/get-started/authorization/#permissions-and-features for details."
+[audience-breakdown][meta][country] accountId=5836264160 message="(#200) Ad account owner has NOT grant ads_management or ads_read permission, refer to https://developers.facebook.com/docs/marketing-api/get-started/authorization/#permissions-and-features for details."
+[audience-breakdown][meta][gender] accountId=1998676917 message="(#200) Ad account owner has NOT grant ads_management or ads_read permission, refer to https://developers.facebook.com/docs/marketing-api/get-started/authorization/#permissions-and-features for details."
+[audience-breakdown][meta][age] accountId=1998676917 message="(#200) Ad account owner has NOT grant ads_management or ads_read permission, refer to https://developers.facebook.com/docs/marketing-api/get-started/authorization/#permissions-and-features for details."
+[audience-breakdown][meta][country] accountId=1998676917 message="(#200) Ad account owner has NOT grant ads_management or ads_read permission, refer to https://developers.facebook.com/docs/marketing-api/get-started/authorization/#permissions-and-features for details."
+[audience-breakdown][meta][region] accountId=1998676917 message="(#200) Ad account owner has NOT grant ads_management or ads_read permission, refer to https://developers.facebook.com/docs/marketing-api/get-started/authorization/#permissions-and-features for details."
+[audience-breakdown][meta][country] accountId=3145754127 message="(#200) Ad account owner has NOT grant ads_management or ads_read permission, refer to https://developers.facebook.com/docs/marketing-api/get-started/authorization/#permissions-and-features for details."
+[audience-breakdown][meta][region] accountId=3145754127 message="(#200) Ad account owner has NOT grant ads_management or ads_read permission, refer to https://developers.facebook.com/docs/marketing-api/get-started/authorization/#permissions-and-features for details."
+[audience-breakdown][meta][gender] accountId=3145754127 message="(#200) Ad account owner has NOT grant ads_management or ads_read permission, refer to https://developers.facebook.com/docs/marketing-api/get-started/authorization/#permissions-and-features for details."
+[audience-breakdown][meta][age] accountId=3145754127 message="(#200) Ad account owner has NOT grant ads_management or ads_read permission, refer to https://developers.facebook.com/docs/marketing-api/get-started/authorization/#permissions-and-features for details."
+[audience-breakdown][meta][age] accountId=5504733537 message="(#200) Ad account owner has NOT grant ads_management or ads_read permission, refer to https://developers.facebook.com/docs/marketing-api/get-started/authorization/#permissions-and-features for details."
+[audience-breakdown][meta][gender] accountId=5504733537 message="(#200) Ad account owner has NOT grant ads_management or ads_read permission, refer to https://developers.facebook.com/docs/marketing-api/get-started/authorization/#permissions-and-features for details."
+[audience-breakdown][meta][country] accountId=5504733537 message="(#200) Ad account owner has NOT grant ads_management or ads_read permission, refer to https://developers.facebook.com/docs/marketing-api/get-started/authorization/#permissions-and-features for details."
+[audience-breakdown][meta][region] accountId=5504733537 message="(#200) Ad account owner has NOT grant ads_management or ads_read permission, refer to https://developers.facebook.com/docs/marketing-api/get-started/authorization/#permissions-and-features for details."
+[audience-breakdown][meta][region] accountId=3101998300 message="(#200) Ad account owner has NOT grant ads_management or ads_read permission, refer to https://developers.facebook.com/docs/marketing-api/get-started/authorization/#permissions-and-features for details."
+[audience-breakdown][meta][country] accountId=3101998300 message="(#200) Ad account owner has NOT grant ads_management or ads_read permission, refer to https://developers.facebook.com/docs/marketing-api/get-started/authorization/#permissions-and-features for details."
+[audience-breakdown][meta][gender] accountId=3101998300 message="(#200) Ad account owner has NOT grant ads_management or ads_read permission, refer to https://developers.facebook.com/docs/marketing-api/get-started/authorization/#permissions-and-features for details."
+[audience-breakdown][meta][age] accountId=3101998300 message="(#200) Ad account owner has NOT grant ads_management or ads_read permission, refer to https://developers.facebook.com/docs/marketing-api/get-started/authorization/#permissions-and-features for details."
+@notionhq/client warn: request fail {
+  code: 'validation_error',
+  message: 'Could not find property with name or id: Monthly Report Enabled',
+  attempt: 0,
+  requestId: '8968fa47-b865-4d0f-9187-10c499482c16'
+}
+Monthly report raw Notion query failed Error [APIResponseError]: Could not find property with name or id: Monthly Report Enabled
+    at async getMonthlyReportAccounts (src\lib\notion\get-monthly-report-accounts.ts:71:22)
+    at async resolveTargets (src\lib\cron\run-monthly-report-job.ts:204:26)
+    at async runMonthlyReportJob (src\lib\cron\run-monthly-report-job.ts:63:29)
+    at async POST (app\api\cron\monthly-report\route.ts:25:20)
+  69 |     const fullDataset = buildResultFromRows(fullResponse.results);
+  70 |
+> 71 |     const response = await notion.dataSources.query({
+     |                      ^
+  72 |       data_source_id: dataSourceId,
+  73 |       filter: {
+  74 |         and: [ {
+  code: 'validation_error',
+  status: 400,
+  headers: Headers {
+    date: 'Tue, 12 May 2026 06:21:50 GMT',
+    'content-type': 'application/json; charset=utf-8',
+    'content-length': '185',
+    connection: 'keep-alive',
+    'cf-ray': '9fa753576f73f8d0-SIN',
+    'cf-cache-status': 'DYNAMIC',
+    etag: 'W/"b9-0Kh3qH1y3d4Xlmodo0Den+pNhoY"',
+    server: 'cloudflare',
+    'strict-transport-security': 'max-age=31536000; includeSubDomains; preload',
+    vary: 'Accept-Encoding',
+    'content-security-policy': "default-src 'none'",
+    'referrer-policy': 'strict-origin-when-cross-origin',
+    'x-content-type-options': 'nosniff',
+    'x-dns-prefetch-control': 'off',
+    'x-download-options': 'noopen',
+    'x-frame-options': 'SAMEORIGIN',
+    'x-notion-request-id': '8968fa47-b865-4d0f-9187-10c499482c16',
+    'x-permitted-cross-domain-policies': 'none',
+    'x-xss-protection': '0',
+    'set-cookie': '__cf_bm=IfRP3yCizZeWztHpcwTO9Hx8j8JdHScQJG.xfBIzncY-1778566910.6292-1.0.1.1-FOvuQlGH1Ed.FF1sfnHbb10Pgz3zzkrAsIjj6O75WBrhpiqNSbQl5UsErq2RAkjleL.g9B810kLp5vf1x0difehOt0rVnWBR5n6wTp3C04gb4e2xCOoniBmMGonVk.Ik; HttpOnly; SameSite=None; Secure; Path=/; Domain=notion.com; Expires=Tue, 12 May 2026 06:51:50 GMT',
+    'alt-svc': 'h3=":443"; ma=86400'
+  },
+  body: '{"object":"error","status":400,"code":"validation_error","message":"Could not find property with name or id: Monthly Report Enabled","request_id":"8968fa47-b865-4d0f-9187-10c499482c16"}',
+  additional_data: undefined,
+  request_id: '8968fa47-b865-4d0f-9187-10c499482c16'
+}
+⨯ Error [NotionIntegrationError]: Google Ads routing could not be resolved for lookup "26081194298131611" because no matching row was found in Notion DB | Ad Accounts.
+    at createGoogleAdsRoutingError (lib\reporting\notion.ts:124:10)
+    at <unknown> (lib\reporting\notion.ts:242:13)
+    at Array.forEach (<anonymous>)
+    at resolveGoogleAccountsFromNotion (lib\reporting\notion.ts:196:17)
+    at async resolveReportAccountContext (lib\reporting\service.ts:2192:32)
+    at async getOverallReport (lib\reporting\service.ts:236:56)
+    at async MonthlyReportPrintPage (app\reports\print\monthly\[accountId]\page.tsx:26:18)
+  122 |
+  123 | function createGoogleAdsRoutingError(message: string): NotionIntegrationError {
+> 124 |   return new NotionIntegrationError(
+      |          ^
+  125 |     {
+  126 |       success: false,
+  127 |       stage: "google_ads_routing", {
+  payload: [Object],
+  httpStatus: 500,
+  digest: '3378486638'
+}
+⨯ Error [NotionIntegrationError]: Google Ads routing could not be resolved for lookup "1458920562401266" because no matching row was found in Notion DB | Ad Accounts.
+    at createGoogleAdsRoutingError (lib\reporting\notion.ts:124:10)
+    at <unknown> (lib\reporting\notion.ts:242:13)
+    at Array.forEach (<anonymous>)
+    at resolveGoogleAccountsFromNotion (lib\reporting\notion.ts:196:17)
+    at async resolveReportAccountContext (lib\reporting\service.ts:2192:32)
+    at async getOverallReport (lib\reporting\service.ts:236:56)
+    at async MonthlyReportPrintPage (app\reports\print\monthly\[accountId]\page.tsx:26:18)
+  122 |
+  123 | function createGoogleAdsRoutingError(message: string): NotionIntegrationError {
+> 124 |   return new NotionIntegrationError(
+      |          ^
+  125 |     {
+  126 |       success: false,
+  127 |       stage: "google_ads_routing", {
+  payload: [Object],
+  httpStatus: 500,
+  digest: '3471017698'
+}
+⨯ Error [NotionIntegrationError]: Google Ads routing could not be resolved for lookup "1075348557259245" because no matching row was found in Notion DB | Ad Accounts.
+    at createGoogleAdsRoutingError (lib\reporting\notion.ts:124:10)
+    at <unknown> (lib\reporting\notion.ts:242:13)
+    at Array.forEach (<anonymous>)
+    at resolveGoogleAccountsFromNotion (lib\reporting\notion.ts:196:17)
+    at async resolveReportAccountContext (lib\reporting\service.ts:2192:32)
+    at async getOverallReport (lib\reporting\service.ts:236:56)
+    at async MonthlyReportPrintPage (app\reports\print\monthly\[accountId]\page.tsx:26:18)
+  122 |
+  123 | function createGoogleAdsRoutingError(message: string): NotionIntegrationError {
+> 124 |   return new NotionIntegrationError(
+      |          ^
+  125 |     {
+  126 |       success: false,
+  127 |       stage: "google_ads_routing", {
+  payload: [Object],
+  httpStatus: 500,
+  digest: '2140149198'
+}
+⨯ Error [NotionIntegrationError]: Google Ads routing could not be resolved for lookup "26081194298131611" because no matching row was found in Notion DB | Ad Accounts.
+    at createGoogleAdsRoutingError (lib\reporting\notion.ts:124:10)
+    at <unknown> (lib\reporting\notion.ts:242:13)
+    at Array.forEach (<anonymous>)
+    at resolveGoogleAccountsFromNotion (lib\reporting\notion.ts:196:17)
+    at async resolveReportAccountContext (lib\reporting\service.ts:2192:32)
+    at async getOverallReport (lib\reporting\service.ts:236:56)
+    at async MonthlyReportPrintPage (app\reports\print\monthly\[accountId]\page.tsx:26:18)
+  122 |
+  123 | function createGoogleAdsRoutingError(message: string): NotionIntegrationError {
+> 124 |   return new NotionIntegrationError(
+      |          ^
+  125 |     {
+  126 |       success: false,
+  127 |       stage: "google_ads_routing", {
+  payload: [Object],
+  httpStatus: 500,
+  digest: '3378486638'
+}
+⨯ Error [NotionIntegrationError]: Google Ads routing could not be resolved for lookup "1075348557259245" because no matching row was found in Notion DB | Ad Accounts.
+    at createGoogleAdsRoutingError (lib\reporting\notion.ts:124:10)
+    at <unknown> (lib\reporting\notion.ts:242:13)
+    at Array.forEach (<anonymous>)
+    at resolveGoogleAccountsFromNotion (lib\reporting\notion.ts:196:17)
+    at async resolveReportAccountContext (lib\reporting\service.ts:2192:32)
+    at async getOverallReport (lib\reporting\service.ts:236:56)
+    at async MonthlyReportPrintPage (app\reports\print\monthly\[accountId]\page.tsx:26:18)
+  122 |
+  123 | function createGoogleAdsRoutingError(message: string): NotionIntegrationError {
+> 124 |   return new NotionIntegrationError(
+      |          ^
+  125 |     {
+  126 |       success: false,
+  127 |       stage: "google_ads_routing", {
+  payload: [Object],
+  httpStatus: 500,
+  digest: '2140149198'
+}
+⨯ Error [NotionIntegrationError]: Google Ads routing could not be resolved for lookup "1458920562401266" because no matching row was found in Notion DB | Ad Accounts.
+    at createGoogleAdsRoutingError (lib\reporting\notion.ts:124:10)
+    at <unknown> (lib\reporting\notion.ts:242:13)
+    at Array.forEach (<anonymous>)
+    at resolveGoogleAccountsFromNotion (lib\reporting\notion.ts:196:17)
+    at async resolveReportAccountContext (lib\reporting\service.ts:2192:32)
+    at async getOverallReport (lib\reporting\service.ts:236:56)
+    at async MonthlyReportPrintPage (app\reports\print\monthly\[accountId]\page.tsx:26:18)
+  122 |
+  123 | function createGoogleAdsRoutingError(message: string): NotionIntegrationError {
+> 124 |   return new NotionIntegrationError(
+      |          ^
+  125 |     {
+  126 |       success: false,
+  127 |       stage: "google_ads_routing", {
+  payload: [Object],
+  httpStatus: 500,
+  digest: '2736430094'
+}
+⨯ Error [NotionIntegrationError]: Google Ads routing could not be resolved for lookup "26081194298131611" because no matching row was found in Notion DB | Ad Accounts.
+    at createGoogleAdsRoutingError (lib\reporting\notion.ts:124:10)
+    at <unknown> (lib\reporting\notion.ts:242:13)
+    at Array.forEach (<anonymous>)
+    at resolveGoogleAccountsFromNotion (lib\reporting\notion.ts:196:17)
+    at async resolveReportAccountContext (lib\reporting\service.ts:2192:32)
+    at async getOverallReport (lib\reporting\service.ts:236:56)
+    at async MonthlyReportPrintPage (app\reports\print\monthly\[accountId]\page.tsx:26:18)
+  122 |
+  123 | function createGoogleAdsRoutingError(message: string): NotionIntegrationError {
+> 124 |   return new NotionIntegrationError(
+      |          ^
+  125 |     {
+  126 |       success: false,
+  127 |       stage: "google_ads_routing", {
+  payload: [Object],
+  httpStatus: 500,
+  digest: '3378486638'
+}
+⨯ Error [NotionIntegrationError]: Google Ads routing could not be resolved for lookup "1458920562401266" because no matching row was found in Notion DB | Ad Accounts.
+    at createGoogleAdsRoutingError (lib\reporting\notion.ts:124:10)
+    at <unknown> (lib\reporting\notion.ts:242:13)
+    at Array.forEach (<anonymous>)
+    at resolveGoogleAccountsFromNotion (lib\reporting\notion.ts:196:17)
+    at async resolveReportAccountContext (lib\reporting\service.ts:2192:32)
+    at async getOverallReport (lib\reporting\service.ts:236:56)
+    at async MonthlyReportPrintPage (app\reports\print\monthly\[accountId]\page.tsx:26:18)
+  122 |
+  123 | function createGoogleAdsRoutingError(message: string): NotionIntegrationError {
+> 124 |   return new NotionIntegrationError(
+      |          ^
+  125 |     {
+  126 |       success: false,
+  127 |       stage: "google_ads_routing", {
+  payload: [Object],
+  httpStatus: 500,
+  digest: '2736430094'
+}
+⨯ Error [NotionIntegrationError]: Google Ads routing could not be resolved for lookup "1075348557259245" because no matching row was found in Notion DB | Ad Accounts.
+    at createGoogleAdsRoutingError (lib\reporting\notion.ts:124:10)
+    at <unknown> (lib\reporting\notion.ts:242:13)
+    at Array.forEach (<anonymous>)
+    at resolveGoogleAccountsFromNotion (lib\reporting\notion.ts:196:17)
+    at async resolveReportAccountContext (lib\reporting\service.ts:2192:32)
+    at async getOverallReport (lib\reporting\service.ts:236:56)
+    at async MonthlyReportPrintPage (app\reports\print\monthly\[accountId]\page.tsx:26:18)
+  122 |
+  123 | function createGoogleAdsRoutingError(message: string): NotionIntegrationError {
+> 124 |   return new NotionIntegrationError(
+      |          ^
+  125 |     {
+  126 |       success: false,
+  127 |       stage: "google_ads_routing", {
+  payload: [Object],
+  httpStatus: 500,
+  digest: '2140149198'
+}

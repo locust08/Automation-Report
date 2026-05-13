@@ -7,8 +7,6 @@ import {
   EyeIcon,
   HouseIcon,
   IdCardIcon,
-  LightbulbIcon,
-  SearchIcon,
   SparklesIcon,
 } from "lucide-react";
 
@@ -40,8 +38,6 @@ export function ReportShell({
     home: withQuery("/", activeQuery),
     overall: withQuery("/overall", activeQuery),
     preview: withQuery("/preview", activeQuery),
-    keywords: withQuery("/keywords", activeQuery),
-    insights: withQuery("/insights", activeQuery),
     advanced: withQuery("/advanced", activeQuery),
   };
 
@@ -98,22 +94,6 @@ export function ReportShell({
                     className="inline-flex size-10 items-center justify-center rounded-md bg-white/10 hover:bg-white/20"
                   >
                     <EyeIcon className="size-5" />
-                  </Link>
-                  <Link
-                    href={hrefs.keywords}
-                    title="Top 10 Keywords"
-                    aria-label="Open Top 10 Keywords page"
-                    className="inline-flex size-10 items-center justify-center rounded-md bg-white/10 hover:bg-white/20"
-                  >
-                    <SearchIcon className="size-5" />
-                  </Link>
-                  <Link
-                    href={hrefs.insights}
-                    title="Insights"
-                    aria-label="Open Insights page"
-                    className="inline-flex size-10 items-center justify-center rounded-md bg-white/10 hover:bg-white/20"
-                  >
-                    <LightbulbIcon className="size-5" />
                   </Link>
                   <Link
                     href={hrefs.advanced}
