@@ -1181,8 +1181,8 @@ async function renderPdfWithBrowserRun(env: Env, reportUrl: string): Promise<Arr
     });
     await page.emulateMediaType("screen");
     await page.goto(reportUrl, {
-      waitUntil: "networkidle0",
-      timeout: 45000,
+      waitUntil: "domcontentloaded",
+      timeout: 60000,
     });
     await page.addStyleTag({
       content: `
@@ -1202,15 +1202,7 @@ async function renderPdfWithBrowserRun(env: Env, reportUrl: string): Promise<Arr
         }
       `,
     });
-    await page.waitForSelector("[data-report-capture-root='true']", {
-      visible: true,
-      timeout: 45000,
-    });
-    await page.evaluate(() => document.fonts.ready);
-    await page.waitForFunction(() => {
-      const root = document.querySelector<HTMLElement>("[data-report-capture-root='true']");
-      return Boolean(root && root.scrollHeight > 0 && root.scrollWidth > 0);
-    });
+    await waitForOverallReportReady(page, 60000);
     const pageSize = await page.$eval("[data-report-capture-root='true']", (element) => {
       const target = element as HTMLElement;
       const rect = target.getBoundingClientRect();
@@ -1402,6 +1394,23 @@ async function renderPdfForReportMessage(env: Env, message: ReportQueueMessage):
   });
 }
 
+async function waitForOverallReportReady(page: Page, timeoutMs: number): Promise<void> {
+  await page.waitForSelector("[data-report-capture-root='true'][data-report-ready='true']", {
+    visible: true,
+    timeout: timeoutMs,
+  });
+  await page.evaluate(() => document.fonts.ready);
+  await page.waitForFunction(
+    () => {
+      const root = document.querySelector<HTMLElement>(
+        "[data-report-capture-root='true'][data-report-ready='true']"
+      );
+      return Boolean(root && root.scrollHeight > 0 && root.scrollWidth > 0);
+    },
+    { timeout: timeoutMs }
+  );
+}
+
 async function renderStackedReportSectionsPdf(
   env: Env,
   message: ReportQueueMessage,
@@ -1481,8 +1490,8 @@ async function captureReportSectionImage(
   });
   await page.emulateMediaType("screen");
   await page.goto(reportUrl, {
-    waitUntil: "networkidle0",
-    timeout: 45000,
+    waitUntil: "domcontentloaded",
+    timeout: 60000,
   });
   await page.addStyleTag({
     content: `
@@ -1502,15 +1511,7 @@ async function captureReportSectionImage(
       }
     `,
   });
-  await page.waitForSelector("[data-report-capture-root='true']", {
-    visible: true,
-    timeout: 45000,
-  });
-  await page.evaluate(() => document.fonts.ready);
-  await page.waitForFunction(() => {
-    const root = document.querySelector<HTMLElement>("[data-report-capture-root='true']");
-    return Boolean(root && root.scrollHeight > 0 && root.scrollWidth > 0);
-  });
+  await waitForOverallReportReady(page, 60000);
   const clip = await page.$eval("[data-report-capture-root='true']", (element) => {
     const target = element as HTMLElement;
     const rect = target.getBoundingClientRect();

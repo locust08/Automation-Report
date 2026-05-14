@@ -46,6 +46,7 @@ import {
   MetaPreviewDiagnostics,
   OverallReportPayload,
   Platform,
+  ReportPerformanceDiagnostic,
   PreviewCampaignNode,
   GooglePreviewDiagnostics,
   GooglePreviewFatalError,
@@ -88,6 +89,10 @@ const GOOGLE_FETCH_CACHE_MAX_ENTRIES = parsePositiveIntegerEnv(
   process.env.REPORTING_GOOGLE_CACHE_MAX_ENTRIES,
   200
 );
+const OVERALL_REPORT_SLOW_STAGE_WARNING_MS = parsePositiveIntegerEnv(
+  process.env.REPORTING_SLOW_STAGE_WARNING_MS,
+  10 * 1000
+);
 
 const googleCampaignRowsCache = new Map<
   string,
@@ -109,6 +114,42 @@ const googleAccountNameCache = new Map<string, MemoryCacheEntry<string | null>>(
 function parsePositiveIntegerEnv(rawValue: string | undefined, fallback: number): number {
   const parsed = Number.parseInt(rawValue ?? "", 10);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+async function timeOverallReportStage<T>(
+  requestId: string,
+  timings: ReportPerformanceDiagnostic[],
+  stage: string,
+  factory: () => Promise<T>
+): Promise<T> {
+  const startedAt = Date.now();
+  try {
+    return await factory();
+  } finally {
+    const durationMs = Date.now() - startedAt;
+    timings.push({ stage, durationMs });
+    console.info(`[overall-report] request=${requestId} stage=${stage} duration_ms=${durationMs}`);
+  }
+}
+
+function createReportRequestId(): string {
+  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function buildSlowStageWarning(timings: ReportPerformanceDiagnostic[]): string | null {
+  const slowStages = timings
+    .filter((timing) => timing.durationMs >= OVERALL_REPORT_SLOW_STAGE_WARNING_MS)
+    .sort((left, right) => right.durationMs - left.durationMs)
+    .slice(0, 3);
+
+  if (slowStages.length === 0) {
+    return null;
+  }
+
+  const stageList = slowStages
+    .map((timing) => `${timing.stage} ${Math.round(timing.durationMs / 1000)}s`)
+    .join(", ");
+  return `Report diagnostics: slow upstream stage detected (${stageList}). If loading feels unusually long, retry once or check the related API credentials/rate limits.`;
 }
 
 function createGoogleFetchCacheKey(
@@ -230,12 +271,17 @@ const MANUAL_AUCTION_INSIGHT_ROWS_BY_ACCOUNT: Record<string, AuctionInsightRow[]
 };
 
 export async function getOverallReport(input: OverallInput): Promise<OverallReportPayload> {
+  const reportRequestId = createReportRequestId();
+  const reportStartedAt = Date.now();
+  const diagnostics: ReportPerformanceDiagnostic[] = [];
   const credentials = getCredentials();
   const dateRange = buildDateRange(input.startDate, input.endDate);
 
-  const { resolvedAccountIds, googleManagerContext } = await resolveReportAccountContext(
-    input,
-    credentials
+  const { resolvedAccountIds, googleManagerContext } = await timeOverallReportStage(
+    reportRequestId,
+    diagnostics,
+    "notion_resolution",
+    () => resolveReportAccountContext(input, credentials)
   );
   const mappedCompanyName = resolveCompanyNameFromAccountId(
     {
@@ -247,14 +293,20 @@ export async function getOverallReport(input: OverallInput): Promise<OverallRepo
     },
     { fallback: false }
   );
-  const [resolvedMetaAccountName, resolvedGoogleAccountName] = await Promise.all([
-    tryFetchMetaAccountNames(resolvedAccountIds.metaAccountIds, credentials.metaAccessToken),
-    tryFetchGoogleAccountNames(
-      resolvedAccountIds.googleAccountIds,
-      credentials,
-      googleManagerContext.loginCustomerIdByAccount
-    ),
-  ]);
+  const [resolvedMetaAccountName, resolvedGoogleAccountName] = await timeOverallReportStage(
+    reportRequestId,
+    diagnostics,
+    "account_names",
+    () =>
+      Promise.all([
+        tryFetchMetaAccountNames(resolvedAccountIds.metaAccountIds, credentials.metaAccessToken),
+        tryFetchGoogleAccountNames(
+          resolvedAccountIds.googleAccountIds,
+          credentials,
+          googleManagerContext.loginCustomerIdByAccount
+        ),
+      ])
+  );
   const fallbackCompanyName =
     resolveCompanyNameFromAccountId({
       companyName: credentials.companyName,
@@ -272,70 +324,94 @@ export async function getOverallReport(input: OverallInput): Promise<OverallRepo
   const warnings: string[] = [...googleManagerContext.messages];
 
   const [metaCurrentResult, metaPreviousResult, metaAudienceBreakdownResult] = await Promise.all([
-    tryFetchMetaForAccounts(
-      resolvedAccountIds.metaAccountIds,
-      credentials.metaAccessToken,
-      dateRange.startDate,
-      dateRange.endDate
+    timeOverallReportStage(reportRequestId, diagnostics, "meta_current", () =>
+      tryFetchMetaForAccounts(
+        resolvedAccountIds.metaAccountIds,
+        credentials.metaAccessToken,
+        dateRange.startDate,
+        dateRange.endDate
+      )
     ),
-    tryFetchMetaForAccounts(
-      resolvedAccountIds.metaAccountIds,
-      credentials.metaAccessToken,
-      dateRange.previousStartDate,
-      dateRange.previousEndDate
+    timeOverallReportStage(reportRequestId, diagnostics, "meta_previous", () =>
+      tryFetchMetaForAccounts(
+        resolvedAccountIds.metaAccountIds,
+        credentials.metaAccessToken,
+        dateRange.previousStartDate,
+        dateRange.previousEndDate
+      )
     ),
-    tryFetchMetaAudienceBreakdownForAccounts(
-      resolvedAccountIds.metaAccountIds,
-      credentials.metaAccessToken,
-      dateRange.startDate,
-      dateRange.endDate
+    timeOverallReportStage(reportRequestId, diagnostics, "meta_audience", () =>
+      tryFetchMetaAudienceBreakdownForAccounts(
+        resolvedAccountIds.metaAccountIds,
+        credentials.metaAccessToken,
+        dateRange.startDate,
+        dateRange.endDate
+      )
     ),
   ]);
 
   // Google Ads is called sequentially to avoid burst-rate-limit (429) in shared environments.
-  const googleCurrentResult = await tryFetchGoogleForAccounts(
-    resolvedAccountIds.googleAccountIds,
-    credentials.googleAdsApiVersion,
-    credentials.googleDeveloperToken,
-    credentials.googleAccessToken,
-    credentials.googleRefreshToken,
-    credentials.googleClientId,
-    credentials.googleClientSecret,
-    googleManagerContext.loginCustomerIdByAccount,
-    googleManagerContext.accessPathByAccount,
-    credentials.googleLoginCustomerId,
-    dateRange.startDate,
-    dateRange.endDate,
-    true
+  const googleCurrentResult = await timeOverallReportStage(
+    reportRequestId,
+    diagnostics,
+    "google_current",
+    () =>
+      tryFetchGoogleForAccounts(
+        resolvedAccountIds.googleAccountIds,
+        credentials.googleAdsApiVersion,
+        credentials.googleDeveloperToken,
+        credentials.googleAccessToken,
+        credentials.googleRefreshToken,
+        credentials.googleClientId,
+        credentials.googleClientSecret,
+        googleManagerContext.loginCustomerIdByAccount,
+        googleManagerContext.accessPathByAccount,
+        credentials.googleLoginCustomerId,
+        dateRange.startDate,
+        dateRange.endDate,
+        true
+      )
   );
-  const googlePreviousResult = await tryFetchGoogleForAccounts(
-    resolvedAccountIds.googleAccountIds,
-    credentials.googleAdsApiVersion,
-    credentials.googleDeveloperToken,
-    credentials.googleAccessToken,
-    credentials.googleRefreshToken,
-    credentials.googleClientId,
-    credentials.googleClientSecret,
-    googleManagerContext.loginCustomerIdByAccount,
-    googleManagerContext.accessPathByAccount,
-    credentials.googleLoginCustomerId,
-    dateRange.previousStartDate,
-    dateRange.previousEndDate,
-    true
+  const googlePreviousResult = await timeOverallReportStage(
+    reportRequestId,
+    diagnostics,
+    "google_previous",
+    () =>
+      tryFetchGoogleForAccounts(
+        resolvedAccountIds.googleAccountIds,
+        credentials.googleAdsApiVersion,
+        credentials.googleDeveloperToken,
+        credentials.googleAccessToken,
+        credentials.googleRefreshToken,
+        credentials.googleClientId,
+        credentials.googleClientSecret,
+        googleManagerContext.loginCustomerIdByAccount,
+        googleManagerContext.accessPathByAccount,
+        credentials.googleLoginCustomerId,
+        dateRange.previousStartDate,
+        dateRange.previousEndDate,
+        true
+      )
   );
-  const googleAudienceBreakdownResult = await tryFetchGoogleAudienceBreakdownForAccounts(
-    resolvedAccountIds.googleAccountIds,
-    credentials.googleAdsApiVersion,
-    credentials.googleDeveloperToken,
-    credentials.googleAccessToken,
-    credentials.googleRefreshToken,
-    credentials.googleClientId,
-    credentials.googleClientSecret,
-    googleManagerContext.loginCustomerIdByAccount,
-    googleManagerContext.accessPathByAccount,
-    credentials.googleLoginCustomerId,
-    dateRange.startDate,
-    dateRange.endDate
+  const googleAudienceBreakdownResult = await timeOverallReportStage(
+    reportRequestId,
+    diagnostics,
+    "google_audience",
+    () =>
+      tryFetchGoogleAudienceBreakdownForAccounts(
+        resolvedAccountIds.googleAccountIds,
+        credentials.googleAdsApiVersion,
+        credentials.googleDeveloperToken,
+        credentials.googleAccessToken,
+        credentials.googleRefreshToken,
+        credentials.googleClientId,
+        credentials.googleClientSecret,
+        googleManagerContext.loginCustomerIdByAccount,
+        googleManagerContext.accessPathByAccount,
+        credentials.googleLoginCustomerId,
+        dateRange.startDate,
+        dateRange.endDate
+      )
   );
 
   warnings.push(
@@ -395,6 +471,16 @@ export async function getOverallReport(input: OverallInput): Promise<OverallRepo
     );
   }
 
+  const totalDurationMs = Date.now() - reportStartedAt;
+  diagnostics.push({ stage: "total", durationMs: totalDurationMs });
+  console.info(`[overall-report] request=${reportRequestId} stage=total duration_ms=${totalDurationMs}`);
+  const slowStageWarning = buildSlowStageWarning(
+    diagnostics.filter((diagnostic) => diagnostic.stage !== "total")
+  );
+  if (slowStageWarning) {
+    warnings.push(slowStageWarning);
+  }
+
   return {
     companyName,
     dateRange,
@@ -408,6 +494,7 @@ export async function getOverallReport(input: OverallInput): Promise<OverallRepo
     campaignGroups,
     audienceClickBreakdown,
     warnings: dedupeWarnings(warnings),
+    diagnostics,
   };
 }
 

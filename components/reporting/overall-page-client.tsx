@@ -45,6 +45,7 @@ export function OverallPageClient({
     useReportFilters(initialFilters);
   const { screenshotMode } = useScreenshotMode();
   const [resolvedLabels, setResolvedLabels] = useState<ResolvedAccountLabel[]>([]);
+  const [readyAccountKeys, setReadyAccountKeys] = useState<Record<string, boolean>>({});
 
   const queryString = useMemo(() => {
     const params = new URLSearchParams();
@@ -92,6 +93,15 @@ export function OverallPageClient({
     });
   }, []);
 
+  const handleAccountReadyChange = useCallback((key: string, ready: boolean) => {
+    setReadyAccountKeys((current) => {
+      if (current[key] === ready) {
+        return current;
+      }
+      return { ...current, [key]: ready };
+    });
+  }, []);
+
   const forwardQuery = useMemo(() => {
     const params = new URLSearchParams(queryString);
     if (screenshotMode) {
@@ -104,6 +114,9 @@ export function OverallPageClient({
     () => new Set(accountReportEntries.map((entry) => entry.key)),
     [accountReportEntries]
   );
+  const reportReady = splitByAccount
+    ? accountReportEntries.length > 0 && accountReportEntries.every((entry) => readyAccountKeys[entry.key])
+    : Boolean(data && !loading && !error);
   const firstResolvedCompanyName = resolvedLabels.find((label) =>
     activeAccountKeys.has(label.key)
   )?.companyName;
@@ -133,6 +146,7 @@ export function OverallPageClient({
       title={title}
       dateLabel={dateLabel}
       activeQuery={queryString}
+      reportReady={reportReady}
       headerDateControl={
         <ReportHeaderMonthPicker
           startDate={filters.startDate}
@@ -181,6 +195,7 @@ export function OverallPageClient({
                 index={index}
                 screenshotMode={screenshotMode}
                 onResolved={handleAccountResolved}
+                onReadyChange={handleAccountReadyChange}
               />
             ))}
           </div>
@@ -207,11 +222,13 @@ function SplitAccountOverallReport({
   index,
   screenshotMode,
   onResolved,
+  onReadyChange,
 }: {
   entry: AccountReportEntry;
   index: number;
   screenshotMode: boolean;
   onResolved: (label: ResolvedAccountLabel) => void;
+  onReadyChange: (key: string, ready: boolean) => void;
 }) {
   const { data, error, loading, retry } = useOverallReport(entry.queryString, true);
 
@@ -220,6 +237,10 @@ function SplitAccountOverallReport({
       onResolved({ key: entry.key, companyName: data.companyName });
     }
   }, [data?.companyName, entry.key, onResolved]);
+
+  useEffect(() => {
+    onReadyChange(entry.key, Boolean(data && !loading && !error));
+  }, [data, entry.key, error, loading, onReadyChange]);
 
   const forwardQuery = useMemo(() => {
     const params = new URLSearchParams(entry.queryString);

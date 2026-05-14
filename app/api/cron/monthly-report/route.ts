@@ -12,6 +12,16 @@ export async function GET() {
 }
 
 export async function POST(request: Request) {
+  if (!isAuthorized(request)) {
+    return Response.json(
+      {
+        success: false,
+        error: "Unauthorized",
+      },
+      { status: 401 }
+    );
+  }
+
   try {
     console.log("Monthly report cron triggered");
     const body = (await safeReadJson(request)) as
@@ -47,6 +57,18 @@ export async function POST(request: Request) {
       { status: 500 }
     );
   }
+}
+
+function isAuthorized(request: Request): boolean {
+  const expectedSecret =
+    process.env.CRON_SECRET?.trim() || process.env.REPORT_AUTOMATION_SECRET?.trim();
+
+  if (!expectedSecret) {
+    return false;
+  }
+
+  const authorization = request.headers.get("authorization") ?? "";
+  return authorization === `Bearer ${expectedSecret}`;
 }
 
 function parseOptionalBoolean(value: boolean | string | undefined): boolean | undefined {

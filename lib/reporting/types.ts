@@ -131,6 +131,12 @@ export interface OverallReportPayload {
   campaignGroups: CampaignGroup[];
   audienceClickBreakdown: AudienceClickBreakdownResponse;
   warnings: string[];
+  diagnostics?: ReportPerformanceDiagnostic[];
+}
+
+export interface ReportPerformanceDiagnostic {
+  stage: string;
+  durationMs: number;
 }
 
 export interface CampaignComparisonPayload {

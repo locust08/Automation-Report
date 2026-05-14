@@ -18,6 +18,7 @@ interface ReportShellProps {
   headerDateControl?: React.ReactNode;
   headerBottomControl?: React.ReactNode;
   activeQuery?: string;
+  reportReady?: boolean;
   children: React.ReactNode;
 }
 
@@ -31,6 +32,7 @@ export function ReportShell({
   headerDateControl,
   headerBottomControl,
   activeQuery = "",
+  reportReady = false,
   children,
 }: ReportShellProps) {
   const { screenshotMode } = useScreenshotMode();
@@ -45,6 +47,7 @@ export function ReportShell({
     <main
       className="flex min-h-screen flex-col bg-[#f0f0f0] text-[#111]"
       data-report-capture-root="true"
+      data-report-ready={reportReady ? "true" : undefined}
     >
       <div className={`${REPORT_PAGE_FRAME_CLASS} ${screenshotMode ? "!min-h-0 !flex-none" : ""}`}>
         {screenshotMode ? (
