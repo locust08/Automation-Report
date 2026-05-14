@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { runMonthlyReportJob } from "@/src/lib/cron/run-monthly-report-job";
 
 async function main() {

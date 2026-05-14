@@ -1,11 +1,18 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import {
+import * as googleAccessPathModule from "../lib/reporting/google-access-path";
+
+const googleAccessPath = (
+  "default" in googleAccessPathModule
+    ? googleAccessPathModule.default
+    : googleAccessPathModule
+) as typeof import("../lib/reporting/google-access-path");
+const {
   DEFAULT_GOOGLE_ADS_FALLBACK_LOGIN_CUSTOMER_ID,
   formatGoogleAdsAccessPathErrorMessage,
   resolveGoogleAdsAccessPath,
-} from "../lib/reporting/google-access-path";
+} = googleAccessPath;
 
 test("Personal access path uses direct mode", () => {
   const resolved = resolveGoogleAdsAccessPath({

@@ -120,6 +120,7 @@ interface ReportTarget {
   platform?: string | null;
   reportType?: string | null;
   country?: string | null;
+  monthlyEmailEnabled?: boolean | null;
 }
 
 interface ReportSectionTarget extends ReportTarget {
@@ -216,16 +217,13 @@ const worker = {
   async scheduled(controller: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
     const scheduledJob = resolveScheduledJob(controller);
     ctx.waitUntil(
-      createReportJob(
-        env,
-        scheduledJob.input,
-        {
-          source: "scheduled",
-          scheduledCron: controller.cron,
-          scheduledTime: new Date(controller.scheduledTime).toISOString(),
-          scheduleName: scheduledJob.name,
-        }
-      )
+      triggerVercelCronEndpoint(env, {
+        ...scheduledJob.input,
+        scheduleDay: new Date(controller.scheduledTime).getUTCDate(),
+        scheduledCron: controller.cron,
+        scheduledTime: new Date(controller.scheduledTime).toISOString(),
+        scheduleName: scheduledJob.name,
+      })
     );
   },
 
@@ -243,6 +241,37 @@ const worker = {
 };
 
 export default worker;
+
+async function triggerVercelCronEndpoint(
+  env: Env,
+  body: CreateJobRequest & {
+    scheduleDay: number;
+    scheduledCron: string;
+    scheduledTime: string;
+    scheduleName: string;
+  }
+): Promise<void> {
+  const endpoint = `${trimTrailingSlash(env.VERCEL_APP_BASE_URL)}/api/cron/monthly-report`;
+  const response = await fetch(endpoint, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${readRequired(env.REPORT_AUTOMATION_SECRET, "REPORT_AUTOMATION_SECRET")}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(body),
+  });
+
+  if (!response.ok) {
+    const message = await response.text().catch(() => "");
+    throw new Error(
+      `Vercel monthly report cron trigger failed status=${response.status} body=${message.slice(0, 500)}`
+    );
+  }
+
+  console.info(
+    `[monthly-report-automation] triggered Vercel cron endpoint schedule=${body.scheduleName} scheduled_cron=${body.scheduledCron} scheduled_time=${body.scheduledTime}`
+  );
+}
 
 export class BrowserLaunchLimiter {
   constructor(
@@ -293,6 +322,11 @@ async function handleFetch(request: Request, env: Env): Promise<Response> {
         monthlyOverall: "day 7",
         monthlyAdvanced: "day 10",
         biweeklyOverall: "day 15",
+      },
+      cronExpressions: {
+        monthlyOverall: MONTHLY_OVERALL_CRON,
+        monthlyAdvanced: MONTHLY_ADVANCED_CRON,
+        biweeklyOverall: BIWEEKLY_OVERALL_CRON,
       },
       timezone: "UTC",
       malaysiaTime: "12:00 on days 7, 10, and 15",
@@ -349,12 +383,38 @@ async function createReportJob(
   const testMode = Boolean(input.forceTestMode);
   const sendEmail = input.sendEmail !== false;
   const resolved = await resolveTargets(env, input, testMode);
-  const targets = expandAdvancedTargets(resolved.targets);
+  const expandedTargets = expandAdvancedTargets(resolved.targets);
+  const monthlyEmailTargets = expandedTargets.filter((target) => target.monthlyEmailEnabled !== false);
+  const skippedUnchecked = expandedTargets.length - monthlyEmailTargets.length;
+  const recipientTargets = monthlyEmailTargets.filter((target) => {
+    if (!sendEmail || testMode) {
+      return true;
+    }
+    return Boolean(resolveRecipientEmail(env, target, testMode));
+  });
+  const skippedMissingEmail = monthlyEmailTargets.length - recipientTargets.length;
+  const duplicateResult = sendEmail
+    ? await filterAlreadySentTargets(env, recipientTargets, {
+        startDate: resolved.startDate,
+        endDate: resolved.endDate,
+        reportMonthKey: resolved.reportMonthKey,
+      })
+    : { targets: recipientTargets, skippedAlreadySent: 0 };
+  const targets = duplicateResult.targets;
+
+  console.info(
+    `[monthly-report-automation] target gate report_month=${resolved.reportMonthKey} total_resolved=${expandedTargets.length} monthly_email_approved=${monthlyEmailTargets.length} skipped_unchecked=${skippedUnchecked} skipped_missing_email=${skippedMissingEmail} skipped_already_sent=${duplicateResult.skippedAlreadySent}`
+  );
 
   if (targets.length === 0) {
     return {
-      success: false,
-      error: "No valid report targets resolved.",
+      success: true,
+      status: "empty",
+      total: 0,
+      skippedUnchecked,
+      skippedMissingEmail,
+      skippedAlreadySent: duplicateResult.skippedAlreadySent,
+      message: "No report targets queued after monthly email, recipient, and duplicate-send gates.",
       metadata,
     };
   }
@@ -433,9 +493,61 @@ async function createReportJob(
     jobId,
     status: jobStatus,
     total: targets.length,
+    skippedUnchecked,
+    skippedMissingEmail,
+    skippedAlreadySent: duplicateResult.skippedAlreadySent,
     reportMonthKey: resolved.reportMonthKey,
     reportMonthLabel: resolved.reportMonthLabel,
     metadata,
+  };
+}
+
+async function filterAlreadySentTargets(
+  env: Env,
+  targets: ReportTarget[],
+  range: {
+    startDate: string;
+    endDate: string;
+    reportMonthKey: string;
+  }
+): Promise<{ targets: ReportTarget[]; skippedAlreadySent: number }> {
+  const queuedTargets: ReportTarget[] = [];
+  let skippedAlreadySent = 0;
+
+  for (const target of targets) {
+    const reportType = normalizeReportType(target.reportType);
+    const googleAccountId = normalizeOptional(target.googleAccountId) ?? "";
+    const metaAccountId = normalizeOptional(target.metaAccountId) ?? "";
+    const existing = await env.REPORT_JOBS_DB.prepare(
+      `SELECT i.id
+       FROM report_job_items i
+       INNER JOIN report_jobs j ON j.id = i.job_id
+       WHERE j.report_month_key = ?
+         AND j.start_date = ?
+         AND j.end_date = ?
+         AND i.status = 'completed'
+         AND i.report_type = ?
+         AND COALESCE(i.google_account_id, '') = ?
+         AND COALESCE(i.meta_account_id, '') = ?
+       LIMIT 1`
+    )
+      .bind(range.reportMonthKey, range.startDate, range.endDate, reportType, googleAccountId, metaAccountId)
+      .first<{ id: string }>();
+
+    if (existing) {
+      skippedAlreadySent += 1;
+      console.info(
+        `[monthly-report-automation] skipped already sent report_month=${range.reportMonthKey} report_type=${reportType} google_account_id=${googleAccountId || "(none)"} meta_account_id=${metaAccountId || "(none)"}`
+      );
+      continue;
+    }
+
+    queuedTargets.push(target);
+  }
+
+  return {
+    targets: queuedTargets,
+    skippedAlreadySent,
   };
 }
 
@@ -758,6 +870,10 @@ async function enrichTargetsFromNotion(env: Env, targets: ReportTarget[]): Promi
           metaAccountId: target.metaAccountId ?? matchedRows.find((row) => row.metaAccountId)?.metaAccountId ?? null,
           recipientEmail: target.recipientEmail ?? matchedRows.find((row) => row.clientEmail)?.clientEmail ?? null,
           ccEmail: target.ccEmail ?? matchedRows.find((row) => row.ccEmail)?.ccEmail ?? null,
+          monthlyEmailEnabled:
+            matchedRows.length > 0
+              ? matchedRows.some((row) => row.monthlyEmailEnabled)
+              : target.monthlyEmailEnabled ?? null,
         };
       })
     );
@@ -773,6 +889,7 @@ interface NotionAdAccountRow {
   accountName: string | null;
   clientEmail: string | null;
   ccEmail: string | null;
+  monthlyEmailEnabled: boolean;
   clientRelationPageIds: string[];
 }
 
@@ -831,6 +948,7 @@ function mapNotionAdAccountRow(properties: Record<string, unknown>): NotionAdAcc
       "Person-In-Charge Email",
       "PIC Email",
     ]),
+    monthlyEmailEnabled: getNotionCheckbox(properties, ["Monthly email"]),
     clientRelationPageIds: getNotionRelationIds(properties, ["Client"]),
   };
 }
@@ -907,6 +1025,26 @@ function getNotionText(properties: Record<string, unknown>, aliases: string[]): 
   }
 
   return null;
+}
+
+function getNotionCheckbox(properties: Record<string, unknown>, aliases: string[]): boolean {
+  for (const alias of aliases) {
+    const property = findNotionProperty(properties, alias);
+    if (!property || typeof property.type !== "string") {
+      continue;
+    }
+    if (property.type === "checkbox") {
+      return property.checkbox === true;
+    }
+    if (property.type === "formula") {
+      const formula = property.formula as { type?: string; boolean?: boolean | null } | undefined;
+      if (formula?.type === "boolean") {
+        return formula.boolean === true;
+      }
+    }
+  }
+
+  return false;
 }
 
 function getNotionRelationIds(properties: Record<string, unknown>, aliases: string[]): string[] {

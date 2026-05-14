@@ -13,6 +13,7 @@ export interface SendMonthlyReportEmailInput {
   pdfBuffer: Buffer;
   reportMonthKey: string;
   reportMonthLabel: string;
+  forceTestMode?: boolean;
 }
 
 export interface SendMonthlyReportEmailResult {
@@ -26,7 +27,7 @@ export interface SendMonthlyReportEmailResult {
 export async function sendMonthlyReportEmail(
   input: SendMonthlyReportEmailInput
 ): Promise<SendMonthlyReportEmailResult> {
-  const testMode = parseBooleanEnv(process.env.MONTHLY_REPORT_TEST_MODE);
+  const testMode = input.forceTestMode ?? parseBooleanEnv(process.env.MONTHLY_REPORT_TEST_MODE);
   const testRecipient = resolveTestRecipient();
   const fromAddress = readOptionalEnv("RESEND_FROM_MONTHLY_REPORT") ?? DEFAULT_FROM_ADDRESS;
   const recipientEmails = parseEmailList(testMode ? testRecipient : input.account.clientEmail);
@@ -55,8 +56,8 @@ export async function sendMonthlyReportEmail(
     };
   }
 
-  if (testMode && !areSameEmailList(recipientEmails, [DEFAULT_TEST_RECIPIENT])) {
-    const errorMessage = `Unsafe test email send blocked: test emails may only go to ${DEFAULT_TEST_RECIPIENT}.`;
+  if (testMode && !areSameEmailList(recipientEmails, [testRecipient])) {
+    const errorMessage = "Unsafe test email send blocked: test emails may only go to the configured test recipient.";
     console.error(`[monthly-report] email blocked client=${input.account.clientName} error=${errorMessage}`);
     return {
       success: false,

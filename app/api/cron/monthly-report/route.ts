@@ -30,11 +30,28 @@ export async function POST(request: Request) {
           forceDryRun?: boolean | string;
           overrideTargets?: MonthlyReportTargetConfig[];
           overrideTargetsJson?: string;
+          scheduleDay?: number;
+          reportType?: string | null;
+          startDate?: string;
+          endDate?: string;
+          reportMonthKey?: string;
+          reportMonthLabel?: string;
         }
       | null;
     const result = await runMonthlyReportJob({
       forceTestMode: parseOptionalBoolean(body?.forceTestMode),
       forceDryRun: parseOptionalBoolean(body?.forceDryRun),
+      scheduleDay: typeof body?.scheduleDay === "number" ? body.scheduleDay : undefined,
+      reportType: typeof body?.reportType === "string" ? body.reportType : undefined,
+      dateRange:
+        body?.startDate && body.endDate && body.reportMonthKey && body.reportMonthLabel
+          ? {
+              startDate: body.startDate,
+              endDate: body.endDate,
+              reportMonthKey: body.reportMonthKey,
+              reportMonthLabel: body.reportMonthLabel,
+            }
+          : undefined,
       overrideTargets:
         Array.isArray(body?.overrideTargets)
           ? body.overrideTargets
@@ -42,8 +59,16 @@ export async function POST(request: Request) {
     });
 
     return Response.json({
+      ok: result.failed === 0,
       success: true,
       message: "CRON STARTED",
+      reportType: result.reportType,
+      scheduleDay: result.scheduleDay,
+      checkedCount: result.checkedCount,
+      skippedCount: result.skipped,
+      sentCount: result.emailed,
+      failedCount: result.failed,
+      testMode: result.testMode,
       result,
     });
   } catch (error) {

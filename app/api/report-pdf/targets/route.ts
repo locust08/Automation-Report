@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server";
 
 import {
-  getMonthlyReportTargets,
   parseBooleanEnv,
   parseTargetList,
   type MonthlyReportTargetConfig,
@@ -40,7 +39,18 @@ export async function POST(request: Request): Promise<NextResponse> {
     overrideTargets,
     forceTestMode,
   });
-  const targets = resolvedTargets
+  const checkedTargets = resolvedTargets.filter((target) => target.monthlyReportEnabled);
+  const skippedUnchecked = resolvedTargets.length - checkedTargets.length;
+  const targetsMissingEmail = checkedTargets.filter((target) => !target.clientEmail?.trim());
+  const approvedTargets = checkedTargets.filter((target) => target.clientEmail?.trim());
+
+  for (const target of targetsMissingEmail) {
+    console.warn(
+      `[monthly-report-targets] skipped missing email page_id=${target.notionPageId} client=${target.clientName}`
+    );
+  }
+
+  const targets = approvedTargets
     .filter((target) => target.isValid)
     .map((target) => ({
       notionPageId: target.notionPageId,
@@ -53,12 +63,17 @@ export async function POST(request: Request): Promise<NextResponse> {
       ccEmail: forceTestMode ? null : target.picEmail,
       platform: target.platform,
       reportType: target.reportType,
+      monthlyEmailEnabled: true,
     }));
 
   return NextResponse.json({
     success: true,
     ...dateRange,
     testMode: forceTestMode,
+    totalResolved: resolvedTargets.length,
+    checkedCount: checkedTargets.length,
+    skippedUnchecked,
+    skippedMissingEmail: targetsMissingEmail.length,
     targets,
   });
 }
@@ -71,15 +86,20 @@ async function resolveReportTargets(input: {
     return resolveMonthlyReportTargetsFromNotion(input.overrideTargets);
   }
 
-  const configuredTargets = getMonthlyReportTargets({
-    testModeOverride: input.forceTestMode,
-  });
-  if (configuredTargets.length > 0) {
-    return configuredTargets;
+  const configuredTargetConfigs = parseTargetList(
+    input.forceTestMode
+      ? process.env.MONTHLY_REPORT_TEST_TARGETS_JSON
+      : process.env.MONTHLY_REPORT_TARGETS_JSON
+  );
+  if (configuredTargetConfigs.length > 0) {
+    return resolveMonthlyReportTargetsFromNotion(configuredTargetConfigs);
   }
 
   const notionResult = await getMonthlyReportAccounts();
-  return notionResult.accounts.filter((account) => Boolean(account.googleAdsAccountId));
+  console.info(
+    `[monthly-report-targets] notion rows fetched=${notionResult.total} monthly_email_approved=${notionResult.monthlyEmailApprovedCount} monthly_email_unchecked_skipped=${notionResult.monthlyEmailSkippedCount}`
+  );
+  return notionResult.accounts.filter((account) => Boolean(account.googleAdsAccountId || account.metaAdsAccountId));
 }
 
 function isAuthorized(request: Request): boolean {

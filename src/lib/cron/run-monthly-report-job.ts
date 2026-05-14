@@ -3,12 +3,17 @@ import {
   isMonthlyReportDryRun,
   type MonthlyReportPdfBatchResult,
 } from "@/src/lib/cron/generate-monthly-report-pdf";
+import { resolveMonthlyReportDateRange } from "@/src/lib/cron/monthly-report-date";
 import {
-  getMonthlyReportTargets,
   parseBooleanEnv,
+  parseTargetList,
   type MonthlyReportTargetConfig,
 } from "@/src/lib/cron/monthly-report-targets";
 import { sendMonthlyReportEmail } from "@/src/lib/email/send-monthly-report-email";
+import {
+  hasMonthlyReportEmailBeenSent,
+  recordMonthlyReportEmailSent,
+} from "@/src/lib/notion/monthly-report-email-log";
 import {
   getMonthlyReportAccounts,
   resolveMonthlyReportTargetsFromNotion,
@@ -17,11 +22,17 @@ import {
 
 export interface MonthlyReportJobResult {
   totalAccounts: number;
+  reportType: string;
+  scheduleDay: number;
+  checkedCount: number;
   processed: number;
   generated: number;
   emailed: number;
   failed: number;
   skipped: number;
+  skippedMonthlyEmailUnchecked: number;
+  skippedMissingEmail: number;
+  skippedAlreadySent: number;
   totalDurationMs: number;
   withinTenMinutes: boolean;
   warning: string | null;
@@ -52,27 +63,65 @@ export async function runMonthlyReportJob(input?: {
   forceTestMode?: boolean;
   forceDryRun?: boolean;
   overrideTargets?: MonthlyReportTargetConfig[];
+  scheduleDay?: number;
+  reportType?: string;
+  dateRange?: ReturnType<typeof resolveMonthlyReportDateRange>;
 }): Promise<MonthlyReportJobResult> {
   const startedAt = Date.now();
   console.log("Monthly job started");
 
   const testMode = input?.forceTestMode ?? parseBooleanEnv(process.env.MONTHLY_REPORT_TEST_MODE);
   const dryRun = input?.forceDryRun ?? isMonthlyReportDryRun();
+  const scheduleDay = input?.scheduleDay ?? new Date().getUTCDate();
+  const reportType = input?.reportType
+    ? normalizeScheduledReportType(input.reportType, scheduleDay)
+    : resolveReportTypeForScheduleDay(scheduleDay);
 
   try {
-    const resolvedTargets = await resolveTargets({
+    const targetResolution = await resolveTargets({
       testMode,
       overrideTargets: input?.overrideTargets,
     });
-    const accountsToProcess = testMode ? resolvedTargets.slice(0, 1) : resolvedTargets;
-    const skippedFromTestMode = Math.max(resolvedTargets.length - accountsToProcess.length, 0);
+    const checkedTargets = targetResolution.accounts.filter((account) => account.monthlyReportEnabled);
+    const missingEmailTargets = checkedTargets.filter((account) => !account.clientEmail?.trim());
+    const emailableTargets = checkedTargets.filter((account) => account.clientEmail?.trim());
+    const dateRange = input?.dateRange ?? resolveMonthlyReportDateRange();
+    const duplicateFilteredTargets = dryRun || testMode
+      ? { accounts: emailableTargets, skippedAlreadySent: 0 }
+      : await filterAlreadySentAccounts(emailableTargets, {
+          reportType,
+          reportMonthKey: dateRange.reportMonthKey,
+        });
+    const accountsToProcess = testMode ? duplicateFilteredTargets.accounts.slice(0, 1) : duplicateFilteredTargets.accounts;
+    const skippedFromTestMode = Math.max(duplicateFilteredTargets.accounts.length - accountsToProcess.length, 0);
+    const skippedMonthlyEmailUnchecked =
+      targetResolution.skippedMonthlyEmailUnchecked +
+      targetResolution.accounts.filter((account) => !account.monthlyReportEnabled).length;
+    const skippedMissingEmail = missingEmailTargets.length;
 
-    console.log(`Monthly report configured targets=${resolvedTargets.length}`);
+    console.log(`[monthly-report] scheduler day detected=${scheduleDay}`);
+    console.log(`[monthly-report] report type=${reportType}`);
+    console.log(`[monthly-report] notion rows fetched=${targetResolution.totalNotionRows}`);
+    console.log(`[monthly-report] monthly email approved=${checkedTargets.length}`);
+    console.log(`[monthly-report] monthly email unchecked skipped=${skippedMonthlyEmailUnchecked}`);
+    console.log(`[monthly-report] missing email skipped=${skippedMissingEmail}`);
+    console.log(`[monthly-report] already sent skipped=${duplicateFilteredTargets.skippedAlreadySent}`);
+    console.log(`Monthly report configured targets=${targetResolution.accounts.length}`);
     console.log(`Monthly report test mode enabled=${testMode}`);
+    if (testMode) {
+      console.log("[monthly-report] test mode active; processing at most one checked account and using the configured test recipient");
+    }
     console.log(`Monthly report dry run enabled=${dryRun}`);
+
+    for (const account of missingEmailTargets) {
+      console.warn(
+        `[monthly-report] skipped missing email page_id=${account.notionPageId} account_id=${resolvePrimaryAccountId(account) ?? "missing"} client=${account.clientName}`
+      );
+    }
 
     const pdfBatch = await generateMonthlyReportPdfBatch({
       accounts: accountsToProcess,
+      dateRange,
     });
     const emailResults: MonthlyReportJobResult["emailResults"] = [];
     let emailed = 0;
@@ -95,6 +144,7 @@ export async function runMonthlyReportJob(input?: {
             pdfBuffer: pdfResult.pdfBuffer,
             reportMonthKey: pdfResult.reportMonthKey,
             reportMonthLabel: pdfResult.reportMonthLabel,
+            forceTestMode: testMode,
           });
 
           emailResults.push({
@@ -109,6 +159,18 @@ export async function runMonthlyReportJob(input?: {
 
           if (emailResult.success) {
             emailed += 1;
+            if (!testMode) {
+              await recordMonthlyReportEmailSent({
+                account: pdfResult.account,
+                reportType,
+                reportMonthKey: pdfResult.reportMonthKey,
+                recipientEmail: emailResult.recipientEmail,
+                ccEmail: emailResult.ccEmail,
+                resendEmailId: emailResult.resendEmailId,
+              }).catch((error: unknown) => {
+                console.error(`[monthly-report] sent log failed account_id=${pdfResult.accountId ?? "missing"} error=${toErrorMessage(error)}`);
+              });
+            }
           } else {
             emailFailures += 1;
             console.error(
@@ -131,15 +193,26 @@ export async function runMonthlyReportJob(input?: {
     }
 
     const totalDurationMs = Date.now() - startedAt;
-    const skipped = pdfBatch.skipped + skippedFromTestMode;
+    const skipped =
+      pdfBatch.skipped +
+      skippedFromTestMode +
+      skippedMonthlyEmailUnchecked +
+      skippedMissingEmail +
+      duplicateFilteredTargets.skippedAlreadySent;
     const failed = pdfBatch.failed + emailFailures;
     const result: MonthlyReportJobResult = {
-      totalAccounts: resolvedTargets.length,
+      totalAccounts: targetResolution.accounts.length,
+      reportType,
+      scheduleDay,
+      checkedCount: checkedTargets.length,
       processed: pdfBatch.processed,
       generated: pdfBatch.generated,
       emailed,
       failed,
       skipped,
+      skippedMonthlyEmailUnchecked,
+      skippedMissingEmail,
+      skippedAlreadySent: duplicateFilteredTargets.skippedAlreadySent,
       totalDurationMs,
       withinTenMinutes: totalDurationMs <= 10 * 60 * 1000,
       warning:
@@ -162,7 +235,7 @@ export async function runMonthlyReportJob(input?: {
     };
 
     console.log(
-      `[monthly-report] summary total=${result.totalAccounts} processed=${result.processed} generated=${result.generated} emailed=${result.emailed} failed=${result.failed} skipped=${result.skipped} total_duration_ms=${result.totalDurationMs} within_ten_minutes=${result.withinTenMinutes}`
+      `[monthly-report] summary report_type=${result.reportType} schedule_day=${result.scheduleDay} total=${result.totalAccounts} checked=${result.checkedCount} processed=${result.processed} generated=${result.generated} emailed=${result.emailed} failed=${result.failed} skipped=${result.skipped} skipped_missing_email=${result.skippedMissingEmail} skipped_unchecked=${result.skippedMonthlyEmailUnchecked} skipped_already_sent=${result.skippedAlreadySent} total_duration_ms=${result.totalDurationMs} within_ten_minutes=${result.withinTenMinutes}`
     );
 
     return result;
@@ -171,11 +244,17 @@ export async function runMonthlyReportJob(input?: {
 
     return {
       totalAccounts: 0,
+      reportType,
+      scheduleDay,
+      checkedCount: 0,
       processed: 0,
       generated: 0,
       emailed: 0,
       failed: 1,
       skipped: 0,
+      skippedMonthlyEmailUnchecked: 0,
+      skippedMissingEmail: 0,
+      skippedAlreadySent: 0,
       totalDurationMs: Date.now() - startedAt,
       withinTenMinutes: true,
       warning: `Monthly job target resolution failed: ${toErrorMessage(error)}`,
@@ -191,18 +270,102 @@ export async function runMonthlyReportJob(input?: {
 async function resolveTargets(input: {
   testMode: boolean;
   overrideTargets?: MonthlyReportTargetConfig[];
-}): Promise<MonthlyReportAccount[]> {
-  const configuredTargets =
+}): Promise<{
+  accounts: MonthlyReportAccount[];
+  totalNotionRows: number;
+  skippedMonthlyEmailUnchecked: number;
+}> {
+  const rawConfiguredTargets =
     input.overrideTargets && input.overrideTargets.length > 0
-      ? await resolveMonthlyReportTargetsFromNotion(input.overrideTargets)
-      : getMonthlyReportTargets({ testModeOverride: input.testMode });
+      ? input.overrideTargets
+      : parseTargetList(
+          input.testMode
+            ? process.env.MONTHLY_REPORT_TEST_TARGETS_JSON
+            : process.env.MONTHLY_REPORT_TARGETS_JSON
+        );
+  const configuredTargets =
+    rawConfiguredTargets.length > 0
+      ? await resolveMonthlyReportTargetsFromNotion(rawConfiguredTargets)
+      : [];
 
   if (configuredTargets.length > 0) {
-    return configuredTargets;
+    return {
+      accounts: configuredTargets,
+      totalNotionRows: 0,
+      skippedMonthlyEmailUnchecked: 0,
+    };
   }
 
   const notionAccounts = await getMonthlyReportAccounts();
-  return notionAccounts.accounts.filter((account) => Boolean(account.googleAdsAccountId || account.metaAdsAccountId));
+  return {
+    accounts: notionAccounts.accounts.filter((account) => Boolean(account.googleAdsAccountId || account.metaAdsAccountId)),
+    totalNotionRows: notionAccounts.total,
+    skippedMonthlyEmailUnchecked: notionAccounts.monthlyEmailSkippedCount,
+  };
+}
+
+function resolveReportTypeForScheduleDay(scheduleDay: number): string {
+  if (scheduleDay === 7) {
+    return "monthlyOverall";
+  }
+  if (scheduleDay === 10) {
+    return "monthlyAdvanced";
+  }
+  if (scheduleDay === 15) {
+    return "biweeklyOverall";
+  }
+  return "monthlyOverall";
+}
+
+function normalizeScheduledReportType(value: string, scheduleDay: number): string {
+  const normalized = value.trim().toLowerCase();
+  if (normalized === "monthlyoverall" || (normalized === "overall" && scheduleDay === 7)) {
+    return "monthlyOverall";
+  }
+  if (normalized === "monthlyadvanced" || normalized === "advanced") {
+    return "monthlyAdvanced";
+  }
+  if (normalized === "biweeklyoverall" || (normalized === "overall" && scheduleDay === 15)) {
+    return "biweeklyOverall";
+  }
+  return resolveReportTypeForScheduleDay(scheduleDay);
+}
+
+async function filterAlreadySentAccounts(
+  accounts: MonthlyReportAccount[],
+  input: {
+    reportType: string;
+    reportMonthKey: string;
+  }
+): Promise<{ accounts: MonthlyReportAccount[]; skippedAlreadySent: number }> {
+  const eligibleAccounts: MonthlyReportAccount[] = [];
+  let skippedAlreadySent = 0;
+
+  for (const account of accounts) {
+    const alreadySent = await hasMonthlyReportEmailBeenSent({
+      account,
+      reportType: input.reportType,
+      reportMonthKey: input.reportMonthKey,
+    });
+    if (alreadySent) {
+      skippedAlreadySent += 1;
+      console.info(
+        `[monthly-report] skipped already sent report_type=${input.reportType} report_month=${input.reportMonthKey} page_id=${account.notionPageId} account_id=${resolvePrimaryAccountId(account) ?? "missing"} client=${account.clientName}`
+      );
+      continue;
+    }
+
+    eligibleAccounts.push(account);
+  }
+
+  return {
+    accounts: eligibleAccounts,
+    skippedAlreadySent,
+  };
+}
+
+function resolvePrimaryAccountId(account: MonthlyReportAccount): string | null {
+  return account.googleAdsAccountId ?? account.metaAdsAccountId ?? null;
 }
 
 function toErrorMessage(error: unknown): string {

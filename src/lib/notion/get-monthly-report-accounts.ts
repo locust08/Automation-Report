@@ -23,6 +23,8 @@ export interface MonthlyReportAccountReadResult {
   raw: unknown[];
   accounts: MonthlyReportAccount[];
   skippedAccounts: MonthlyReportAccount[];
+  monthlyEmailApprovedCount: number;
+  monthlyEmailSkippedCount: number;
   sampleProperties: Record<string, unknown> | null;
   errorMessage: string | null;
 }
@@ -69,30 +71,35 @@ export async function getMonthlyReportAccounts(): Promise<MonthlyReportAccountRe
       return emptyResult(errorMessage);
     }
 
-    const fullResponse = await notion.dataSources.query({
-      data_source_id: dataSourceId,
-    });
-    const fullDataset = buildResultFromRows(fullResponse.results);
-
     const filter = buildMonthlyReportNotionFilter(databaseProperties);
-    if (!filter) {
-      console.warn("Monthly report Notion filter skipped: expected filter properties not found.");
-      return fullDataset;
+    const fullResults = await queryAllDataSourceRows(notion, dataSourceId);
+    const fullDataset = buildResultFromRows(fullResults);
+
+    if (!filter?.monthlyEmailProperty) {
+      const errorMessage =
+        'Monthly report Notion filter failed closed: expected checkbox property "Monthly email" was not found.';
+      console.error(errorMessage);
+      return {
+        ...fullDataset,
+        accounts: [],
+        errorMessage,
+      };
     }
 
-    const response = await notion.dataSources.query({
-      data_source_id: dataSourceId,
-      filter,
-    });
+    const filteredResults = await queryAllDataSourceRows(notion, dataSourceId, filter.filter);
+    console.log("Filtered results:", filteredResults.length);
 
-    console.log("Filtered results:", response.results.length);
-
-    if (response.results.length === 0) {
-      console.warn("Filter returned 0 -> fallback to full dataset");
-      return fullDataset;
-    }
-
-    return buildResultFromRows(response.results);
+    return {
+      ...buildResultFromRows(filteredResults),
+      total: fullDataset.total,
+      monthlyEmailApprovedCount: filteredResults
+        .map((row) => mapMonthlyReportAccount(row))
+        .filter((account): account is MonthlyReportAccount => Boolean(account))
+        .filter((account) => account.isValid && account.monthlyReportEnabled).length,
+      monthlyEmailSkippedCount: fullDataset.accounts.filter(
+        (account) => isActiveStatus(account.status) && !account.monthlyReportEnabled
+      ).length,
+    };
   } catch (error) {
     console.error("Monthly report raw Notion query failed", error);
     return emptyResult(toErrorMessage(error));
@@ -149,7 +156,7 @@ export async function resolveMonthlyReportTargetsFromNotion(
       clientEmail: target.recipientEmail?.trim() || matchedAccount?.clientEmail || null,
       picEmail: target.ccEmail?.trim() || matchedAccount?.picEmail || null,
       status: matchedAccount?.status ?? null,
-      monthlyReportEnabled: matchedAccount?.monthlyReportEnabled ?? true,
+      monthlyReportEnabled: matchedAccount?.monthlyReportEnabled ?? false,
       platform:
         target.platform?.trim() ||
         matchedAccount?.platform ||
@@ -328,6 +335,8 @@ function buildResultFromRows(results: unknown[]): MonthlyReportAccountReadResult
     raw: results.slice(0, 3),
     accounts,
     skippedAccounts,
+    monthlyEmailApprovedCount: accounts.filter((account) => account.monthlyReportEnabled).length,
+    monthlyEmailSkippedCount: accounts.filter((account) => !account.monthlyReportEnabled).length,
     sampleProperties: firstProperties,
     errorMessage: null,
   };
@@ -350,6 +359,7 @@ function mapMonthlyReportAccount(row: unknown): MonthlyReportAccount | null {
 
   const status = getPropertyValue(properties, ["Status", "status"]);
   const monthlyReportEnabled = getBooleanPropertyValue(properties, [
+    "Monthly email",
     "Monthly Report Enabled",
     "Monthly Email",
     "monthly report enabled",
@@ -506,10 +516,18 @@ function buildMonthlyReportNotionFilter(
   databaseProperties: Record<string, unknown>
 ):
   | {
+      monthlyEmailProperty: string | null;
+      filter: {
       and: Array<
         | {
             property: string;
             select: {
+              equals: string;
+            };
+          }
+        | {
+            property: string;
+            status: {
               equals: string;
             };
           }
@@ -520,24 +538,30 @@ function buildMonthlyReportNotionFilter(
             };
           }
       >;
+      };
     }
   | undefined {
   const statusProperty = findDatabasePropertyName(databaseProperties, ["Status", "status"]);
-  const enabledProperty = findDatabasePropertyName(databaseProperties, [
-    "Monthly Report Enabled",
-    "Monthly Email",
-    "monthly report enabled",
-    "monthly email",
-  ]);
-  const filters: NonNullable<ReturnType<typeof buildMonthlyReportNotionFilter>>["and"] = [];
+  const enabledProperty = findExactDatabasePropertyName(databaseProperties, "Monthly email");
+  const filters: NonNullable<ReturnType<typeof buildMonthlyReportNotionFilter>>["filter"]["and"] = [];
 
   if (statusProperty) {
-    filters.push({
-      property: statusProperty,
-      select: {
-        equals: "Active",
-      },
-    });
+    const statusType = getDatabasePropertyType(databaseProperties, statusProperty);
+    filters.push(
+      statusType === "status"
+        ? {
+            property: statusProperty,
+            status: {
+              equals: "Active",
+            },
+          }
+        : {
+            property: statusProperty,
+            select: {
+              equals: "Active",
+            },
+          }
+    );
   }
 
   if (enabledProperty) {
@@ -549,7 +573,33 @@ function buildMonthlyReportNotionFilter(
     });
   }
 
-  return filters.length > 0 ? { and: filters } : undefined;
+  return filters.length > 0
+    ? {
+        monthlyEmailProperty: enabledProperty,
+        filter: { and: filters },
+      }
+    : undefined;
+}
+
+async function queryAllDataSourceRows(
+  notion: Client,
+  dataSourceId: string,
+  filter?: NonNullable<ReturnType<typeof buildMonthlyReportNotionFilter>>["filter"]
+): Promise<unknown[]> {
+  const results: unknown[] = [];
+  let startCursor: string | undefined;
+
+  do {
+    const response = await notion.dataSources.query({
+      data_source_id: dataSourceId,
+      filter,
+      start_cursor: startCursor,
+    });
+    results.push(...response.results);
+    startCursor = response.has_more ? response.next_cursor ?? undefined : undefined;
+  } while (startCursor);
+
+  return results;
 }
 
 function findDatabasePropertyName(
@@ -562,6 +612,26 @@ function findDatabasePropertyName(
   );
 
   return match ?? null;
+}
+
+function findExactDatabasePropertyName(
+  properties: Record<string, unknown>,
+  propertyName: string
+): string | null {
+  return Object.keys(properties).find((key) => key === propertyName) ?? null;
+}
+
+function getDatabasePropertyType(
+  properties: Record<string, unknown>,
+  propertyName: string
+): string | null {
+  const property = properties[propertyName];
+  if (!property || typeof property !== "object" || !("type" in property)) {
+    return null;
+  }
+
+  const type = (property as { type?: unknown }).type;
+  return typeof type === "string" ? type : null;
 }
 
 function normalizePropertyKey(value: string): string {
@@ -756,9 +826,15 @@ function emptyResult(errorMessage: string | null = null): MonthlyReportAccountRe
     raw: [],
     accounts: [],
     skippedAccounts: [],
+    monthlyEmailApprovedCount: 0,
+    monthlyEmailSkippedCount: 0,
     sampleProperties: null,
     errorMessage,
   };
+}
+
+function isActiveStatus(status: string | null): boolean {
+  return !status || status.trim().toLowerCase() === "active";
 }
 
 function toErrorMessage(error: unknown): string {
