@@ -2,7 +2,7 @@ import { Resend } from "resend";
 
 import type { MonthlyReportAccount } from "@/src/lib/notion/get-monthly-report-accounts";
 
-const DEFAULT_TEST_RECIPIENT = "ava@locus-t.com.my";
+const DEFAULT_TEST_RECIPIENT = "amirulshahrul1775@gmail.com";
 const DEFAULT_FROM_ADDRESS = "LOCUS-T Reports <reports@locus-t.com.my>";
 const DEFAULT_LOGO_URL = "https://www.locus-t.com.my/wp-content/uploads/2024/09/LT-Logo-25.svg";
 
@@ -26,9 +26,8 @@ export interface SendMonthlyReportEmailResult {
 export async function sendMonthlyReportEmail(
   input: SendMonthlyReportEmailInput
 ): Promise<SendMonthlyReportEmailResult> {
-  const resend = getResendClient();
   const testMode = parseBooleanEnv(process.env.MONTHLY_REPORT_TEST_MODE);
-  const testRecipient = readOptionalEnv("MONTHLY_REPORT_TEST_RECIPIENT") ?? DEFAULT_TEST_RECIPIENT;
+  const testRecipient = resolveTestRecipient();
   const fromAddress = readOptionalEnv("RESEND_FROM_MONTHLY_REPORT") ?? DEFAULT_FROM_ADDRESS;
   const recipientEmails = parseEmailList(testMode ? testRecipient : input.account.clientEmail);
   const ccEmails = testMode ? [] : parseEmailList(input.account.picEmail);
@@ -43,6 +42,31 @@ export async function sendMonthlyReportEmail(
   );
   console.info(`[monthly-report] test mode status enabled=${testMode}`);
 
+  if (!testMode && process.env.NODE_ENV !== "production") {
+    const errorMessage =
+      "Unsafe email send blocked: NODE_ENV is not production and MONTHLY_REPORT_TEST_MODE is not true.";
+    console.error(`[monthly-report] email blocked client=${input.account.clientName} error=${errorMessage}`);
+    return {
+      success: false,
+      resendEmailId: null,
+      recipientEmail,
+      ccEmail,
+      errorMessage,
+    };
+  }
+
+  if (testMode && !areSameEmailList(recipientEmails, [DEFAULT_TEST_RECIPIENT])) {
+    const errorMessage = `Unsafe test email send blocked: test emails may only go to ${DEFAULT_TEST_RECIPIENT}.`;
+    console.error(`[monthly-report] email blocked client=${input.account.clientName} error=${errorMessage}`);
+    return {
+      success: false,
+      resendEmailId: null,
+      recipientEmail,
+      ccEmail,
+      errorMessage,
+    };
+  }
+
   if (recipientEmails.length === 0) {
     const errorMessage = "Missing recipient email for monthly report.";
     console.error(`[monthly-report] email failed client=${input.account.clientName} error=${errorMessage}`);
@@ -56,6 +80,7 @@ export async function sendMonthlyReportEmail(
   }
 
   try {
+    const resend = getResendClient();
     const attachments: Array<{ filename: string; content: string }> = [
       {
         filename: buildAttachmentFilename(input.account.clientName, input.reportMonthLabel),
@@ -72,6 +97,15 @@ export async function sendMonthlyReportEmail(
         logoUrl: resolveLogoUrl(),
         clientName: input.account.clientName,
         reportMonthLabel: input.reportMonthLabel,
+        testDetails: testMode
+          ? {
+              accountId: resolvePrimaryAccountId(input.account) ?? "Missing account ID",
+              accountName: input.account.clientName,
+              originalRecipient: input.account.clientEmail ?? "Missing recipient email",
+              actualSendTo: recipientEmail ?? DEFAULT_TEST_RECIPIENT,
+              testMode,
+            }
+          : null,
       }),
       attachments,
     });
@@ -118,9 +152,34 @@ function buildEmailHtml(input: {
   logoUrl: string;
   clientName: string;
   reportMonthLabel: string;
+  testDetails?: {
+    accountId: string;
+    accountName: string;
+    originalRecipient: string;
+    actualSendTo: string;
+    testMode: boolean;
+  } | null;
 }): string {
   const clientName = formatClientNameForEmail(input.clientName);
   const reportMonthLabel = input.reportMonthLabel;
+  const testDetailsHtml = input.testDetails
+    ? `
+              <tr>
+                <td style="padding:0 30px 26px;background:#ffffff;color:#1f2937;font-size:14px;line-height:1.55;">
+                  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="width:100%;border-collapse:collapse;border:1px solid #fecaca;background:#fff7f7;">
+                    <tr>
+                      <td style="padding:14px 16px;font-weight:800;color:#991b1b;">Test Delivery Details</td>
+                    </tr>
+                    <tr><td style="padding:0 16px 6px;"><strong>Account ID:</strong> ${escapeHtml(input.testDetails.accountId)}</td></tr>
+                    <tr><td style="padding:0 16px 6px;"><strong>Account Name:</strong> ${escapeHtml(input.testDetails.accountName)}</td></tr>
+                    <tr><td style="padding:0 16px 6px;"><strong>Original Notion Recipient:</strong> ${escapeHtml(input.testDetails.originalRecipient)}</td></tr>
+                    <tr><td style="padding:0 16px 6px;"><strong>Actual Sent To:</strong> ${escapeHtml(input.testDetails.actualSendTo)}</td></tr>
+                    <tr><td style="padding:0 16px 14px;"><strong>Test Mode:</strong> ${input.testDetails.testMode ? "true" : "false"}</td></tr>
+                  </table>
+                </td>
+              </tr>
+      `
+    : "";
 
   return `
     <div style="margin:0;padding:0;background:#f3f4f6;font-family:Arial,Helvetica,sans-serif;color:#111827;">
@@ -153,6 +212,7 @@ function buildEmailHtml(input: {
                   <p style="margin:0;">Best regards,<br/><strong style="font-weight:800;color:#111827;">LOCUS-T</strong></p>
                 </td>
               </tr>
+              ${testDetailsHtml}
               <tr>
                 <td style="padding:15px 30px 16px;background:#f9fafb;border-top:1px solid #e5e7eb;color:#6b7280;font-size:11px;line-height:1.55;">
                   This report was generated automatically from the LOCUS-T reporting dashboard.<br/>
@@ -225,6 +285,32 @@ export function parseEmailList(value: string | null | undefined): string[] {
         .filter(Boolean)
     )
   );
+}
+
+function resolveTestRecipient(): string {
+  const configured = readOptionalEnv("MONTHLY_REPORT_TEST_RECIPIENT");
+  if (!configured) {
+    return DEFAULT_TEST_RECIPIENT;
+  }
+
+  return configured.toLowerCase() === DEFAULT_TEST_RECIPIENT.toLowerCase()
+    ? DEFAULT_TEST_RECIPIENT
+    : configured;
+}
+
+function areSameEmailList(left: string[], right: string[]): boolean {
+  const normalize = (items: string[]) => items.map((item) => item.trim().toLowerCase()).sort();
+  const normalizedLeft = normalize(left);
+  const normalizedRight = normalize(right);
+
+  return (
+    normalizedLeft.length === normalizedRight.length &&
+    normalizedLeft.every((item, index) => item === normalizedRight[index])
+  );
+}
+
+function resolvePrimaryAccountId(account: MonthlyReportAccount): string | null {
+  return account.googleAdsAccountId ?? account.metaAdsAccountId ?? null;
 }
 
 function escapeHtml(value: string): string {

@@ -1,6 +1,6 @@
 import type { MonthlyReportAccount } from "@/src/lib/notion/get-monthly-report-accounts";
 
-const DEFAULT_TEST_RECIPIENT = "ava@locus-t.com.my";
+const DEFAULT_TEST_RECIPIENT = "amirulshahrul1775@gmail.com";
 
 export interface MonthlyReportTargetConfig {
   clientName?: string;

@@ -48,7 +48,7 @@ export async function POST(request: Request): Promise<NextResponse> {
       googleAccountId: target.googleAdsAccountId,
       metaAccountId: target.metaAdsAccountId,
       recipientEmail: forceTestMode
-        ? process.env.MONTHLY_REPORT_TEST_RECIPIENT?.trim() || "eason@locus-t.com.my"
+        ? process.env.MONTHLY_REPORT_TEST_RECIPIENT?.trim() || "amirulshahrul1775@gmail.com"
         : target.clientEmail,
       ccEmail: forceTestMode ? null : target.picEmail,
       platform: target.platform,

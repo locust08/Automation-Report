@@ -2,7 +2,7 @@
 
 import { FormEvent, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { ArrowRightIcon, LinkIcon } from "lucide-react";
+import { ArrowRightIcon, EyeIcon, LinkIcon, SlidersHorizontalIcon } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -29,20 +29,23 @@ export function HomePageClient() {
   const [accountId, setAccountId] = useState("");
   const [country, setCountry] = useState(initialCountry);
 
-  function handleSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
+  const reportQueryString = useMemo(() => {
     const params = new URLSearchParams();
     if (accountId.trim()) {
       params.set("accountId", accountId.trim());
     }
     params.set("country", country);
-    router.push(`/overall${params.toString() ? `?${params.toString()}` : ""}`);
-  }
+    return params.toString();
+  }, [accountId, country]);
 
-  const advancedHref = `/advanced?${new URLSearchParams({
-    ...(accountId.trim() ? { accountId: accountId.trim() } : {}),
-    country,
-  }).toString()}`;
+  const overallHref = `/overall${reportQueryString ? `?${reportQueryString}` : ""}`;
+  const previewHref = `/preview${reportQueryString ? `?${reportQueryString}` : ""}`;
+  const advancedHref = `/advanced${reportQueryString ? `?${reportQueryString}` : ""}`;
+
+  function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    router.push(overallHref);
+  }
 
   return (
     <main className="flex min-h-screen items-center justify-center bg-[url('/background.png')] bg-cover bg-center bg-no-repeat px-4 py-8">
@@ -78,18 +81,36 @@ export function HomePageClient() {
             </Select>
           </label>
 
-          <div className="flex flex-col gap-4 sm:flex-row sm:items-center">
-            <Button type="submit" className="h-11 w-full bg-red-600 px-5 hover:bg-red-700 sm:w-auto">
+          <div className="grid gap-3 sm:grid-cols-3">
+            <Button
+              type="submit"
+              className="h-auto min-h-12 w-full whitespace-normal bg-red-600 px-4 py-3 text-center leading-snug hover:bg-red-700"
+            >
               Open Overall Performance
               <ArrowRightIcon data-icon="inline-end" />
             </Button>
 
-            <a
-              href={advancedHref}
-              className="inline-flex h-11 w-full items-center justify-center rounded-md border border-white/30 px-5 text-sm font-medium text-white transition hover:bg-white/10 sm:w-auto"
+            <Button
+              asChild
+              variant="outline"
+              className="h-auto min-h-12 w-full whitespace-normal border-white/30 bg-white/10 px-4 py-3 text-center leading-snug text-white shadow-none hover:bg-white/20 hover:text-white"
             >
-              Open Advanced Report
-            </a>
+              <a href={previewHref}>
+                Open Preview Page
+                <EyeIcon data-icon="inline-end" />
+              </a>
+            </Button>
+
+            <Button
+              asChild
+              variant="outline"
+              className="h-auto min-h-12 w-full whitespace-normal border-white/30 bg-transparent px-4 py-3 text-center leading-snug text-white shadow-none hover:bg-white/10 hover:text-white"
+            >
+              <a href={advancedHref}>
+                Open Advanced Report
+                <SlidersHorizontalIcon data-icon="inline-end" />
+              </a>
+            </Button>
           </div>
         </form>
 
