@@ -65,19 +65,23 @@ export async function POST(request: Request): Promise<NextResponse> {
 
     const targets = approvedTargets
       .filter((target) => target.isValid)
-      .map((target) => ({
-        notionPageId: target.notionPageId,
-        clientName: target.clientName,
-        googleAccountId: target.googleAdsAccountId,
-        metaAccountId: target.metaAdsAccountId,
-        recipientEmail: forceTestMode
-          ? process.env.MONTHLY_REPORT_TEST_RECIPIENT?.trim() || "amirulshahrul1775@gmail.com"
-          : target.clientEmail,
-        ccEmail: forceTestMode ? null : target.picEmail,
-        platform: target.platform,
-        reportType: target.reportType,
-        monthlyEmailEnabled: true,
-      }));
+      .map((target) => {
+        const accountIds = resolveTargetAccountIds(target);
+
+        return {
+          notionPageId: target.notionPageId,
+          clientName: target.clientName,
+          googleAccountId: accountIds.googleAccountId,
+          metaAccountId: accountIds.metaAccountId,
+          recipientEmail: forceTestMode
+            ? process.env.MONTHLY_REPORT_TEST_RECIPIENT?.trim() || "amirulshahrul1775@gmail.com"
+            : target.clientEmail,
+          ccEmail: forceTestMode ? null : target.picEmail,
+          platform: target.platform,
+          reportType: target.reportType,
+          monthlyEmailEnabled: true,
+        };
+      });
 
     return NextResponse.json({
       success: true,
@@ -177,4 +181,34 @@ async function safeReadJson(request: Request): Promise<unknown> {
 
 function toErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : "Unknown target resolution failure.";
+}
+
+function resolveTargetAccountIds(target: {
+  platform: string | null;
+  googleAdsAccountId: string | null;
+  metaAdsAccountId: string | null;
+}): {
+  googleAccountId: string | null;
+  metaAccountId: string | null;
+} {
+  const platform = target.platform?.trim().toLowerCase() ?? "";
+
+  if (platform.includes("meta") || platform.includes("facebook")) {
+    return {
+      googleAccountId: null,
+      metaAccountId: target.metaAdsAccountId,
+    };
+  }
+
+  if (platform.includes("google")) {
+    return {
+      googleAccountId: target.googleAdsAccountId,
+      metaAccountId: null,
+    };
+  }
+
+  return {
+    googleAccountId: target.googleAdsAccountId,
+    metaAccountId: target.metaAdsAccountId,
+  };
 }

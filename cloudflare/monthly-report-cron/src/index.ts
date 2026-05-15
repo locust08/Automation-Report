@@ -2049,6 +2049,9 @@ function buildReportUrl(
 
   const googleAccountId = normalizeOptional(target.googleAccountId);
   const metaAccountId = normalizeOptional(target.metaAccountId);
+  const platform = inferPlatform(target).toLowerCase();
+  const shouldUseMetaOnly = platform === "meta";
+  const shouldUseGoogleOnly = platform === "google";
 
   if (reportType === "advanced") {
     const accountId = googleAccountId ?? metaAccountId;
@@ -2059,14 +2062,14 @@ function buildReportUrl(
     return url.toString();
   }
 
-  if (googleAccountId) {
+  if (googleAccountId && !shouldUseMetaOnly) {
     url.searchParams.set("googleAccountId", googleAccountId);
     url.searchParams.set("platform", "google");
   }
 
-  if (metaAccountId) {
+  if (metaAccountId && !shouldUseGoogleOnly) {
     url.searchParams.set("metaAccountId", metaAccountId);
-    if (!googleAccountId) {
+    if (!googleAccountId || shouldUseMetaOnly) {
       url.searchParams.set("platform", "meta");
     }
   }
