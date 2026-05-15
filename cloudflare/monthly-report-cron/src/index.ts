@@ -871,9 +871,10 @@ async function enrichTargetsFromNotion(env: Env, targets: ReportTarget[]): Promi
           recipientEmail: target.recipientEmail ?? matchedRows.find((row) => row.clientEmail)?.clientEmail ?? null,
           ccEmail: target.ccEmail ?? matchedRows.find((row) => row.ccEmail)?.ccEmail ?? null,
           monthlyEmailEnabled:
-            matchedRows.length > 0
+            target.monthlyEmailEnabled ??
+            (matchedRows.length > 0
               ? matchedRows.some((row) => row.monthlyEmailEnabled)
-              : target.monthlyEmailEnabled ?? null,
+              : null),
         };
       })
     );
