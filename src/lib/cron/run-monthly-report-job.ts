@@ -9,6 +9,12 @@ import {
   parseTargetList,
   type MonthlyReportTargetConfig,
 } from "@/src/lib/cron/monthly-report-targets";
+import {
+  getReportConfirmationCheckboxProperty,
+  normalizeScheduledReportType,
+  resolveReportTypeForScheduleDay,
+  type ScheduledMonthlyReportType,
+} from "@/src/lib/cron/monthly-report-confirmation";
 import { sendMonthlyReportEmail } from "@/src/lib/email/send-monthly-report-email";
 import {
   hasMonthlyReportEmailBeenSent,
@@ -22,8 +28,9 @@ import {
 
 export interface MonthlyReportJobResult {
   totalAccounts: number;
-  reportType: string;
+  reportType: ScheduledMonthlyReportType;
   scheduleDay: number;
+  confirmationCheckboxProperty: string;
   checkedCount: number;
   processed: number;
   generated: number;
@@ -76,10 +83,13 @@ export async function runMonthlyReportJob(input?: {
   const reportType = input?.reportType
     ? normalizeScheduledReportType(input.reportType, scheduleDay)
     : resolveReportTypeForScheduleDay(scheduleDay);
+  const confirmationCheckboxProperty = getReportConfirmationCheckboxProperty(reportType);
 
   try {
     const targetResolution = await resolveTargets({
       testMode,
+      reportType,
+      scheduleDay,
       overrideTargets: input?.overrideTargets,
     });
     const checkedTargets = targetResolution.accounts.filter((account) => account.monthlyReportEnabled);
@@ -101,9 +111,10 @@ export async function runMonthlyReportJob(input?: {
 
     console.log(`[monthly-report] scheduler day detected=${scheduleDay}`);
     console.log(`[monthly-report] report type=${reportType}`);
+    console.log(`[monthly-report] confirmation checkbox property="${confirmationCheckboxProperty}"`);
     console.log(`[monthly-report] notion rows fetched=${targetResolution.totalNotionRows}`);
-    console.log(`[monthly-report] monthly email approved=${checkedTargets.length}`);
-    console.log(`[monthly-report] monthly email unchecked skipped=${skippedMonthlyEmailUnchecked}`);
+    console.log(`[monthly-report] rows approved by checkbox=${checkedTargets.length}`);
+    console.log(`[monthly-report] rows skipped by checkbox=${skippedMonthlyEmailUnchecked}`);
     console.log(`[monthly-report] missing email skipped=${skippedMissingEmail}`);
     console.log(`[monthly-report] already sent skipped=${duplicateFilteredTargets.skippedAlreadySent}`);
     console.log(`Monthly report configured targets=${targetResolution.accounts.length}`);
@@ -204,6 +215,7 @@ export async function runMonthlyReportJob(input?: {
       totalAccounts: targetResolution.accounts.length,
       reportType,
       scheduleDay,
+      confirmationCheckboxProperty,
       checkedCount: checkedTargets.length,
       processed: pdfBatch.processed,
       generated: pdfBatch.generated,
@@ -235,7 +247,7 @@ export async function runMonthlyReportJob(input?: {
     };
 
     console.log(
-      `[monthly-report] summary report_type=${result.reportType} schedule_day=${result.scheduleDay} total=${result.totalAccounts} checked=${result.checkedCount} processed=${result.processed} generated=${result.generated} emailed=${result.emailed} failed=${result.failed} skipped=${result.skipped} skipped_missing_email=${result.skippedMissingEmail} skipped_unchecked=${result.skippedMonthlyEmailUnchecked} skipped_already_sent=${result.skippedAlreadySent} total_duration_ms=${result.totalDurationMs} within_ten_minutes=${result.withinTenMinutes}`
+      `[monthly-report] summary report_type=${result.reportType} schedule_day=${result.scheduleDay} confirmation_checkbox="${result.confirmationCheckboxProperty}" total=${result.totalAccounts} checked=${result.checkedCount} processed=${result.processed} generated=${result.generated} sent=${result.emailed} failed=${result.failed} skipped=${result.skipped} skipped_missing_email=${result.skippedMissingEmail} skipped_unchecked=${result.skippedMonthlyEmailUnchecked} skipped_already_sent=${result.skippedAlreadySent} test_mode=${result.testMode} total_duration_ms=${result.totalDurationMs} within_ten_minutes=${result.withinTenMinutes}`
     );
 
     return result;
@@ -246,6 +258,7 @@ export async function runMonthlyReportJob(input?: {
       totalAccounts: 0,
       reportType,
       scheduleDay,
+      confirmationCheckboxProperty,
       checkedCount: 0,
       processed: 0,
       generated: 0,
@@ -269,6 +282,8 @@ export async function runMonthlyReportJob(input?: {
 
 async function resolveTargets(input: {
   testMode: boolean;
+  reportType: ScheduledMonthlyReportType;
+  scheduleDay: number;
   overrideTargets?: MonthlyReportTargetConfig[];
 }): Promise<{
   accounts: MonthlyReportAccount[];
@@ -285,7 +300,10 @@ async function resolveTargets(input: {
         );
   const configuredTargets =
     rawConfiguredTargets.length > 0
-      ? await resolveMonthlyReportTargetsFromNotion(rawConfiguredTargets)
+      ? await resolveMonthlyReportTargetsFromNotion(rawConfiguredTargets, {
+          reportType: input.reportType,
+          scheduleDay: input.scheduleDay,
+        })
       : [];
 
   if (configuredTargets.length > 0) {
@@ -296,39 +314,18 @@ async function resolveTargets(input: {
     };
   }
 
-  const notionAccounts = await getMonthlyReportAccounts();
+  const notionAccounts = await getMonthlyReportAccounts({
+    reportType: input.reportType,
+    scheduleDay: input.scheduleDay,
+  });
+  if (notionAccounts.errorMessage) {
+    throw new Error(notionAccounts.errorMessage);
+  }
   return {
     accounts: notionAccounts.accounts.filter((account) => Boolean(account.googleAdsAccountId || account.metaAdsAccountId)),
     totalNotionRows: notionAccounts.total,
     skippedMonthlyEmailUnchecked: notionAccounts.monthlyEmailSkippedCount,
   };
-}
-
-function resolveReportTypeForScheduleDay(scheduleDay: number): string {
-  if (scheduleDay === 7) {
-    return "monthlyOverall";
-  }
-  if (scheduleDay === 10) {
-    return "monthlyAdvanced";
-  }
-  if (scheduleDay === 15) {
-    return "biweeklyOverall";
-  }
-  return "monthlyOverall";
-}
-
-function normalizeScheduledReportType(value: string, scheduleDay: number): string {
-  const normalized = value.trim().toLowerCase();
-  if (normalized === "monthlyoverall" || (normalized === "overall" && scheduleDay === 7)) {
-    return "monthlyOverall";
-  }
-  if (normalized === "monthlyadvanced" || normalized === "advanced") {
-    return "monthlyAdvanced";
-  }
-  if (normalized === "biweeklyoverall" || (normalized === "overall" && scheduleDay === 15)) {
-    return "biweeklyOverall";
-  }
-  return resolveReportTypeForScheduleDay(scheduleDay);
 }
 
 async function filterAlreadySentAccounts(

@@ -60,15 +60,17 @@ export async function POST(request: Request) {
 
     return Response.json({
       ok: result.failed === 0,
-      success: true,
-      message: "CRON STARTED",
+      success: result.failed === 0,
+      message: result.failed === 0 ? "CRON STARTED" : "CRON FAILED CLOSED",
       reportType: result.reportType,
       scheduleDay: result.scheduleDay,
+      confirmationCheckboxProperty: result.confirmationCheckboxProperty,
       checkedCount: result.checkedCount,
       skippedCount: result.skipped,
       sentCount: result.emailed,
       failedCount: result.failed,
       testMode: result.testMode,
+      warning: result.warning,
       result,
     });
   } catch (error) {
