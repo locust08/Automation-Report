@@ -2,7 +2,6 @@ import { summarizeAudienceItemsForChart } from "@/lib/reporting/audience-breakdo
 import { formatCompactNumber, formatDelta, formatMetricValue } from "@/lib/reporting/format";
 import type {
   AudienceBreakdownRow,
-  AudienceClickBreakdownResponse,
   CampaignGroup,
   CampaignRow,
   OverallReportPayload,
@@ -16,9 +15,11 @@ import styles from "./monthly-report-print.module.css";
 export function MonthlyReportPrint({
   accountId,
   report,
+  platform,
 }: {
   accountId: string;
   report: OverallReportPayload;
+  platform?: string;
 }) {
   const title = `${report.companyName} Monthly Performance`;
   const activeAccountItems = [
@@ -60,7 +61,7 @@ export function MonthlyReportPrint({
           ))}
 
           <CampaignBreakdown groups={report.campaignGroups} />
-          <AudienceBreakdown breakdown={report.audienceClickBreakdown} />
+          <AudienceBreakdown report={report} platform={platform} />
         </section>
 
         <footer className={styles.footer}>
@@ -182,14 +183,29 @@ function CampaignRowCells({
   );
 }
 
-function AudienceBreakdown({ breakdown }: { breakdown: AudienceClickBreakdownResponse }) {
+function AudienceBreakdown({
+  report,
+  platform,
+}: {
+  report: OverallReportPayload;
+  platform?: string;
+}) {
+  const breakdown = report.audienceClickBreakdown;
   const ageRows = summarizeAudienceItemsForChart(breakdown.age, "age").slice(0, 6);
   const genderRows = summarizeAudienceItemsForChart(breakdown.gender, "gender").slice(0, 4);
   const countryRows = summarizeAudienceItemsForChart(breakdown.location.country, "country");
   const regionRows = summarizeAudienceItemsForChart(breakdown.location.region, "region");
   const cityRows = summarizeAudienceItemsForChart(breakdown.location.city, "city");
-  const locationRows = (cityRows.length > 0 ? cityRows : regionRows.length > 0 ? regionRows : countryRows).slice(0, 7);
-  const activeLocationTab = cityRows.length > 0 ? "City" : regionRows.length > 0 ? "State / Region" : "Country";
+  const locationBreakdown = resolvePdfLocationBreakdown(
+    report,
+    {
+      countryRows,
+      regionRows,
+      cityRows,
+    },
+    platform
+  );
+  const locationRows = locationBreakdown.rows.slice(0, 7);
 
   return (
     <section className={styles.dashboardSection}>
@@ -198,14 +214,6 @@ function AudienceBreakdown({ breakdown }: { breakdown: AudienceClickBreakdownRes
           <h2>Audience Click Breakdown</h2>
           <p>Clicks by age, gender, and top 10 locations for audience optimisation.</p>
         </div>
-        <div className={styles.audienceControls} aria-hidden="true">
-          <span className={styles.activeControl}>Bar</span>
-          <span>Pie</span>
-          <span className={styles.toggleControl}>
-            Hide unknown
-            <i />
-          </span>
-        </div>
       </div>
 
       <div className={styles.audienceGrid}>
@@ -213,7 +221,12 @@ function AudienceBreakdown({ breakdown }: { breakdown: AudienceClickBreakdownRes
         <AudienceChartCard title="Gender Breakdown" rows={genderRows} />
       </div>
 
-      <AudienceChartCard title="Location Breakdown" rows={locationRows} activeLocationTab={activeLocationTab} wide />
+      <AudienceChartCard
+        title="Location Breakdown"
+        rows={locationRows}
+        activeLocationTab={locationBreakdown.label}
+        wide
+      />
     </section>
   );
 }
@@ -238,11 +251,7 @@ function AudienceChartCard({
         </div>
         {activeLocationTab ? (
           <div className={styles.locationTabs} aria-hidden="true">
-            {(["Country", "State / Region", "City"] as const).map((tab) => (
-              <span key={tab} className={tab === activeLocationTab ? styles.activeLocationTab : ""}>
-                {tab}
-              </span>
-            ))}
+            <span className={styles.activeLocationTab}>{activeLocationTab}</span>
           </div>
         ) : null}
       </div>
@@ -314,4 +323,50 @@ function platformLabel(platform: Platform): string {
     return "Google YouTube";
   }
   return "Google Ads";
+}
+
+function resolvePdfLocationBreakdown(
+  report: OverallReportPayload,
+  rows: {
+    countryRows: AudienceBreakdownRow[];
+    regionRows: AudienceBreakdownRow[];
+    cityRows: AudienceBreakdownRow[];
+  },
+  platform?: string
+): { label: "Country" | "State / Region" | "City"; rows: AudienceBreakdownRow[] } {
+  const platformLocation = getPdfLocationFromPlatform(platform);
+  if (platformLocation === "meta") {
+    return { label: "State / Region", rows: rows.regionRows };
+  }
+  if (platformLocation === "google") {
+    return { label: "City", rows: rows.cityRows };
+  }
+
+  const hasMeta = report.accountIds.metaAccountIds.length > 0 || Boolean(report.accountIds.metaAccountId);
+  const hasGoogle = report.accountIds.googleAccountIds.length > 0 || Boolean(report.accountIds.googleAccountId);
+
+  if (hasMeta && !hasGoogle) {
+    return { label: "State / Region", rows: rows.regionRows };
+  }
+  if (hasGoogle && !hasMeta) {
+    return { label: "City", rows: rows.cityRows };
+  }
+  if (rows.cityRows.length > 0) {
+    return { label: "City", rows: rows.cityRows };
+  }
+  if (rows.regionRows.length > 0) {
+    return { label: "State / Region", rows: rows.regionRows };
+  }
+  return { label: "Country", rows: rows.countryRows };
+}
+
+function getPdfLocationFromPlatform(platform?: string): "meta" | "google" | null {
+  const normalized = platform?.trim().toLowerCase();
+  if (normalized === "meta") {
+    return "meta";
+  }
+  if (normalized === "google" || normalized === "googleyoutube") {
+    return "google";
+  }
+  return null;
 }

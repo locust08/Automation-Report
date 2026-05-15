@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { BarChart3Icon, PieChartIcon } from "lucide-react";
 
 import { summarizeAudienceItemsForChart } from "@/lib/reporting/audience-breakdown";
@@ -26,10 +27,13 @@ const PIE_COLORS = ["#f30707", "#ff4d4d", "#b91c1c", "#ef4444", "#991b1b", "#f87
 
 export function AudienceClickBreakdownSection({
   breakdown,
+  pdfLocationTab,
 }: {
   breakdown: AudienceClickBreakdownResponse;
+  pdfLocationTab?: LocationTabKey;
 }) {
   const { screenshotMode } = useScreenshotMode();
+  const searchParams = useSearchParams();
   const [selectedLocationTab, setSelectedLocationTab] = useState<LocationTabKey | null>(null);
   const [chartType, setChartType] = useState<ChartType>("bar");
   const [unknownFilterMode, setUnknownFilterMode] = useState<UnknownFilterMode>("include");
@@ -80,10 +84,16 @@ export function AudienceClickBreakdownSection({
     cityRows,
     hasGoogleCityData
   );
+  const forcedPdfLocationTab = screenshotMode
+    ? getPdfLocationTabFromPlatform(searchParams.get("platform")) ??
+      pdfLocationTab ??
+      inferPdfLocationTabFromBreakdown(breakdown)
+    : null;
   const activeLocationTab =
-    selectedLocationTab && locationRowCounts[selectedLocationTab] > 0
+    forcedPdfLocationTab ??
+    (selectedLocationTab && locationRowCounts[selectedLocationTab] > 0
       ? selectedLocationTab
-      : defaultLocationTab;
+      : defaultLocationTab);
 
   const locationRows = useMemo(() => {
     if (activeLocationTab === "country") {
@@ -108,12 +118,14 @@ export function AudienceClickBreakdownSection({
             Clicks by age, gender, and top 10 locations for audience optimisation.
           </p>
         </div>
-        <AudienceChartControls
-          chartType={chartType}
-          onChartTypeChange={setChartType}
-          unknownFilterMode={unknownFilterMode}
-          onUnknownFilterModeChange={setUnknownFilterMode}
-        />
+        {screenshotMode ? null : (
+          <AudienceChartControls
+            chartType={chartType}
+            onChartTypeChange={setChartType}
+            unknownFilterMode={unknownFilterMode}
+            onUnknownFilterModeChange={setUnknownFilterMode}
+          />
+        )}
       </div>
 
       <div className="grid gap-4 lg:grid-cols-2">
@@ -560,6 +572,42 @@ function shouldUseCityLocationTab(
   hasGoogleCityData: boolean
 ): boolean {
   return hasGoogleCityData && cityRows.length > 0;
+}
+
+function inferPdfLocationTabFromBreakdown(
+  breakdown: AudienceClickBreakdownResponse
+): LocationTabKey | null {
+  const platforms = new Set(
+    [
+      ...breakdown.age,
+      ...breakdown.gender,
+      ...breakdown.location.country,
+      ...breakdown.location.region,
+      ...breakdown.location.city,
+    ].map((item) => item.platform)
+  );
+  const hasMeta = platforms.has("meta");
+  const hasGoogle = platforms.has("google");
+
+  if (hasMeta && !hasGoogle) {
+    return "region";
+  }
+  if (hasGoogle && !hasMeta) {
+    return "city";
+  }
+
+  return null;
+}
+
+function getPdfLocationTabFromPlatform(value: string | null): LocationTabKey | null {
+  const normalized = value?.trim().toLowerCase();
+  if (normalized === "meta") {
+    return "region";
+  }
+  if (normalized === "google" || normalized === "googleyoutube") {
+    return "city";
+  }
+  return null;
 }
 
 function formatPercent(value: number, total: number): string {

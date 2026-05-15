@@ -388,9 +388,12 @@ function renderAudienceBreakdown(
 
   writeAudienceBreakdownRows(writeLine, "Age", ageRows);
   writeAudienceBreakdownRows(writeLine, "Gender", genderRows);
-  writeAudienceBreakdownRows(writeLine, "Country", countryRows);
-  writeAudienceBreakdownRows(writeLine, "State / Region", regionRows);
-  writeAudienceBreakdownRows(writeLine, "City", cityRows);
+  const locationBreakdown = resolvePdfLocationBreakdown(reportPayload, {
+    countryRows,
+    regionRows,
+    cityRows,
+  });
+  writeAudienceBreakdownRows(writeLine, locationBreakdown.heading, locationBreakdown.rows);
 }
 
 function writeAudienceBreakdownRows(
@@ -407,6 +410,34 @@ function writeAudienceBreakdownRows(
   rows.forEach((row) => {
     writeLine(`${row.label}: ${formatInteger(row.clicks)} clicks`, { indent: 14 });
   });
+}
+
+function resolvePdfLocationBreakdown(
+  reportPayload: OverallReportPayload,
+  rows: {
+    countryRows: Array<{ label: string; clicks: number }>;
+    regionRows: Array<{ label: string; clicks: number }>;
+    cityRows: Array<{ label: string; clicks: number }>;
+  }
+): { heading: string; rows: Array<{ label: string; clicks: number }> } {
+  const hasMeta =
+    reportPayload.accountIds.metaAccountIds.length > 0 || Boolean(reportPayload.accountIds.metaAccountId);
+  const hasGoogle =
+    reportPayload.accountIds.googleAccountIds.length > 0 || Boolean(reportPayload.accountIds.googleAccountId);
+
+  if (hasMeta && !hasGoogle) {
+    return { heading: "State / Region", rows: rows.regionRows };
+  }
+  if (hasGoogle && !hasMeta) {
+    return { heading: "City", rows: rows.cityRows };
+  }
+  if (rows.cityRows.length > 0) {
+    return { heading: "City", rows: rows.cityRows };
+  }
+  if (rows.regionRows.length > 0) {
+    return { heading: "State / Region", rows: rows.regionRows };
+  }
+  return { heading: "Country", rows: rows.countryRows };
 }
 
 async function persistReportLog(config: NotionClientConfig, log: MonthlyReportLog): Promise<void> {

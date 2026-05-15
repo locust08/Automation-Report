@@ -209,7 +209,10 @@ export function OverallPageClient({
               groups={data.campaignGroups}
               queryString={forwardQuery}
             />
-            <AudienceClickBreakdownSection breakdown={data.audienceClickBreakdown} />
+            <AudienceClickBreakdownSection
+              breakdown={data.audienceClickBreakdown}
+              pdfLocationTab={resolvePdfAudienceLocationTab(data)}
+            />
           </>
         ) : null}
       </div>
@@ -297,9 +300,28 @@ function AccountReportContent({
         <MetricSection key={section.platform} section={section} />
       ))}
       <OverallCampaignGroupsTable groups={data.campaignGroups} queryString={queryString} />
-      <AudienceClickBreakdownSection breakdown={data.audienceClickBreakdown} />
+      <AudienceClickBreakdownSection
+        breakdown={data.audienceClickBreakdown}
+        pdfLocationTab={resolvePdfAudienceLocationTab(data)}
+      />
     </>
   );
+}
+
+function resolvePdfAudienceLocationTab(
+  data: OverallReportPayload
+): "region" | "city" | undefined {
+  const hasMeta = data.accountIds.metaAccountIds.length > 0 || Boolean(data.accountIds.metaAccountId);
+  const hasGoogle = data.accountIds.googleAccountIds.length > 0 || Boolean(data.accountIds.googleAccountId);
+
+  if (hasMeta && !hasGoogle) {
+    return "region";
+  }
+  if (hasGoogle && !hasMeta) {
+    return "city";
+  }
+
+  return undefined;
 }
 
 function buildAccountReportEntries(filters: ReportFilters, fallbackQueryString: string): AccountReportEntry[] {

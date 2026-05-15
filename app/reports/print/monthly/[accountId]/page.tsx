@@ -31,7 +31,7 @@ export default async function MonthlyReportPrintPage({
     endDate: dateRange.endDate,
   });
 
-  return <MonthlyReportPrint accountId={decodedAccountId} report={report} />;
+  return <MonthlyReportPrint accountId={decodedAccountId} report={report} platform={query.platform} />;
 }
 
 function resolveDateRange(query: {
