@@ -81,7 +81,16 @@ export async function getMonthlyReportAccounts(input?: {
       return emptyResult(errorMessage);
     }
 
-    const filter = buildMonthlyReportNotionFilter(databaseProperties, confirmationCheckboxProperty);
+    const dataSource = await notion.dataSources.retrieve({
+      data_source_id: dataSourceId,
+    });
+    const dataSourceProperties =
+      "properties" in dataSource && dataSource.properties && typeof dataSource.properties === "object"
+        ? (dataSource.properties as Record<string, unknown>)
+        : {};
+    const filterProperties =
+      Object.keys(dataSourceProperties).length > 0 ? dataSourceProperties : databaseProperties;
+    const filter = buildMonthlyReportNotionFilter(filterProperties, confirmationCheckboxProperty);
     const fullResults = await queryAllDataSourceRows(notion, dataSourceId);
     const fullDataset = buildResultFromRows(fullResults, confirmationCheckboxProperty);
 

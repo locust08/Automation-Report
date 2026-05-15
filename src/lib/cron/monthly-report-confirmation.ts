@@ -1,7 +1,7 @@
 export const REPORT_CONFIRMATION_CHECKBOX = {
-  monthlyOverall: "Monthly email",
-  monthlyAdvanced: "Monthly email",
-  biweeklyOverall: "Bi-Weekly Email",
+  monthlyOverall: "Monthly Email",
+  monthlyAdvanced: "Monthly Email",
+  biweeklyOverall: "Bi-Weekly",
 } as const;
 
 export type ScheduledMonthlyReportType = keyof typeof REPORT_CONFIRMATION_CHECKBOX;
