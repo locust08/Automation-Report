@@ -569,7 +569,7 @@ export async function fetchGoogleCampaignRows({
       metrics.conversions,
       metrics.cost_micros
     FROM campaign
-    WHERE campaign.status != 'REMOVED'
+    WHERE campaign.status = 'ENABLED'
       AND segments.date BETWEEN '${startDate}' AND '${endDate}'
   `;
 
@@ -598,7 +598,7 @@ export async function fetchGoogleCampaignRows({
           metrics.engagements,
           metrics.interactions
         FROM campaign
-        WHERE campaign.status != 'REMOVED'
+        WHERE campaign.status = 'ENABLED'
           AND segments.date BETWEEN '${startDate}' AND '${endDate}'
       `,
       baseSelect,
