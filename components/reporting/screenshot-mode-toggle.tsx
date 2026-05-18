@@ -379,12 +379,17 @@ async function prepareServerPrintPdfDownload(
 }
 
 function canUseServerPrintPdfDownload(): boolean {
-  return typeof window !== "undefined" && window.location.pathname === "/overall";
+  if (typeof window === "undefined" || window.location.pathname !== "/overall") {
+    return false;
+  }
+
+  return new URLSearchParams(window.location.search).get("serverPdf") === "1";
 }
 
 function buildServerPrintPdfEndpoint(fileNamePrefix: string | undefined): string {
   const params = new URLSearchParams(window.location.search);
   params.delete("screenshot");
+  params.delete("serverPdf");
   if (fileNamePrefix?.trim()) {
     params.set("clientName", fileNamePrefix.trim());
   }
