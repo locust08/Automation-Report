@@ -1,0 +1,13 @@
+
+> automated-report@0.1.0 start
+> next start --port 3010
+
+▲ Next.js 16.1.6
+- Local:         http://localhost:3010
+- Network:       http://192.168.0.200:3010
+
+✓ Starting...
+✓ Ready in 1385ms
+Monthly report cron triggered
+Monthly job started
+[monthly-report] Notion query started

@@ -133,6 +133,7 @@ export function ReportHeaderMonthPicker({
         className="h-8 w-8 shrink-0 text-[#6f6f6f]"
         onClick={() => shiftRange(-1)}
         aria-label="Previous date range"
+        data-report-export-exclude="true"
       >
         <ChevronLeftIcon className="size-4" />
       </Button>
@@ -149,7 +150,10 @@ export function ReportHeaderMonthPicker({
       >
         <CalendarDaysIcon className="size-4 text-[#7a7a7a]" />
         <span className="truncate text-sm font-semibold leading-none text-[#5f5f5f] sm:text-base">{dateLabel}</span>
-        <ChevronDownIcon className="ml-auto size-4 text-[#7a7a7a]" />
+        <ChevronDownIcon
+          className="ml-auto size-4 text-[#7a7a7a]"
+          data-report-export-exclude="true"
+        />
       </button>
 
       <Button
@@ -159,6 +163,7 @@ export function ReportHeaderMonthPicker({
         className="h-8 w-8 shrink-0 text-[#6f6f6f]"
         onClick={() => shiftRange(1)}
         aria-label="Next date range"
+        data-report-export-exclude="true"
       >
         <ChevronRightIcon className="size-4" />
       </Button>

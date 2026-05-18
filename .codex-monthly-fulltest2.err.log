@@ -1,0 +1,43 @@
+@notionhq/client warn: request fail {
+  code: 'unauthorized',
+  message: 'API token is invalid.',
+  attempt: 0,
+  requestId: '67ff70ef-5b50-4623-95d0-e9b787b48a93'
+}
+Monthly report raw Notion query failed Error [APIResponseError]: API token is invalid.
+    at r.buildRequestError (C:\Users\User\Desktop\looker_template\automated-report\.next\server\chunks\[root-of-the-server]__e5e798b9._.js:2:152241)
+    at C.executeSingleRequest (C:\Users\User\Desktop\looker_template\automated-report\.next\server\chunks\[root-of-the-server]__e5e798b9._.js:2:182201)
+    at async C.executeWithRetry (C:\Users\User\Desktop\looker_template\automated-report\.next\server\chunks\[root-of-the-server]__e5e798b9._.js:2:181554)
+    at async eD (C:\Users\User\Desktop\looker_template\automated-report\.next\server\chunks\[root-of-the-server]__e5e798b9._.js:15:1184)
+    at async ez (C:\Users\User\Desktop\looker_template\automated-report\.next\server\chunks\[root-of-the-server]__e5e798b9._.js:15:2414)
+    at async eK (C:\Users\User\Desktop\looker_template\automated-report\.next\server\chunks\[root-of-the-server]__e5e798b9._.js:15:5072)
+    at async c (C:\Users\User\Desktop\looker_template\automated-report\.next\server\chunks\[root-of-the-server]__e5e798b9._.js:15:8320) {
+  code: 'unauthorized',
+  status: 401,
+  headers: Headers {
+    date: 'Wed, 29 Apr 2026 00:54:27 GMT',
+    'content-type': 'application/json; charset=utf-8',
+    'content-length': '139',
+    connection: 'keep-alive',
+    'cf-ray': '9f3a55e7dbc4a28e-SIN',
+    'cf-cache-status': 'DYNAMIC',
+    etag: 'W/"8b-xeCoVHhcvKvD5z1nIbhPQbm6z8I"',
+    server: 'cloudflare',
+    'strict-transport-security': 'max-age=31536000; includeSubDomains; preload',
+    vary: 'Accept-Encoding',
+    'content-security-policy': "default-src 'none'",
+    'referrer-policy': 'strict-origin-when-cross-origin',
+    'x-content-type-options': 'nosniff',
+    'x-dns-prefetch-control': 'off',
+    'x-download-options': 'noopen',
+    'x-frame-options': 'SAMEORIGIN',
+    'x-notion-request-id': '67ff70ef-5b50-4623-95d0-e9b787b48a93',
+    'x-permitted-cross-domain-policies': 'none',
+    'x-xss-protection': '0',
+    'set-cookie': '__cf_bm=lYZTk6kIjvBckszhkiUO7LqNJNBGdV8iUrTgd1MGnWQ-1777424067.817525-1.0.1.1-U5Ag1WMiUBYbEBNRTZZp0zRjg5odqx7Yw8HBIj6n.wjuwlkTFvJWlTls852speqMdeRH2XoHtOtHgELY6c2G2qA7_MIqKeuBf4V3B42D92g6P542voAxnW0kWA5HyB_5; HttpOnly; Secure; Path=/; Domain=notion.com; Expires=Wed, 29 Apr 2026 01:24:27 GMT',
+    'alt-svc': 'h3=":443"; ma=86400'
+  },
+  body: '{"object":"error","status":401,"code":"unauthorized","message":"API token is invalid.","request_id":"67ff70ef-5b50-4623-95d0-e9b787b48a93"}',
+  additional_data: undefined,
+  request_id: '67ff70ef-5b50-4623-95d0-e9b787b48a93'
+}

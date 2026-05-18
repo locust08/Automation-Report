@@ -1,0 +1,9 @@
+Monthly job Notion fetch failed Error [NotionIntegrationError]: Missing required env var NOTION_TOKEN.
+    at _ (C:\Users\User\Desktop\looker_template\automated-report\.next\server\chunks\lib_reporting_1ca01955._.js:1:12536)
+    at g (C:\Users\User\Desktop\looker_template\automated-report\.next\server\chunks\lib_reporting_1ca01955._.js:1:11117)
+    at v (C:\Users\User\Desktop\looker_template\automated-report\.next\server\chunks\[root-of-the-server]__021353bb._.js:1:1241)
+    at b (C:\Users\User\Desktop\looker_template\automated-report\.next\server\chunks\[root-of-the-server]__021353bb._.js:1:3342)
+    at T (C:\Users\User\Desktop\looker_template\automated-report\.next\server\chunks\[root-of-the-server]__021353bb._.js:1:3788) {
+  payload: [Object],
+  httpStatus: 500
+}

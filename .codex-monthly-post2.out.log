@@ -1,0 +1,12 @@
+
+> automated-report@0.1.0 start
+> next start --port 3007
+
+▲ Next.js 16.1.6
+- Local:         http://localhost:3007
+- Network:       http://192.168.0.200:3007
+
+✓ Starting...
+✓ Ready in 905ms
+Monthly report cron triggered
+Monthly job started

@@ -1,0 +1,12 @@
+name = "ads-dashboard-advanced-report-cache"
+main = "src/index.ts"
+compatibility_date = "2026-05-01"
+
+[[d1_databases]]
+binding = "ADVANCED_REPORT_DB"
+database_name = "automation-advanced-report-cache"
+database_id = "6b31f85a-0352-4e9d-8a65-1e2cebc0b8cb"
+
+[[r2_buckets]]
+binding = "ADVANCED_REPORTS"
+bucket_name = "automation-advanced-reports"
