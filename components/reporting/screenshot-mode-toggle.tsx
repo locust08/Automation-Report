@@ -139,6 +139,8 @@ export function ReportDownloadButton({ fileNamePrefix }: ReportDownloadButtonPro
   const [overlayState, setOverlayState] = useState<ExportOverlayState>({ phase: "idle" });
 
   const runDownload = useCallback(async (format: DownloadFormat) => {
+    const root = document.querySelector<HTMLElement>("[data-report-capture-root='true']");
+
     if (format === "pdf" && canUseServerPrintPdfDownload()) {
       setDownloadingFormat(format);
       setOverlayState({ phase: "loading", kind: "download", format });
@@ -149,21 +151,41 @@ export function ReportDownloadButton({ fileNamePrefix }: ReportDownloadButtonPro
         preparedDownload();
         setOverlayState({ phase: "idle" });
       } catch (error) {
-        setOverlayState({
-          phase: "error",
-          format,
-          message:
-            error instanceof Error
-              ? error.message
-              : "The export could not be completed. Please try again.",
-        });
+        if (!root) {
+          setOverlayState({
+            phase: "error",
+            format,
+            message:
+              error instanceof Error
+                ? error.message
+                : "The export could not be completed. Please try again.",
+          });
+          return;
+        }
+
+        try {
+          console.warn("[report-download] server PDF export failed; falling back to browser capture", error);
+          const preparedDownload = await prepareStandardDownload(root, format, fileNamePrefix);
+          setOverlayState({ phase: "success", kind: "download", format });
+          await waitFor(DOWNLOAD_READY_DELAY_MS);
+          preparedDownload();
+          setOverlayState({ phase: "idle" });
+        } catch (fallbackError) {
+          setOverlayState({
+            phase: "error",
+            format,
+            message:
+              fallbackError instanceof Error
+                ? fallbackError.message
+                : "The export could not be completed. Please try again.",
+          });
+        }
       } finally {
         setDownloadingFormat(null);
       }
       return;
     }
 
-    const root = document.querySelector<HTMLElement>("[data-report-capture-root='true']");
     if (!root) {
       setOverlayState({
         phase: "error",

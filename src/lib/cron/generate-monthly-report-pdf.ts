@@ -60,7 +60,21 @@ export async function generateMonthlyReportPdfForAccount(
   }
 ): Promise<MonthlyReportPdfResult> {
   const dateRange = input?.dateRange ?? resolveMonthlyReportDateRange();
-  const browser = input?.browser ?? (await launchPdfBrowser());
+  const accountId = resolvePrimaryAccountId(account);
+  const accountName = account.clientName || accountId || "Unknown account";
+  let browser: Browser;
+
+  try {
+    browser = input?.browser ?? (await launchPdfBrowser());
+  } catch (error) {
+    return buildSkippedOrFailedResult(
+      account,
+      dateRange,
+      "failed",
+      toErrorMessage(error, "Browser launch failure.")
+    );
+  }
+
   const ownsBrowser = !input?.browser;
 
   try {
@@ -71,7 +85,11 @@ export async function generateMonthlyReportPdfForAccount(
     });
   } finally {
     if (ownsBrowser) {
-      await browser.close();
+      await browser.close().catch((error: unknown) => {
+        console.warn(
+          `[monthly-report] pdf browser close failed account_id=${accountId ?? "missing"} account_name=${accountName} ${toErrorMessage(error)}`
+        );
+      });
     }
   }
 }
