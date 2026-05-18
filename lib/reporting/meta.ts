@@ -1676,6 +1676,16 @@ function pickResultMetric(input: {
     return { actionType: "results", label: "Results", value: 0, costPerResult: null };
   }
 
+  const configuredResultCostMetric = pickConfiguredResultCostMetric(
+    input.costPerResult,
+    input.costPerObjectiveResult,
+    actions,
+    costs
+  );
+  if (configuredResultCostMetric) {
+    return configuredResultCostMetric;
+  }
+
   const prioritizedActionTypes = uniqueActionTypes([
     ...resultActionPriorityForObjective(input.objective, input.optimizationGoal),
     ...RESULT_ACTION_PRIORITY,
@@ -1705,6 +1715,68 @@ function pickResultMetric(input: {
     value: toNumber(fallback?.value),
     costPerResult: null,
   };
+}
+
+function pickConfiguredResultCostMetric(
+  costPerResult: MetaObjectiveResultMetricValue | undefined,
+  costPerObjectiveResult: MetaObjectiveResultMetricValue | undefined,
+  actions: MetaActionMetric[],
+  costs: MetaActionMetric[] | undefined
+): { actionType: string; label: string; value: number; costPerResult: number | null } | null {
+  const costMetrics = [
+    ...normalizeMetaObjectiveResultMetrics(costPerResult),
+    ...normalizeMetaObjectiveResultMetrics(costPerObjectiveResult),
+  ].filter((metric) => readMetaObjectiveResultValue(metric) > 0);
+
+  for (const costMetric of costMetrics) {
+    const action = findActionForObjectiveCost(costMetric, actions);
+    if (action?.action_type && toNumber(action.value) > 0) {
+      const actionCost =
+        costs?.find((cost) => cost.action_type === action.action_type) ?? null;
+
+      return {
+        actionType: action.action_type,
+        label: humanizeObjectiveResultLabel(costMetric, action.action_type),
+        value: toNumber(action.value),
+        costPerResult: actionCost
+          ? toNumber(actionCost.value)
+          : readMetaObjectiveResultValue(costMetric),
+      };
+    }
+  }
+
+  return null;
+}
+
+function findActionForObjectiveCost(
+  costMetric: MetaObjectiveResultMetric,
+  actions: MetaActionMetric[]
+): MetaActionMetric | null {
+  const candidates = buildObjectiveCostActionCandidates(readMetaObjectiveResultKey(costMetric));
+
+  for (const candidate of candidates) {
+    const exactMatch = actions.find((action) => action.action_type === candidate);
+    if (exactMatch) {
+      return exactMatch;
+    }
+  }
+
+  return null;
+}
+
+function buildObjectiveCostActionCandidates(actionType: string): string[] {
+  const stripped = actionType
+    .trim()
+    .replace(/^(actions|conversions):/i, "")
+    .trim();
+  const candidates = [stripped];
+  const customConversionPrefix = "offsite_conversion.fb_pixel_custom.";
+
+  if (stripped.startsWith(customConversionPrefix)) {
+    candidates.push("offsite_conversion.fb_pixel_custom");
+  }
+
+  return uniqueActionTypes(candidates.filter(Boolean));
 }
 
 function pickAwarenessResultMetric(input: {
