@@ -52,7 +52,10 @@ export function ReportWarnings({ warnings }: { warnings: string[] }) {
   }
 
   return (
-    <div className="rounded-2xl border border-amber-300 bg-amber-50 p-4 text-amber-800">
+    <div
+      className="rounded-2xl border border-amber-300 bg-amber-50 p-4 text-amber-800"
+      data-report-export-exclude="true"
+    >
       <p className="mb-1 font-semibold">Warnings</p>
       <ul className="list-disc space-y-1 pl-5 text-sm">
         {uniqueWarnings.map((warning, index) => (

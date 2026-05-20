@@ -1,6 +1,6 @@
 export const REPORT_CONFIRMATION_CHECKBOX = {
   monthlyOverall: "Monthly Email",
-  monthlyAdvanced: "Monthly Email",
+  monthlyAdvanced: "Advanced Report",
   biweeklyOverall: "Bi-Weekly",
 } as const;
 
@@ -40,4 +40,14 @@ export function getReportConfirmationCheckboxProperty(
   reportType: ScheduledMonthlyReportType
 ): string {
   return REPORT_CONFIRMATION_CHECKBOX[reportType];
+}
+
+export function isAdvancedScheduledReportType(reportType: ScheduledMonthlyReportType): boolean {
+  return reportType === "monthlyAdvanced";
+}
+
+export function getScheduledReportAutomationType(
+  reportType: ScheduledMonthlyReportType
+): "overall" | "advanced" {
+  return isAdvancedScheduledReportType(reportType) ? "advanced" : "overall";
 }

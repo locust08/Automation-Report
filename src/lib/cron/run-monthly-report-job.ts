@@ -11,6 +11,7 @@ import {
 } from "@/src/lib/cron/monthly-report-targets";
 import {
   getReportConfirmationCheckboxProperty,
+  isAdvancedScheduledReportType,
   normalizeScheduledReportType,
   resolveReportTypeForScheduleDay,
   type ScheduledMonthlyReportType,
@@ -72,6 +73,7 @@ export async function runMonthlyReportJob(input?: {
   overrideTargets?: MonthlyReportTargetConfig[];
   scheduleDay?: number;
   reportType?: string;
+  scheduledDate?: string;
   dateRange?: ReturnType<typeof resolveMonthlyReportDateRange>;
 }): Promise<MonthlyReportJobResult> {
   const startedAt = Date.now();
@@ -84,6 +86,43 @@ export async function runMonthlyReportJob(input?: {
     ? normalizeScheduledReportType(input.reportType, scheduleDay)
     : resolveReportTypeForScheduleDay(scheduleDay);
   const confirmationCheckboxProperty = getReportConfirmationCheckboxProperty(reportType);
+  const scheduledDate = resolveScheduledDate(input?.scheduledDate);
+  const dateRange = input?.dateRange ?? resolveMonthlyReportDateRange();
+
+  if (isAdvancedScheduledReportType(reportType) && !isAdvancedReportAutomationEnabled()) {
+    const totalDurationMs = Date.now() - startedAt;
+    const warning = "Advanced Report automation disabled by ADVANCED_REPORT_ENABLED=false.";
+    console.warn(
+      `[monthly-report] skipped report_type=${reportType} period=${dateRange.reportMonthKey} scheduled_date=${scheduledDate} reason="${warning}"`
+    );
+    console.info(
+      `[monthly-report] debug summary processed=0 sent=0 skipped=1 failed=0 report_type=${reportType} period=${dateRange.reportMonthKey} scheduled_date=${scheduledDate}`
+    );
+
+    return {
+      totalAccounts: 0,
+      reportType,
+      scheduleDay,
+      confirmationCheckboxProperty,
+      checkedCount: 0,
+      processed: 0,
+      generated: 0,
+      emailed: 0,
+      failed: 0,
+      skipped: 1,
+      skippedMonthlyEmailUnchecked: 0,
+      skippedMissingEmail: 0,
+      skippedAlreadySent: 0,
+      totalDurationMs,
+      withinTenMinutes: true,
+      warning,
+      slowestAccounts: [],
+      dryRun,
+      testMode,
+      pdfResults: [],
+      emailResults: [],
+    };
+  }
 
   try {
     const targetResolution = await resolveTargets({
@@ -95,14 +134,15 @@ export async function runMonthlyReportJob(input?: {
     const checkedTargets = targetResolution.accounts.filter((account) => account.monthlyReportEnabled);
     const missingEmailTargets = checkedTargets.filter((account) => !account.clientEmail?.trim());
     const emailableTargets = checkedTargets.filter((account) => account.clientEmail?.trim());
-    const dateRange = input?.dateRange ?? resolveMonthlyReportDateRange();
     const duplicateFilteredTargets = dryRun || testMode
       ? { accounts: emailableTargets, skippedAlreadySent: 0 }
       : await filterAlreadySentAccounts(emailableTargets, {
           reportType,
           reportMonthKey: dateRange.reportMonthKey,
+          scheduledDate,
         });
-    const accountsToProcess = testMode ? duplicateFilteredTargets.accounts.slice(0, 1) : duplicateFilteredTargets.accounts;
+    const accountsToProcess = (testMode ? duplicateFilteredTargets.accounts.slice(0, 1) : duplicateFilteredTargets.accounts)
+      .map((account) => applyScheduledReportType(account, reportType));
     const skippedFromTestMode = Math.max(duplicateFilteredTargets.accounts.length - accountsToProcess.length, 0);
     const skippedMonthlyEmailUnchecked =
       targetResolution.skippedMonthlyEmailUnchecked +
@@ -111,6 +151,7 @@ export async function runMonthlyReportJob(input?: {
 
     console.log(`[monthly-report] scheduler day detected=${scheduleDay}`);
     console.log(`[monthly-report] report type=${reportType}`);
+    console.log(`[monthly-report] period=${dateRange.reportMonthKey} scheduled_date=${scheduledDate}`);
     console.log(`[monthly-report] confirmation checkbox property="${confirmationCheckboxProperty}"`);
     console.log(`[monthly-report] notion rows fetched=${targetResolution.totalNotionRows}`);
     console.log(`[monthly-report] rows approved by checkbox=${checkedTargets.length}`);
@@ -126,7 +167,7 @@ export async function runMonthlyReportJob(input?: {
 
     for (const account of missingEmailTargets) {
       console.warn(
-        `[monthly-report] skipped missing email page_id=${account.notionPageId} account_id=${resolvePrimaryAccountId(account) ?? "missing"} client=${account.clientName}`
+        `[monthly-report] skipped missing email report_type=${reportType} period=${dateRange.reportMonthKey} scheduled_date=${scheduledDate} page_id=${account.notionPageId} account_id=${resolvePrimaryAccountId(account) ?? "missing"} client=${account.clientName} skipped_reason="missing recipient email"`
       );
     }
 
@@ -145,10 +186,17 @@ export async function runMonthlyReportJob(input?: {
         if (pdfResult.status !== "generated" || !pdfResult.pdfBuffer) {
           continue;
         }
+        if (isAdvancedScheduledReportType(reportType) && pdfResult.account.reportType !== "Advanced") {
+          emailFailures += 1;
+          console.error(
+            `[monthly-report] advanced email blocked account_id=${pdfResult.accountId ?? "missing"} reason=reportType was not advanced`
+          );
+          continue;
+        }
 
         try {
           console.log(
-            `[monthly-report] email sending started account_id=${pdfResult.accountId ?? "missing"} account_name=${pdfResult.accountName}`
+            `[monthly-report] email sending started report_type=${reportType} period=${pdfResult.reportMonthKey} scheduled_date=${scheduledDate} account_id=${pdfResult.accountId ?? "missing"} account_name=${pdfResult.accountName} email_status=started`
           );
           const emailResult = await sendMonthlyReportEmail({
             account: pdfResult.account,
@@ -170,11 +218,15 @@ export async function runMonthlyReportJob(input?: {
 
           if (emailResult.success) {
             emailed += 1;
+            console.info(
+              `[monthly-report] email sent report_type=${reportType} period=${pdfResult.reportMonthKey} scheduled_date=${scheduledDate} account_id=${pdfResult.accountId ?? "missing"} account_name=${pdfResult.accountName} email_status=sent resend_email_id=${emailResult.resendEmailId ?? "missing"}`
+            );
             if (!testMode) {
               await recordMonthlyReportEmailSent({
                 account: pdfResult.account,
                 reportType,
                 reportMonthKey: pdfResult.reportMonthKey,
+                scheduledDate,
                 recipientEmail: emailResult.recipientEmail,
                 ccEmail: emailResult.ccEmail,
                 resendEmailId: emailResult.resendEmailId,
@@ -185,11 +237,14 @@ export async function runMonthlyReportJob(input?: {
           } else {
             emailFailures += 1;
             console.error(
-              `[monthly-report] email send failure account_id=${pdfResult.accountId ?? "missing"} reason=${emailResult.errorMessage ?? "Unknown email send error."}`
+              `[monthly-report] email send failure report_type=${reportType} period=${pdfResult.reportMonthKey} scheduled_date=${scheduledDate} account_id=${pdfResult.accountId ?? "missing"} account_name=${pdfResult.accountName} email_status=failed reason=${emailResult.errorMessage ?? "Unknown email send error."}`
             );
           }
         } catch (error) {
           emailFailures += 1;
+          console.error(
+            `[monthly-report] email send failure report_type=${reportType} period=${pdfResult.reportMonthKey} scheduled_date=${scheduledDate} account_id=${pdfResult.accountId ?? "missing"} account_name=${pdfResult.accountName} email_status=failed reason=${toErrorMessage(error)}`
+          );
           emailResults.push({
             accountId: pdfResult.accountId,
             accountName: pdfResult.accountName,
@@ -248,6 +303,9 @@ export async function runMonthlyReportJob(input?: {
 
     console.log(
       `[monthly-report] summary report_type=${result.reportType} schedule_day=${result.scheduleDay} confirmation_checkbox="${result.confirmationCheckboxProperty}" total=${result.totalAccounts} checked=${result.checkedCount} processed=${result.processed} generated=${result.generated} sent=${result.emailed} failed=${result.failed} skipped=${result.skipped} skipped_missing_email=${result.skippedMissingEmail} skipped_unchecked=${result.skippedMonthlyEmailUnchecked} skipped_already_sent=${result.skippedAlreadySent} test_mode=${result.testMode} total_duration_ms=${result.totalDurationMs} within_ten_minutes=${result.withinTenMinutes}`
+    );
+    console.info(
+      `[monthly-report] debug summary processed=${result.processed} sent=${result.emailed} skipped=${result.skipped} failed=${result.failed} report_type=${result.reportType} period=${dateRange.reportMonthKey} scheduled_date=${scheduledDate}`
     );
 
     return result;
@@ -333,6 +391,7 @@ async function filterAlreadySentAccounts(
   input: {
     reportType: string;
     reportMonthKey: string;
+    scheduledDate: string;
   }
 ): Promise<{ accounts: MonthlyReportAccount[]; skippedAlreadySent: number }> {
   const eligibleAccounts: MonthlyReportAccount[] = [];
@@ -343,6 +402,7 @@ async function filterAlreadySentAccounts(
       account,
       reportType: input.reportType,
       reportMonthKey: input.reportMonthKey,
+      scheduledDate: input.scheduledDate,
     });
     if (alreadySent) {
       skippedAlreadySent += 1;
@@ -365,6 +425,39 @@ function resolvePrimaryAccountId(account: MonthlyReportAccount): string | null {
   return account.googleAdsAccountId ?? account.metaAdsAccountId ?? null;
 }
 
+function applyScheduledReportType(
+  account: MonthlyReportAccount,
+  reportType: ScheduledMonthlyReportType
+): MonthlyReportAccount {
+  if (!isAdvancedScheduledReportType(reportType)) {
+    return account;
+  }
+
+  return {
+    ...account,
+    reportType: "Advanced",
+  };
+}
+
+function resolveScheduledDate(value: string | undefined): string {
+  const trimmed = value?.trim();
+  if (trimmed && /^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
+    return trimmed;
+  }
+  if (trimmed) {
+    const parsed = new Date(trimmed);
+    if (!Number.isNaN(parsed.getTime())) {
+      return parsed.toISOString().slice(0, 10);
+    }
+  }
+  return new Date().toISOString().slice(0, 10);
+}
+
 function toErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : "Unknown error.";
+}
+
+function isAdvancedReportAutomationEnabled(): boolean {
+  const value = process.env.ADVANCED_REPORT_ENABLED?.trim().toLowerCase();
+  return value !== "false" && value !== "0" && value !== "off" && value !== "no";
 }

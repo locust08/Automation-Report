@@ -34,19 +34,21 @@ export async function sendMonthlyReportEmail(
   const ccEmails = testMode ? [] : parseEmailList(input.account.picEmail);
   const recipientEmail = recipientEmails.join(", ") || null;
   const ccEmail = ccEmails.join(", ") || null;
+  const accountId = resolvePrimaryAccountId(input.account) ?? "missing";
+  const reportType = normalizeReportType(input.account.reportType ?? input.account.platform);
   const subject = testMode
     ? `[TEST] Monthly Ads Report - ${input.account.clientName}`
     : `Monthly Ads Report - ${input.account.clientName} - ${input.reportMonthLabel}`;
 
   console.info(
-    `[monthly-report] email send started client=${input.account.clientName} test_mode=${testMode}`
+    `[monthly-report] email send started report_type=${reportType} period=${input.reportMonthKey} account_id=${accountId} client=${input.account.clientName} test_mode=${testMode} email_status=started`
   );
   console.info(`[monthly-report] test mode status enabled=${testMode}`);
 
   if (!testMode && process.env.NODE_ENV !== "production") {
     const errorMessage =
       "Unsafe email send blocked: NODE_ENV is not production and MONTHLY_REPORT_TEST_MODE is not true.";
-    console.error(`[monthly-report] email blocked client=${input.account.clientName} error=${errorMessage}`);
+    console.error(`[monthly-report] email blocked report_type=${reportType} period=${input.reportMonthKey} account_id=${accountId} client=${input.account.clientName} email_status=blocked error=${errorMessage}`);
     return {
       success: false,
       resendEmailId: null,
@@ -58,7 +60,7 @@ export async function sendMonthlyReportEmail(
 
   if (testMode && !areSameEmailList(recipientEmails, [testRecipient])) {
     const errorMessage = "Unsafe test email send blocked: test emails may only go to the configured test recipient.";
-    console.error(`[monthly-report] email blocked client=${input.account.clientName} error=${errorMessage}`);
+    console.error(`[monthly-report] email blocked report_type=${reportType} period=${input.reportMonthKey} account_id=${accountId} client=${input.account.clientName} email_status=blocked error=${errorMessage}`);
     return {
       success: false,
       resendEmailId: null,
@@ -70,7 +72,7 @@ export async function sendMonthlyReportEmail(
 
   if (recipientEmails.length === 0) {
     const errorMessage = "Missing recipient email for monthly report.";
-    console.error(`[monthly-report] email failed client=${input.account.clientName} error=${errorMessage}`);
+    console.error(`[monthly-report] email failed report_type=${reportType} period=${input.reportMonthKey} account_id=${accountId} client=${input.account.clientName} email_status=failed error=${errorMessage}`);
     return {
       success: false,
       resendEmailId: null,
@@ -115,7 +117,7 @@ export async function sendMonthlyReportEmail(
       throw new Error(response.error.message || "Resend email send failed.");
     }
 
-    console.info(`[monthly-report] email sent client=${input.account.clientName}`);
+    console.info(`[monthly-report] email sent report_type=${reportType} period=${input.reportMonthKey} account_id=${accountId} client=${input.account.clientName} email_status=sent resend_email_id=${response.data?.id ?? "missing"}`);
     return {
       success: true,
       resendEmailId: response.data?.id ?? null,
@@ -125,7 +127,7 @@ export async function sendMonthlyReportEmail(
     };
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : "Unknown email send error.";
-    console.error(`[monthly-report] email failed client=${input.account.clientName} error=${errorMessage}`);
+    console.error(`[monthly-report] email failed report_type=${reportType} period=${input.reportMonthKey} account_id=${accountId} client=${input.account.clientName} email_status=failed error=${errorMessage}`);
     return {
       success: false,
       resendEmailId: null,
@@ -312,6 +314,11 @@ function areSameEmailList(left: string[], right: string[]): boolean {
 
 function resolvePrimaryAccountId(account: MonthlyReportAccount): string | null {
   return account.googleAdsAccountId ?? account.metaAdsAccountId ?? null;
+}
+
+function normalizeReportType(value: string | null | undefined): string {
+  const normalized = value?.trim().toLowerCase() ?? "";
+  return normalized.includes("advance") ? "advanced" : "overall";
 }
 
 function escapeHtml(value: string): string {

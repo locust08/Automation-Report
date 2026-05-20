@@ -20,6 +20,8 @@ import {
   PreviewCampaignNode,
   PreviewDetailField,
   GoogleFinalUrlSpendRow,
+  GoogleImageCreativePerformanceRow,
+  GoogleVideoCreativePerformanceRow,
   GooglePreviewBlockDiagnostic,
   GooglePreviewDiagnostics,
   GooglePreviewFatalError,
@@ -178,6 +180,17 @@ interface GoogleAdsResult {
   campaignBudget?: {
     amountMicros?: string | number;
   };
+  assetGroup?: {
+    id?: string;
+    name?: string;
+    finalUrls?: string[];
+    status?: string;
+  };
+  assetGroupAsset?: {
+    asset?: string;
+    fieldType?: string;
+    status?: string;
+  };
   adGroup?: {
     id?: string;
     name?: string;
@@ -237,9 +250,49 @@ interface GoogleAdsResult {
         path1?: string;
         path2?: string;
       };
+      imageAd?: {
+        imageUrl?: string;
+        previewImageUrl?: string;
+        name?: string;
+        imageAsset?: {
+          asset?: string;
+        };
+      };
+      responsiveDisplayAd?: {
+        headlines?: Array<{
+          text?: string;
+        }>;
+        longHeadline?: {
+          text?: string;
+        };
+        descriptions?: Array<{
+          text?: string;
+        }>;
+        marketingImages?: Array<{
+          asset?: string;
+        }>;
+        squareMarketingImages?: Array<{
+          asset?: string;
+        }>;
+      };
+      videoResponsiveAd?: {
+        headlines?: Array<{
+          text?: string;
+        }>;
+        longHeadlines?: Array<{
+          text?: string;
+        }>;
+        descriptions?: Array<{
+          text?: string;
+        }>;
+        videos?: Array<{
+          asset?: string;
+        }>;
+      };
     };
   };
   asset?: {
+    resourceName?: string;
     id?: string;
     name?: string;
     type?: string;
@@ -256,6 +309,10 @@ interface GoogleAdsResult {
       fullSize?: {
         url?: string;
       };
+    };
+    youtubeVideoAsset?: {
+      youtubeVideoId?: string;
+      youtubeVideoTitle?: string;
     };
   };
   adGroupAsset?: {
@@ -298,6 +355,11 @@ interface GoogleAdsResult {
     engagements?: string | number;
     interactions?: string | number;
     conversionRate?: number | string;
+    searchImpressionShare?: number | string;
+    searchBudgetLostImpressionShare?: number | string;
+    searchRankLostImpressionShare?: number | string;
+    videoViews?: string | number;
+    videoTrueviewViews?: string | number;
     auctionInsightSearchImpressionShare?: number | string;
     auctionInsightSearchOverlapRate?: number | string;
     auctionInsightSearchPositionAboveRate?: number | string;
@@ -350,6 +412,37 @@ interface GoogleAssetLinkResult {
   description2?: string | null;
   finalUrl?: string | null;
   imageUrl?: string | null;
+}
+
+interface GoogleYoutubeVideoAssetDetails {
+  resourceName: string;
+  youtubeVideoId: string | null;
+  youtubeVideoTitle: string | null;
+}
+
+interface GoogleImpressionShareMetrics {
+  impressionShare: number | null;
+  lostImpressionShareBudget: number | null;
+  lostImpressionShareRank: number | null;
+}
+
+interface GoogleFinalUrlImpressionShareLookup {
+  byAdGroupId: Map<string, GoogleImpressionShareMetrics>;
+  byCampaignId: Map<string, GoogleImpressionShareMetrics>;
+}
+
+interface WeightedMetricAccumulator {
+  sum: number;
+  weight: number;
+}
+
+interface GoogleFinalUrlAccumulator {
+  row: GoogleFinalUrlSpendRow;
+  impressionShare: WeightedMetricAccumulator;
+  lostImpressionShareBudget: WeightedMetricAccumulator;
+  lostImpressionShareRank: WeightedMetricAccumulator;
+  sawAdGroupShare: boolean;
+  sawCampaignShare: boolean;
 }
 
 interface GooglePreviewBlockDefinition {
@@ -2193,6 +2286,7 @@ export async function fetchGoogleFinalUrlSpendRows({
           ad_group_ad.ad.final_urls,
           metrics.impressions,
           metrics.clicks,
+          metrics.conversions,
           metrics.cost_micros
         FROM ad_group_ad
         WHERE campaign.status = 'ENABLED'
@@ -2203,12 +2297,27 @@ export async function fetchGoogleFinalUrlSpendRows({
     ],
   });
 
-  const byUrl = new Map<string, GoogleFinalUrlSpendRow>();
+  const impressionShareLookup = await fetchGoogleFinalUrlImpressionShareLookup({
+    customerId: context.customerId,
+    apiVersion,
+    developerToken,
+    accessToken,
+    refreshToken,
+    clientId,
+    clientSecret,
+    loginCustomerId: context.loginCustomerId,
+    startDate,
+    endDate,
+  }).catch((): GoogleFinalUrlImpressionShareLookup => {
+    return {
+      byAdGroupId: new Map<string, GoogleImpressionShareMetrics>(),
+      byCampaignId: new Map<string, GoogleImpressionShareMetrics>(),
+    };
+  });
+
+  const byUrl = new Map<string, GoogleFinalUrlAccumulator>();
   results.forEach((result, index) => {
     const cost = microsToCurrency(result.metrics?.costMicros);
-    if (cost <= 1) {
-      return;
-    }
 
     const urls = result.adGroupAd?.ad?.finalUrls ?? [];
     urls.forEach((rawUrl) => {
@@ -2218,37 +2327,1114 @@ export async function fetchGoogleFinalUrlSpendRows({
       }
 
       const existing = byUrl.get(finalUrl);
+      const campaignId = result.campaign?.id?.trim();
       const campaignName = result.campaign?.name?.trim();
+      const adGroupId = result.adGroup?.id?.trim();
       const adGroupName = result.adGroup?.name?.trim();
       const impressions = toNumber(result.metrics?.impressions);
       const clicks = toNumber(result.metrics?.clicks);
+      const conversions = toNumber(result.metrics?.conversions);
+      const impressionShareMatch = pickFinalUrlImpressionShareMetrics(
+        impressionShareLookup,
+        campaignId,
+        adGroupId
+      );
+      const metricWeight = impressions > 0 ? impressions : 1;
 
       if (!existing) {
         byUrl.set(finalUrl, {
-          id: result.adGroupAd?.ad?.id ?? `${customerId}-final-url-${index}`,
-          finalUrl,
-          campaignNames: campaignName ? [campaignName] : [],
-          adGroupNames: adGroupName ? [adGroupName] : [],
-          impressions,
-          clicks,
-          cost,
+          row: {
+            id: result.adGroupAd?.ad?.id ?? `${customerId}-final-url-${index}`,
+            finalUrl,
+            campaignIds: campaignId ? [campaignId] : [],
+            campaignNames: campaignName ? [campaignName] : [],
+            adGroupIds: adGroupId ? [adGroupId] : [],
+            adGroupNames: adGroupName ? [adGroupName] : [],
+            impressions,
+            clicks,
+            conversions,
+            cost,
+            impressionShare: null,
+            lostImpressionShareBudget: null,
+            lostImpressionShareRank: null,
+            impressionShareSource: null,
+          },
+          impressionShare: createWeightedMetricAccumulator(),
+          lostImpressionShareBudget: createWeightedMetricAccumulator(),
+          lostImpressionShareRank: createWeightedMetricAccumulator(),
+          sawAdGroupShare: false,
+          sawCampaignShare: false,
         });
+        const created = byUrl.get(finalUrl);
+        if (created) {
+          addFinalUrlImpressionShareMetrics(created, impressionShareMatch, metricWeight);
+        }
         return;
       }
 
-      if (campaignName && !existing.campaignNames.includes(campaignName)) {
-        existing.campaignNames.push(campaignName);
+      if (campaignId && !existing.row.campaignIds.includes(campaignId)) {
+        existing.row.campaignIds.push(campaignId);
       }
-      if (adGroupName && !existing.adGroupNames.includes(adGroupName)) {
-        existing.adGroupNames.push(adGroupName);
+      if (campaignName && !existing.row.campaignNames.includes(campaignName)) {
+        existing.row.campaignNames.push(campaignName);
       }
-      existing.impressions += impressions;
-      existing.clicks += clicks;
-      existing.cost += cost;
+      if (adGroupId && !existing.row.adGroupIds.includes(adGroupId)) {
+        existing.row.adGroupIds.push(adGroupId);
+      }
+      if (adGroupName && !existing.row.adGroupNames.includes(adGroupName)) {
+        existing.row.adGroupNames.push(adGroupName);
+      }
+      existing.row.impressions += impressions;
+      existing.row.clicks += clicks;
+      existing.row.conversions += conversions;
+      existing.row.cost += cost;
+      addFinalUrlImpressionShareMetrics(existing, impressionShareMatch, metricWeight);
     });
   });
 
-  return Array.from(byUrl.values()).sort((a, b) => b.cost - a.cost);
+  return Array.from(byUrl.values())
+    .map(finalizeGoogleFinalUrlAccumulator)
+    .sort((a, b) => b.cost - a.cost);
+}
+
+export async function fetchGoogleImageCreativePerformanceRows({
+  customerId,
+  apiVersion,
+  developerToken,
+  accessToken,
+  refreshToken,
+  clientId,
+  clientSecret,
+  loginCustomerId,
+  accessPath,
+  fallbackLoginCustomerId,
+  startDate,
+  endDate,
+}: GoogleFetchInput): Promise<GoogleImageCreativePerformanceRow[]> {
+  const context = await resolveVerifiedGoogleAdsContext({
+    customerId,
+    apiVersion,
+    developerToken,
+    accessToken,
+    refreshToken,
+    clientId,
+    clientSecret,
+    loginCustomerId,
+    accessPath: accessPath ?? null,
+    fallbackLoginCustomerId: fallbackLoginCustomerId ?? null,
+  });
+
+  const requestContext = {
+    customerId: context.customerId,
+    apiVersion,
+    developerToken,
+    accessToken,
+    refreshToken,
+    clientId,
+    clientSecret,
+    loginCustomerId: context.loginCustomerId,
+  };
+
+  const [imageAdResults, responsiveDisplayResults, performanceMaxResults] = await Promise.all([
+    fetchOptionalGoogleCreativeResults({
+      ...requestContext,
+      query: buildGoogleImageAdCreativeQuery(startDate, endDate),
+      label: "google-image-ad-creatives",
+    }),
+    fetchOptionalGoogleCreativeResults({
+      ...requestContext,
+      query: buildGoogleResponsiveDisplayCreativeQuery(startDate, endDate),
+      label: "google-responsive-display-creatives",
+    }),
+    fetchOptionalGoogleCreativeResults({
+      ...requestContext,
+      query: buildGooglePerformanceMaxImageAssetQuery(startDate, endDate),
+      label: "google-performance-max-image-assets",
+    }),
+  ]);
+
+  const responsiveAssetResourceNames = collectResponsiveDisplayImageAssetResourceNames(responsiveDisplayResults);
+  const responsiveImageUrlByResourceName = await fetchGoogleAssetImageUrls({
+    ...requestContext,
+    resourceNames: responsiveAssetResourceNames,
+  }).catch(() => new Map<string, string>());
+
+  return dedupeGoogleImageCreativeRows([
+    ...buildImageAdCreativeRows(imageAdResults, context.customerId),
+    ...buildResponsiveDisplayCreativeRows(
+      responsiveDisplayResults,
+      responsiveImageUrlByResourceName,
+      context.customerId
+    ),
+    ...buildPerformanceMaxImageCreativeRows(performanceMaxResults, context.customerId),
+  ]).sort(compareGoogleImageCreativeRows);
+}
+
+export async function fetchGoogleVideoCreativePerformanceRows({
+  customerId,
+  apiVersion,
+  developerToken,
+  accessToken,
+  refreshToken,
+  clientId,
+  clientSecret,
+  loginCustomerId,
+  accessPath,
+  fallbackLoginCustomerId,
+  startDate,
+  endDate,
+}: GoogleFetchInput): Promise<GoogleVideoCreativePerformanceRow[]> {
+  const context = await resolveVerifiedGoogleAdsContext({
+    customerId,
+    apiVersion,
+    developerToken,
+    accessToken,
+    refreshToken,
+    clientId,
+    clientSecret,
+    loginCustomerId,
+    accessPath: accessPath ?? null,
+    fallbackLoginCustomerId: fallbackLoginCustomerId ?? null,
+  });
+
+  const requestContext = {
+    customerId: context.customerId,
+    apiVersion,
+    developerToken,
+    accessToken,
+    refreshToken,
+    clientId,
+    clientSecret,
+    loginCustomerId: context.loginCustomerId,
+  };
+
+  const [videoResponsiveResults, performanceMaxResults] = await Promise.all([
+    fetchOptionalGoogleCreativeResultsWithFallback({
+      ...requestContext,
+      queries: buildGoogleVideoResponsiveAdCreativeQueries(apiVersion, startDate, endDate),
+      label: "google-video-responsive-creatives",
+    }),
+    fetchOptionalGoogleCreativeResultsWithFallback({
+      ...requestContext,
+      queries: buildGooglePerformanceMaxVideoAssetQueries(apiVersion, startDate, endDate),
+      label: "google-performance-max-video-assets",
+    }),
+  ]);
+
+  const videoAssetResourceNames = collectVideoAssetResourceNames(videoResponsiveResults);
+  const videoAssetByResourceName = await fetchGoogleYoutubeVideoAssetDetails({
+    ...requestContext,
+    resourceNames: videoAssetResourceNames,
+  }).catch(() => new Map<string, GoogleYoutubeVideoAssetDetails>());
+
+  return dedupeGoogleVideoCreativeRows([
+    ...buildVideoResponsiveCreativeRows(
+      videoResponsiveResults,
+      videoAssetByResourceName,
+      context.customerId
+    ),
+    ...buildPerformanceMaxVideoCreativeRows(performanceMaxResults, context.customerId),
+  ]).sort(compareGoogleVideoCreativeRows);
+}
+
+async function fetchOptionalGoogleCreativeResults(
+  input: Omit<GoogleFetchInput, "startDate" | "endDate" | "accessPath" | "fallbackLoginCustomerId"> & {
+    query: string;
+    label: string;
+  }
+): Promise<GoogleAdsResult[]> {
+  try {
+    return await fetchGoogleAdsResults(input);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unknown Google Ads creative query failure.";
+    console.warn(`[google-creatives] label=${input.label} accountId=${input.customerId} message=${JSON.stringify(message)}`);
+    return [];
+  }
+}
+
+async function fetchOptionalGoogleCreativeResultsWithFallback(
+  input: Omit<GoogleFetchInput, "startDate" | "endDate" | "accessPath" | "fallbackLoginCustomerId"> & {
+    queries: string[];
+    label: string;
+  }
+): Promise<GoogleAdsResult[]> {
+  try {
+    return await fetchGoogleAdsResultsWithFallback(input);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unknown Google Ads creative query failure.";
+    console.warn(`[google-creatives] label=${input.label} accountId=${input.customerId} message=${JSON.stringify(message)}`);
+    return [];
+  }
+}
+
+function buildGoogleImageAdCreativeQuery(startDate: string, endDate: string): string {
+  return `
+    SELECT
+      campaign.id,
+      campaign.name,
+      campaign.advertising_channel_type,
+      ad_group.id,
+      ad_group.name,
+      ad_group_ad.status,
+      ad_group_ad.ad.id,
+      ad_group_ad.ad.name,
+      ad_group_ad.ad.type,
+      ad_group_ad.ad.final_urls,
+      ad_group_ad.ad.image_ad.name,
+      ad_group_ad.ad.image_ad.image_url,
+      ad_group_ad.ad.image_ad.preview_image_url,
+      metrics.impressions,
+      metrics.clicks,
+      metrics.ctr,
+      metrics.conversions,
+      metrics.cost_micros
+    FROM ad_group_ad
+    WHERE campaign.status = 'ENABLED'
+      AND ad_group.status = 'ENABLED'
+      AND ad_group_ad.status = 'ENABLED'
+      AND ad_group_ad.ad.type = 'IMAGE_AD'
+      AND segments.date BETWEEN '${startDate}' AND '${endDate}'
+  `;
+}
+
+function buildGoogleResponsiveDisplayCreativeQuery(startDate: string, endDate: string): string {
+  return `
+    SELECT
+      campaign.id,
+      campaign.name,
+      campaign.advertising_channel_type,
+      ad_group.id,
+      ad_group.name,
+      ad_group_ad.status,
+      ad_group_ad.ad.id,
+      ad_group_ad.ad.name,
+      ad_group_ad.ad.type,
+      ad_group_ad.ad.final_urls,
+      ad_group_ad.ad.responsive_display_ad.headlines,
+      ad_group_ad.ad.responsive_display_ad.long_headline,
+      ad_group_ad.ad.responsive_display_ad.descriptions,
+      ad_group_ad.ad.responsive_display_ad.marketing_images,
+      ad_group_ad.ad.responsive_display_ad.square_marketing_images,
+      metrics.impressions,
+      metrics.clicks,
+      metrics.ctr,
+      metrics.conversions,
+      metrics.cost_micros
+    FROM ad_group_ad
+    WHERE campaign.status = 'ENABLED'
+      AND ad_group.status = 'ENABLED'
+      AND ad_group_ad.status = 'ENABLED'
+      AND ad_group_ad.ad.type = 'RESPONSIVE_DISPLAY_AD'
+      AND segments.date BETWEEN '${startDate}' AND '${endDate}'
+  `;
+}
+
+function buildGooglePerformanceMaxImageAssetQuery(startDate: string, endDate: string): string {
+  return `
+    SELECT
+      campaign.id,
+      campaign.name,
+      campaign.advertising_channel_type,
+      asset_group.id,
+      asset_group.name,
+      asset_group.final_urls,
+      asset_group.status,
+      asset_group_asset.asset,
+      asset_group_asset.field_type,
+      asset_group_asset.status,
+      asset.resource_name,
+      asset.id,
+      asset.name,
+      asset.type,
+      asset.image_asset.full_size.url,
+      metrics.impressions,
+      metrics.clicks,
+      metrics.ctr,
+      metrics.conversions,
+      metrics.cost_micros
+    FROM asset_group_asset
+    WHERE campaign.status = 'ENABLED'
+      AND campaign.advertising_channel_type = 'PERFORMANCE_MAX'
+      AND asset_group.status = 'ENABLED'
+      AND asset_group_asset.status != 'REMOVED'
+      AND asset_group_asset.field_type IN ('MARKETING_IMAGE', 'SQUARE_MARKETING_IMAGE')
+      AND segments.date BETWEEN '${startDate}' AND '${endDate}'
+  `;
+}
+
+function buildGoogleVideoResponsiveAdCreativeQueries(
+  apiVersion: string,
+  startDate: string,
+  endDate: string
+): string[] {
+  return buildGoogleVideoMetricFieldNames(apiVersion).map((videoViewsField) => `
+    SELECT
+      campaign.id,
+      campaign.name,
+      campaign.advertising_channel_type,
+      ad_group.id,
+      ad_group.name,
+      ad_group_ad.status,
+      ad_group_ad.ad.id,
+      ad_group_ad.ad.name,
+      ad_group_ad.ad.type,
+      ad_group_ad.ad.final_urls,
+      ad_group_ad.ad.video_responsive_ad.headlines,
+      ad_group_ad.ad.video_responsive_ad.long_headlines,
+      ad_group_ad.ad.video_responsive_ad.descriptions,
+      ad_group_ad.ad.video_responsive_ad.videos,
+      metrics.impressions,
+      metrics.clicks,
+      metrics.ctr,
+      metrics.conversions,
+      ${videoViewsField},
+      metrics.cost_micros
+    FROM ad_group_ad
+    WHERE campaign.status = 'ENABLED'
+      AND ad_group.status = 'ENABLED'
+      AND ad_group_ad.status = 'ENABLED'
+      AND ad_group_ad.ad.type = 'VIDEO_RESPONSIVE_AD'
+      AND segments.date BETWEEN '${startDate}' AND '${endDate}'
+  `);
+}
+
+function buildGooglePerformanceMaxVideoAssetQueries(
+  apiVersion: string,
+  startDate: string,
+  endDate: string
+): string[] {
+  return buildGoogleVideoMetricFieldNames(apiVersion).map((videoViewsField) => `
+    SELECT
+      campaign.id,
+      campaign.name,
+      campaign.advertising_channel_type,
+      asset_group.id,
+      asset_group.name,
+      asset_group.final_urls,
+      asset_group.status,
+      asset_group_asset.asset,
+      asset_group_asset.field_type,
+      asset_group_asset.status,
+      asset.resource_name,
+      asset.id,
+      asset.name,
+      asset.type,
+      asset.youtube_video_asset.youtube_video_id,
+      asset.youtube_video_asset.youtube_video_title,
+      metrics.impressions,
+      metrics.clicks,
+      metrics.ctr,
+      metrics.conversions,
+      ${videoViewsField},
+      metrics.cost_micros
+    FROM asset_group_asset
+    WHERE campaign.status = 'ENABLED'
+      AND campaign.advertising_channel_type = 'PERFORMANCE_MAX'
+      AND asset_group.status = 'ENABLED'
+      AND asset_group_asset.status != 'REMOVED'
+      AND asset_group_asset.field_type IN ('YOUTUBE_VIDEO', 'VIDEO')
+      AND segments.date BETWEEN '${startDate}' AND '${endDate}'
+  `);
+}
+
+function buildGoogleVideoMetricFieldNames(apiVersion: string): string[] {
+  const versionNumber = Number.parseInt(apiVersion.replace(/\D/g, ""), 10);
+  const preferred = Number.isFinite(versionNumber) && versionNumber >= 22
+    ? "metrics.video_trueview_views"
+    : "metrics.video_views";
+  const fallback = preferred === "metrics.video_trueview_views"
+    ? "metrics.video_views"
+    : "metrics.video_trueview_views";
+  return [preferred, fallback];
+}
+
+function collectResponsiveDisplayImageAssetResourceNames(results: GoogleAdsResult[]): string[] {
+  const resourceNames = new Set<string>();
+  results.forEach((result) => {
+    [
+      ...(result.adGroupAd?.ad?.responsiveDisplayAd?.marketingImages ?? []),
+      ...(result.adGroupAd?.ad?.responsiveDisplayAd?.squareMarketingImages ?? []),
+    ].forEach((image) => {
+      const resourceName = image.asset?.trim();
+      if (resourceName) {
+        resourceNames.add(resourceName);
+      }
+    });
+  });
+  return Array.from(resourceNames);
+}
+
+function collectVideoAssetResourceNames(results: GoogleAdsResult[]): string[] {
+  const resourceNames = new Set<string>();
+  results.forEach((result) => {
+    (result.adGroupAd?.ad?.videoResponsiveAd?.videos ?? []).forEach((video) => {
+      const resourceName = video.asset?.trim();
+      if (resourceName) {
+        resourceNames.add(resourceName);
+      }
+    });
+  });
+  return Array.from(resourceNames);
+}
+
+async function fetchGoogleAssetImageUrls(
+  input: Omit<GoogleFetchInput, "startDate" | "endDate" | "accessPath" | "fallbackLoginCustomerId"> & {
+    resourceNames: string[];
+  }
+): Promise<Map<string, string>> {
+  const imageUrlByResourceName = new Map<string, string>();
+  const resourceNameChunks = chunkArray(input.resourceNames, 100);
+
+  for (const resourceNameChunk of resourceNameChunks) {
+    if (resourceNameChunk.length === 0) {
+      continue;
+    }
+
+    const quotedResourceNames = resourceNameChunk.map((resourceName) => `'${escapeGaqlString(resourceName)}'`);
+    const results = await fetchGoogleAdsResults({
+      customerId: input.customerId,
+      apiVersion: input.apiVersion,
+      developerToken: input.developerToken,
+      accessToken: input.accessToken,
+      refreshToken: input.refreshToken,
+      clientId: input.clientId,
+      clientSecret: input.clientSecret,
+      loginCustomerId: input.loginCustomerId,
+      query: `
+        SELECT
+          asset.resource_name,
+          asset.image_asset.full_size.url
+        FROM asset
+        WHERE asset.resource_name IN (${quotedResourceNames.join(", ")})
+      `,
+    });
+
+    results.forEach((result) => {
+      const resourceName = result.asset?.resourceName?.trim();
+      const imageUrl = result.asset?.imageAsset?.fullSize?.url?.trim();
+      if (resourceName && imageUrl) {
+        imageUrlByResourceName.set(resourceName, imageUrl);
+      }
+    });
+  }
+
+  return imageUrlByResourceName;
+}
+
+async function fetchGoogleYoutubeVideoAssetDetails(
+  input: Omit<GoogleFetchInput, "startDate" | "endDate" | "accessPath" | "fallbackLoginCustomerId"> & {
+    resourceNames: string[];
+  }
+): Promise<Map<string, GoogleYoutubeVideoAssetDetails>> {
+  const detailsByResourceName = new Map<string, GoogleYoutubeVideoAssetDetails>();
+  const resourceNameChunks = chunkArray(input.resourceNames, 100);
+
+  for (const resourceNameChunk of resourceNameChunks) {
+    if (resourceNameChunk.length === 0) {
+      continue;
+    }
+
+    const quotedResourceNames = resourceNameChunk.map((resourceName) => `'${escapeGaqlString(resourceName)}'`);
+    const results = await fetchGoogleAdsResults({
+      customerId: input.customerId,
+      apiVersion: input.apiVersion,
+      developerToken: input.developerToken,
+      accessToken: input.accessToken,
+      refreshToken: input.refreshToken,
+      clientId: input.clientId,
+      clientSecret: input.clientSecret,
+      loginCustomerId: input.loginCustomerId,
+      query: `
+        SELECT
+          asset.resource_name,
+          asset.youtube_video_asset.youtube_video_id,
+          asset.youtube_video_asset.youtube_video_title
+        FROM asset
+        WHERE asset.resource_name IN (${quotedResourceNames.join(", ")})
+      `,
+    });
+
+    results.forEach((result) => {
+      const resourceName = result.asset?.resourceName?.trim();
+      if (!resourceName) {
+        return;
+      }
+      detailsByResourceName.set(resourceName, {
+        resourceName,
+        youtubeVideoId: result.asset?.youtubeVideoAsset?.youtubeVideoId?.trim() || null,
+        youtubeVideoTitle: result.asset?.youtubeVideoAsset?.youtubeVideoTitle?.trim() || null,
+      });
+    });
+  }
+
+  return detailsByResourceName;
+}
+
+function buildImageAdCreativeRows(
+  results: GoogleAdsResult[],
+  customerId: string
+): GoogleImageCreativePerformanceRow[] {
+  return results.flatMap((result, index) => {
+    const imageUrl = result.adGroupAd?.ad?.imageAd?.imageUrl?.trim() || result.adGroupAd?.ad?.imageAd?.previewImageUrl?.trim();
+    if (!imageUrl) {
+      return [];
+    }
+    return buildRowsForFinalUrls(result, customerId, index, {
+      source: "image_ad",
+      imageUrl,
+      assetId: result.adGroupAd?.ad?.imageAd?.imageAsset?.asset ?? null,
+      headline: result.adGroupAd?.ad?.name ?? result.adGroupAd?.ad?.imageAd?.name ?? null,
+      description: null,
+    });
+  });
+}
+
+function buildResponsiveDisplayCreativeRows(
+  results: GoogleAdsResult[],
+  imageUrlByResourceName: Map<string, string>,
+  customerId: string
+): GoogleImageCreativePerformanceRow[] {
+  return results.flatMap((result, index) => {
+    const imageResourceNames = collectResponsiveDisplayImageAssetResourceNames([result]);
+    const imageResourceName = imageResourceNames.find((resourceName) => imageUrlByResourceName.has(resourceName));
+    const imageUrl = imageResourceName ? imageUrlByResourceName.get(imageResourceName) : null;
+    if (!imageUrl) {
+      return [];
+    }
+
+    return buildRowsForFinalUrls(result, customerId, index, {
+      source: "responsive_display_ad",
+      imageUrl,
+      assetId: imageResourceName ?? null,
+      headline: pickFirstText([
+        result.adGroupAd?.ad?.responsiveDisplayAd?.longHeadline?.text,
+        ...(result.adGroupAd?.ad?.responsiveDisplayAd?.headlines ?? []).map((item) => item.text),
+        result.adGroupAd?.ad?.name,
+      ]),
+      description: pickFirstText(
+        (result.adGroupAd?.ad?.responsiveDisplayAd?.descriptions ?? []).map((item) => item.text)
+      ),
+    });
+  });
+}
+
+function buildPerformanceMaxImageCreativeRows(
+  results: GoogleAdsResult[],
+  customerId: string
+): GoogleImageCreativePerformanceRow[] {
+  return results.flatMap((result, index) => {
+    const imageUrl = result.asset?.imageAsset?.fullSize?.url?.trim();
+    const finalUrls = result.assetGroup?.finalUrls ?? [];
+    if (!imageUrl || finalUrls.length === 0) {
+      return [];
+    }
+
+    return finalUrls.flatMap((rawUrl) => {
+      const finalUrl = rawUrl?.trim();
+      if (!finalUrl) {
+        return [];
+      }
+
+      return [
+        createGoogleImageCreativeRow(result, customerId, index, finalUrl, {
+          source: "performance_max_asset",
+          imageUrl,
+          assetId: result.asset?.resourceName ?? result.assetGroupAsset?.asset ?? result.asset?.id ?? null,
+          headline: result.asset?.name ?? result.assetGroup?.name ?? null,
+          description: null,
+        }),
+      ];
+    });
+  });
+}
+
+function buildRowsForFinalUrls(
+  result: GoogleAdsResult,
+  customerId: string,
+  index: number,
+  creative: {
+    source: GoogleImageCreativePerformanceRow["source"];
+    imageUrl: string;
+    assetId: string | null;
+    headline: string | null;
+    description: string | null;
+  }
+): GoogleImageCreativePerformanceRow[] {
+  return (result.adGroupAd?.ad?.finalUrls ?? []).flatMap((rawUrl) => {
+    const finalUrl = rawUrl?.trim();
+    if (!finalUrl) {
+      return [];
+    }
+    return [createGoogleImageCreativeRow(result, customerId, index, finalUrl, creative)];
+  });
+}
+
+function createGoogleImageCreativeRow(
+  result: GoogleAdsResult,
+  customerId: string,
+  index: number,
+  finalUrl: string,
+  creative: {
+    source: GoogleImageCreativePerformanceRow["source"];
+    imageUrl: string;
+    assetId: string | null;
+    headline: string | null;
+    description: string | null;
+  }
+): GoogleImageCreativePerformanceRow {
+  const impressions = toNumber(result.metrics?.impressions);
+  const clicks = toNumber(result.metrics?.clicks);
+  const conversions = toNumber(result.metrics?.conversions);
+  const cost = microsToCurrency(result.metrics?.costMicros);
+  const adId = result.adGroupAd?.ad?.id?.trim() ?? null;
+  const assetGroupId = result.assetGroup?.id?.trim() ?? null;
+  const assetId = creative.assetId?.trim() || null;
+
+  return {
+    id: [
+      customerId,
+      creative.source,
+      finalUrl,
+      adId ?? assetGroupId ?? "creative",
+      assetId ?? index,
+    ].join(":"),
+    source: creative.source,
+    finalUrl,
+    campaignId: result.campaign?.id?.trim() ?? null,
+    campaignName: result.campaign?.name?.trim() || "Untitled Campaign",
+    adGroupId: result.adGroup?.id?.trim() ?? assetGroupId,
+    adGroupName: result.adGroup?.name?.trim() ?? result.assetGroup?.name?.trim() ?? null,
+    adId,
+    adName:
+      result.adGroupAd?.ad?.name?.trim() ||
+      result.adGroupAd?.ad?.imageAd?.name?.trim() ||
+      result.assetGroup?.name?.trim() ||
+      result.asset?.name?.trim() ||
+      "Untitled Creative",
+    adType: humanizeEnum(result.adGroupAd?.ad?.type) || (creative.source === "performance_max_asset" ? "Performance Max Image Asset" : "Image Creative"),
+    assetId,
+    imageUrl: creative.imageUrl,
+    headline: creative.headline?.trim() || null,
+    description: creative.description?.trim() || null,
+    impressions,
+    clicks,
+    ctr: impressions > 0 ? (clicks * 100) / impressions : normalizeOptionalPercent(result.metrics?.ctr),
+    conversions,
+    cpa: conversions > 0 ? cost / conversions : null,
+    cost,
+  };
+}
+
+function dedupeGoogleImageCreativeRows(
+  rows: GoogleImageCreativePerformanceRow[]
+): GoogleImageCreativePerformanceRow[] {
+  const byId = new Map<string, GoogleImageCreativePerformanceRow>();
+  rows.forEach((row) => {
+    if (!row.finalUrl.trim() || !row.imageUrl.trim()) {
+      return;
+    }
+    byId.set(row.id, row);
+  });
+  return Array.from(byId.values());
+}
+
+function compareGoogleImageCreativeRows(
+  left: GoogleImageCreativePerformanceRow,
+  right: GoogleImageCreativePerformanceRow
+): number {
+  if (right.conversions !== left.conversions) {
+    return right.conversions - left.conversions;
+  }
+
+  const leftCpa = left.cpa ?? Number.POSITIVE_INFINITY;
+  const rightCpa = right.cpa ?? Number.POSITIVE_INFINITY;
+  if (leftCpa !== rightCpa) {
+    return leftCpa - rightCpa;
+  }
+
+  const leftCtr = left.ctr ?? 0;
+  const rightCtr = right.ctr ?? 0;
+  if (rightCtr !== leftCtr) {
+    return rightCtr - leftCtr;
+  }
+
+  return right.cost - left.cost;
+}
+
+function buildVideoResponsiveCreativeRows(
+  results: GoogleAdsResult[],
+  videoAssetByResourceName: Map<string, GoogleYoutubeVideoAssetDetails>,
+  customerId: string
+): GoogleVideoCreativePerformanceRow[] {
+  return results.flatMap((result, index) => {
+    const videoResourceName = collectVideoAssetResourceNames([result])[0] ?? null;
+    const videoDetails = videoResourceName ? videoAssetByResourceName.get(videoResourceName) : undefined;
+    const youtubeVideoId = videoDetails?.youtubeVideoId ?? null;
+
+    if (!videoResourceName && !youtubeVideoId) {
+      return [];
+    }
+
+    return buildVideoRowsForFinalUrls(result, customerId, index, {
+      source: "video_responsive_ad",
+      videoAssetResourceName: videoResourceName,
+      youtubeVideoId,
+      videoUrl: buildYoutubeVideoUrl(youtubeVideoId),
+      thumbnailUrl: buildYoutubeThumbnailUrl(youtubeVideoId),
+      assetId: videoResourceName,
+      headline: pickFirstText([
+        ...(result.adGroupAd?.ad?.videoResponsiveAd?.longHeadlines ?? []).map((item) => item.text),
+        ...(result.adGroupAd?.ad?.videoResponsiveAd?.headlines ?? []).map((item) => item.text),
+        videoDetails?.youtubeVideoTitle,
+        result.adGroupAd?.ad?.name,
+      ]),
+      description: pickFirstText(
+        (result.adGroupAd?.ad?.videoResponsiveAd?.descriptions ?? []).map((item) => item.text)
+      ),
+    });
+  });
+}
+
+function buildPerformanceMaxVideoCreativeRows(
+  results: GoogleAdsResult[],
+  customerId: string
+): GoogleVideoCreativePerformanceRow[] {
+  return results.flatMap((result, index) => {
+    const youtubeVideoId = result.asset?.youtubeVideoAsset?.youtubeVideoId?.trim() || null;
+    const finalUrls = result.assetGroup?.finalUrls ?? [];
+    if (!youtubeVideoId || finalUrls.length === 0) {
+      return [];
+    }
+
+    return finalUrls.flatMap((rawUrl) => {
+      const finalUrl = rawUrl?.trim();
+      if (!finalUrl) {
+        return [];
+      }
+
+      return [
+        createGoogleVideoCreativeRow(result, customerId, index, finalUrl, {
+          source: "performance_max_youtube_asset",
+          videoAssetResourceName: result.asset?.resourceName ?? result.assetGroupAsset?.asset ?? null,
+          youtubeVideoId,
+          videoUrl: buildYoutubeVideoUrl(youtubeVideoId),
+          thumbnailUrl: buildYoutubeThumbnailUrl(youtubeVideoId),
+          assetId: result.asset?.resourceName ?? result.assetGroupAsset?.asset ?? result.asset?.id ?? null,
+          headline:
+            result.asset?.youtubeVideoAsset?.youtubeVideoTitle ??
+            result.asset?.name ??
+            result.assetGroup?.name ??
+            null,
+          description: null,
+        }),
+      ];
+    });
+  });
+}
+
+function buildVideoRowsForFinalUrls(
+  result: GoogleAdsResult,
+  customerId: string,
+  index: number,
+  creative: {
+    source: GoogleVideoCreativePerformanceRow["source"];
+    videoAssetResourceName: string | null;
+    youtubeVideoId: string | null;
+    videoUrl: string | null;
+    thumbnailUrl: string | null;
+    assetId: string | null;
+    headline: string | null;
+    description: string | null;
+  }
+): GoogleVideoCreativePerformanceRow[] {
+  return (result.adGroupAd?.ad?.finalUrls ?? []).flatMap((rawUrl) => {
+    const finalUrl = rawUrl?.trim();
+    if (!finalUrl) {
+      return [];
+    }
+    return [createGoogleVideoCreativeRow(result, customerId, index, finalUrl, creative)];
+  });
+}
+
+function createGoogleVideoCreativeRow(
+  result: GoogleAdsResult,
+  customerId: string,
+  index: number,
+  finalUrl: string,
+  creative: {
+    source: GoogleVideoCreativePerformanceRow["source"];
+    videoAssetResourceName: string | null;
+    youtubeVideoId: string | null;
+    videoUrl: string | null;
+    thumbnailUrl: string | null;
+    assetId: string | null;
+    headline: string | null;
+    description: string | null;
+  }
+): GoogleVideoCreativePerformanceRow {
+  const impressions = toNumber(result.metrics?.impressions);
+  const clicks = toNumber(result.metrics?.clicks);
+  const conversions = toNumber(result.metrics?.conversions);
+  const cost = microsToCurrency(result.metrics?.costMicros);
+  const views = readGoogleVideoViews(result);
+  const adId = result.adGroupAd?.ad?.id?.trim() ?? null;
+  const assetGroupId = result.assetGroup?.id?.trim() ?? null;
+  const assetId = creative.assetId?.trim() || null;
+
+  return {
+    id: [
+      customerId,
+      creative.source,
+      finalUrl,
+      adId ?? assetGroupId ?? "video",
+      assetId ?? creative.youtubeVideoId ?? index,
+    ].join(":"),
+    source: creative.source,
+    finalUrl,
+    campaignId: result.campaign?.id?.trim() ?? null,
+    campaignName: result.campaign?.name?.trim() || "Untitled Campaign",
+    adGroupId: result.adGroup?.id?.trim() ?? assetGroupId,
+    adGroupName: result.adGroup?.name?.trim() ?? result.assetGroup?.name?.trim() ?? null,
+    adId,
+    adName:
+      result.adGroupAd?.ad?.name?.trim() ||
+      creative.headline?.trim() ||
+      result.assetGroup?.name?.trim() ||
+      result.asset?.name?.trim() ||
+      "Untitled Video Creative",
+    adType:
+      humanizeEnum(result.adGroupAd?.ad?.type) ||
+      (creative.source === "performance_max_youtube_asset"
+        ? "Performance Max YouTube Asset"
+        : "Video Creative"),
+    assetId,
+    videoAssetResourceName: creative.videoAssetResourceName,
+    youtubeVideoId: creative.youtubeVideoId,
+    videoUrl: creative.videoUrl,
+    thumbnailUrl: creative.thumbnailUrl,
+    headline: creative.headline?.trim() || null,
+    description: creative.description?.trim() || null,
+    impressions,
+    views,
+    clicks,
+    ctr: impressions > 0 ? (clicks * 100) / impressions : normalizeOptionalPercent(result.metrics?.ctr),
+    conversions,
+    cpa: conversions > 0 ? cost / conversions : null,
+    cost,
+  };
+}
+
+function dedupeGoogleVideoCreativeRows(
+  rows: GoogleVideoCreativePerformanceRow[]
+): GoogleVideoCreativePerformanceRow[] {
+  const byId = new Map<string, GoogleVideoCreativePerformanceRow>();
+  rows.forEach((row) => {
+    if (!row.finalUrl.trim() || (!row.videoUrl?.trim() && !row.youtubeVideoId?.trim())) {
+      return;
+    }
+    byId.set(row.id, row);
+  });
+  return Array.from(byId.values());
+}
+
+function compareGoogleVideoCreativeRows(
+  left: GoogleVideoCreativePerformanceRow,
+  right: GoogleVideoCreativePerformanceRow
+): number {
+  if (right.conversions !== left.conversions) {
+    return right.conversions - left.conversions;
+  }
+
+  const leftCpa = left.cpa ?? Number.POSITIVE_INFINITY;
+  const rightCpa = right.cpa ?? Number.POSITIVE_INFINITY;
+  if (leftCpa !== rightCpa) {
+    return leftCpa - rightCpa;
+  }
+
+  const leftCtr = left.ctr ?? 0;
+  const rightCtr = right.ctr ?? 0;
+  if (rightCtr !== leftCtr) {
+    return rightCtr - leftCtr;
+  }
+
+  if (right.views !== left.views) {
+    return right.views - left.views;
+  }
+
+  return right.cost - left.cost;
+}
+
+function readGoogleVideoViews(result: GoogleAdsResult): number {
+  return toNumber(result.metrics?.videoTrueviewViews ?? result.metrics?.videoViews);
+}
+
+function buildYoutubeVideoUrl(youtubeVideoId: string | null): string | null {
+  const id = youtubeVideoId?.trim();
+  return id ? `https://www.youtube.com/watch?v=${encodeURIComponent(id)}` : null;
+}
+
+function buildYoutubeThumbnailUrl(youtubeVideoId: string | null): string | null {
+  const id = youtubeVideoId?.trim();
+  return id ? `https://i.ytimg.com/vi/${encodeURIComponent(id)}/hqdefault.jpg` : null;
+}
+
+function pickFirstText(values: Array<string | null | undefined>): string | null {
+  return values.map((value) => value?.trim() ?? "").find(Boolean) ?? null;
+}
+
+async function fetchGoogleFinalUrlImpressionShareLookup(
+  input: Omit<GoogleFetchInput, "accessPath" | "fallbackLoginCustomerId">
+): Promise<GoogleFinalUrlImpressionShareLookup> {
+  const adGroupResults = await fetchGoogleAdsResults({
+    customerId: input.customerId,
+    apiVersion: input.apiVersion,
+    developerToken: input.developerToken,
+    accessToken: input.accessToken,
+    refreshToken: input.refreshToken,
+    clientId: input.clientId,
+    clientSecret: input.clientSecret,
+    loginCustomerId: input.loginCustomerId,
+    query: `
+      SELECT
+        campaign.id,
+        ad_group.id,
+        metrics.search_impression_share,
+        metrics.search_budget_lost_impression_share,
+        metrics.search_rank_lost_impression_share
+      FROM ad_group
+      WHERE campaign.status = 'ENABLED'
+        AND ad_group.status = 'ENABLED'
+        AND segments.date BETWEEN '${input.startDate}' AND '${input.endDate}'
+    `,
+  }).catch(() => [] as GoogleAdsResult[]);
+  const campaignResults = await fetchGoogleAdsResults({
+    customerId: input.customerId,
+    apiVersion: input.apiVersion,
+    developerToken: input.developerToken,
+    accessToken: input.accessToken,
+    refreshToken: input.refreshToken,
+    clientId: input.clientId,
+    clientSecret: input.clientSecret,
+    loginCustomerId: input.loginCustomerId,
+    query: `
+      SELECT
+        campaign.id,
+        metrics.search_impression_share,
+        metrics.search_budget_lost_impression_share,
+        metrics.search_rank_lost_impression_share
+      FROM campaign
+      WHERE campaign.status = 'ENABLED'
+        AND segments.date BETWEEN '${input.startDate}' AND '${input.endDate}'
+    `,
+  }).catch(() => [] as GoogleAdsResult[]);
+
+  const byAdGroupId = new Map<string, GoogleImpressionShareMetrics>();
+  adGroupResults.forEach((result) => {
+    const adGroupId = result.adGroup?.id?.trim();
+    if (adGroupId) {
+      byAdGroupId.set(adGroupId, readGoogleImpressionShareMetrics(result));
+    }
+  });
+
+  const byCampaignId = new Map<string, GoogleImpressionShareMetrics>();
+  campaignResults.forEach((result) => {
+    const campaignId = result.campaign?.id?.trim();
+    if (campaignId) {
+      byCampaignId.set(campaignId, readGoogleImpressionShareMetrics(result));
+    }
+  });
+
+  return { byAdGroupId, byCampaignId };
+}
+
+function pickFinalUrlImpressionShareMetrics(
+  lookup: GoogleFinalUrlImpressionShareLookup,
+  campaignId: string | undefined,
+  adGroupId: string | undefined
+): { metrics: GoogleImpressionShareMetrics | null; source: "ad_group" | "campaign" | null } {
+  if (adGroupId) {
+    const adGroupMetrics = lookup.byAdGroupId.get(adGroupId);
+    if (adGroupMetrics && hasAnyImpressionShareMetric(adGroupMetrics)) {
+      return { metrics: adGroupMetrics, source: "ad_group" };
+    }
+  }
+
+  if (campaignId) {
+    const campaignMetrics = lookup.byCampaignId.get(campaignId);
+    if (campaignMetrics && hasAnyImpressionShareMetric(campaignMetrics)) {
+      return { metrics: campaignMetrics, source: "campaign" };
+    }
+  }
+
+  return { metrics: null, source: null };
+}
+
+function readGoogleImpressionShareMetrics(result: GoogleAdsResult): GoogleImpressionShareMetrics {
+  return {
+    impressionShare: normalizeOptionalPercent(result.metrics?.searchImpressionShare),
+    lostImpressionShareBudget: normalizeOptionalPercent(result.metrics?.searchBudgetLostImpressionShare),
+    lostImpressionShareRank: normalizeOptionalPercent(result.metrics?.searchRankLostImpressionShare),
+  };
+}
+
+function hasAnyImpressionShareMetric(metrics: GoogleImpressionShareMetrics): boolean {
+  return (
+    metrics.impressionShare !== null ||
+    metrics.lostImpressionShareBudget !== null ||
+    metrics.lostImpressionShareRank !== null
+  );
+}
+
+function createWeightedMetricAccumulator(): WeightedMetricAccumulator {
+  return { sum: 0, weight: 0 };
+}
+
+function addFinalUrlImpressionShareMetrics(
+  accumulator: GoogleFinalUrlAccumulator,
+  match: { metrics: GoogleImpressionShareMetrics | null; source: "ad_group" | "campaign" | null },
+  weight: number
+) {
+  if (!match.metrics) {
+    return;
+  }
+
+  addWeightedMetric(accumulator.impressionShare, match.metrics.impressionShare, weight);
+  addWeightedMetric(accumulator.lostImpressionShareBudget, match.metrics.lostImpressionShareBudget, weight);
+  addWeightedMetric(accumulator.lostImpressionShareRank, match.metrics.lostImpressionShareRank, weight);
+
+  if (match.source === "ad_group") {
+    accumulator.sawAdGroupShare = true;
+  } else if (match.source === "campaign") {
+    accumulator.sawCampaignShare = true;
+  }
+}
+
+function addWeightedMetric(accumulator: WeightedMetricAccumulator, value: number | null, weight: number) {
+  if (!Number.isFinite(value)) {
+    return;
+  }
+
+  const safeWeight = Number.isFinite(weight) && weight > 0 ? weight : 1;
+  accumulator.sum += Number(value) * safeWeight;
+  accumulator.weight += safeWeight;
+}
+
+function finalizeGoogleFinalUrlAccumulator(accumulator: GoogleFinalUrlAccumulator): GoogleFinalUrlSpendRow {
+  return {
+    ...accumulator.row,
+    impressionShare: finalizeWeightedMetric(accumulator.impressionShare),
+    lostImpressionShareBudget: finalizeWeightedMetric(accumulator.lostImpressionShareBudget),
+    lostImpressionShareRank: finalizeWeightedMetric(accumulator.lostImpressionShareRank),
+    impressionShareSource: accumulator.sawAdGroupShare
+      ? "ad_group"
+      : accumulator.sawCampaignShare
+        ? "campaign"
+        : null,
+  };
+}
+
+function finalizeWeightedMetric(accumulator: WeightedMetricAccumulator): number | null {
+  return accumulator.weight > 0 ? accumulator.sum / accumulator.weight : null;
 }
 
 export async function fetchGoogleAuctionInsightRows({
@@ -4341,6 +5527,17 @@ function normalizePercent(value: number | string | undefined, fallbackBase = 0, 
     return (fallbackCount * 100) / fallbackBase;
   }
   return 0;
+}
+
+function normalizeOptionalPercent(value: number | string | undefined): number | null {
+  if (value === undefined || value === null || value === "") {
+    return null;
+  }
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) {
+    return null;
+  }
+  return numeric <= 1 ? numeric * 100 : numeric;
 }
 
 function microsToCurrency(value: string | number | undefined): number {

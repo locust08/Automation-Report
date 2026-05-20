@@ -9,6 +9,7 @@ import {
 import { emptyCampaignRow, hasReportableCampaignSpend } from "@/lib/reporting/metrics";
 import {
   CampaignRow,
+  MetaCreativePerformanceRow,
   MetaPreviewBlockDiagnostic,
   MetaPreviewBlockIssue,
   PreviewCampaignNode,
@@ -124,6 +125,7 @@ interface MetaCreativeRow {
       description?: string;
     };
     video_data?: {
+      video_id?: string;
       call_to_action?: {
         value?: {
           link?: string;
@@ -133,6 +135,7 @@ interface MetaCreativeRow {
       message?: string;
       title?: string;
       image_url?: string;
+      thumbnail_url?: string;
     };
   };
 }
@@ -353,6 +356,26 @@ const META_PREVIEW_CREATIVE_FIELDS = [
   "object_story_spec",
 ] as const;
 
+const META_ADVANCED_CREATIVE_INSIGHT_FIELDS = [
+  "campaign_id",
+  "campaign_name",
+  "adset_id",
+  "adset_name",
+  "ad_id",
+  "ad_name",
+  "objective",
+  "impressions",
+  "reach",
+  "clicks",
+  "ctr",
+  "spend",
+  "objective_results",
+  "cost_per_result",
+  "cost_per_objective_result",
+  "actions",
+  "cost_per_action_type",
+] as const;
+
 const META_PREVIEW_INSIGHT_FIELDS = [
   "campaign_id",
   "campaign_name",
@@ -488,6 +511,114 @@ export async function fetchMetaCampaignRows({
   );
 
   return responseRows;
+}
+
+export async function fetchMetaCreativePerformanceRows({
+  accountId,
+  accessToken,
+  startDate,
+  endDate,
+}: MetaFetchInput): Promise<MetaCreativePerformanceRow[]> {
+  const [ads, insights] = await Promise.all([
+    fetchMetaAdCollection({
+      accountId,
+      accessToken,
+      fields: [...META_PREVIEW_AD_FIELDS],
+    }),
+    fetchMetaInsightsCollection({
+      accountId,
+      accessToken,
+      startDate,
+      endDate,
+      breakdowns: [],
+      fields: [...META_ADVANCED_CREATIVE_INSIGHT_FIELDS],
+    }),
+  ]);
+  const adById = new Map(
+    ads
+      .map((ad) => [ad.id?.trim() ?? "", ad] as const)
+      .filter(([adId]) => Boolean(adId))
+  );
+  const creativeIds = Array.from(
+    new Set(ads.map((ad) => ad.creative?.id?.trim()).filter(Boolean) as string[])
+  );
+  const creativeMap =
+    creativeIds.length > 0
+      ? await fetchMetaCreativeCollection({ accessToken, creativeIds })
+      : new Map<string, PreviewCreativeAsset>();
+  const rowsByAdId = new Map<string, MetaCreativePerformanceRow>();
+
+  insights.forEach((insight) => {
+    const adId = insight.ad_id?.trim();
+    if (!adId) {
+      return;
+    }
+
+    const ad = adById.get(adId);
+    const creativeId = ad?.creative?.id?.trim() || null;
+    const creative = creativeId ? creativeMap.get(creativeId) ?? null : null;
+    const finalUrl = creative?.linkUrl?.trim() ?? "";
+    if (!finalUrl) {
+      return;
+    }
+
+    const spend = toNumber(insight.spend);
+    const impressions = toNumber(insight.impressions);
+    const clicks = toNumber(insight.clicks);
+    const resultMetric = pickResultMetric({
+      objectiveResults: insight.objective_results,
+      costPerResult: insight.cost_per_result,
+      costPerObjectiveResult: insight.cost_per_objective_result,
+      reach: insight.reach,
+      cpp: insight.cpp,
+      estimatedAdRecallers: insight.estimated_ad_recallers,
+      costPerEstimatedAdRecallers: insight.cost_per_estimated_ad_recallers,
+      videoThruPlayWatchedActions: insight.video_thruplay_watched_actions,
+      costPerThruPlay: insight.cost_per_thruplay,
+      actions: insight.actions,
+      costs: insight.cost_per_action_type,
+      objective: insight.objective,
+      optimizationGoal: insight.optimization_goal,
+    });
+    const existing = rowsByAdId.get(adId);
+    const nextSpend = (existing?.cost ?? 0) + spend;
+    const nextClicks = (existing?.clicks ?? 0) + clicks;
+    const nextImpressions = (existing?.impressions ?? 0) + impressions;
+    const nextConversions = (existing?.conversions ?? 0) + resultMetric.value;
+    const mediaType =
+      creative?.videoUrl || creative?.objectType?.toUpperCase().includes("VIDEO") ? "video" : "image";
+
+    rowsByAdId.set(adId, {
+      id: existing?.id ?? `${accountId}:${adId}`,
+      finalUrl,
+      mediaType,
+      imageUrl: creative?.imageUrl?.trim() || creative?.thumbnailUrl?.trim() || null,
+      videoUrl: creative?.videoUrl?.trim() || null,
+      thumbnailUrl: creative?.thumbnailUrl?.trim() || creative?.imageUrl?.trim() || null,
+      campaignId: insight.campaign_id?.trim() || ad?.campaign_id?.trim() || null,
+      campaignName: insight.campaign_name?.trim() || "Meta campaign",
+      adSetId: insight.adset_id?.trim() || ad?.adset_id?.trim() || null,
+      adSetName: insight.adset_name?.trim() || null,
+      adId,
+      adName: insight.ad_name?.trim() || ad?.name?.trim() || `Ad ${adId}`,
+      creativeId,
+      creativeName: creative?.name?.trim() || ad?.creative?.name?.trim() || null,
+      primaryText: creative?.body?.trim() || null,
+      headline: creative?.title?.trim() || null,
+      description: creative?.description?.trim() || null,
+      impressions: nextImpressions,
+      reach: (existing?.reach ?? 0) + toNumber(insight.reach),
+      clicks: nextClicks,
+      ctr: nextImpressions > 0 ? (nextClicks * 100) / nextImpressions : null,
+      conversions: nextConversions,
+      cpa: nextConversions > 0 ? nextSpend / nextConversions : resultMetric.costPerResult,
+      cost: nextSpend,
+    });
+  });
+
+  return Array.from(rowsByAdId.values()).filter(
+    (row) => row.cost > 0 || row.impressions > 0 || row.clicks > 0 || row.conversions > 0
+  );
 }
 
 export async function fetchMetaAudienceBreakdown({
@@ -1484,10 +1615,12 @@ function buildDemographicMap(rows: MetaInsightRow[]): Map<string, PreviewDemogra
 function mapCreativeAsset(row: MetaCreativeRow): PreviewCreativeAsset {
   const storyLink = row.object_story_spec?.link_data?.link?.trim();
   const videoLink = row.object_story_spec?.video_data?.call_to_action?.value?.link?.trim();
+  const videoId = row.object_story_spec?.video_data?.video_id?.trim();
   const imageUrl =
     row.image_url?.trim() ||
     row.thumbnail_url?.trim() ||
     row.object_story_spec?.video_data?.image_url?.trim() ||
+    row.object_story_spec?.video_data?.thumbnail_url?.trim() ||
     null;
 
   return {
@@ -1505,7 +1638,8 @@ function mapCreativeAsset(row: MetaCreativeRow): PreviewCreativeAsset {
       null,
     description: row.object_story_spec?.link_data?.description?.trim() || null,
     imageUrl,
-    thumbnailUrl: row.thumbnail_url?.trim() || null,
+    videoUrl: videoId ? `https://www.facebook.com/watch/?v=${encodeURIComponent(videoId)}` : null,
+    thumbnailUrl: row.thumbnail_url?.trim() || row.object_story_spec?.video_data?.thumbnail_url?.trim() || null,
     linkUrl: storyLink || videoLink || null,
     callToActionType:
       row.object_story_spec?.link_data?.call_to_action?.type?.trim() ||

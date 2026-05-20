@@ -3,6 +3,7 @@ import { Client } from "@notionhq/client";
 import { getCredentials, normalizeGoogleAccountId, normalizeMetaAccountId } from "@/lib/reporting/env";
 import {
   getReportConfirmationCheckboxProperty,
+  isAdvancedScheduledReportType,
   normalizeScheduledReportType,
 } from "@/src/lib/cron/monthly-report-confirmation";
 
@@ -138,6 +139,8 @@ export async function resolveMonthlyReportTargetsFromNotion(
     return [];
   }
 
+  const scheduledReportType = normalizeScheduledReportType(input?.reportType, input?.scheduleDay ?? 7);
+  const isAdvancedReport = isAdvancedScheduledReportType(scheduledReportType);
   const allAccountsResult = await getMonthlyReportAccounts(input);
   if (allAccountsResult.errorMessage) {
     throw new Error(allAccountsResult.errorMessage);
@@ -182,15 +185,21 @@ export async function resolveMonthlyReportTargetsFromNotion(
       clientName,
       googleAdsAccountId: googleAccountId ?? matchedAccount?.googleAdsAccountId ?? null,
       metaAdsAccountId: metaAccountId ?? matchedAccount?.metaAdsAccountId ?? null,
-      clientEmail: target.recipientEmail?.trim() || matchedAccount?.clientEmail || null,
-      picEmail: target.ccEmail?.trim() || matchedAccount?.picEmail || null,
+      clientEmail: isAdvancedReport
+        ? matchedAccount?.clientEmail || null
+        : target.recipientEmail?.trim() || matchedAccount?.clientEmail || null,
+      picEmail: isAdvancedReport
+        ? matchedAccount?.picEmail || null
+        : target.ccEmail?.trim() || matchedAccount?.picEmail || null,
       status: matchedAccount?.status ?? null,
       monthlyReportEnabled: matchedAccount?.monthlyReportEnabled ?? false,
       platform:
         target.platform?.trim() ||
         matchedAccount?.platform ||
         (metaAccountId && !googleAccountId ? "Meta" : googleAccountId && !metaAccountId ? "Google" : "Google + Meta"),
-      reportType: target.reportType?.trim() || matchedAccount?.reportType || "Overall",
+      reportType: isAdvancedReport
+        ? "Advanced"
+        : target.reportType?.trim() || matchedAccount?.reportType || "Overall",
       isValid: Boolean(googleAccountId || metaAccountId || matchedAccount?.isValid),
       skipReason:
         googleAccountId || metaAccountId || matchedAccount?.isValid ? null : "Missing account ID.",
@@ -524,28 +533,8 @@ export function buildMonthlyReportNotionFilter(
       };
     }
   | undefined {
-  const statusProperty = findDatabasePropertyName(databaseProperties, ["Status", "status"]);
   const enabledProperty = findExactDatabasePropertyName(databaseProperties, confirmationCheckboxProperty);
   const filters: NonNullable<ReturnType<typeof buildMonthlyReportNotionFilter>>["filter"]["and"] = [];
-
-  if (statusProperty) {
-    const statusType = getDatabasePropertyType(databaseProperties, statusProperty);
-    filters.push(
-      statusType === "status"
-        ? {
-            property: statusProperty,
-            status: {
-              equals: "Active",
-            },
-          }
-        : {
-            property: statusProperty,
-            select: {
-              equals: "Active",
-            },
-          }
-    );
-  }
 
   if (!enabledProperty) {
     return {
@@ -597,18 +586,6 @@ async function queryAllDataSourceRows(
   } while (startCursor);
 
   return results;
-}
-
-function findDatabasePropertyName(
-  properties: Record<string, unknown>,
-  aliases: string[]
-): string | null {
-  const normalizedAliases = new Set(aliases.map((alias) => normalizePropertyKey(alias)));
-  const match = Object.keys(properties).find((key) =>
-    normalizedAliases.has(normalizePropertyKey(key))
-  );
-
-  return match ?? null;
 }
 
 function findExactDatabasePropertyName(

@@ -1,9 +1,6 @@
-import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 
-import { jsPDF } from "jspdf";
-import { chromium } from "playwright";
-
+import { generateMonthlyReportPdfForAccount } from "@/src/lib/cron/generate-monthly-report-pdf";
 import { sendMonthlyReportEmail } from "@/src/lib/email/send-monthly-report-email";
 import type { MonthlyReportAccount } from "@/src/lib/notion/get-monthly-report-accounts";
 
@@ -39,88 +36,36 @@ async function main() {
   const reportMonthKey = resolvePreviousMonthKey(new Date());
   const reportMonthLabel = resolvePreviousMonthLabel(new Date());
   const { startDate, endDate } = resolvePreviousMonthRange(new Date());
-  const query = new URLSearchParams({
-    startDate,
-    endDate,
-    screenshot: "1",
-  });
-  if (account.googleAdsAccountId) {
-    query.set("googleAccountId", account.googleAdsAccountId);
-  }
-  if (account.metaAdsAccountId) {
-    query.set("metaAccountId", account.metaAdsAccountId);
-  }
-  query.set("platform", account.metaAdsAccountId ? "overall" : "google");
-  const pageUrl = `http://127.0.0.1:3000/overall?${query.toString()}`;
   const outputDir = path.join(process.cwd(), "artifacts", "monthly-report-tests");
 
-  await mkdir(outputDir, { recursive: true });
-
-  const browser = await chromium.launch({ headless: true });
-
-  try {
-    const context = await browser.newContext({
-      viewport: { width: 1440, height: 2200 },
-      deviceScaleFactor: 1.5,
-    });
-    const page = await context.newPage();
-
-    console.log(`OPEN_URL=${pageUrl}`);
-    await page.goto(pageUrl, { waitUntil: "domcontentloaded", timeout: 120000 });
-    await page.waitForResponse(
-      (response) => response.url().includes("/api/reporting?") && response.request().method() === "GET",
-      { timeout: 120000 }
-    );
-    await page.waitForLoadState("networkidle", { timeout: 120000 });
-
-    const captureRoot = page.locator("[data-report-capture-root='true']");
-    await captureRoot.waitFor({ state: "visible", timeout: 120000 });
-    await page.waitForTimeout(2000);
-
-    const pngBuffer = await captureRoot.screenshot({ type: "png" });
-    const safeAccountId = [googleAdsAccountId, metaAdsAccountId]
-      .filter(Boolean)
-      .join("-")
-      .replace(/[^a-z0-9-]+/gi, "");
-    const pngPath = path.join(outputDir, `overall-page-${safeAccountId}-${reportMonthKey}.png`);
-    await writeFile(pngPath, pngBuffer);
-
-    const pdfBuffer = buildPdfFromPngBuffer(pngBuffer);
-    const pdfPath = path.join(outputDir, `overall-page-${safeAccountId}-${reportMonthKey}.pdf`);
-    await writeFile(pdfPath, pdfBuffer);
-
-    console.log(`PNG_SAVED=${pngPath}`);
-    console.log(`PDF_SAVED=${pdfPath}`);
-    console.log(`PDF_BYTES=${pdfBuffer.byteLength}`);
-
-    const emailResult = await sendMonthlyReportEmail({
-      account,
-      pdfBuffer,
+  const pdfResult = await generateMonthlyReportPdfForAccount(account, {
+    dateRange: {
+      startDate,
+      endDate,
       reportMonthKey,
       reportMonthLabel,
-    });
-
-    console.log(`EMAIL_SUCCESS=${emailResult.success}`);
-    console.log(`EMAIL_RECIPIENT=${emailResult.recipientEmail ?? ""}`);
-    console.log(`EMAIL_RESEND_ID=${emailResult.resendEmailId ?? ""}`);
-    console.log(`EMAIL_ERROR=${emailResult.errorMessage ?? ""}`);
-  } finally {
-    await browser.close();
-  }
-}
-
-function buildPdfFromPngBuffer(pngBuffer: Buffer): Buffer {
-  const dataUrl = `data:image/png;base64,${pngBuffer.toString("base64")}`;
-  const probe = new jsPDF({ orientation: "portrait", unit: "px", format: "a4" });
-  const image = probe.getImageProperties(dataUrl);
-  const pdf = new jsPDF({
-    orientation: image.width > image.height ? "landscape" : "portrait",
-    unit: "px",
-    format: [image.width, image.height],
+    },
+    outputDir,
   });
 
-  pdf.addImage(dataUrl, "PNG", 0, 0, image.width, image.height, undefined, "FAST");
-  return Buffer.from(pdf.output("arraybuffer"));
+  if (pdfResult.status !== "generated" || !pdfResult.pdfBuffer) {
+    throw new Error(pdfResult.errorMessage ?? "PDF generation failed.");
+  }
+
+  console.log(`PDF_SAVED=${pdfResult.pdfPath ?? ""}`);
+  console.log(`PDF_BYTES=${pdfResult.pdfSizeBytes}`);
+
+  const emailResult = await sendMonthlyReportEmail({
+    account,
+    pdfBuffer: pdfResult.pdfBuffer,
+    reportMonthKey,
+    reportMonthLabel,
+  });
+
+  console.log(`EMAIL_SUCCESS=${emailResult.success}`);
+  console.log(`EMAIL_RECIPIENT=${emailResult.recipientEmail ?? ""}`);
+  console.log(`EMAIL_RESEND_ID=${emailResult.resendEmailId ?? ""}`);
+  console.log(`EMAIL_ERROR=${emailResult.errorMessage ?? ""}`);
 }
 
 function resolvePreviousMonthRange(referenceDate: Date): {

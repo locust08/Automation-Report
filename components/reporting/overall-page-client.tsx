@@ -286,7 +286,7 @@ function SplitAccountOverallReport({
   );
 }
 
-function AccountReportContent({
+export function AccountReportContent({
   data,
   queryString,
 }: {

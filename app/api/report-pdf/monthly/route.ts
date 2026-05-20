@@ -7,6 +7,16 @@ export const dynamic = "force-dynamic";
 
 export async function GET(request: Request) {
   const url = new URL(request.url);
+  if (isAdvancedReportRequest(url.searchParams)) {
+    return Response.json(
+      {
+        success: false,
+        error: "Advanced PDF export requires the Advanced Report view with reportType=advanced.",
+      },
+      { status: 400 }
+    );
+  }
+
   const account = buildAccountFromSearchParams(url.searchParams);
 
   if (!account.isValid) {
@@ -43,6 +53,13 @@ export async function GET(request: Request) {
       "cache-control": "no-store",
     },
   });
+}
+
+function isAdvancedReportRequest(searchParams: URLSearchParams): boolean {
+  return (
+    searchParams.get("reportType")?.trim().toLowerCase() === "advanced" ||
+    searchParams.get("reportMode")?.trim().toLowerCase() === "advanced"
+  );
 }
 
 function buildAccountFromSearchParams(searchParams: URLSearchParams): MonthlyReportAccount {

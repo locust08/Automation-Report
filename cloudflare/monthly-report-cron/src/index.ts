@@ -23,6 +23,7 @@ interface Env {
   BROWSER_LAUNCH_SPACING_MS?: string;
   REPORT_COMPLETION_NOTIFICATION_TO?: string;
   REPORT_COMPLETION_NOTIFICATION_CC?: string;
+  ADVANCED_REPORT_ENABLED?: string;
 }
 
 interface ScheduledController {
@@ -133,6 +134,8 @@ interface CreateJobRequest {
   sendEmail?: boolean;
   reportType?: string | null;
   country?: string | null;
+  scheduledDate?: string;
+  scheduledTime?: string;
   startDate?: string;
   endDate?: string;
   reportMonthKey?: string;
@@ -166,6 +169,7 @@ interface JobRow {
   failure_alert_resend_email_id: string | null;
   completion_notification_sent_at: string | null;
   completion_notification_resend_email_id: string | null;
+  metadata_json: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -178,6 +182,7 @@ interface JobItemRow {
   platform: string | null;
   report_type: string | null;
   country: string | null;
+  idempotency_key: string | null;
   google_account_id: string | null;
   meta_account_id: string | null;
   recipient_email: string | null;
@@ -204,6 +209,7 @@ const BROWSER_RATE_LIMIT_RETRY_JITTER_MS = 15000;
 const REPORT_ITEM_FINAL_FAILURE_ATTEMPTS = 6;
 const ADVANCED_REPORT_READY_TIMEOUT_MS = 8 * 60 * 1000;
 const ADVANCED_REPORT_READY_POLL_MS = 5000;
+const EMAIL_SAFE_PDF_SIZE_BYTES = 35 * 1024 * 1024;
 const DEFAULT_COMPLETION_NOTIFICATION_TO = ["waiing@locus-t.com.my"];
 const DEFAULT_COMPLETION_NOTIFICATION_CC = ["eason@locus-t.com.my", "ava@locus-t.com.my"];
 const DEFAULT_FROM_ADDRESS = "LOCUS-T Reports <reports@locus-t.com.my>";
@@ -216,13 +222,25 @@ const worker = {
 
   async scheduled(controller: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
     const scheduledJob = resolveScheduledJob(controller);
+    const scheduledTime = new Date(controller.scheduledTime).toISOString();
     ctx.waitUntil(
-      triggerVercelCronEndpoint(env, {
-        ...scheduledJob.input,
-        scheduleDay: new Date(controller.scheduledTime).getUTCDate(),
-        scheduledCron: controller.cron,
-        scheduledTime: new Date(controller.scheduledTime).toISOString(),
-        scheduleName: scheduledJob.name,
+      createReportJob(
+        env,
+        {
+          ...scheduledJob.input,
+          scheduledTime,
+        },
+        {
+          source: "scheduled",
+          scheduleDay: String(new Date(controller.scheduledTime).getUTCDate()),
+          scheduledCron: controller.cron,
+          scheduledTime,
+          scheduleName: scheduledJob.name,
+        }
+      ).then((result) => {
+        console.info(
+          `[monthly-report-automation] scheduled job created schedule=${scheduledJob.name} scheduled_cron=${controller.cron} scheduled_time=${scheduledTime} status=${String(result.status)} job_id=${String(result.jobId ?? "")}`
+        );
       })
     );
   },
@@ -241,37 +259,6 @@ const worker = {
 };
 
 export default worker;
-
-async function triggerVercelCronEndpoint(
-  env: Env,
-  body: CreateJobRequest & {
-    scheduleDay: number;
-    scheduledCron: string;
-    scheduledTime: string;
-    scheduleName: string;
-  }
-): Promise<void> {
-  const endpoint = `${trimTrailingSlash(env.VERCEL_APP_BASE_URL)}/api/cron/monthly-report`;
-  const response = await fetch(endpoint, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${readRequired(env.REPORT_AUTOMATION_SECRET, "REPORT_AUTOMATION_SECRET")}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(body),
-  });
-
-  if (!response.ok) {
-    const message = await response.text().catch(() => "");
-    throw new Error(
-      `Vercel monthly report cron trigger failed status=${response.status} body=${message.slice(0, 500)}`
-    );
-  }
-
-  console.info(
-    `[monthly-report-automation] triggered Vercel cron endpoint schedule=${body.scheduleName} scheduled_cron=${body.scheduledCron} scheduled_time=${body.scheduledTime}`
-  );
-}
 
 export class BrowserLaunchLimiter {
   constructor(
@@ -382,6 +369,22 @@ async function createReportJob(
 ): Promise<Record<string, unknown>> {
   const testMode = Boolean(input.forceTestMode);
   const sendEmail = input.sendEmail !== false;
+  const scheduledDate = resolveScheduledDate(input.scheduledDate ?? input.scheduledTime);
+  if (normalizeReportType(input.reportType) === "advanced" && !isAdvancedReportAutomationEnabled(env)) {
+    console.warn(
+      `[monthly-report-automation] skipped report_type=advanced scheduled_date=${scheduledDate} reason="ADVANCED_REPORT_ENABLED=false"`
+    );
+    console.info("[monthly-report-automation] debug summary processed=0 sent=0 skipped=1 failed=0 report_type=advanced");
+    return {
+      success: true,
+      status: "skipped",
+      total: 0,
+      skippedTotal: 1,
+      skippedReason: "ADVANCED_REPORT_ENABLED=false",
+      message: "Advanced Report automation is disabled.",
+      metadata,
+    };
+  }
   const resolved = await resolveTargets(env, input, testMode);
   const expandedTargets = expandAdvancedTargets(resolved.targets);
   const monthlyEmailTargets = expandedTargets.filter((target) => target.monthlyEmailEnabled !== false);
@@ -393,20 +396,41 @@ async function createReportJob(
     return Boolean(resolveRecipientEmail(env, target, testMode));
   });
   const skippedMissingEmail = monthlyEmailTargets.length - recipientTargets.length;
+  if (sendEmail && !testMode) {
+    for (const target of monthlyEmailTargets) {
+      if (!resolveRecipientEmail(env, target, testMode)) {
+        console.warn(
+          `[monthly-report-automation] skipped missing email report_type=${normalizeReportType(target.reportType)} period=${resolved.reportMonthKey} scheduled_date=${scheduledDate} account_id=${resolveTargetAccountId(target)} client=${target.clientName} skipped_reason="missing recipient email"`
+        );
+      }
+    }
+  }
   const duplicateResult = sendEmail
     ? await filterAlreadySentTargets(env, recipientTargets, {
         startDate: resolved.startDate,
         endDate: resolved.endDate,
         reportMonthKey: resolved.reportMonthKey,
+        scheduledDate,
       })
     : { targets: recipientTargets, skippedAlreadySent: 0 };
   const targets = duplicateResult.targets;
+  const skippedTotal = skippedUnchecked + skippedMissingEmail + duplicateResult.skippedAlreadySent;
+  const jobMetadata = {
+    ...metadata,
+    skippedUnchecked: String(skippedUnchecked),
+    skippedMissingEmail: String(skippedMissingEmail),
+    skippedAlreadySent: String(duplicateResult.skippedAlreadySent),
+    skippedTotal: String(skippedTotal),
+  };
 
   console.info(
-    `[monthly-report-automation] target gate report_month=${resolved.reportMonthKey} total_resolved=${expandedTargets.length} monthly_email_approved=${monthlyEmailTargets.length} skipped_unchecked=${skippedUnchecked} skipped_missing_email=${skippedMissingEmail} skipped_already_sent=${duplicateResult.skippedAlreadySent}`
+    `[monthly-report-automation] target gate report_type=${normalizeReportType(input.reportType)} report_month=${resolved.reportMonthKey} scheduled_date=${scheduledDate} total_resolved=${expandedTargets.length} monthly_email_approved=${monthlyEmailTargets.length} skipped_unchecked=${skippedUnchecked} skipped_missing_email=${skippedMissingEmail} skipped_already_sent=${duplicateResult.skippedAlreadySent}`
   );
 
   if (targets.length === 0) {
+    console.info(
+      `[monthly-report-automation] debug summary processed=0 sent=0 skipped=${skippedTotal} failed=0 report_type=${normalizeReportType(input.reportType)} period=${resolved.reportMonthKey} scheduled_date=${scheduledDate}`
+    );
     return {
       success: true,
       status: "empty",
@@ -415,7 +439,7 @@ async function createReportJob(
       skippedMissingEmail,
       skippedAlreadySent: duplicateResult.skippedAlreadySent,
       message: "No report targets queued after monthly email, recipient, and duplicate-send gates.",
-      metadata,
+      metadata: jobMetadata,
     };
   }
 
@@ -439,7 +463,7 @@ async function createReportJob(
       targets.length,
       sendEmail ? 1 : 0,
       testMode ? 1 : 0,
-      JSON.stringify(metadata),
+      JSON.stringify(jobMetadata),
       now,
       now
     )
@@ -450,8 +474,8 @@ async function createReportJob(
     await env.REPORT_JOBS_DB.prepare(
       `INSERT INTO report_job_items (
         id, job_id, status, client_name, platform, report_type, country, google_account_id, meta_account_id,
-        recipient_email, cc_email, attempts, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        idempotency_key, recipient_email, cc_email, attempts, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     )
       .bind(
         itemId,
@@ -463,6 +487,10 @@ async function createReportJob(
         normalizeAdvancedCountry(target.country),
         normalizeOptional(target.googleAccountId),
         normalizeOptional(target.metaAccountId),
+        buildReportIdempotencyKey(target, {
+          reportMonthKey: resolved.reportMonthKey,
+          scheduledDate,
+        }),
         resolveRecipientEmail(env, target, testMode),
         testMode ? null : normalizeOptional(target.ccEmail),
         0,
@@ -488,6 +516,10 @@ async function createReportJob(
     });
   }
 
+  console.info(
+    `[monthly-report-automation] debug summary processed=0 sent=0 skipped=${skippedTotal} failed=0 report_type=${normalizeReportType(input.reportType)} period=${resolved.reportMonthKey} scheduled_date=${scheduledDate} queued=${targets.length}`
+  );
+
   return {
     success: true,
     jobId,
@@ -498,7 +530,7 @@ async function createReportJob(
     skippedAlreadySent: duplicateResult.skippedAlreadySent,
     reportMonthKey: resolved.reportMonthKey,
     reportMonthLabel: resolved.reportMonthLabel,
-    metadata,
+    metadata: jobMetadata,
   };
 }
 
@@ -509,6 +541,7 @@ async function filterAlreadySentTargets(
     startDate: string;
     endDate: string;
     reportMonthKey: string;
+    scheduledDate: string;
   }
 ): Promise<{ targets: ReportTarget[]; skippedAlreadySent: number }> {
   const queuedTargets: ReportTarget[] = [];
@@ -518,26 +551,28 @@ async function filterAlreadySentTargets(
     const reportType = normalizeReportType(target.reportType);
     const googleAccountId = normalizeOptional(target.googleAccountId) ?? "";
     const metaAccountId = normalizeOptional(target.metaAccountId) ?? "";
+    const idempotencyKey = buildReportIdempotencyKey(target, {
+      reportMonthKey: range.reportMonthKey,
+      scheduledDate: range.scheduledDate,
+    });
     const existing = await env.REPORT_JOBS_DB.prepare(
       `SELECT i.id
        FROM report_job_items i
        INNER JOIN report_jobs j ON j.id = i.job_id
-       WHERE j.report_month_key = ?
+       WHERE i.idempotency_key = ?
+         AND j.report_month_key = ?
          AND j.start_date = ?
          AND j.end_date = ?
          AND i.status = 'completed'
-         AND i.report_type = ?
-         AND COALESCE(i.google_account_id, '') = ?
-         AND COALESCE(i.meta_account_id, '') = ?
        LIMIT 1`
     )
-      .bind(range.reportMonthKey, range.startDate, range.endDate, reportType, googleAccountId, metaAccountId)
+      .bind(idempotencyKey, range.reportMonthKey, range.startDate, range.endDate)
       .first<{ id: string }>();
 
     if (existing) {
       skippedAlreadySent += 1;
       console.info(
-        `[monthly-report-automation] skipped already sent report_month=${range.reportMonthKey} report_type=${reportType} google_account_id=${googleAccountId || "(none)"} meta_account_id=${metaAccountId || "(none)"}`
+        `[monthly-report-automation] skipped already sent idempotency_key=${idempotencyKey} report_month=${range.reportMonthKey} report_type=${reportType} google_account_id=${googleAccountId || "(none)"} meta_account_id=${metaAccountId || "(none)"}`
       );
       continue;
     }
@@ -553,6 +588,8 @@ async function filterAlreadySentTargets(
 
 async function processReportItem(env: Env, message: ReportQueueMessage): Promise<void> {
   const now = new Date().toISOString();
+  const reportType = normalizeReportType(message.target.reportType);
+  const accountId = resolveTargetAccountId(message.target);
   const existing = await env.REPORT_JOBS_DB.prepare("SELECT * FROM report_job_items WHERE id = ? AND job_id = ?")
     .bind(message.itemId, message.jobId)
     .first<JobItemRow>();
@@ -574,8 +611,18 @@ async function processReportItem(env: Env, message: ReportQueueMessage): Promise
     .run();
   await refreshJobStatus(env, message.jobId);
 
+  let pdfStatus = "not_started";
+  let emailStatus = message.sendEmail ? "not_started" : "skipped";
   try {
+    console.info(
+      `[monthly-report-automation] pdf start report_type=${reportType} period=${message.reportMonthKey} account_id=${accountId} client=${message.target.clientName} pdf_status=started`
+    );
+    pdfStatus = "started";
     const pdf = await renderPdfForReportMessage(env, message);
+    pdfStatus = "generated";
+    console.info(
+      `[monthly-report-automation] pdf generated report_type=${reportType} period=${message.reportMonthKey} account_id=${accountId} client=${message.target.clientName} pdf_status=generated size_bytes=${pdf.byteLength}`
+    );
     const r2Key = buildR2Key(message);
     const filename = buildPdfFilename(
       message.target.clientName,
@@ -599,6 +646,10 @@ async function processReportItem(env: Env, message: ReportQueueMessage): Promise
 
     let resendEmailId: string | null = null;
     if (message.sendEmail) {
+      console.info(
+        `[monthly-report-automation] email start report_type=${reportType} period=${message.reportMonthKey} account_id=${accountId} client=${message.target.clientName} email_status=started`
+      );
+      emailStatus = "started";
       const emailResult = await sendReportEmail(env, {
         target: message.target,
         reportMonthLabel: message.reportMonthLabel,
@@ -608,6 +659,15 @@ async function processReportItem(env: Env, message: ReportQueueMessage): Promise
         filename,
       });
       resendEmailId = emailResult.resendEmailId;
+      emailStatus = "sent";
+      console.info(
+        `[monthly-report-automation] email sent report_type=${reportType} period=${message.reportMonthKey} account_id=${accountId} client=${message.target.clientName} email_status=sent resend_email_id=${resendEmailId ?? "missing"}`
+      );
+    } else {
+      emailStatus = "skipped";
+      console.info(
+        `[monthly-report-automation] email skipped report_type=${reportType} period=${message.reportMonthKey} account_id=${accountId} client=${message.target.clientName} email_status=skipped skipped_reason="sendEmail=false"`
+      );
     }
 
     await env.REPORT_JOBS_DB.prepare(
@@ -631,6 +691,9 @@ async function processReportItem(env: Env, message: ReportQueueMessage): Promise
       .bind(finalFailure ? "failed" : "retrying", errorMessage, new Date().toISOString(), message.itemId, message.jobId)
       .run();
     await refreshJobStatus(env, message.jobId);
+    console.error(
+      `[monthly-report-automation] item failure report_type=${reportType} period=${message.reportMonthKey} account_id=${accountId} client=${message.target.clientName} pdf_status=${pdfStatus === "generated" ? "generated" : "failed"} email_status=${emailStatus === "sent" ? "sent" : emailStatus === "skipped" ? "skipped" : "failed"} attempt=${attemptCount} final_failure=${finalFailure} error=${errorMessage}`
+    );
     if (finalFailure) {
       await maybeSendJobCompletionNotification(env, message.jobId);
     }
@@ -650,7 +713,7 @@ async function getReportJob(env: Env, jobId: string): Promise<Record<string, unk
 
   const itemsResult = await env.REPORT_JOBS_DB.prepare(
     `SELECT id, job_id, status, client_name, platform, report_type, country, google_account_id, meta_account_id,
-      recipient_email, cc_email, attempts, r2_key, report_url, resend_email_id, error_message, updated_at
+      idempotency_key, recipient_email, cc_email, attempts, r2_key, report_url, resend_email_id, error_message, updated_at
      FROM report_job_items
      WHERE job_id = ?
      ORDER BY created_at ASC`
@@ -678,7 +741,7 @@ async function retryFailedItems(env: Env, jobId: string): Promise<Record<string,
   }
 
   const failedResult = await env.REPORT_JOBS_DB.prepare(
-    `SELECT id, client_name, platform, report_type, country, google_account_id, meta_account_id, recipient_email, cc_email
+    `SELECT id, client_name, platform, report_type, country, google_account_id, meta_account_id, idempotency_key, recipient_email, cc_email
      FROM report_job_items
      WHERE job_id = ? AND status = ?`
   )
@@ -766,11 +829,12 @@ async function resolveTargets(
     const payload = await resolveTargetsFromVercel(env, {
       forceTestMode: testMode,
       overrideTargets: input.accounts,
+      reportType: input.reportType,
     }).catch((error) => {
       console.error("[monthly-report-automation] Vercel target enrichment failed", formatError(error));
       return { targets: input.accounts ?? [] };
     });
-    const enrichedTargets = await enrichTargetsFromNotion(env, payload.targets ?? input.accounts);
+    const enrichedTargets = await enrichTargetsFromNotion(env, payload.targets ?? input.accounts, input.reportType);
 
     return {
       ...range,
@@ -780,6 +844,7 @@ async function resolveTargets(
 
   const payload = await resolveTargetsFromVercel(env, {
     forceTestMode: testMode,
+    reportType: input.reportType,
   });
   const inputRange = resolveDateRange(input);
 
@@ -797,6 +862,7 @@ async function resolveTargetsFromVercel(
   body: {
     forceTestMode: boolean;
     overrideTargets?: ReportTarget[];
+    reportType?: string | null;
   }
 ): Promise<{
   startDate?: string;
@@ -835,7 +901,11 @@ async function resolveTargetsFromVercel(
   return payload;
 }
 
-async function enrichTargetsFromNotion(env: Env, targets: ReportTarget[]): Promise<ReportTarget[]> {
+async function enrichTargetsFromNotion(
+  env: Env,
+  targets: ReportTarget[],
+  requestedReportType?: string | null
+): Promise<ReportTarget[]> {
   const notionToken = env.NOTION_TOKEN?.trim();
   const databaseId = env.NOTION_AD_ACCOUNTS_DATABASE_ID?.trim() || env.NOTION_DATABASE_ID?.trim();
 
@@ -862,19 +932,22 @@ async function enrichTargetsFromNotion(env: Env, targets: ReportTarget[]): Promi
           ...metaAccountIds.map((accountId) => rowsByMetaId.get(accountId) ?? null),
         ].filter((row): row is NotionAdAccountRow => Boolean(row));
         const clientName = await resolveNotionClientName(notionToken, matchedRows, clientNameCache);
+        const isAdvancedTarget = normalizeReportType(target.reportType ?? requestedReportType) === "advanced";
 
         return {
           ...target,
           clientName: clientName ?? target.clientName,
           googleAccountId: target.googleAccountId ?? matchedRows.find((row) => row.googleAccountId)?.googleAccountId ?? null,
           metaAccountId: target.metaAccountId ?? matchedRows.find((row) => row.metaAccountId)?.metaAccountId ?? null,
-          recipientEmail: target.recipientEmail ?? matchedRows.find((row) => row.clientEmail)?.clientEmail ?? null,
-          ccEmail: target.ccEmail ?? matchedRows.find((row) => row.ccEmail)?.ccEmail ?? null,
+          recipientEmail: isAdvancedTarget
+            ? matchedRows.find((row) => row.clientEmail)?.clientEmail ?? null
+            : target.recipientEmail ?? matchedRows.find((row) => row.clientEmail)?.clientEmail ?? null,
+          ccEmail: isAdvancedTarget
+            ? matchedRows.find((row) => row.ccEmail)?.ccEmail ?? null
+            : target.ccEmail ?? matchedRows.find((row) => row.ccEmail)?.ccEmail ?? null,
           monthlyEmailEnabled:
             target.monthlyEmailEnabled ??
-            (matchedRows.length > 0
-              ? matchedRows.some((row) => row.monthlyEmailEnabled)
-              : null),
+            resolveNotionMonthlyEmailEnabled(matchedRows, target.reportType ?? requestedReportType),
         };
       })
     );
@@ -891,6 +964,7 @@ interface NotionAdAccountRow {
   clientEmail: string | null;
   ccEmail: string | null;
   monthlyEmailEnabled: boolean;
+  advancedReportEnabled: boolean;
   clientRelationPageIds: string[];
 }
 
@@ -943,15 +1017,37 @@ function mapNotionAdAccountRow(properties: Record<string, unknown>): NotionAdAcc
     googleAccountId,
     metaAccountId,
     accountName: getNotionText(properties, ["Account Name", "Name", "Client Name"]),
-    clientEmail: getNotionText(properties, ["Client Email", "Email"]),
+    clientEmail: getNotionText(properties, [
+      "Recipient Email",
+      "Monthly Report Recipient",
+      "Monthly Report Email",
+      "Client Email",
+      "Email",
+    ]),
     ccEmail: getNotionText(properties, [
       "Person in Charge Email",
       "Person-In-Charge Email",
       "PIC Email",
     ]),
     monthlyEmailEnabled: getNotionCheckbox(properties, ["Monthly email"]),
+    advancedReportEnabled: getNotionCheckbox(properties, ["Advanced Report"]),
     clientRelationPageIds: getNotionRelationIds(properties, ["Client"]),
   };
+}
+
+function resolveNotionMonthlyEmailEnabled(
+  rows: NotionAdAccountRow[],
+  reportType: string | null | undefined
+): boolean | null {
+  if (rows.length === 0) {
+    return null;
+  }
+
+  if (normalizeReportType(reportType) === "advanced") {
+    return rows.some((row) => row.advancedReportEnabled);
+  }
+
+  return rows.some((row) => row.monthlyEmailEnabled);
 }
 
 async function resolveNotionClientName(
@@ -1384,33 +1480,65 @@ async function renderAdvancedPdfWithBrowserRun(env: Env, reportUrl: string): Pro
 
   try {
     const page = await browser.newPage();
-    const captures = await captureAdvancedReportImages(page, reportUrl);
-    const width = Math.max(...captures.map((capture) => capture.width), 1440);
-    const sectionGap = 36;
-    const totalHeight = captures.reduce(
-      (sum, capture) => sum + capture.height + sectionGap,
-      sectionGap
-    );
     await page.setViewport({
-      width,
-      height: Math.min(Math.max(totalHeight, 1200), 6000),
+      width: 1440,
+      height: 2200,
       deviceScaleFactor: 1,
     });
     await page.emulateMediaType("screen");
-    await page.setContent(buildStackedReportHtml(captures, width), {
-      waitUntil: "networkidle0",
+    await page.goto(reportUrl, {
+      waitUntil: "domcontentloaded",
+      timeout: 60000,
+    });
+    await page.addStyleTag({
+      content: `
+        html, body {
+          margin: 0 !important;
+          background: #f3f4f6 !important;
+          -webkit-print-color-adjust: exact !important;
+          print-color-adjust: exact !important;
+        }
+        [data-report-capture-root='true'] {
+          width: 1440px !important;
+          max-width: none !important;
+        }
+        [data-report-export-exclude='true'],
+        [data-report-download-overlay='true'] {
+          display: none !important;
+        }
+        [data-advanced-export-only='true'] {
+          display: block !important;
+        }
+        textarea {
+          border: 0 !important;
+          background: #f7f7f7 !important;
+          resize: none !important;
+        }
+      `,
+    });
+    await waitForAdvancedReportReady(page, 60000);
+    await scrollAdvancedReportForMedia(page);
+    await waitForPageImages(page, 30000);
+    await downsampleLargeImagesForPdf(page);
+    const pageSize = await page.$eval("[data-report-capture-root='true']", (element) => {
+      const target = element as HTMLElement;
+      const rect = target.getBoundingClientRect();
+      return {
+        width: Math.ceil(Math.max(rect.width, target.scrollWidth)),
+        height: Math.ceil(Math.max(rect.height, target.scrollHeight)),
+      };
     });
     await page.addStyleTag({
       content: `
         @page {
-          size: ${width}px ${totalHeight}px;
+          size: ${pageSize.width}px ${pageSize.height}px;
           margin: 0;
         }
       `,
     });
     const pdf = await page.pdf({
-      width: `${width}px`,
-      height: `${totalHeight}px`,
+      width: `${pageSize.width}px`,
+      height: `${pageSize.height}px`,
       printBackground: true,
       scale: 1,
       margin: {
@@ -1421,14 +1549,63 @@ async function renderAdvancedPdfWithBrowserRun(env: Env, reportUrl: string): Pro
       },
     });
 
-    return toArrayBuffer(pdf);
+    if (pdf.byteLength <= EMAIL_SAFE_PDF_SIZE_BYTES) {
+      return toArrayBuffer(pdf);
+    }
+
+    await replaceImagesWithPdfPlaceholders(page);
+    await page.evaluate(() => document.fonts.ready);
+    const lightweightPdf = await page.pdf({
+      width: `${pageSize.width}px`,
+      height: `${pageSize.height}px`,
+      printBackground: true,
+      scale: 1,
+      margin: {
+        top: "0px",
+        right: "0px",
+        bottom: "0px",
+        left: "0px",
+      },
+    });
+
+    return toArrayBuffer(lightweightPdf);
   } finally {
     await browser.close();
   }
 }
 
+async function replaceImagesWithPdfPlaceholders(page: Page): Promise<void> {
+  await page.evaluate(() => {
+    const placeholderSvg = encodeURIComponent(`
+      <svg xmlns="http://www.w3.org/2000/svg" width="900" height="900" viewBox="0 0 900 900">
+        <rect width="900" height="900" fill="#f7f7f7"/>
+        <rect x="24" y="24" width="852" height="852" rx="28" fill="#ffffff" stroke="#dddddd" stroke-width="4"/>
+        <text x="450" y="410" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="42" font-weight="700" fill="#555555">Creative image</text>
+        <text x="450" y="470" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="30" fill="#777777">omitted in email PDF</text>
+        <text x="450" y="525" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="24" fill="#999999">Metrics and analysis remain below</text>
+      </svg>
+    `);
+    const placeholder = `data:image/svg+xml;charset=utf-8,${placeholderSvg}`;
+
+    for (const image of Array.from(document.images)) {
+      const src = image.currentSrc || image.src || "";
+      if (!/^https?:\/\//i.test(src)) {
+        continue;
+      }
+      image.src = placeholder;
+      image.removeAttribute("srcset");
+      image.setAttribute("decoding", "sync");
+      image.style.objectFit = "contain";
+      image.style.background = "#f7f7f7";
+    }
+  });
+}
+
 async function ensureAdvancedReportReady(reportUrl: string): Promise<void> {
   const apiUrl = buildAdvancedReportApiUrl(reportUrl);
+  const apiUrlParts = new URL(apiUrl);
+  const accountId = apiUrlParts.searchParams.get("accountId") ?? "missing";
+  const period = `${apiUrlParts.searchParams.get("startDate") ?? "missing"}_${apiUrlParts.searchParams.get("endDate") ?? "missing"}`;
   const startedAt = Date.now();
   let generationStarted = false;
   let lastStatus = "unknown";
@@ -1440,10 +1617,16 @@ async function ensureAdvancedReportReady(reportUrl: string): Promise<void> {
     lastMessage = ready.message;
 
     if (ready.status === "ready") {
+      console.info(
+        `[monthly-report-automation] advanced ready report_type=advanced account_id=${accountId} period=${period} ai_status=ready`
+      );
       return;
     }
 
     if ((ready.status === "missing" || ready.status === "error") && !generationStarted) {
+      console.info(
+        `[monthly-report-automation] advanced generation requested report_type=advanced account_id=${accountId} period=${period} ai_status=queued previous_status=${ready.status} message=${ready.message ?? "none"}`
+      );
       await startAdvancedReportGeneration(apiUrl);
       generationStarted = true;
     }
@@ -1476,6 +1659,8 @@ function buildAdvancedReportApiUrl(reportUrl: string): string {
   if (endDate) {
     apiUrl.searchParams.set("endDate", endDate);
   }
+  apiUrl.searchParams.set("reportMode", "advanced");
+  apiUrl.searchParams.set("reportType", "advanced");
 
   return apiUrl.toString();
 }
@@ -1500,6 +1685,8 @@ async function startAdvancedReportGeneration(apiUrl: string): Promise<void> {
     country: url.searchParams.get("country") ?? "MY",
     startDate: url.searchParams.get("startDate"),
     endDate: url.searchParams.get("endDate"),
+    reportMode: "advanced",
+    reportType: "advanced",
   };
 
   const response = await fetch(apiUrl, {
@@ -1523,13 +1710,7 @@ async function renderPdfForReportMessage(env: Env, message: ReportQueueMessage):
       return renderAdvancedPdfWithBrowserRun(env, buildReportUrl(env, message));
     }
 
-    const sections = buildReportSections(message.target);
-
-    if (sections.length <= 1) {
-      return renderPdfWithBrowserRun(env, buildReportUrl(env, message, sections[0] ?? message.target));
-    }
-
-    return renderStackedReportSectionsPdf(env, message, sections);
+    return renderPdfWithBrowserRun(env, buildReportUrl(env, message));
   });
 }
 
@@ -1548,130 +1729,6 @@ async function waitForOverallReportReady(page: Page, timeoutMs: number): Promise
     },
     { timeout: timeoutMs }
   );
-}
-
-async function renderStackedReportSectionsPdf(
-  env: Env,
-  message: ReportQueueMessage,
-  sections: ReportSectionTarget[]
-): Promise<ArrayBuffer> {
-  await waitForBrowserLaunchSlot(env);
-  const browser = await puppeteer.launch(env.REPORT_BROWSER);
-
-  try {
-    const captures = [];
-
-    for (const section of sections) {
-      const page = await browser.newPage();
-      try {
-        const reportUrl = buildReportUrl(env, message, section);
-        const capture = await captureReportSectionImage(page, reportUrl);
-        captures.push({
-          ...capture,
-          label: section.sectionLabel,
-        });
-      } finally {
-        await page.close();
-      }
-    }
-
-    const width = Math.max(...captures.map((capture) => capture.width), 1440);
-    const sectionGap = 36;
-    const totalHeight = captures.reduce(
-      (sum, capture) => sum + capture.height + sectionGap,
-      sectionGap
-    );
-    const page = await browser.newPage();
-    await page.setViewport({
-      width,
-      height: Math.min(Math.max(totalHeight, 1200), 6000),
-      deviceScaleFactor: 1,
-    });
-    await page.emulateMediaType("screen");
-    await page.setContent(buildStackedReportHtml(captures, width), {
-      waitUntil: "networkidle0",
-    });
-    await page.addStyleTag({
-      content: `
-        @page {
-          size: ${width}px ${totalHeight}px;
-          margin: 0;
-        }
-      `,
-    });
-    const pdf = await page.pdf({
-      width: `${width}px`,
-      height: `${totalHeight}px`,
-      printBackground: true,
-      scale: 1,
-      margin: {
-        top: "0px",
-        right: "0px",
-        bottom: "0px",
-        left: "0px",
-      },
-    });
-
-    return toArrayBuffer(pdf);
-  } finally {
-    await browser.close();
-  }
-}
-
-async function captureReportSectionImage(
-  page: Page,
-  reportUrl: string
-): Promise<{ dataUrl: string; width: number; height: number }> {
-  await page.setViewport({
-    width: 1440,
-    height: 2200,
-    deviceScaleFactor: 1,
-  });
-  await page.emulateMediaType("screen");
-  await page.goto(reportUrl, {
-    waitUntil: "domcontentloaded",
-    timeout: 60000,
-  });
-  await page.addStyleTag({
-    content: `
-      html, body {
-        margin: 0 !important;
-        background: #f3f4f6 !important;
-        -webkit-print-color-adjust: exact !important;
-        print-color-adjust: exact !important;
-      }
-      [data-report-capture-root='true'] {
-        width: 1440px !important;
-        max-width: none !important;
-      }
-      [data-report-export-exclude='true'],
-      [data-report-download-overlay='true'] {
-        display: none !important;
-      }
-    `,
-  });
-  await waitForOverallReportReady(page, 60000);
-  const clip = await page.$eval("[data-report-capture-root='true']", (element) => {
-    const target = element as HTMLElement;
-    const rect = target.getBoundingClientRect();
-    return {
-      x: Math.floor(rect.left + window.scrollX),
-      y: Math.floor(rect.top + window.scrollY),
-      width: Math.ceil(Math.max(rect.width, target.scrollWidth)),
-      height: Math.ceil(Math.max(rect.height, target.scrollHeight)),
-    };
-  });
-  const screenshot = await page.screenshot({
-    type: "png",
-    clip,
-    captureBeyondViewport: true,
-  });
-
-  return {
-    dataUrl: `data:image/png;base64,${toBase64(screenshot)}`,
-    width: clip.width,
-    height: clip.height,
-  };
 }
 
 async function scrollAdvancedReportForMedia(page: Page): Promise<void> {
@@ -1699,142 +1756,77 @@ async function waitForPageImages(page: Page, timeoutMs: number): Promise<void> {
   ).catch(() => undefined);
 }
 
-async function captureAdvancedReportImages(
-  page: Page,
-  reportUrl: string
-): Promise<Array<{ dataUrl: string; width: number; height: number; label: string }>> {
-  await page.setViewport({
-    width: 1440,
-    height: 2200,
-    deviceScaleFactor: 1,
+async function downsampleLargeImagesForPdf(page: Page): Promise<void> {
+  await page.evaluate(async () => {
+    const maxEdge = 900;
+    const quality = 0.68;
+    const images = Array.from(document.images);
+
+    await Promise.all(
+      images.map(
+        (image) =>
+          new Promise<void>((resolve) => {
+            if (image.complete) {
+              resolve();
+              return;
+            }
+            image.addEventListener("load", () => resolve(), { once: true });
+            image.addEventListener("error", () => resolve(), { once: true });
+          })
+      )
+    );
+
+    for (const image of images) {
+      const width = image.naturalWidth;
+      const height = image.naturalHeight;
+      if (!width || !height || Math.max(width, height) <= maxEdge) {
+        continue;
+      }
+
+      const scale = maxEdge / Math.max(width, height);
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.max(1, Math.round(width * scale));
+      canvas.height = Math.max(1, Math.round(height * scale));
+      const context = canvas.getContext("2d");
+      if (!context) {
+        continue;
+      }
+
+      try {
+        context.fillStyle = "#ffffff";
+        context.fillRect(0, 0, canvas.width, canvas.height);
+        context.drawImage(image, 0, 0, canvas.width, canvas.height);
+        image.src = canvas.toDataURL("image/jpeg", quality);
+        image.removeAttribute("srcset");
+        image.setAttribute("decoding", "sync");
+      } catch {
+        // Cross-origin images without canvas access are left untouched.
+      }
+    }
   });
-  await page.emulateMediaType("screen");
-  await page.goto(reportUrl, {
-    waitUntil: "domcontentloaded",
-    timeout: 60000,
-  });
-  await page.addStyleTag({
-    content: `
-      html, body {
-        margin: 0 !important;
-        background: #f3f4f6 !important;
-        -webkit-print-color-adjust: exact !important;
-        print-color-adjust: exact !important;
-      }
-      [data-report-capture-root='true'] {
-        width: 1440px !important;
-        max-width: none !important;
-      }
-      [data-report-export-exclude='true'],
-      [data-report-download-overlay='true'] {
-        display: none !important;
-      }
-      textarea {
-        border: 0 !important;
-        background: #f7f7f7 !important;
-        resize: none !important;
-      }
-    `,
-  });
+}
+
+async function waitForAdvancedReportReady(page: Page, timeoutMs: number): Promise<void> {
   await page.waitForSelector("[data-report-capture-root='true']", {
     visible: true,
-    timeout: 60000,
+    timeout: timeoutMs,
+  });
+  await page.waitForSelector("[data-advanced-report-content='true'][data-report-type='advanced']", {
+    visible: true,
+    timeout: timeoutMs,
   });
   await page.waitForSelector("[data-advanced-report-ready='true']", {
     visible: true,
-    timeout: 60000,
+    timeout: timeoutMs,
   });
   await page.evaluate(() => document.fonts.ready);
-  await scrollAdvancedReportForMedia(page);
-  await waitForPageImages(page, 30000);
-
-  const clips = await page.$$eval(
-    [
-      "[data-report-export-header-section='true']",
-      "[data-advanced-report-section='true']",
-      "[data-report-export-footer='true']",
-    ].join(","),
-    (elements) =>
-      elements.map((element, index) => {
-        const target = element as HTMLElement;
-        const rect = target.getBoundingClientRect();
-        return {
-          x: Math.floor(rect.left + window.scrollX),
-          y: Math.floor(rect.top + window.scrollY),
-          width: Math.ceil(Math.max(rect.width, target.scrollWidth)),
-          height: Math.ceil(Math.max(rect.height, target.scrollHeight)),
-          label: target.textContent?.trim().slice(0, 80) || `Advanced report section ${index + 1}`,
-        };
-      })
+  await page.waitForFunction(
+    () => {
+      const root = document.querySelector<HTMLElement>("[data-report-capture-root='true']");
+      return Boolean(root && root.scrollHeight > 0 && root.scrollWidth > 0);
+    },
+    { timeout: timeoutMs }
   );
-
-  const captures = [];
-  for (const clip of clips.filter((item) => item.width > 0 && item.height > 0)) {
-    const screenshot = await page.screenshot({
-      type: "jpeg",
-      quality: 76,
-      clip: {
-        x: clip.x,
-        y: clip.y,
-        width: clip.width,
-        height: clip.height,
-      },
-      captureBeyondViewport: true,
-    });
-    captures.push({
-      dataUrl: `data:image/jpeg;base64,${toBase64(screenshot)}`,
-      width: clip.width,
-      height: clip.height,
-      label: clip.label,
-    });
-  }
-
-  if (captures.length === 0) {
-    throw new Error("Advanced report did not expose any sections for PDF capture.");
-  }
-
-  return captures;
-}
-
-function buildStackedReportHtml(
-  captures: Array<{ dataUrl: string; width: number; height: number; label: string }>,
-  width: number
-): string {
-  const body = captures
-    .map(
-      (capture, index) => `
-        <section style="width:${width}px;margin:0 0 36px 0;page-break-inside:avoid;break-inside:avoid;">
-          ${
-            index > 0
-              ? `<div style="height:36px;background:#f3f4f6;border-top:4px solid #ef0000;"></div>`
-              : ""
-          }
-          <img src="${capture.dataUrl}" width="${capture.width}" height="${capture.height}" alt="${escapeHtml(capture.label)}" style="display:block;width:${capture.width}px;height:${capture.height}px;margin:0 auto;" />
-        </section>
-      `
-    )
-    .join("");
-
-  return `
-    <!doctype html>
-    <html>
-      <head>
-        <meta charset="utf-8" />
-        <style>
-          html,
-          body {
-            margin: 0;
-            padding: 0;
-            width: ${width}px;
-            background: #f3f4f6;
-            -webkit-print-color-adjust: exact;
-            print-color-adjust: exact;
-          }
-        </style>
-      </head>
-      <body>${body}</body>
-    </html>
-  `;
 }
 
 async function sendReportEmail(
@@ -1981,7 +1973,7 @@ async function maybeSendJobCompletionNotification(env: Env, jobId: string): Prom
 
   const itemsResult = await env.REPORT_JOBS_DB.prepare(
     `SELECT id, job_id, status, client_name, platform, report_type, country, google_account_id, meta_account_id,
-      recipient_email, cc_email, attempts, r2_key, report_url, resend_email_id, error_message, updated_at
+      idempotency_key, recipient_email, cc_email, attempts, r2_key, report_url, resend_email_id, error_message, updated_at
      FROM report_job_items
      WHERE job_id = ?
      ORDER BY created_at ASC`
@@ -2050,11 +2042,13 @@ function buildReportUrl(
 
   const googleAccountId = normalizeOptional(target.googleAccountId);
   const metaAccountId = normalizeOptional(target.metaAccountId);
-  const platform = inferPlatform(target).toLowerCase();
+  const platform = target.platform?.trim().toLowerCase() ?? "";
   const shouldUseMetaOnly = platform === "meta";
   const shouldUseGoogleOnly = platform === "google";
 
   if (reportType === "advanced") {
+    url.searchParams.set("reportMode", "advanced");
+    url.searchParams.set("reportType", "advanced");
     const accountId = googleAccountId ?? metaAccountId;
     if (accountId) {
       url.searchParams.set("accountId", accountId);
@@ -2065,12 +2059,14 @@ function buildReportUrl(
 
   if (googleAccountId && !shouldUseMetaOnly) {
     url.searchParams.set("googleAccountId", googleAccountId);
-    url.searchParams.set("platform", "google");
+    if (shouldUseGoogleOnly || !metaAccountId) {
+      url.searchParams.set("platform", "google");
+    }
   }
 
   if (metaAccountId && !shouldUseGoogleOnly) {
     url.searchParams.set("metaAccountId", metaAccountId);
-    if (!googleAccountId || shouldUseMetaOnly) {
+    if (shouldUseMetaOnly || !googleAccountId) {
       url.searchParams.set("platform", "meta");
     }
   }
@@ -2081,7 +2077,7 @@ function buildReportUrl(
 function buildR2Key(message: ReportQueueMessage): string {
   const sections = buildReportSections(message.target);
   const reportType = normalizeReportType(message.target.reportType);
-  const platform = sections.length > 1 ? "split" : inferPlatform(message.target).toLowerCase();
+  const platform = sections.length > 1 ? "combined" : inferPlatform(message.target).toLowerCase();
   const accountId =
     sections
     .map((section) => normalizeOptional(section.googleAccountId) ?? normalizeOptional(section.metaAccountId))
@@ -2200,6 +2196,31 @@ function resolveRecipientEmail(env: Env, target: ReportTarget, testMode: boolean
   return normalizeOptional(target.recipientEmail);
 }
 
+function resolveTargetAccountId(target: ReportTarget): string {
+  return normalizeOptional(target.googleAccountId) ?? normalizeOptional(target.metaAccountId) ?? "missing";
+}
+
+function buildReportIdempotencyKey(
+  target: ReportTarget,
+  input: {
+    reportMonthKey: string;
+    scheduledDate: string;
+  }
+): string {
+  const reportType = normalizeReportType(target.reportType);
+  const accountId =
+    normalizeOptional(target.googleAccountId) ??
+    normalizeOptional(target.metaAccountId) ??
+    "unknown";
+
+  return [
+    accountId,
+    reportType,
+    input.reportMonthKey,
+    input.scheduledDate,
+  ].join(":");
+}
+
 function inferPlatform(target: ReportTarget): string {
   return target.metaAccountId && !target.googleAccountId ? "Meta" : "Google";
 }
@@ -2209,9 +2230,28 @@ function normalizeReportType(value: string | null | undefined): "overall" | "adv
   return normalized.includes("advance") ? "advanced" : "overall";
 }
 
+function isAdvancedReportAutomationEnabled(env: Env): boolean {
+  const value = env.ADVANCED_REPORT_ENABLED?.trim().toLowerCase();
+  return value !== "false" && value !== "0" && value !== "off" && value !== "no";
+}
+
 function normalizeAdvancedCountry(value: string | null | undefined): string {
   const country = value?.trim().toUpperCase();
   return country && /^[A-Z]{2}$/.test(country) ? country : "MY";
+}
+
+function resolveScheduledDate(value: string | null | undefined): string {
+  const trimmed = value?.trim();
+  if (trimmed && /^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
+    return trimmed;
+  }
+  if (trimmed) {
+    const parsed = new Date(trimmed);
+    if (!Number.isNaN(parsed.getTime())) {
+      return parsed.toISOString().slice(0, 10);
+    }
+  }
+  return new Date().toISOString().slice(0, 10);
 }
 
 function summarizeItems(items: JobItemRow[]): Record<string, number> {
@@ -2319,9 +2359,29 @@ function buildCompletionNotificationEmailHtml(input: {
 }): string {
   const completedCount = input.items.filter((item) => item.status === "completed").length;
   const failedCount = input.failedItems.length;
+  const skippedCount = resolveSkippedCount(input.job, input.items);
+  const summaryCards = [
+    { label: "Total", value: input.items.length },
+    { label: "Completed", value: completedCount },
+    { label: "Failed", value: failedCount },
+    ...(skippedCount > 0 ? [{ label: "Skipped", value: skippedCount }] : []),
+  ];
+  const summaryCardWidth = `${(100 / summaryCards.length).toFixed(3)}%`;
+  const accountRows = input.items
+    .map((item) => {
+      const accountId = formatAccountIdForEmail(item);
+      return `
+        <tr>
+          <td style="padding:12px 14px;border-top:1px solid #e5e7eb;color:#111827;font-size:13px;line-height:1.45;">${escapeHtml(item.client_name)}</td>
+          <td style="padding:12px 14px;border-top:1px solid #e5e7eb;color:#374151;font-size:13px;line-height:1.45;">${escapeHtml(accountId)}</td>
+          <td style="padding:12px 14px;border-top:1px solid #e5e7eb;color:#374151;font-size:13px;line-height:1.45;">${buildAccountStatusBadge(item, Boolean(input.job.test_mode))}</td>
+        </tr>
+      `;
+    })
+    .join("");
   const failedRows = input.failedItems
     .map((item) => {
-      const accountId = item.google_account_id ?? item.meta_account_id ?? "-";
+      const accountId = formatAccountIdForEmail(item);
       return `
         <tr>
           <td style="padding:12px 10px;border-top:1px solid #e5e7eb;color:#111827;font-size:13px;line-height:1.45;">${escapeHtml(item.client_name)}</td>
@@ -2388,9 +2448,11 @@ function buildCompletionNotificationEmailHtml(input: {
                 <td style="padding:18px 32px 8px;">
                   <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-collapse:separate;border-spacing:0;">
                     <tr>
-                      ${buildAlertStatCell("Total", input.items.length)}
-                      ${buildAlertStatCell("Completed", completedCount)}
-                      ${buildAlertStatCell("Failed", failedCount)}
+                      ${summaryCards
+                        .map((card, index) =>
+                          buildAlertStatCell(card.label, card.value, summaryCardWidth, index === summaryCards.length - 1)
+                        )
+                        .join("")}
                     </tr>
                   </table>
                 </td>
@@ -2403,6 +2465,41 @@ function buildCompletionNotificationEmailHtml(input: {
                     ${buildAlertDetailRow("Report Month", input.job.report_month_label)}
                     ${buildAlertDetailRow("Date Range", `${input.job.start_date} to ${input.job.end_date}`)}
                     ${buildAlertDetailRow("Test Mode", input.job.test_mode ? "Yes" : "No")}
+                  </table>
+                </td>
+              </tr>
+              <tr>
+                <td style="padding:0 32px 30px;">
+                  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-collapse:collapse;border-top:1px solid #e5e7eb;">
+                    <tr>
+                      <td style="padding:22px 0 12px;">
+                        <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-collapse:collapse;">
+                          <tr>
+                            <td align="left" style="padding:0 12px 0 0;">
+                              <div style="font-size:18px;line-height:1.3;font-weight:800;color:#111827;">Account Details</div>
+                            </td>
+                            <td align="right" style="padding:0 0 0 12px;">
+                              <a href="#account-list" style="display:inline-block;border:1px solid #d7192a;border-radius:999px;padding:9px 14px;color:#b40012;background:#ffffff;font-size:12px;line-height:1;font-weight:800;text-decoration:none;">See account names</a>
+                            </td>
+                          </tr>
+                        </table>
+                      </td>
+                    </tr>
+                    <tr>
+                      <td style="padding:0;">
+                        <a id="account-list" name="account-list" style="display:block;text-decoration:none;line-height:0;font-size:0;">&nbsp;</a>
+                        <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-collapse:collapse;border:1px solid #e5e7eb;border-radius:12px;overflow:hidden;background:#ffffff;">
+                          <thead>
+                            <tr>
+                              <th align="left" style="background:#f9fafb;color:#374151;padding:12px 14px;font-size:12px;text-transform:uppercase;letter-spacing:.04em;">Account Name</th>
+                              <th align="left" style="background:#f9fafb;color:#374151;padding:12px 14px;font-size:12px;text-transform:uppercase;letter-spacing:.04em;">Account ID</th>
+                              <th align="left" style="background:#f9fafb;color:#374151;padding:12px 14px;font-size:12px;text-transform:uppercase;letter-spacing:.04em;">Status</th>
+                            </tr>
+                          </thead>
+                          <tbody>${accountRows}</tbody>
+                        </table>
+                      </td>
+                    </tr>
                   </table>
                 </td>
               </tr>
@@ -2420,9 +2517,9 @@ function buildCompletionNotificationEmailHtml(input: {
   `.trim();
 }
 
-function buildAlertStatCell(label: string, value: number): string {
+function buildAlertStatCell(label: string, value: number, width: string, isLast = false): string {
   return `
-    <td style="width:33.333%;padding:0 6px 0 0;">
+    <td style="width:${width};padding:0 ${isLast ? "0" : "6px"} 0 0;">
       <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-collapse:separate;border-spacing:0;">
         <tr>
           <td style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:14px;padding:14px 16px;">
@@ -2442,6 +2539,120 @@ function buildAlertDetailRow(label: string, value: string): string {
       <td style="padding:10px 14px;color:#111827;font-size:13px;border-top:1px solid #e5e7eb;">${escapeHtml(value)}</td>
     </tr>
   `;
+}
+
+function resolveSkippedCount(job: JobRow, items: JobItemRow[]): number {
+  const metadata = parseJobMetadata(job.metadata_json);
+  const metadataSkipped = readMetadataNumber(metadata, "skippedTotal");
+  if (metadataSkipped !== null) {
+    return metadataSkipped;
+  }
+
+  return items.filter((item) => isSkippedStatus(item.status)).length;
+}
+
+function parseJobMetadata(value: string | null): Record<string, unknown> | null {
+  if (!value) {
+    return null;
+  }
+
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function readMetadataNumber(metadata: Record<string, unknown> | null, key: string): number | null {
+  const value = metadata?.[key];
+  const numeric = typeof value === "number" ? value : typeof value === "string" ? Number(value) : NaN;
+  return Number.isFinite(numeric) && numeric > 0 ? numeric : null;
+}
+
+function formatAccountIdForEmail(item: JobItemRow): string {
+  const googleAccountId = normalizeOptional(item.google_account_id);
+  const metaAccountId = normalizeOptional(item.meta_account_id);
+
+  if (googleAccountId && metaAccountId && googleAccountId === metaAccountId) {
+    return googleAccountId;
+  }
+
+  if (googleAccountId && metaAccountId) {
+    return `Google: ${googleAccountId}, Meta: ${metaAccountId}`;
+  }
+
+  return googleAccountId ?? metaAccountId ?? "-";
+}
+
+function buildAccountStatusBadge(item: JobItemRow, testMode: boolean): string {
+  const badge = getAccountStatusBadge(item.status, testMode);
+  return `<span style="display:inline-block;background:${badge.background};border:1px solid ${badge.border};border-radius:999px;padding:5px 10px;color:${badge.color};font-size:12px;line-height:1;font-weight:800;">${escapeHtml(badge.label)}</span>`;
+}
+
+function getAccountStatusBadge(
+  status: string,
+  testMode: boolean
+): { label: string; background: string; border: string; color: string } {
+  const normalized = status.trim().toLowerCase();
+
+  if (normalized === "test_sent" || (testMode && normalized === "completed")) {
+    return {
+      label: "Test Sent",
+      background: "#dbeafe",
+      border: "#bfdbfe",
+      color: "#1d4ed8",
+    };
+  }
+
+  if (normalized === "completed") {
+    return {
+      label: "Completed",
+      background: "#dcfce7",
+      border: "#bbf7d0",
+      color: "#15803d",
+    };
+  }
+
+  if (normalized === "failed") {
+    return {
+      label: "Failed",
+      background: "#fee2e2",
+      border: "#fecaca",
+      color: "#b91c1c",
+    };
+  }
+
+  if (isSkippedStatus(normalized)) {
+    return {
+      label: "Skipped",
+      background: "#fef3c7",
+      border: "#fde68a",
+      color: "#b45309",
+    };
+  }
+
+  return {
+    label: toTitleCaseStatus(status),
+    background: "#f3f4f6",
+    border: "#e5e7eb",
+    color: "#4b5563",
+  };
+}
+
+function isSkippedStatus(status: string): boolean {
+  return status.trim().toLowerCase().includes("skip");
+}
+
+function toTitleCaseStatus(status: string): string {
+  const normalized = status.trim().replace(/[_-]+/g, " ");
+  if (!normalized) {
+    return "Pending";
+  }
+
+  return normalized.replace(/\b\w/g, (letter) => letter.toUpperCase());
 }
 
 function truncateForEmail(value: string, maxLength: number): string {

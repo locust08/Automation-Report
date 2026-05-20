@@ -8,6 +8,7 @@ import {
 import { resolveMonthlyReportDateRange } from "@/src/lib/cron/monthly-report-date";
 import {
   getReportConfirmationCheckboxProperty,
+  isAdvancedScheduledReportType,
   normalizeScheduledReportType,
 } from "@/src/lib/cron/monthly-report-confirmation";
 import {
@@ -37,6 +38,26 @@ export async function POST(request: Request): Promise<NextResponse> {
   const confirmationCheckboxProperty = getReportConfirmationCheckboxProperty(reportType);
 
   try {
+    if (isAdvancedScheduledReportType(reportType) && !isAdvancedReportAutomationEnabled()) {
+      console.warn(
+        `[monthly-report-targets] skipped report_type=${reportType} schedule_day=${scheduleDay} reason="ADVANCED_REPORT_ENABLED=false"`
+      );
+      return NextResponse.json({
+        success: true,
+        ...resolveMonthlyReportDateRange(),
+        reportType,
+        scheduleDay,
+        confirmationCheckboxProperty,
+        testMode: false,
+        totalResolved: 0,
+        checkedCount: 0,
+        skippedUnchecked: 0,
+        skippedMissingEmail: 0,
+        skippedReason: "ADVANCED_REPORT_ENABLED=false",
+        targets: [],
+      });
+    }
+
     const forceTestMode =
       typeof body?.forceTestMode === "boolean"
         ? body.forceTestMode
@@ -78,7 +99,7 @@ export async function POST(request: Request): Promise<NextResponse> {
             : target.clientEmail,
           ccEmail: forceTestMode ? null : target.picEmail,
           platform: target.platform,
-          reportType: target.reportType,
+          reportType: isAdvancedScheduledReportType(reportType) ? "advanced" : target.reportType,
           monthlyEmailEnabled: true,
         };
       });
@@ -181,6 +202,11 @@ async function safeReadJson(request: Request): Promise<unknown> {
 
 function toErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : "Unknown target resolution failure.";
+}
+
+function isAdvancedReportAutomationEnabled(): boolean {
+  const value = process.env.ADVANCED_REPORT_ENABLED?.trim().toLowerCase();
+  return value !== "false" && value !== "0" && value !== "off" && value !== "no";
 }
 
 function resolveTargetAccountIds(target: {

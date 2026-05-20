@@ -429,6 +429,10 @@ async function prepareAdvancedPdfDownload(
   root: HTMLElement,
   fileNamePrefix: string | undefined
 ): Promise<() => void> {
+  if (!isAdvancedReportRoot(root)) {
+    throw new Error("Advanced PDF export requires an Advanced Report view.");
+  }
+
   const pdfBlob = await createAdvancedPdfBlob(root);
 
   return () => {
@@ -453,6 +457,7 @@ async function createPdfBlob(root: HTMLElement, dataUrl: string): Promise<Blob> 
 
 async function createAdvancedPdfBlob(root: HTMLElement): Promise<Blob> {
   const exportStyle = installReportExportCaptureStyle();
+  const advancedExportOnlyStyle = installAdvancedPdfOnlyStyle();
 
   try {
     await waitForReportCaptureReady(root);
@@ -498,6 +503,7 @@ async function createAdvancedPdfBlob(root: HTMLElement): Promise<Blob> {
 
     return pdf.output("blob");
   } finally {
+    advancedExportOnlyStyle.remove();
     exportStyle.remove();
   }
 }
@@ -545,7 +551,12 @@ async function captureElementPng(element: HTMLElement, format: DownloadFormat): 
 }
 
 function isAdvancedReportRoot(root: HTMLElement): boolean {
-  return Boolean(root.querySelector("[data-advanced-report-content='true']"));
+  const content = root.querySelector<HTMLElement>("[data-advanced-report-content='true']");
+  return Boolean(
+    content &&
+      content.dataset.reportMode === "advanced" &&
+      content.dataset.reportType === "advanced"
+  );
 }
 
 function getAdvancedExportElements(root: HTMLElement): HTMLElement[] {
@@ -675,6 +686,18 @@ function installReportExportCaptureStyle(): HTMLStyleElement {
   const style = document.createElement("style");
   style.dataset.reportExportCaptureStyle = "true";
   style.textContent = REPORT_EXPORT_CAPTURE_STYLE;
+  document.head.appendChild(style);
+  return style;
+}
+
+function installAdvancedPdfOnlyStyle(): HTMLStyleElement {
+  const style = document.createElement("style");
+  style.dataset.advancedPdfOnlyStyle = "true";
+  style.textContent = `
+    [data-advanced-export-only='true'] {
+      display: block !important;
+    }
+  `;
   document.head.appendChild(style);
   return style;
 }

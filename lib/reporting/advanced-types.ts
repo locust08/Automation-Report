@@ -1,4 +1,10 @@
-import type { DateRangeConfig, GoogleFinalUrlSpendRow, TopKeywordRow } from "@/lib/reporting/types";
+import type {
+  AuctionInsightRow,
+  DateRangeConfig,
+  GoogleFinalUrlSpendRow,
+  OverallReportPayload,
+  TopKeywordRow,
+} from "@/lib/reporting/types";
 
 export type AdvancedReportCountryCode = "MY" | "SG" | "AU" | "US";
 
@@ -30,6 +36,149 @@ export interface AdvancedReportMetadata {
   dateRange: DateRangeConfig;
   generatedAt: string;
   cached: boolean;
+}
+
+export interface AdvancedBasicOverallMetric {
+  key:
+    | "spend"
+    | "impressions"
+    | "clicks"
+    | "ctr"
+    | "cpc"
+    | "conversions"
+    | "cpa"
+    | "conversionRate";
+  label: string;
+  value: number | null;
+  format: "number" | "currency" | "percent";
+}
+
+export interface AdvancedBasicOverallSummary {
+  status: "success" | "partial" | "empty" | "error";
+  message: string | null;
+  narrative: string;
+  metrics: AdvancedBasicOverallMetric[];
+  warnings: string[];
+  generatedAt: string;
+}
+
+export interface AdvancedFinalUrlPerformanceRow {
+  id: string;
+  finalUrl: string;
+  campaign: string;
+  spend: number;
+  impressions: number;
+  clicks: number;
+  ctr: number | null;
+  cpc: number | null;
+  conversions: number;
+  cpa: number | null;
+  conversionRate: number | null;
+  impressionShare: number | null;
+  lostImpressionShareBudget: number | null;
+  lostImpressionShareRank: number | null;
+  impressionShareSource: "ad_group" | "campaign" | null;
+  sourceUrlCount?: number;
+}
+
+export interface AdvancedFinalUrlPerformanceSection {
+  rows: AdvancedFinalUrlPerformanceRow[];
+  otherRow: AdvancedFinalUrlPerformanceRow | null;
+  totalUrlCount: number;
+  generatedAt: string;
+}
+
+export interface AdvancedAuctionVisibilityRow
+  extends Omit<AuctionInsightRow, "displayDomain"> {
+  competitor: string;
+}
+
+export interface AdvancedAuctionVisibilitySection {
+  shareOfVoice: number;
+  shareOfVoiceSource: "auction_insights" | "impression_share_fallback";
+  rows: AdvancedAuctionVisibilityRow[];
+  generatedAt: string;
+}
+
+export interface AdvancedGoogleVisualCreativeRow {
+  id: string;
+  finalUrl: string;
+  imageUrl: string;
+  campaignName: string;
+  adName: string;
+  headline: string | null;
+  description: string | null;
+  spend: number;
+  impressions: number;
+  clicks: number;
+  ctr: number | null;
+  conversions: number;
+  cpa: number | null;
+  reasons: string[];
+  analysisSource: "openai_image" | "metric_fallback";
+  aiStatus: "cached" | "generated" | "fallback" | "skipped";
+}
+
+export interface AdvancedGoogleVisualCreativeSection {
+  rows: AdvancedGoogleVisualCreativeRow[];
+  generatedAt: string;
+}
+
+export interface AdvancedGoogleVideoCreativeRow {
+  id: string;
+  finalUrl: string;
+  videoUrl: string | null;
+  thumbnailUrl: string | null;
+  youtubeVideoId: string | null;
+  campaignName: string;
+  adName: string;
+  headline: string | null;
+  description: string | null;
+  spend: number;
+  impressions: number;
+  views: number;
+  clicks: number;
+  ctr: number | null;
+  conversions: number;
+  cpa: number | null;
+  reasons: string[];
+  analysisSource: "openrouter_gemini_video" | "metric_fallback";
+  aiStatus: "cached" | "generated" | "fallback" | "skipped";
+}
+
+export interface AdvancedGoogleVideoCreativeSection {
+  rows: AdvancedGoogleVideoCreativeRow[];
+  generatedAt: string;
+}
+
+export interface AdvancedMetaCreativeAnalysisRow {
+  id: string;
+  finalUrl: string;
+  mediaType: "image" | "video";
+  imageUrl: string | null;
+  videoUrl: string | null;
+  thumbnailUrl: string | null;
+  campaignName: string;
+  adName: string;
+  primaryText: string | null;
+  headline: string | null;
+  description: string | null;
+  spend: number;
+  impressions: number;
+  reach: number;
+  clicks: number;
+  ctr: number | null;
+  conversions: number;
+  cpa: number | null;
+  themes: string[];
+  reasons: string[];
+  analysisSource: "openai_image" | "openrouter_gemini_video" | "metric_fallback";
+  aiStatus: "cached" | "generated" | "fallback" | "skipped";
+}
+
+export interface AdvancedMetaCreativeAnalysisSection {
+  rows: AdvancedMetaCreativeAnalysisRow[];
+  generatedAt: string;
 }
 
 export interface AdvancedReportDiagnostics {
@@ -68,6 +217,11 @@ export interface AdvancedReportDiagnostics {
   googleAds: {
     keywordRowsWithSpend: number;
     finalUrlRowsWithSpend: number;
+    imageCreativeRows: number;
+    videoCreativeRows: number;
+  };
+  metaAds: {
+    creativeRows: number;
   };
 }
 
@@ -186,6 +340,13 @@ export interface AdvancedDecisionRow {
 export interface AdvancedReportPayload {
   metadata: AdvancedReportMetadata;
   diagnostics: AdvancedReportDiagnostics;
+  basicOverallReport?: OverallReportPayload;
+  basicOverallSummary?: AdvancedBasicOverallSummary;
+  finalUrlPerformance?: AdvancedFinalUrlPerformanceSection;
+  auctionVisibility?: AdvancedAuctionVisibilitySection;
+  metaCreativeAnalysis?: AdvancedMetaCreativeAnalysisSection;
+  googleVisualCreativeAnalysis?: AdvancedGoogleVisualCreativeSection;
+  googleVideoCreativeAnalysis?: AdvancedGoogleVideoCreativeSection;
   googleAdsUsage: {
     keywordRowsWithSpend: TopKeywordRow[];
     finalUrlRowsWithSpend: GoogleFinalUrlSpendRow[];

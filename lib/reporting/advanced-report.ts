@@ -7,6 +7,15 @@ import {
   AdvancedKeywordMetric,
   AdvancedLanguageTrend,
   AdvancedMonthlyPoint,
+  AdvancedAuctionVisibilitySection,
+  AdvancedFinalUrlPerformanceRow,
+  AdvancedFinalUrlPerformanceSection,
+  AdvancedGoogleVideoCreativeRow,
+  AdvancedGoogleVideoCreativeSection,
+  AdvancedGoogleVisualCreativeRow,
+  AdvancedGoogleVisualCreativeSection,
+  AdvancedMetaCreativeAnalysisRow,
+  AdvancedMetaCreativeAnalysisSection,
   AdvancedOpportunitySection,
   AdvancedReportCountry,
   AdvancedReportCountryCode,
@@ -16,6 +25,12 @@ import {
   AdvancedReportSectionStatus,
   AdvancedSocialCalendarItem,
 } from "@/lib/reporting/advanced-types";
+import {
+  buildAdvancedCreativeAiCacheKey,
+  readAdvancedCreativeAiCache,
+  writeAdvancedCreativeAiCache,
+  type AdvancedCreativeAiStatus,
+} from "@/lib/reporting/advanced-ai-cache";
 import { buildDateRange } from "@/lib/reporting/date";
 import { getCredentials, resolveCompanyNameFromAccountId } from "@/lib/reporting/env";
 import {
@@ -24,13 +39,58 @@ import {
   queryNotionDatabasePages,
   type NotionPageProperty,
 } from "@/lib/reporting/notion";
-import { getGoogleAdvancedAdUsageReport, getTopKeywordsReport } from "@/lib/reporting/service";
-import type { DateRangeConfig, GoogleFinalUrlSpendRow, TopKeywordRow } from "@/lib/reporting/types";
+import {
+  getGoogleAdvancedAdUsageReport,
+  getGoogleAdvancedAuctionInsightRows,
+  getGoogleAdvancedImageCreativeRows,
+  getGoogleAdvancedVideoCreativeRows,
+  getMetaAdvancedCreativeRows,
+  getOverallReport,
+  getTopKeywordsReport,
+} from "@/lib/reporting/service";
+import type {
+  AuctionInsightRow,
+  DateRangeConfig,
+  GoogleFinalUrlSpendRow,
+  GoogleImageCreativePerformanceRow,
+  GoogleVideoCreativePerformanceRow,
+  MetaCreativePerformanceRow,
+  OverallReportPayload,
+  TopKeywordRow,
+} from "@/lib/reporting/types";
 
-const ADVANCED_REPORT_SCHEMA_VERSION = 1;
+const ADVANCED_REPORT_SCHEMA_VERSION = 8;
 const OPENAI_RESPONSES_ENDPOINT = "https://api.openai.com/v1/responses";
+const OPENROUTER_CHAT_COMPLETIONS_ENDPOINT = "https://openrouter.ai/api/v1/chat/completions";
+const ADVANCED_REPORT_AI_TIMEOUT_MS = 1000 * 8;
 const DATAFORSEO_BASE_URL = "https://api.dataforseo.com";
 const DEFAULT_CONTENT_DATABASE_ID = "d82e7aec250645e2bbe7f37fa92feb03";
+const CREATIVE_THEME_STOP_WORDS = new Set([
+  "and",
+  "are",
+  "but",
+  "for",
+  "from",
+  "get",
+  "has",
+  "have",
+  "how",
+  "into",
+  "now",
+  "our",
+  "the",
+  "this",
+  "that",
+  "to",
+  "with",
+  "you",
+  "your",
+  "kami",
+  "dan",
+  "yang",
+  "untuk",
+  "dengan",
+]);
 
 const ADVANCED_REPORT_COUNTRIES: Record<AdvancedReportCountryCode, AdvancedReportCountry> = {
   MY: { code: "MY", emoji: "🇲🇾", label: "MY", locationName: "Malaysia", timezone: "Asia/Kuala_Lumpur" },
@@ -165,9 +225,13 @@ export async function generateAdvancedReport(input: AdvancedGenerationInput): Pr
   const country = getAdvancedReportCountry(input.country);
   const cacheKey = buildAdvancedReportCacheKey({ accountId, country: country.code, dateRange });
   const accountPlatform = inferAccountPlatform(accountId);
-  const companyName = await resolveAdvancedCompanyName(accountId, accountPlatform, dateRange);
   const warnings: string[] = [];
   const sectionStatuses = createDefaultSectionStatuses();
+  const aiKeyStatus = resolveAdvancedAiKeyStatus();
+
+  console.info(
+    `[advanced-report] generation started report_type=advanced account_id=${accountId || "missing"} period=${dateRange.startDate}_${dateRange.endDate} platform=${accountPlatform} ai_status=${aiKeyStatus}`
+  );
 
   const googleUsage =
     accountPlatform === "google"
@@ -185,6 +249,66 @@ export async function generateAdvancedReport(input: AdvancedGenerationInput): Pr
           warnings: [] as string[],
         };
   warnings.push(...googleUsage.warnings);
+
+  const basicOverallReport = await fetchBasicOverallReport({
+    accountId,
+    accountPlatform,
+    dateRange,
+  }).catch((error: unknown) => {
+    warnings.push(toWarning("Basic Overall Report", error));
+    return undefined;
+  });
+  const companyName = await resolveAdvancedCompanyName(accountId, accountPlatform, dateRange, basicOverallReport);
+  const finalUrlPerformance = buildFinalUrlPerformanceSection(googleUsage.finalUrlRows);
+  const auctionInsightRows =
+    accountPlatform === "google"
+      ? await fetchGoogleAdvancedAuctionRows(accountId, dateRange).catch((error: unknown) => {
+          logAdvancedAuctionHiddenReason(accountId, toWarning("Google Ads auction insights", error));
+          return [] as AuctionInsightRow[];
+        })
+      : [];
+  const auctionVisibility = buildAuctionVisibilitySection({
+    accountId,
+    accountPlatform,
+    auctionRows: auctionInsightRows,
+    finalUrlRows: googleUsage.finalUrlRows,
+  });
+  const metaCreativeRows =
+    accountPlatform === "meta"
+      ? await fetchMetaAdvancedCreatives(accountId, dateRange).catch((error: unknown) => {
+          warnings.push(toWarning("Meta creative analysis", error));
+          return [] as MetaCreativePerformanceRow[];
+        })
+      : [];
+  const metaCreativeAnalysis = await buildMetaCreativeAnalysisSection({
+    accountId,
+    dateRange,
+    rows: metaCreativeRows,
+  });
+  const googleImageCreativeRows =
+    accountPlatform === "google"
+      ? await fetchGoogleAdvancedImageCreatives(accountId, dateRange).catch((error: unknown) => {
+          warnings.push(toWarning("Google visual creative analysis", error));
+          return [] as GoogleImageCreativePerformanceRow[];
+        })
+      : [];
+  const googleVisualCreativeAnalysis = await buildGoogleVisualCreativeSection({
+    accountId,
+    dateRange,
+    rows: googleImageCreativeRows,
+  });
+  const googleVideoCreativeRows =
+    accountPlatform === "google"
+      ? await fetchGoogleAdvancedVideoCreatives(accountId, dateRange).catch((error: unknown) => {
+          warnings.push(toWarning("Google video creative analysis", error));
+          return [] as GoogleVideoCreativePerformanceRow[];
+        })
+      : [];
+  const googleVideoCreativeAnalysis = await buildGoogleVideoCreativeSection({
+    accountId,
+    dateRange,
+    rows: googleVideoCreativeRows,
+  });
 
   let discovery = await discoverMarket({
     companyName,
@@ -292,10 +416,13 @@ export async function generateAdvancedReport(input: AdvancedGenerationInput): Pr
     keywordData,
     peopleAlsoAskTerms,
     googleUsage,
+    metaCreativeRows,
+    googleImageCreativeRows,
+    googleVideoCreativeRows,
     sectionStatuses,
   });
 
-  return {
+  const payload: AdvancedReportPayload = {
     metadata: {
       schemaVersion: ADVANCED_REPORT_SCHEMA_VERSION,
       cacheKey,
@@ -308,6 +435,12 @@ export async function generateAdvancedReport(input: AdvancedGenerationInput): Pr
       cached: false,
     },
     diagnostics,
+    basicOverallReport,
+    finalUrlPerformance,
+    auctionVisibility: auctionVisibility ?? undefined,
+    metaCreativeAnalysis: metaCreativeAnalysis ?? undefined,
+    googleVisualCreativeAnalysis: googleVisualCreativeAnalysis ?? undefined,
+    googleVideoCreativeAnalysis: googleVideoCreativeAnalysis ?? undefined,
     googleAdsUsage: {
       keywordRowsWithSpend: googleUsage.keywordRows,
       finalUrlRowsWithSpend: googleUsage.finalUrlRows,
@@ -321,11 +454,1494 @@ export async function generateAdvancedReport(input: AdvancedGenerationInput): Pr
     warnings: dedupeStrings(warnings),
     sectionStatuses,
   };
+
+  console.info(
+    `[advanced-report] generation finished report_type=advanced account_id=${accountId || "missing"} period=${dateRange.startDate}_${dateRange.endDate} google_keyword_rows=${googleUsage.keywordRows.length} google_final_url_rows=${googleUsage.finalUrlRows.length} meta_creative_rows=${metaCreativeRows.length} google_image_creative_rows=${googleImageCreativeRows.length} google_video_creative_rows=${googleVideoCreativeRows.length} ai_status=${summarizeAdvancedAiStatus(payload)} warning_count=${payload.warnings.length}`
+  );
+
+  return payload;
+}
+
+function buildFinalUrlPerformanceSection(rows: GoogleFinalUrlSpendRow[]): AdvancedFinalUrlPerformanceSection {
+  const sortedRows = rows
+    .map(createFinalUrlPerformanceRow)
+    .sort(compareFinalUrlPerformanceRows);
+  const hasOtherRows = sortedRows.length > 10;
+  const topRows = hasOtherRows ? sortedRows.slice(0, 9) : sortedRows.slice(0, 10);
+  const otherRows = hasOtherRows ? sortedRows.slice(9) : [];
+
+  return {
+    rows: topRows,
+    otherRow: otherRows.length > 0 ? buildOtherFinalUrlPerformanceRow(otherRows) : null,
+    totalUrlCount: sortedRows.length,
+    generatedAt: new Date().toISOString(),
+  };
+}
+
+function createFinalUrlPerformanceRow(row: GoogleFinalUrlSpendRow, index: number): AdvancedFinalUrlPerformanceRow {
+  const spend = safeNumber(row.cost);
+  const impressions = safeNumber(row.impressions);
+  const clicks = safeNumber(row.clicks);
+  const conversions = safeNumber(row.conversions);
+  const finalUrl = safeText(row.finalUrl);
+
+  return {
+    id: safeText(row.id) || finalUrl || `final-url-${index + 1}`,
+    finalUrl: finalUrl || "Not available",
+    campaign: formatFinalUrlCampaignNames(row.campaignNames),
+    spend,
+    impressions,
+    clicks,
+    ctr: impressions > 0 ? (clicks * 100) / impressions : null,
+    cpc: clicks > 0 ? spend / clicks : null,
+    conversions,
+    cpa: conversions > 0 ? spend / conversions : null,
+    conversionRate: clicks > 0 ? (conversions * 100) / clicks : null,
+    impressionShare: normalizeNullableNumber(row.impressionShare),
+    lostImpressionShareBudget: normalizeNullableNumber(row.lostImpressionShareBudget),
+    lostImpressionShareRank: normalizeNullableNumber(row.lostImpressionShareRank),
+    impressionShareSource: row.impressionShareSource,
+  };
+}
+
+function compareFinalUrlPerformanceRows(
+  left: AdvancedFinalUrlPerformanceRow,
+  right: AdvancedFinalUrlPerformanceRow
+): number {
+  if (right.conversions !== left.conversions) {
+    return right.conversions - left.conversions;
+  }
+  return right.spend - left.spend;
+}
+
+function buildOtherFinalUrlPerformanceRow(rows: AdvancedFinalUrlPerformanceRow[]): AdvancedFinalUrlPerformanceRow {
+  const totals = rows.reduce(
+    (acc, row) => ({
+      spend: acc.spend + safeNumber(row.spend),
+      impressions: acc.impressions + safeNumber(row.impressions),
+      clicks: acc.clicks + safeNumber(row.clicks),
+      conversions: acc.conversions + safeNumber(row.conversions),
+    }),
+    { spend: 0, impressions: 0, clicks: 0, conversions: 0 }
+  );
+
+  return {
+    id: "other-final-urls",
+    finalUrl: "Other URLs",
+    campaign: `${rows.length} URLs`,
+    spend: totals.spend,
+    impressions: totals.impressions,
+    clicks: totals.clicks,
+    ctr: totals.impressions > 0 ? (totals.clicks * 100) / totals.impressions : null,
+    cpc: totals.clicks > 0 ? totals.spend / totals.clicks : null,
+    conversions: totals.conversions,
+    cpa: totals.conversions > 0 ? totals.spend / totals.conversions : null,
+    conversionRate: totals.clicks > 0 ? (totals.conversions * 100) / totals.clicks : null,
+    impressionShare: aggregateFinalUrlPercent(rows, (row) => row.impressionShare),
+    lostImpressionShareBudget: aggregateFinalUrlPercent(rows, (row) => row.lostImpressionShareBudget),
+    lostImpressionShareRank: aggregateFinalUrlPercent(rows, (row) => row.lostImpressionShareRank),
+    impressionShareSource: rows.some((row) => row.impressionShareSource === "ad_group")
+      ? "ad_group"
+      : rows.find((row) => row.impressionShareSource)?.impressionShareSource ?? null,
+    sourceUrlCount: rows.length,
+  };
+}
+
+function aggregateFinalUrlPercent(
+  rows: AdvancedFinalUrlPerformanceRow[],
+  selector: (row: AdvancedFinalUrlPerformanceRow) => number | null
+): number | null {
+  const weighted = rows.reduce(
+    (acc, row) => {
+      const value = selector(row);
+      if (!Number.isFinite(value)) {
+        return acc;
+      }
+      const weight = row.impressions > 0 ? row.impressions : 1;
+      return {
+        sum: acc.sum + Number(value) * weight,
+        weight: acc.weight + weight,
+      };
+    },
+    { sum: 0, weight: 0 }
+  );
+
+  return weighted.weight > 0 ? weighted.sum / weighted.weight : null;
+}
+
+function formatFinalUrlCampaignNames(campaignNames: string[]): string {
+  const names = (Array.isArray(campaignNames) ? campaignNames : [])
+    .map((name) => safeText(name))
+    .filter(Boolean);
+  if (names.length === 0) {
+    return "Not available";
+  }
+  if (names.length <= 2) {
+    return names.join(", ");
+  }
+  return `${names.slice(0, 2).join(", ")} +${names.length - 2}`;
+}
+
+function buildAuctionVisibilitySection(input: {
+  accountId: string;
+  accountPlatform: "google" | "meta" | "unknown";
+  auctionRows: AuctionInsightRow[];
+  finalUrlRows: GoogleFinalUrlSpendRow[];
+}): AdvancedAuctionVisibilitySection | null {
+  if (input.accountPlatform !== "google") {
+    logAdvancedAuctionHiddenReason(input.accountId, "Advanced auction visibility is Google Ads only.");
+    return null;
+  }
+
+  const ownDomains = getFinalUrlDomains(input.finalUrlRows);
+  const normalizedAuctionRows = input.auctionRows
+    .map(normalizeAdvancedAuctionRow)
+    .filter((row): row is AuctionInsightRow => Boolean(row))
+    .filter(hasMeaningfulAuctionMetrics);
+  const ownAuctionRows = normalizedAuctionRows.filter((row) => ownDomains.has(normalizeDomain(row.displayDomain)));
+  const competitorRows = normalizedAuctionRows
+    .filter((row) => !ownDomains.has(normalizeDomain(row.displayDomain)))
+    .slice(0, 20);
+  const auctionShareOfVoice = aggregateAuctionShareOfVoice(ownAuctionRows);
+  const fallbackShareOfVoice = aggregateFinalUrlImpressionShare(input.finalUrlRows);
+  const shareOfVoice = auctionShareOfVoice ?? fallbackShareOfVoice;
+
+  if (!Number.isFinite(shareOfVoice)) {
+    logAdvancedAuctionHiddenReason(
+      input.accountId,
+      normalizedAuctionRows.length > 0
+        ? "Auction rows were returned, but the client domain could not be matched and no campaign impression share fallback was available."
+        : "No auction rows or campaign impression share fallback were available."
+    );
+    return null;
+  }
+
+  if (competitorRows.length === 0) {
+    logAdvancedAuctionHiddenReason(
+      input.accountId,
+      normalizedAuctionRows.length > 0
+        ? "Only client auction visibility was available, so the competitor table is hidden."
+        : "Competitor auction rows were unavailable, so the section will use impression share fallback only."
+    );
+  }
+
+  return {
+    shareOfVoice: shareOfVoice!,
+    shareOfVoiceSource: auctionShareOfVoice !== null ? "auction_insights" : "impression_share_fallback",
+    rows: competitorRows.map((row) => ({
+      ...row,
+      competitor: row.displayDomain,
+    })),
+    generatedAt: new Date().toISOString(),
+  };
+}
+
+async function buildMetaCreativeAnalysisSection(input: {
+  accountId: string;
+  dateRange: DateRangeConfig;
+  rows: MetaCreativePerformanceRow[];
+}): Promise<AdvancedMetaCreativeAnalysisSection | null> {
+  const selectedRows = selectTopMetaCreatives(input.rows);
+  if (selectedRows.length === 0) {
+    return null;
+  }
+
+  const analyzedRows = await Promise.all(selectedRows.map(async (row): Promise<AdvancedMetaCreativeAnalysisRow> => {
+    let analysisSource: AdvancedMetaCreativeAnalysisRow["analysisSource"] = "metric_fallback";
+    let aiStatus: AdvancedCreativeAiStatus = "skipped";
+    let analysis = buildMetricMetaCreativeAnalysis(row);
+
+    if (row.mediaType === "image" && canUseOpenAiMetaImageAnalysis(row) && process.env.OPENAI_API_KEY?.trim()) {
+      const result = await resolveCachedMetaCreativeAnalysis({
+        accountId: input.accountId,
+        dateRange: input.dateRange,
+        row,
+        fallback: analysis,
+        generator: () => generateMetaImageCreativeAnalysis(row, analysis),
+        logLabel: "OpenAI Meta image creative analysis",
+      });
+      analysis = result.analysis;
+      aiStatus = result.aiStatus;
+      if (result.aiStatus !== "fallback") {
+          analysisSource = "openai_image";
+      }
+    } else if (
+      row.mediaType === "video" &&
+      canUseOpenRouterMetaVideoAnalysis(row) &&
+      process.env.OPENROUTER_API_KEY?.trim()
+    ) {
+      const result = await resolveCachedMetaCreativeAnalysis({
+        accountId: input.accountId,
+        dateRange: input.dateRange,
+        row,
+        fallback: analysis,
+        generator: () => generateMetaVideoCreativeAnalysis(row, analysis),
+        logLabel: "OpenRouter Gemini Meta video creative analysis",
+      });
+      analysis = result.analysis;
+      aiStatus = result.aiStatus;
+      if (result.aiStatus !== "fallback") {
+          analysisSource = "openrouter_gemini_video";
+      }
+    }
+
+    analysis = normalizeMetaCreativeAnalysis(analysis, analysis);
+    return {
+      id: row.id,
+      finalUrl: row.finalUrl,
+      mediaType: row.mediaType,
+      imageUrl: row.imageUrl,
+      videoUrl: row.videoUrl,
+      thumbnailUrl: row.thumbnailUrl,
+      campaignName: row.campaignName,
+      adName: row.adName,
+      primaryText: row.primaryText,
+      headline: row.headline,
+      description: row.description,
+      spend: safeNumber(row.cost),
+      impressions: safeNumber(row.impressions),
+      reach: safeNumber(row.reach),
+      clicks: safeNumber(row.clicks),
+      ctr: normalizeNullableNumber(row.ctr),
+      conversions: safeNumber(row.conversions),
+      cpa: normalizeNullableNumber(row.cpa),
+      themes: analysis.themes,
+      reasons: analysis.reasons,
+      analysisSource,
+      aiStatus,
+    };
+  }));
+
+  return {
+    rows: analyzedRows,
+    generatedAt: new Date().toISOString(),
+  };
+}
+
+function selectTopMetaCreatives(rows: MetaCreativePerformanceRow[]): MetaCreativePerformanceRow[] {
+  const byFinalUrl = new Map<string, MetaCreativePerformanceRow[]>();
+  rows.forEach((row) => {
+    const finalUrl = row.finalUrl.trim();
+    if (!finalUrl) {
+      return;
+    }
+
+    const items = byFinalUrl.get(finalUrl) ?? [];
+    items.push(row);
+    byFinalUrl.set(finalUrl, items);
+  });
+
+  return Array.from(byFinalUrl.values())
+    .map((group) => [...group].sort(compareMetaCreatives)[0])
+    .filter((row): row is MetaCreativePerformanceRow => Boolean(row))
+    .sort(compareMetaCreatives)
+    .slice(0, 3);
+}
+
+function compareMetaCreatives(
+  left: MetaCreativePerformanceRow,
+  right: MetaCreativePerformanceRow
+): number {
+  if (right.conversions !== left.conversions) {
+    return right.conversions - left.conversions;
+  }
+
+  const leftCpa = left.cpa ?? Number.POSITIVE_INFINITY;
+  const rightCpa = right.cpa ?? Number.POSITIVE_INFINITY;
+  if (leftCpa !== rightCpa) {
+    return leftCpa - rightCpa;
+  }
+
+  const leftCtr = left.ctr ?? 0;
+  const rightCtr = right.ctr ?? 0;
+  if (rightCtr !== leftCtr) {
+    return rightCtr - leftCtr;
+  }
+
+  return right.cost - left.cost;
+}
+
+async function buildGoogleVisualCreativeSection(input: {
+  accountId: string;
+  dateRange: DateRangeConfig;
+  rows: GoogleImageCreativePerformanceRow[];
+}): Promise<AdvancedGoogleVisualCreativeSection | null> {
+  const selectedRows = selectTopGoogleVisualCreatives(input.rows);
+  if (selectedRows.length === 0) {
+    return null;
+  }
+
+  const analyzedRows = await Promise.all(selectedRows.map(async (row): Promise<AdvancedGoogleVisualCreativeRow> => {
+    let analysisSource: AdvancedGoogleVisualCreativeRow["analysisSource"] = "metric_fallback";
+    let aiStatus: AdvancedCreativeAiStatus = "skipped";
+    let reasons = buildMetricCreativeReasons(row);
+    if (canUseOpenAiImageAnalysis(row) && process.env.OPENAI_API_KEY?.trim()) {
+      const result = await resolveCachedGoogleCreativeReasons({
+        accountId: input.accountId,
+        dateRange: input.dateRange,
+        platform: "google",
+        adId: row.adId,
+        creativeId: row.assetId,
+        finalUrl: row.finalUrl,
+        mediaUrl: row.imageUrl,
+        fallback: reasons,
+        generator: () => generateGoogleVisualCreativeReasons(row),
+        logLabel: "OpenAI Google image creative analysis",
+      });
+      reasons = result.reasons;
+      aiStatus = result.aiStatus;
+      if (result.aiStatus !== "fallback") {
+        analysisSource = "openai_image";
+      }
+    }
+
+    reasons = normalizeCreativeReasons({ reasons }, reasons);
+    return {
+      id: row.id,
+      finalUrl: row.finalUrl,
+      imageUrl: row.imageUrl,
+      campaignName: row.campaignName,
+      adName: row.adName,
+      headline: row.headline,
+      description: row.description,
+      spend: safeNumber(row.cost),
+      impressions: safeNumber(row.impressions),
+      clicks: safeNumber(row.clicks),
+      ctr: normalizeNullableNumber(row.ctr),
+      conversions: safeNumber(row.conversions),
+      cpa: normalizeNullableNumber(row.cpa),
+      reasons,
+      analysisSource,
+      aiStatus,
+    };
+  }));
+
+  return {
+    rows: analyzedRows,
+    generatedAt: new Date().toISOString(),
+  };
+}
+
+function selectTopGoogleVisualCreatives(
+  rows: GoogleImageCreativePerformanceRow[]
+): GoogleImageCreativePerformanceRow[] {
+  const byFinalUrl = new Map<string, GoogleImageCreativePerformanceRow[]>();
+  rows.forEach((row) => {
+    const finalUrl = row.finalUrl.trim();
+    const imageUrl = row.imageUrl.trim();
+    if (!finalUrl || !imageUrl) {
+      return;
+    }
+
+    const items = byFinalUrl.get(finalUrl) ?? [];
+    items.push(row);
+    byFinalUrl.set(finalUrl, items);
+  });
+
+  return Array.from(byFinalUrl.values())
+    .map((group) => [...group].sort(compareGoogleVisualCreatives)[0])
+    .filter((row): row is GoogleImageCreativePerformanceRow => Boolean(row))
+    .sort(compareGoogleVisualCreatives)
+    .slice(0, 3);
+}
+
+function compareGoogleVisualCreatives(
+  left: GoogleImageCreativePerformanceRow,
+  right: GoogleImageCreativePerformanceRow
+): number {
+  if (right.conversions !== left.conversions) {
+    return right.conversions - left.conversions;
+  }
+
+  const leftCpa = left.cpa ?? Number.POSITIVE_INFINITY;
+  const rightCpa = right.cpa ?? Number.POSITIVE_INFINITY;
+  if (leftCpa !== rightCpa) {
+    return leftCpa - rightCpa;
+  }
+
+  const leftCtr = left.ctr ?? 0;
+  const rightCtr = right.ctr ?? 0;
+  if (rightCtr !== leftCtr) {
+    return rightCtr - leftCtr;
+  }
+
+  return right.cost - left.cost;
+}
+
+async function buildGoogleVideoCreativeSection(input: {
+  accountId: string;
+  dateRange: DateRangeConfig;
+  rows: GoogleVideoCreativePerformanceRow[];
+}): Promise<AdvancedGoogleVideoCreativeSection | null> {
+  const selectedRows = selectTopGoogleVideoCreatives(input.rows);
+  if (selectedRows.length === 0) {
+    return null;
+  }
+
+  const analyzedRows = await Promise.all(selectedRows.map(async (row): Promise<AdvancedGoogleVideoCreativeRow> => {
+    let analysisSource: AdvancedGoogleVideoCreativeRow["analysisSource"] = "metric_fallback";
+    let aiStatus: AdvancedCreativeAiStatus = "skipped";
+    let reasons = buildMetricVideoCreativeReasons(row);
+    if (canUseOpenRouterVideoAnalysis(row) && process.env.OPENROUTER_API_KEY?.trim()) {
+      const result = await resolveCachedGoogleCreativeReasons({
+        accountId: input.accountId,
+        dateRange: input.dateRange,
+        platform: "google",
+        adId: row.adId,
+        creativeId: row.assetId ?? row.youtubeVideoId,
+        finalUrl: row.finalUrl,
+        mediaUrl: row.videoUrl,
+        fallback: reasons,
+        generator: () => generateGoogleVideoCreativeReasons(row),
+        logLabel: "OpenRouter Gemini Google video creative analysis",
+      });
+      reasons = result.reasons;
+      aiStatus = result.aiStatus;
+      if (result.aiStatus !== "fallback") {
+        analysisSource = "openrouter_gemini_video";
+      }
+    }
+
+    reasons = normalizeCreativeReasons({ reasons }, reasons);
+    return {
+      id: row.id,
+      finalUrl: row.finalUrl,
+      videoUrl: row.videoUrl,
+      thumbnailUrl: row.thumbnailUrl,
+      youtubeVideoId: row.youtubeVideoId,
+      campaignName: row.campaignName,
+      adName: row.adName,
+      headline: row.headline,
+      description: row.description,
+      spend: safeNumber(row.cost),
+      impressions: safeNumber(row.impressions),
+      views: safeNumber(row.views),
+      clicks: safeNumber(row.clicks),
+      ctr: normalizeNullableNumber(row.ctr),
+      conversions: safeNumber(row.conversions),
+      cpa: normalizeNullableNumber(row.cpa),
+      reasons,
+      analysisSource,
+      aiStatus,
+    };
+  }));
+
+  return {
+    rows: analyzedRows,
+    generatedAt: new Date().toISOString(),
+  };
+}
+
+function selectTopGoogleVideoCreatives(
+  rows: GoogleVideoCreativePerformanceRow[]
+): GoogleVideoCreativePerformanceRow[] {
+  const byFinalUrl = new Map<string, GoogleVideoCreativePerformanceRow[]>();
+  rows.forEach((row) => {
+    const finalUrl = row.finalUrl.trim();
+    if (!finalUrl || (!row.videoUrl?.trim() && !row.youtubeVideoId?.trim())) {
+      return;
+    }
+
+    const items = byFinalUrl.get(finalUrl) ?? [];
+    items.push(row);
+    byFinalUrl.set(finalUrl, items);
+  });
+
+  return Array.from(byFinalUrl.values())
+    .map((group) => [...group].sort(compareGoogleVideoCreatives)[0])
+    .filter((row): row is GoogleVideoCreativePerformanceRow => Boolean(row))
+    .sort(compareGoogleVideoCreatives)
+    .slice(0, 3);
+}
+
+function compareGoogleVideoCreatives(
+  left: GoogleVideoCreativePerformanceRow,
+  right: GoogleVideoCreativePerformanceRow
+): number {
+  if (right.conversions !== left.conversions) {
+    return right.conversions - left.conversions;
+  }
+
+  const leftCpa = left.cpa ?? Number.POSITIVE_INFINITY;
+  const rightCpa = right.cpa ?? Number.POSITIVE_INFINITY;
+  if (leftCpa !== rightCpa) {
+    return leftCpa - rightCpa;
+  }
+
+  const leftCtr = left.ctr ?? 0;
+  const rightCtr = right.ctr ?? 0;
+  if (rightCtr !== leftCtr) {
+    return rightCtr - leftCtr;
+  }
+
+  if (right.views !== left.views) {
+    return right.views - left.views;
+  }
+
+  return right.cost - left.cost;
+}
+
+type MetaCreativeAnalysis = { themes: string[]; reasons: string[] };
+
+async function resolveCachedMetaCreativeAnalysis(input: {
+  accountId: string;
+  dateRange: DateRangeConfig;
+  row: MetaCreativePerformanceRow;
+  fallback: MetaCreativeAnalysis;
+  generator: () => Promise<MetaCreativeAnalysis>;
+  logLabel: string;
+}): Promise<{ analysis: MetaCreativeAnalysis; aiStatus: AdvancedCreativeAiStatus }> {
+  const mediaUrl = input.row.mediaType === "image" ? input.row.imageUrl : input.row.videoUrl;
+  const cacheKey = buildAdvancedCreativeAiCacheKey({
+    accountId: input.accountId,
+    platform: "meta",
+    adId: input.row.adId,
+    creativeId: input.row.creativeId,
+    finalUrl: input.row.finalUrl,
+    dateRange: input.dateRange,
+    mediaUrl,
+  });
+  const normalizedFallback = normalizeMetaCreativeAnalysis(input.fallback, input.fallback);
+  const cached = await readAdvancedCreativeAiCache(cacheKey);
+  if (cached) {
+    return {
+      analysis: normalizeMetaCreativeAnalysis(cached, normalizedFallback),
+      aiStatus: "cached",
+    };
+  }
+
+  try {
+    const generated = normalizeMetaCreativeAnalysis(await input.generator(), normalizedFallback);
+    await writeAdvancedCreativeAiCache(cacheKey, {
+      accountId: input.accountId,
+      platform: "meta",
+      adId: input.row.adId,
+      creativeId: input.row.creativeId,
+      finalUrl: input.row.finalUrl,
+      dateRange: input.dateRange,
+      mediaUrl,
+    }, generated);
+    return { analysis: generated, aiStatus: "generated" };
+  } catch (error) {
+    logAdvancedAiError(input.logLabel, input.accountId, input.row.id, error);
+    return { analysis: normalizedFallback, aiStatus: "fallback" };
+  }
+}
+
+async function resolveCachedGoogleCreativeReasons(input: {
+  accountId: string;
+  dateRange: DateRangeConfig;
+  platform: "google";
+  adId?: string | null;
+  creativeId?: string | null;
+  finalUrl: string;
+  mediaUrl: string | null;
+  fallback: string[];
+  generator: () => Promise<string[]>;
+  logLabel: string;
+}): Promise<{ reasons: string[]; aiStatus: AdvancedCreativeAiStatus }> {
+  const cacheKey = buildAdvancedCreativeAiCacheKey(input);
+  const normalizedFallback = normalizeCreativeReasons({ reasons: input.fallback }, input.fallback);
+  const cached = await readAdvancedCreativeAiCache(cacheKey);
+  if (cached) {
+    return {
+      reasons: normalizeCreativeReasons({ reasons: cached.reasons }, normalizedFallback),
+      aiStatus: "cached",
+    };
+  }
+
+  try {
+    const generated = normalizeCreativeReasons({ reasons: await input.generator() }, normalizedFallback);
+    await writeAdvancedCreativeAiCache(cacheKey, input, { reasons: generated });
+    return { reasons: generated, aiStatus: "generated" };
+  } catch (error) {
+    logAdvancedAiError(input.logLabel, input.accountId, input.creativeId || input.adId || "creative", error);
+    return { reasons: normalizedFallback, aiStatus: "fallback" };
+  }
+}
+
+async function generateMetaImageCreativeAnalysis(
+  row: MetaCreativePerformanceRow,
+  fallback: MetaCreativeAnalysis
+): Promise<MetaCreativeAnalysis> {
+  const apiKey = process.env.OPENAI_API_KEY?.trim();
+  if (!apiKey || !canUseOpenAiMetaImageAnalysis(row)) {
+    return fallback;
+  }
+
+  const schema = {
+    type: "object",
+    additionalProperties: false,
+    required: ["themes", "reasons"],
+    properties: {
+      themes: {
+        type: "array",
+        minItems: 0,
+        maxItems: 3,
+        items: { type: "string" },
+      },
+      reasons: {
+        type: "array",
+        minItems: 3,
+        maxItems: 3,
+        items: { type: "string" },
+      },
+    },
+  };
+
+  const response = await fetchWithTimeout(OPENAI_RESPONSES_ENDPOINT, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      model: process.env.ADVANCED_REPORT_META_CREATIVE_OPENAI_MODEL?.trim() || process.env.ADVANCED_REPORT_CREATIVE_OPENAI_MODEL?.trim() || "gpt-4.1-mini",
+      store: true,
+      input: [
+        {
+          role: "system",
+          content:
+            "You are a senior Meta Ads creative analyst. Return strict JSON only. Never claim visual details unless they are visible in the image.",
+        },
+        {
+          role: "user",
+          content: [
+            {
+              type: "input_text",
+              text: buildMetaCreativeAnalysisPrompt(
+                row,
+                fallback,
+                "Explain exactly 3 reasons why this Meta image creative performed best for its final URL."
+              ),
+            },
+            {
+              type: "input_image",
+              image_url: row.imageUrl,
+              detail: "low",
+            },
+          ],
+        },
+      ],
+      text: {
+        format: {
+          type: "json_schema",
+          name: "meta_creative_analysis",
+          strict: true,
+          schema,
+        },
+      },
+    }),
+    cache: "no-store",
+  });
+
+  const bodyText = await response.text();
+  if (!response.ok) {
+    throw new Error(`OpenAI Meta creative analysis failed with status ${response.status}: ${bodyText.slice(0, 220)}`);
+  }
+
+  const parsed = JSON.parse(bodyText) as {
+    output?: Array<Record<string, unknown>>;
+    output_text?: string;
+  };
+  const text = extractOpenAIOutputText(parsed);
+  if (!text) {
+    throw new Error("OpenAI Meta creative response did not include structured text output.");
+  }
+
+  return normalizeMetaCreativeAnalysis(JSON.parse(text) as { themes?: unknown; reasons?: unknown }, fallback);
+}
+
+async function generateMetaVideoCreativeAnalysis(
+  row: MetaCreativePerformanceRow,
+  fallback: MetaCreativeAnalysis
+): Promise<MetaCreativeAnalysis> {
+  const apiKey = process.env.OPENROUTER_API_KEY?.trim();
+  if (!apiKey || !canUseOpenRouterMetaVideoAnalysis(row)) {
+    return fallback;
+  }
+
+  const response = await fetchWithTimeout(OPENROUTER_CHAT_COMPLETIONS_ENDPOINT, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      model:
+        process.env.ADVANCED_REPORT_META_VIDEO_OPENROUTER_MODEL?.trim() ||
+        process.env.ADVANCED_REPORT_VIDEO_OPENROUTER_MODEL?.trim() ||
+        process.env.OPENROUTER_GEMINI_VIDEO_MODEL?.trim() ||
+        "google/gemini-2.5-flash",
+      messages: [
+        {
+          role: "system",
+          content:
+            "You are a senior Meta Ads video creative analyst. Return strict JSON only using this shape: {\"themes\":[\"...\",\"...\",\"...\"],\"reasons\":[\"...\",\"...\",\"...\"]}. Never invent visual details you cannot verify from the video.",
+        },
+        {
+          role: "user",
+          content: [
+            {
+              type: "text",
+              text: buildMetaCreativeAnalysisPrompt(
+                row,
+                fallback,
+                "Explain exactly 3 reasons why this Meta video creative performed best for its final URL."
+              ),
+            },
+            {
+              type: "video_url",
+              videoUrl: {
+                url: row.videoUrl,
+              },
+            },
+          ],
+        },
+      ],
+      response_format: {
+        type: "json_object",
+      },
+      temperature: 0.2,
+      max_tokens: 550,
+      stream: false,
+    }),
+    cache: "no-store",
+  });
+
+  const bodyText = await response.text();
+  if (!response.ok) {
+    throw new Error(`OpenRouter Meta video analysis failed with status ${response.status}: ${bodyText.slice(0, 220)}`);
+  }
+
+  const parsed = JSON.parse(bodyText) as {
+    choices?: Array<{
+      message?: {
+        content?: string | Array<{ type?: string; text?: string }>;
+      };
+    }>;
+  };
+  const text = extractOpenRouterOutputText(parsed);
+  if (!text) {
+    throw new Error("OpenRouter Meta video response did not include text output.");
+  }
+
+  return normalizeMetaCreativeAnalysis(JSON.parse(text) as { themes?: unknown; reasons?: unknown }, fallback);
+}
+
+async function generateGoogleVisualCreativeReasons(
+  row: GoogleImageCreativePerformanceRow
+): Promise<string[]> {
+  const apiKey = process.env.OPENAI_API_KEY?.trim();
+  if (!apiKey || !canUseOpenAiImageAnalysis(row)) {
+    return buildMetricCreativeReasons(row);
+  }
+
+  const metricFallback = buildMetricCreativeReasons(row);
+  const schema = {
+    type: "object",
+    additionalProperties: false,
+    required: ["reasons"],
+    properties: {
+      reasons: {
+        type: "array",
+        minItems: 3,
+        maxItems: 3,
+        items: { type: "string" },
+      },
+    },
+  };
+
+  const response = await fetchWithTimeout(OPENAI_RESPONSES_ENDPOINT, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      model: process.env.ADVANCED_REPORT_CREATIVE_OPENAI_MODEL?.trim() || process.env.ADVANCED_REPORT_OPENAI_MODEL?.trim() || "gpt-4.1-mini",
+      store: true,
+      input: [
+        {
+          role: "system",
+          content:
+            "You are a senior performance marketing creative analyst. Return strict JSON only. Never claim visual details unless they are visible in the image.",
+        },
+        {
+          role: "user",
+          content: [
+            {
+              type: "input_text",
+              text: [
+                "Explain exactly 3 reasons why this Google image creative performed best for its final URL.",
+                "Each reason must be one sentence, client-friendly, and based on both the visible creative and the supplied metrics where possible.",
+                "Do not invent image details; if a visual element is unclear, rely on metrics and copy instead.",
+                `Final URL: ${row.finalUrl}`,
+                `Campaign: ${row.campaignName}`,
+                `Ad name: ${row.adName}`,
+                `Headline: ${row.headline ?? "Not available"}`,
+                `Description: ${row.description ?? "Not available"}`,
+                `Spend: RM${safeNumber(row.cost).toFixed(2)}`,
+                `Impressions: ${Math.round(safeNumber(row.impressions))}`,
+                `Clicks: ${Math.round(safeNumber(row.clicks))}`,
+                `CTR: ${formatReasonPercent(row.ctr)}`,
+                `Conversions: ${formatReasonNumber(row.conversions)}`,
+                `CPA: ${formatReasonCurrency(row.cpa)}`,
+                `Metric fallback options if visual reading is limited: ${metricFallback.join(" ")}`,
+              ].join("\n"),
+            },
+            {
+              type: "input_image",
+              image_url: row.imageUrl,
+              detail: "low",
+            },
+          ],
+        },
+      ],
+      text: {
+        format: {
+          type: "json_schema",
+          name: "google_visual_creative_reasons",
+          strict: true,
+          schema,
+        },
+      },
+    }),
+    cache: "no-store",
+  });
+
+  const bodyText = await response.text();
+  if (!response.ok) {
+    throw new Error(`OpenAI Responses API failed with status ${response.status}: ${bodyText.slice(0, 220)}`);
+  }
+
+  const parsed = JSON.parse(bodyText) as {
+    output?: Array<Record<string, unknown>>;
+    output_text?: string;
+  };
+  const text = extractOpenAIOutputText(parsed);
+  if (!text) {
+    throw new Error("OpenAI creative response did not include structured text output.");
+  }
+
+  return normalizeCreativeReasons(JSON.parse(text) as { reasons?: unknown }, metricFallback);
+}
+
+async function generateGoogleVideoCreativeReasons(
+  row: GoogleVideoCreativePerformanceRow
+): Promise<string[]> {
+  const apiKey = process.env.OPENROUTER_API_KEY?.trim();
+  if (!apiKey || !canUseOpenRouterVideoAnalysis(row)) {
+    return buildMetricVideoCreativeReasons(row);
+  }
+
+  const metricFallback = buildMetricVideoCreativeReasons(row);
+  const response = await fetchWithTimeout(OPENROUTER_CHAT_COMPLETIONS_ENDPOINT, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      model:
+        process.env.ADVANCED_REPORT_VIDEO_OPENROUTER_MODEL?.trim() ||
+        process.env.OPENROUTER_GEMINI_VIDEO_MODEL?.trim() ||
+        "google/gemini-2.5-flash",
+      messages: [
+        {
+          role: "system",
+          content:
+            "You are a senior performance marketing video creative analyst. Return strict JSON only using this shape: {\"reasons\":[\"...\",\"...\",\"...\"]}. Never invent visual details you cannot verify from the video.",
+        },
+        {
+          role: "user",
+          content: [
+            {
+              type: "text",
+              text: [
+                "Explain exactly 3 reasons why this Google YouTube video creative performed best for its final URL.",
+                "Each reason must be one sentence, client-friendly, and based on both the video and the supplied metrics where possible.",
+                "Do not invent video details; if video analysis is limited, rely on metrics and ad copy instead.",
+                `Final URL: ${row.finalUrl}`,
+                `Video URL: ${row.videoUrl ?? "Not available"}`,
+                `Campaign: ${row.campaignName}`,
+                `Ad name: ${row.adName}`,
+                `Headline: ${row.headline ?? "Not available"}`,
+                `Description: ${row.description ?? "Not available"}`,
+                `Spend: RM${safeNumber(row.cost).toFixed(2)}`,
+                `Impressions: ${Math.round(safeNumber(row.impressions))}`,
+                `Views: ${Math.round(safeNumber(row.views))}`,
+                `Clicks: ${Math.round(safeNumber(row.clicks))}`,
+                `CTR: ${formatReasonPercent(row.ctr)}`,
+                `Conversions: ${formatReasonNumber(row.conversions)}`,
+                `CPA: ${formatReasonCurrency(row.cpa)}`,
+                `Metric fallback options if video reading is limited: ${metricFallback.join(" ")}`,
+                "Return JSON only with exactly 3 reasons.",
+              ].join("\n"),
+            },
+            {
+              type: "video_url",
+              videoUrl: {
+                url: row.videoUrl,
+              },
+            },
+          ],
+        },
+      ],
+      response_format: {
+        type: "json_object",
+      },
+      temperature: 0.2,
+      max_tokens: 450,
+      stream: false,
+    }),
+    cache: "no-store",
+  });
+
+  const bodyText = await response.text();
+  if (!response.ok) {
+    throw new Error(`OpenRouter video analysis failed with status ${response.status}: ${bodyText.slice(0, 220)}`);
+  }
+
+  const parsed = JSON.parse(bodyText) as {
+    choices?: Array<{
+      message?: {
+        content?: string | Array<{ type?: string; text?: string }>;
+      };
+    }>;
+  };
+  const text = extractOpenRouterOutputText(parsed);
+  if (!text) {
+    throw new Error("OpenRouter video response did not include text output.");
+  }
+
+  return normalizeCreativeReasons(JSON.parse(text) as { reasons?: unknown }, metricFallback);
+}
+
+function canUseOpenAiImageAnalysis(row: GoogleImageCreativePerformanceRow): boolean {
+  try {
+    const url = new URL(row.imageUrl);
+    return url.protocol === "https:" || url.protocol === "http:";
+  } catch {
+    return false;
+  }
+}
+
+function canUseOpenAiMetaImageAnalysis(row: MetaCreativePerformanceRow): boolean {
+  const imageUrl = row.imageUrl?.trim();
+  if (!imageUrl) {
+    return false;
+  }
+
+  try {
+    const url = new URL(imageUrl);
+    return url.protocol === "https:" || url.protocol === "http:";
+  } catch {
+    return false;
+  }
+}
+
+function canUseOpenRouterMetaVideoAnalysis(row: MetaCreativePerformanceRow): boolean {
+  const videoUrl = row.videoUrl?.trim();
+  if (!videoUrl) {
+    return false;
+  }
+
+  try {
+    const url = new URL(videoUrl);
+    return url.protocol === "https:" || url.protocol === "http:";
+  } catch {
+    return false;
+  }
+}
+
+function canUseOpenRouterVideoAnalysis(row: GoogleVideoCreativePerformanceRow): boolean {
+  const videoUrl = row.videoUrl?.trim();
+  if (!videoUrl) {
+    return false;
+  }
+
+  try {
+    const url = new URL(videoUrl);
+    const hostname = url.hostname.toLowerCase().replace(/^www\./, "");
+    return url.protocol === "https:" && (hostname === "youtube.com" || hostname === "youtu.be");
+  } catch {
+    return false;
+  }
+}
+
+function buildMetaCreativeAnalysisPrompt(
+  row: MetaCreativePerformanceRow,
+  fallback: MetaCreativeAnalysis,
+  instruction: string
+): string {
+  return [
+    instruction,
+    "Each reason must be 1 sentence, client-friendly, and based on the creative plus the supplied metrics.",
+    "Extract creative keyword themes only from the primary text, headline, and description; do not call them search keywords.",
+    "Do not invent visual details; if media analysis is limited, rely on metrics and ad copy instead.",
+    "Return strict JSON only with exactly this shape: {\"themes\":[\"...\",\"...\",\"...\"],\"reasons\":[\"...\",\"...\",\"...\"]}.",
+    `Final URL: ${row.finalUrl}`,
+    `Media type: ${row.mediaType}`,
+    `Campaign: ${row.campaignName}`,
+    `Ad name: ${row.adName}`,
+    `Primary text: ${row.primaryText ?? "Not available"}`,
+    `Headline: ${row.headline ?? "Not available"}`,
+    `Description: ${row.description ?? "Not available"}`,
+    `Spend: RM${safeNumber(row.cost).toFixed(2)}`,
+    `Impressions: ${Math.round(safeNumber(row.impressions))}`,
+    `Reach: ${Math.round(safeNumber(row.reach))}`,
+    `Clicks: ${Math.round(safeNumber(row.clicks))}`,
+    `CTR: ${formatReasonPercent(row.ctr)}`,
+    `Leads/conversions: ${formatReasonNumber(row.conversions)}`,
+    `CPA: ${formatReasonCurrency(row.cpa)}`,
+    `Metric fallback reasons if media reading is limited: ${fallback.reasons.join(" ")}`,
+    `Text-derived creative keyword themes: ${fallback.themes.join(", ") || "None available"}`,
+  ].join("\n");
+}
+
+function normalizeMetaCreativeAnalysis(
+  value: { themes?: unknown; reasons?: unknown },
+  fallback: MetaCreativeAnalysis
+): MetaCreativeAnalysis {
+  const themes = Array.isArray(value.themes)
+    ? value.themes
+        .map((theme) => sanitizeCreativeTheme(typeof theme === "string" ? theme : ""))
+        .filter(Boolean)
+    : [];
+
+  return {
+    themes: dedupeStrings([...themes, ...fallback.themes]).slice(0, 3),
+    reasons: normalizeReasonList(value.reasons, fallback.reasons),
+  };
+}
+
+function normalizeCreativeReasons(value: { reasons?: unknown }, fallback: string[]): string[] {
+  return normalizeReasonList(value.reasons, fallback);
+}
+
+function normalizeReasonList(value: unknown, fallback: string[]): string[] {
+  const generated = Array.isArray(value)
+    ? value
+        .map((reason) => sanitizeReasonSentence(typeof reason === "string" ? reason : ""))
+        .filter(Boolean)
+    : [];
+  const fallbackReasons = fallback
+    .map((reason) => sanitizeReasonSentence(reason))
+    .filter(Boolean);
+  const reasons = dedupeReasons([...generated, ...fallbackReasons]);
+  const pads = [
+    "It generated enough delivery to make this creative useful for performance learning.",
+    "Its engagement signals made it a practical reference for the landing page.",
+    "Its results give the team a clear benchmark for future creative testing.",
+  ];
+
+  return dedupeReasons([...reasons, ...pads]).slice(0, 3);
+}
+
+function dedupeReasons(values: string[]): string[] {
+  const seen = new Set<string>();
+  const results: string[] = [];
+  values.forEach((value) => {
+    const key = value.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+    if (!value || !key || seen.has(key)) {
+      return;
+    }
+    seen.add(key);
+    results.push(value);
+  });
+  return results;
+}
+
+function sanitizeReasonSentence(value: string): string {
+  const normalized = value.replace(/\s+/g, " ").trim();
+  if (!normalized) {
+    return "";
+  }
+  const firstSentence = normalized.match(/^.*?[.!?](?:\s|$)/)?.[0]?.trim() ?? normalized;
+  const shortened = firstSentence.length > 180 ? `${firstSentence.slice(0, 177).trim()}...` : firstSentence;
+  return /[.!?]$/.test(shortened) ? shortened : `${shortened}.`;
+}
+
+function buildMetricCreativeReasons(row: GoogleImageCreativePerformanceRow): string[] {
+  const conversions = safeNumber(row.conversions);
+  const clicks = safeNumber(row.clicks);
+  const impressions = safeNumber(row.impressions);
+  const spend = safeNumber(row.cost);
+  const ctr = normalizeNullableNumber(row.ctr);
+  const cpa = normalizeNullableNumber(row.cpa);
+
+  return [
+    conversions > 0
+      ? `It led this final URL on outcomes with ${formatReasonNumber(conversions)} conversions from ${formatReasonNumber(clicks)} clicks.`
+      : `It provided the strongest traffic signal for this final URL with ${formatReasonNumber(clicks)} clicks from ${formatReasonNumber(impressions)} impressions.`,
+    cpa !== null
+      ? `Its ${formatReasonCurrency(cpa)} CPA shows the spend converted efficiently for this landing page.`
+      : `Its ${formatReasonCurrency(spend)} spend created enough delivery to judge the creative against the other image ads for this URL.`,
+    ctr !== null
+      ? `Its ${formatReasonPercent(ctr)} CTR shows the creative and copy attracted clicks from the served impressions.`
+      : `Its click and impression volume made it the clearest image creative to learn from for this URL.`,
+  ];
+}
+
+function buildMetricVideoCreativeReasons(row: GoogleVideoCreativePerformanceRow): string[] {
+  const conversions = safeNumber(row.conversions);
+  const clicks = safeNumber(row.clicks);
+  const impressions = safeNumber(row.impressions);
+  const views = safeNumber(row.views);
+  const spend = safeNumber(row.cost);
+  const ctr = normalizeNullableNumber(row.ctr);
+  const cpa = normalizeNullableNumber(row.cpa);
+
+  return [
+    conversions > 0
+      ? `It led this final URL on outcomes with ${formatReasonNumber(conversions)} conversions from ${formatReasonNumber(clicks)} clicks and ${formatReasonNumber(views)} views.`
+      : `It created the strongest video engagement signal for this final URL with ${formatReasonNumber(views)} views from ${formatReasonNumber(impressions)} impressions.`,
+    cpa !== null
+      ? `Its ${formatReasonCurrency(cpa)} CPA shows the video converted efficiently for this landing page.`
+      : `Its ${formatReasonCurrency(spend)} spend generated enough video delivery to compare it fairly against the other YouTube creatives for this URL.`,
+    ctr !== null
+      ? `Its ${formatReasonPercent(ctr)} CTR shows the video and ad copy were effective at turning impressions into site visits.`
+      : `Its view, click, and impression volume made it the clearest video creative to learn from for this URL.`,
+  ];
+}
+
+function buildMetricMetaCreativeAnalysis(row: MetaCreativePerformanceRow): MetaCreativeAnalysis {
+  const conversions = safeNumber(row.conversions);
+  const clicks = safeNumber(row.clicks);
+  const impressions = safeNumber(row.impressions);
+  const reach = safeNumber(row.reach);
+  const spend = safeNumber(row.cost);
+  const ctr = normalizeNullableNumber(row.ctr);
+  const cpa = normalizeNullableNumber(row.cpa);
+  const themes = extractCreativeKeywordThemes([row.primaryText, row.headline, row.description]);
+
+  return {
+    themes,
+    reasons: [
+      conversions > 0
+        ? `It produced the strongest outcome for this final URL with ${formatReasonNumber(conversions)} leads or conversions from ${formatReasonNumber(clicks)} clicks.`
+        : `It provided the strongest traffic signal for this final URL with ${formatReasonNumber(clicks)} clicks from ${formatReasonNumber(impressions)} impressions.`,
+      cpa !== null
+        ? `Its ${formatReasonCurrency(cpa)} CPA shows the creative converted efficiently for the landing page.`
+        : `Its ${formatReasonCurrency(spend)} spend gave the creative enough delivery to compare against other Meta ads for this URL.`,
+      ctr !== null
+        ? `Its ${formatReasonPercent(ctr)} CTR shows the message encouraged people reached by the ad to click through.`
+        : `Its reach of ${formatReasonNumber(reach)} and delivery volume made it the clearest Meta creative to learn from for this URL.`,
+    ],
+  };
+}
+
+function extractCreativeKeywordThemes(values: Array<string | null | undefined>): string[] {
+  const text = values
+    .map((value) => value?.trim() ?? "")
+    .filter(Boolean)
+    .join(" ");
+  if (!text) {
+    return [];
+  }
+
+  const phrases = Array.from(
+    text.matchAll(/\b[A-Za-z][A-Za-z0-9&'/-]*(?:\s+[A-Za-z][A-Za-z0-9&'/-]*){1,3}\b/g)
+  )
+    .map((match) => sanitizeCreativeTheme(match[0]))
+    .filter((phrase) => phrase && !isLowValueCreativeTheme(phrase));
+  const phraseThemes = dedupeStrings(phrases).slice(0, 3);
+  if (phraseThemes.length >= 3) {
+    return phraseThemes;
+  }
+
+  const words = text
+    .toLowerCase()
+    .replace(/https?:\/\/\S+/g, " ")
+    .replace(/[^a-z0-9\s&'/-]/g, " ")
+    .split(/\s+/)
+    .map((word) => sanitizeCreativeTheme(word))
+    .filter((word) => word.length > 2 && !CREATIVE_THEME_STOP_WORDS.has(word.toLowerCase()));
+
+  return dedupeStrings([...phraseThemes, ...words]).slice(0, 3);
+}
+
+function sanitizeCreativeTheme(value: string): string {
+  return value
+    .replace(/\s+/g, " ")
+    .replace(/^[^A-Za-z0-9]+|[^A-Za-z0-9]+$/g, "")
+    .trim()
+    .slice(0, 60);
+}
+
+function isLowValueCreativeTheme(value: string): boolean {
+  const words = value.toLowerCase().split(/\s+/).filter(Boolean);
+  if (words.length === 0) {
+    return true;
+  }
+  return words.every((word) => CREATIVE_THEME_STOP_WORDS.has(word) || word.length <= 2);
+}
+
+function formatReasonNumber(value: number | null | undefined): string {
+  if (!Number.isFinite(value)) {
+    return "0";
+  }
+  return new Intl.NumberFormat("en-MY", { maximumFractionDigits: 0 }).format(Number(value));
+}
+
+function formatReasonCurrency(value: number | null | undefined): string {
+  if (!Number.isFinite(value)) {
+    return "Not available";
+  }
+  return `RM${new Intl.NumberFormat("en-MY", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(Number(value))}`;
+}
+
+function formatReasonPercent(value: number | null | undefined): string {
+  if (!Number.isFinite(value)) {
+    return "Not available";
+  }
+  return `${new Intl.NumberFormat("en-MY", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(Number(value))}%`;
+}
+
+function normalizeAdvancedAuctionRow(row: AuctionInsightRow): AuctionInsightRow | null {
+  const displayDomain = row.displayDomain?.trim();
+  if (!displayDomain) {
+    return null;
+  }
+
+  const impressionShare = normalizeNullableNumber(row.impressionShare);
+  const overlapRate = normalizeNullableNumber(row.overlapRate);
+  const positionAboveRate = normalizeNullableNumber(row.positionAboveRate);
+  const topOfPageRate = normalizeNullableNumber(row.topOfPageRate);
+  const absoluteTopOfPageRate = normalizeNullableNumber(row.absoluteTopOfPageRate);
+  const outrankingShare = normalizeNullableNumber(row.outrankingShare);
+  const observations = Math.max(0, Math.round(safeNumber(row.observations)));
+
+  if (
+    impressionShare === null ||
+    overlapRate === null ||
+    positionAboveRate === null ||
+    topOfPageRate === null ||
+    absoluteTopOfPageRate === null ||
+    outrankingShare === null ||
+    observations <= 0
+  ) {
+    return null;
+  }
+
+  return {
+    ...row,
+    displayDomain,
+    impressionShare,
+    overlapRate,
+    positionAboveRate,
+    topOfPageRate,
+    absoluteTopOfPageRate,
+    outrankingShare,
+    observations,
+  };
+}
+
+function hasMeaningfulAuctionMetrics(row: AuctionInsightRow): boolean {
+  return [
+    row.impressionShare,
+    row.overlapRate,
+    row.positionAboveRate,
+    row.topOfPageRate,
+    row.absoluteTopOfPageRate,
+    row.outrankingShare,
+  ].some((value) => Number.isFinite(value) && Number(value) > 0);
+}
+
+function aggregateAuctionShareOfVoice(rows: AuctionInsightRow[]): number | null {
+  if (rows.length === 0) {
+    return null;
+  }
+
+  const weighted = rows.reduce(
+    (acc, row) => {
+      if (!Number.isFinite(row.impressionShare)) {
+        return acc;
+      }
+      const weight = row.observations > 0 ? row.observations : 1;
+      return {
+        sum: acc.sum + row.impressionShare * weight,
+        weight: acc.weight + weight,
+      };
+    },
+    { sum: 0, weight: 0 }
+  );
+
+  return weighted.weight > 0 ? weighted.sum / weighted.weight : null;
+}
+
+function aggregateFinalUrlImpressionShare(rows: GoogleFinalUrlSpendRow[]): number | null {
+  const weighted = rows.reduce(
+    (acc, row) => {
+      const impressionShare = normalizeNullableNumber(row.impressionShare);
+      if (impressionShare === null || impressionShare <= 0) {
+        return acc;
+      }
+      const weight = safeNumber(row.impressions) > 0 ? safeNumber(row.impressions) : 1;
+      return {
+        sum: acc.sum + impressionShare * weight,
+        weight: acc.weight + weight,
+      };
+    },
+    { sum: 0, weight: 0 }
+  );
+
+  return weighted.weight > 0 ? weighted.sum / weighted.weight : null;
+}
+
+function getFinalUrlDomains(rows: GoogleFinalUrlSpendRow[]): Set<string> {
+  const domains = new Set<string>();
+  rows.forEach((row) => {
+    const domain = getHostname(row.finalUrl);
+    if (domain) {
+      domains.add(domain);
+    }
+  });
+  return domains;
+}
+
+function getHostname(value: string): string | null {
+  try {
+    return normalizeDomain(new URL(value).hostname);
+  } catch {
+    return null;
+  }
+}
+
+function normalizeDomain(value: string): string {
+  return value.trim().toLowerCase().replace(/^www\./, "");
+}
+
+function logAdvancedAuctionHiddenReason(accountId: string, reason: string) {
+  console.info(`[advanced-report] auction visibility hidden account_id=${accountId || "missing"} reason=${reason}`);
+}
+
+function logAdvancedAiError(scope: string, accountId: string, creativeId: string, error: unknown) {
+  const message = error instanceof Error ? error.message : String(error);
+  console.warn(
+    `[advanced-report] creative AI fallback scope=${scope} account_id=${accountId || "missing"} creative_id=${creativeId || "missing"} error=${message}`
+  );
+}
+
+function resolveAdvancedAiKeyStatus(): string {
+  const statuses = [
+    process.env.OPENAI_API_KEY?.trim() ? "openai_configured" : "openai_missing",
+    process.env.OPENROUTER_API_KEY?.trim() ? "openrouter_configured" : "openrouter_missing",
+    getDataForSeoCredentials() ? "dataforseo_configured" : "dataforseo_missing",
+  ];
+  return statuses.join(",");
+}
+
+function summarizeAdvancedAiStatus(payload: AdvancedReportPayload): string {
+  const creativeStatuses = [
+    ...(payload.metaCreativeAnalysis?.rows.map((row) => row.aiStatus) ?? []),
+    ...(payload.googleVisualCreativeAnalysis?.rows.map((row) => row.aiStatus) ?? []),
+    ...(payload.googleVideoCreativeAnalysis?.rows.map((row) => row.aiStatus) ?? []),
+  ];
+  const counts = creativeStatuses.reduce<Record<string, number>>((acc, status) => {
+    acc[status] = (acc[status] ?? 0) + 1;
+    return acc;
+  }, {});
+  const creativeSummary =
+    Object.entries(counts)
+      .map(([status, count]) => `${status}:${count}`)
+      .join(",") || "creative_ai:none";
+  const discoveryStatus = payload.diagnostics.openAi.responseId ? "market_discovery:generated" : "market_discovery:fallback";
+
+  return `${discoveryStatus};${creativeSummary}`;
+}
+
+function normalizeNullableNumber(value: number | null | undefined): number | null {
+  return Number.isFinite(value) ? Number(value) : null;
+}
+
+function safeNumber(value: number | null | undefined): number {
+  return Number.isFinite(value) ? Number(value) : 0;
+}
+
+function safeText(value: unknown): string {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+async function refreshAdvancedReportCompanyName(payload: AdvancedReportPayload): Promise<AdvancedReportPayload> {
+  let basicOverallReport = payload.basicOverallReport;
+  let resolvedCompanyName = getResolvedCompanyName(basicOverallReport?.companyName);
+
+  if (!resolvedCompanyName && /^Account\s+/i.test(payload.metadata.companyName)) {
+    basicOverallReport = await fetchBasicOverallReport({
+      accountId: payload.metadata.accountId,
+      accountPlatform: payload.metadata.accountPlatform,
+      dateRange: payload.metadata.dateRange,
+    }).catch(() => undefined);
+    resolvedCompanyName = getResolvedCompanyName(basicOverallReport?.companyName);
+  }
+
+  if (!resolvedCompanyName || payload.metadata.companyName === resolvedCompanyName) {
+    return payload;
+  }
+
+  const previousCompanyName = payload.metadata.companyName;
+  const competitors = {
+    ...payload.competitors,
+    demandShare: relabelClientShareRows(payload.competitors.demandShare, previousCompanyName, resolvedCompanyName),
+    marketPlayerShares: relabelClientShareRows(
+      payload.competitors.marketPlayerShares,
+      previousCompanyName,
+      resolvedCompanyName
+    ),
+  };
+
+  return {
+    ...payload,
+    metadata: {
+      ...payload.metadata,
+      companyName: resolvedCompanyName,
+    },
+    basicOverallReport,
+    competitors,
+  };
+}
+
+function getResolvedCompanyName(value: string | null | undefined): string | null {
+  const trimmed = value?.trim();
+  if (!trimmed || /^Account\s+/i.test(trimmed) || trimmed === "Company Name") {
+    return null;
+  }
+
+  return trimmed;
+}
+
+function relabelClientShareRows<T extends { label: string; type?: "client" | "competitor" }>(
+  rows: T[],
+  previousCompanyName: string,
+  resolvedCompanyName: string
+): T[] {
+  return rows.map((row) =>
+    row.type === "client" || row.label === previousCompanyName
+      ? {
+          ...row,
+          label: resolvedCompanyName,
+        }
+      : row
+  );
 }
 
 export async function refreshAdvancedReportVolatileMedia(
   payload: AdvancedReportPayload
 ): Promise<AdvancedReportPayload> {
+  const renamedPayload = await refreshAdvancedReportCompanyName(payload);
+
+  if (renamedPayload !== payload) {
+    payload = renamedPayload;
+  }
+
   if (!hasExpiredOrExpiringMediaUrls(payload)) {
     return payload;
   }
@@ -359,7 +1975,8 @@ export async function refreshAdvancedReportVolatileMedia(
 async function resolveAdvancedCompanyName(
   accountId: string,
   accountPlatform: "google" | "meta" | "unknown",
-  dateRange: DateRangeConfig
+  dateRange: DateRangeConfig,
+  basicOverallReport?: OverallReportPayload
 ): Promise<string> {
   const credentials = getCredentials();
   const mapped = resolveCompanyNameFromAccountId(
@@ -375,6 +1992,11 @@ async function resolveAdvancedCompanyName(
 
   if (mapped) {
     return mapped;
+  }
+
+  const basicCompanyName = getResolvedCompanyName(basicOverallReport?.companyName);
+  if (basicCompanyName) {
+    return basicCompanyName;
   }
 
   if (accountPlatform === "google") {
@@ -405,6 +2027,84 @@ async function fetchGoogleAdvancedUsage(
     startDate: dateRange.startDate,
     endDate: dateRange.endDate,
   });
+}
+
+async function fetchBasicOverallReport(input: {
+  accountId: string;
+  accountPlatform: "google" | "meta" | "unknown";
+  dateRange: DateRangeConfig;
+}) {
+  return getOverallReport({
+    accountId: input.accountPlatform === "unknown" ? input.accountId : null,
+    metaAccountId: input.accountPlatform === "meta" ? input.accountId : null,
+    googleAccountId: input.accountPlatform === "google" ? input.accountId : null,
+    startDate: input.dateRange.startDate,
+    endDate: input.dateRange.endDate,
+  });
+}
+
+async function fetchGoogleAdvancedAuctionRows(
+  accountId: string,
+  dateRange: DateRangeConfig
+): Promise<AuctionInsightRow[]> {
+  const result = await getGoogleAdvancedAuctionInsightRows({
+    accountId: null,
+    metaAccountId: null,
+    googleAccountId: accountId,
+    startDate: dateRange.startDate,
+    endDate: dateRange.endDate,
+  });
+
+  if (result.warnings.length > 0) {
+    logAdvancedAuctionHiddenReason(accountId, result.warnings.join(" "));
+  }
+
+  return result.rows;
+}
+
+async function fetchMetaAdvancedCreatives(
+  accountId: string,
+  dateRange: DateRangeConfig
+): Promise<MetaCreativePerformanceRow[]> {
+  const result = await getMetaAdvancedCreativeRows({
+    accountId: null,
+    metaAccountId: accountId,
+    googleAccountId: null,
+    startDate: dateRange.startDate,
+    endDate: dateRange.endDate,
+  });
+
+  return result.rows;
+}
+
+async function fetchGoogleAdvancedImageCreatives(
+  accountId: string,
+  dateRange: DateRangeConfig
+): Promise<GoogleImageCreativePerformanceRow[]> {
+  const result = await getGoogleAdvancedImageCreativeRows({
+    accountId: null,
+    metaAccountId: null,
+    googleAccountId: accountId,
+    startDate: dateRange.startDate,
+    endDate: dateRange.endDate,
+  });
+
+  return result.rows;
+}
+
+async function fetchGoogleAdvancedVideoCreatives(
+  accountId: string,
+  dateRange: DateRangeConfig
+): Promise<GoogleVideoCreativePerformanceRow[]> {
+  const result = await getGoogleAdvancedVideoCreativeRows({
+    accountId: null,
+    metaAccountId: null,
+    googleAccountId: accountId,
+    startDate: dateRange.startDate,
+    endDate: dateRange.endDate,
+  });
+
+  return result.rows;
 }
 
 async function discoverMarket(input: {
@@ -540,7 +2240,7 @@ async function discoverMarket(input: {
         .join("\n")
     : "";
 
-  const response = await fetch(OPENAI_RESPONSES_ENDPOINT, {
+  const response = await fetchWithTimeout(OPENAI_RESPONSES_ENDPOINT, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${apiKey}`,
@@ -573,7 +2273,7 @@ async function discoverMarket(input: {
             `Client/account: ${input.companyName}`,
             `Country: ${input.country.locationName}`,
             googleKeywordContext ? `Google Ads keywords with spend > RM1 last period: ${googleKeywordContext}` : "",
-            finalUrlContext ? `Running ad final URLs with spend > RM1 last period: ${finalUrlContext}` : "",
+            finalUrlContext ? `Running ad final URLs from last period: ${finalUrlContext}` : "",
             feedbackContext,
             "Task: infer the actual business category, likely competitors, own-brand terms, product/service categories, broad non-brand seed keywords, multilingual local terms, and recent customer questions.",
             "Best-practice keyword rules: prefer 2-5 word phrases, include exact category terms, commercial modifiers, price/promo terms, problem/need terms, local intent terms, and competitor alternatives. Avoid slogans, full sentences, one-off campaign names, URLs, emojis, symbols, and phrases longer than 10 words.",
@@ -622,6 +2322,29 @@ async function discoverMarket(input: {
   };
 }
 
+async function fetchWithTimeout(url: string, init: RequestInit): Promise<Response> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), getAdvancedAiTimeoutMs());
+  try {
+    return await fetch(url, {
+      ...init,
+      signal: controller.signal,
+    });
+  } catch (error) {
+    if (controller.signal.aborted) {
+      throw new Error(`AI request timed out after ${getAdvancedAiTimeoutMs()}ms.`);
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+function getAdvancedAiTimeoutMs(): number {
+  const configured = Number(process.env.ADVANCED_REPORT_AI_TIMEOUT_MS);
+  return Number.isFinite(configured) && configured > 0 ? configured : ADVANCED_REPORT_AI_TIMEOUT_MS;
+}
+
 function extractOpenAIOutputText(response: { output?: Array<Record<string, unknown>>; output_text?: string }): string | null {
   if (typeof response.output_text === "string") {
     return response.output_text;
@@ -638,6 +2361,23 @@ function extractOpenAIOutputText(response: { output?: Array<Record<string, unkno
     }
   }
 
+  return null;
+}
+
+function extractOpenRouterOutputText(response: {
+  choices?: Array<{
+    message?: {
+      content?: string | Array<{ type?: string; text?: string }>;
+    };
+  }>;
+}): string | null {
+  const content = response.choices?.[0]?.message?.content;
+  if (typeof content === "string") {
+    return content;
+  }
+  if (Array.isArray(content)) {
+    return content.map((item) => item.text?.trim() ?? "").find(Boolean) ?? null;
+  }
   return null;
 }
 
@@ -1490,6 +3230,9 @@ function buildAdvancedDiagnostics(input: {
   keywordData: DataForSeoKeywordResult[];
   peopleAlsoAskTerms: string[];
   googleUsage: { keywordRows: TopKeywordRow[]; finalUrlRows: GoogleFinalUrlSpendRow[] };
+  metaCreativeRows: MetaCreativePerformanceRow[];
+  googleImageCreativeRows: GoogleImageCreativePerformanceRow[];
+  googleVideoCreativeRows: GoogleVideoCreativePerformanceRow[];
   sectionStatuses: Record<AdvancedReportSectionKey, SectionState>;
 }): AdvancedReportDiagnostics {
   const processFlow: AdvancedReportDiagnostics["processFlow"] = [
@@ -1506,7 +3249,7 @@ function buildAdvancedDiagnostics(input: {
         input.googleUsage.keywordRows.length > 0 || input.googleUsage.finalUrlRows.length > 0
           ? "success"
           : "empty",
-      detail: `${input.googleUsage.keywordRows.length} keyword rows and ${input.googleUsage.finalUrlRows.length} final URLs with spend above RM1.`,
+      detail: `${input.googleUsage.keywordRows.length} keyword rows and ${input.googleUsage.finalUrlRows.length} final URL rows.`,
     },
     {
       step: "OpenAI market discovery",
@@ -1527,6 +3270,21 @@ function buildAdvancedDiagnostics(input: {
       step: "DataForSEO People Also Ask",
       status: input.peopleAlsoAskTerms.length > 0 ? "success" : "empty",
       detail: `${input.peopleAlsoAskTerms.length} related questions returned.`,
+    },
+    {
+      step: "Google visual creative analysis",
+      status: input.googleImageCreativeRows.length > 0 ? "success" : "empty",
+      detail: `${input.googleImageCreativeRows.length} Google image, display, or Performance Max creative rows returned.`,
+    },
+    {
+      step: "Google video creative analysis",
+      status: input.googleVideoCreativeRows.length > 0 ? "success" : "empty",
+      detail: `${input.googleVideoCreativeRows.length} Google video or YouTube creative rows returned.`,
+    },
+    {
+      step: "Meta creative analysis",
+      status: input.metaCreativeRows.length > 0 ? "success" : "empty",
+      detail: `${input.metaCreativeRows.length} Meta ad creative rows returned from ad-level insights and creative metadata.`,
     },
     ...Object.entries(input.sectionStatuses).map(([key, value]) => ({
       step: `Render section: ${key}`,
@@ -1569,6 +3327,11 @@ function buildAdvancedDiagnostics(input: {
     googleAds: {
       keywordRowsWithSpend: input.googleUsage.keywordRows.length,
       finalUrlRowsWithSpend: input.googleUsage.finalUrlRows.length,
+      imageCreativeRows: input.googleImageCreativeRows.length,
+      videoCreativeRows: input.googleVideoCreativeRows.length,
+    },
+    metaAds: {
+      creativeRows: input.metaCreativeRows.length,
     },
   };
 }

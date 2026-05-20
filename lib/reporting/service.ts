@@ -16,6 +16,8 @@ import {
   fetchGoogleAuctionInsightRows,
   fetchGoogleCampaignRows,
   fetchGoogleFinalUrlSpendRows,
+  fetchGoogleImageCreativePerformanceRows,
+  fetchGoogleVideoCreativePerformanceRows,
   fetchGooglePreviewData,
   fetchGoogleTopKeywordRows,
   isGoogleAdsAccessPathError,
@@ -32,6 +34,7 @@ import {
   fetchMetaAudienceBreakdown,
   fetchMetaAccountName,
   fetchMetaCampaignRows,
+  fetchMetaCreativePerformanceRows,
   fetchMetaPreviewData,
 } from "@/lib/reporting/meta";
 import {
@@ -41,7 +44,10 @@ import {
   CampaignComparisonPayload,
   CampaignRow,
   GoogleFinalUrlSpendRow,
+  GoogleImageCreativePerformanceRow,
+  GoogleVideoCreativePerformanceRow,
   InsightsPayload,
+  MetaCreativePerformanceRow,
   MetaPreviewBlockIssue,
   MetaPreviewDiagnostics,
   OverallReportPayload,
@@ -108,8 +114,11 @@ const googlePreviewCache = new Map<
 >();
 const googleTopKeywordRowsCache = new Map<string, MemoryCacheEntry<TopKeywordRow[]>>();
 const googleFinalUrlSpendRowsCache = new Map<string, MemoryCacheEntry<GoogleFinalUrlSpendRow[]>>();
+const googleImageCreativeRowsCache = new Map<string, MemoryCacheEntry<GoogleImageCreativePerformanceRow[]>>();
+const googleVideoCreativeRowsCache = new Map<string, MemoryCacheEntry<GoogleVideoCreativePerformanceRow[]>>();
 const googleAuctionInsightRowsCache = new Map<string, MemoryCacheEntry<AuctionInsightRow[]>>();
 const googleAccountNameCache = new Map<string, MemoryCacheEntry<string | null>>();
+const metaCreativeRowsCache = new Map<string, MemoryCacheEntry<MetaCreativePerformanceRow[]>>();
 
 function parsePositiveIntegerEnv(rawValue: string | undefined, fallback: number): number {
   const parsed = Number.parseInt(rawValue ?? "", 10);
@@ -791,8 +800,134 @@ export async function getGoogleAdvancedAdUsageReport(input: OverallInput): Promi
 
   return {
     keywordRows: keywordResult.rows.filter((row) => row.cost > 1),
-    finalUrlRows: finalUrlResult.rows.filter((row) => row.cost > 1),
+    finalUrlRows: finalUrlResult.rows,
     warnings: [...googleManagerContext.messages, ...keywordResult.warnings, ...finalUrlResult.warnings],
+  };
+}
+
+export async function getGoogleAdvancedAuctionInsightRows(input: OverallInput): Promise<{
+  rows: AuctionInsightRow[];
+  warnings: string[];
+}> {
+  const credentials = getCredentials();
+  const dateRange = buildDateRange(input.startDate, input.endDate);
+  const { resolvedAccountIds, googleManagerContext } = await resolveReportAccountContext(
+    input,
+    credentials
+  );
+
+  const auctionResult = await tryFetchGoogleAuctionInsightsForAccounts(
+    resolvedAccountIds.googleAccountIds,
+    credentials.googleAdsApiVersion,
+    credentials.googleDeveloperToken,
+    credentials.googleAccessToken,
+    credentials.googleRefreshToken,
+    credentials.googleClientId,
+    credentials.googleClientSecret,
+    googleManagerContext.loginCustomerIdByAccount,
+    googleManagerContext.accessPathByAccount,
+    credentials.googleLoginCustomerId,
+    dateRange.startDate,
+    dateRange.endDate
+  );
+
+  return {
+    rows: auctionResult.rows,
+    warnings: [...googleManagerContext.messages, ...auctionResult.warnings],
+  };
+}
+
+export async function getGoogleAdvancedImageCreativeRows(input: OverallInput): Promise<{
+  rows: GoogleImageCreativePerformanceRow[];
+  warnings: string[];
+}> {
+  const credentials = getCredentials();
+  const dateRange = buildDateRange(input.startDate, input.endDate);
+  const { resolvedAccountIds, googleManagerContext } = await resolveReportAccountContext(
+    input,
+    credentials
+  );
+
+  const creativeResult = await tryFetchGoogleImageCreativeRowsForAccounts(
+    resolvedAccountIds.googleAccountIds,
+    credentials.googleAdsApiVersion,
+    credentials.googleDeveloperToken,
+    credentials.googleAccessToken,
+    credentials.googleRefreshToken,
+    credentials.googleClientId,
+    credentials.googleClientSecret,
+    googleManagerContext.loginCustomerIdByAccount,
+    googleManagerContext.accessPathByAccount,
+    credentials.googleLoginCustomerId,
+    dateRange.startDate,
+    dateRange.endDate
+  );
+
+  return {
+    rows: creativeResult.rows,
+    warnings: [...googleManagerContext.messages, ...creativeResult.warnings],
+  };
+}
+
+export async function getGoogleAdvancedVideoCreativeRows(input: OverallInput): Promise<{
+  rows: GoogleVideoCreativePerformanceRow[];
+  warnings: string[];
+}> {
+  const credentials = getCredentials();
+  const dateRange = buildDateRange(input.startDate, input.endDate);
+  const { resolvedAccountIds, googleManagerContext } = await resolveReportAccountContext(
+    input,
+    credentials
+  );
+
+  const creativeResult = await tryFetchGoogleVideoCreativeRowsForAccounts(
+    resolvedAccountIds.googleAccountIds,
+    credentials.googleAdsApiVersion,
+    credentials.googleDeveloperToken,
+    credentials.googleAccessToken,
+    credentials.googleRefreshToken,
+    credentials.googleClientId,
+    credentials.googleClientSecret,
+    googleManagerContext.loginCustomerIdByAccount,
+    googleManagerContext.accessPathByAccount,
+    credentials.googleLoginCustomerId,
+    dateRange.startDate,
+    dateRange.endDate
+  );
+
+  return {
+    rows: creativeResult.rows,
+    warnings: [...googleManagerContext.messages, ...creativeResult.warnings],
+  };
+}
+
+export async function getMetaAdvancedCreativeRows(input: OverallInput): Promise<{
+  rows: MetaCreativePerformanceRow[];
+  warnings: string[];
+}> {
+  const credentials = getCredentials();
+  const dateRange = buildDateRange(input.startDate, input.endDate);
+  const { resolvedAccountIds, googleManagerContext } = await resolveReportAccountContext(
+    input,
+    credentials
+  );
+  const rows: MetaCreativePerformanceRow[] = [];
+  const warnings: string[] = [...googleManagerContext.messages];
+
+  for (const accountId of resolvedAccountIds.metaAccountIds) {
+    const result = await tryFetchMetaCreativeRows(
+      accountId,
+      credentials.metaAccessToken,
+      dateRange.startDate,
+      dateRange.endDate
+    );
+    rows.push(...result.rows);
+    warnings.push(...result.warnings.map((warning) => annotateWarningWithAccount(warning, "meta", accountId)));
+  }
+
+  return {
+    rows,
+    warnings,
   };
 }
 
@@ -1199,6 +1334,57 @@ async function tryFetchMetaPreview(
       fatalErrors: [],
       diagnostics: [],
     };
+  }
+}
+
+async function tryFetchMetaCreativeRows(
+  accountId: string | null,
+  accessToken: string | null,
+  startDate: string,
+  endDate: string
+): Promise<{ rows: MetaCreativePerformanceRow[]; warnings: string[] }> {
+  if (!accountId) {
+    return { rows: [], warnings: [] };
+  }
+  if (!accessToken) {
+    return {
+      rows: [],
+      warnings: [
+        "Meta API: Missing META_ACCESS_TOKEN. Add this secret in Vercel Environment Variables or run locally with `doppler run -- npm run dev`.",
+      ],
+    };
+  }
+
+  const cacheKey = createGoogleFetchCacheKey("meta-creatives", {
+    accountId,
+    startDate,
+    endDate,
+    credentials: accessToken.slice(-10),
+  });
+
+  try {
+    const rows = await readThroughMemoryCache(
+      metaCreativeRowsCache,
+      cacheKey,
+      () =>
+        fetchMetaCreativePerformanceRows({
+          accountId,
+          accessToken,
+          startDate,
+          endDate,
+        }),
+      {
+        ttlMs: GOOGLE_FETCH_CACHE_TTL_MS,
+        maxEntries: GOOGLE_FETCH_CACHE_MAX_ENTRIES,
+      }
+    );
+    return { rows, warnings: [] };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Failed to load Meta creative performance data.";
+    const hint = message.includes("(#200)")
+      ? " Meta token is valid but missing required ads scopes (`ads_read` or `ads_management`) for this ad account, or the token owner is not assigned to the ad account."
+      : "";
+    return { rows: [], warnings: [`Meta API: ${message}${hint}`] };
   }
 }
 
@@ -1646,6 +1832,168 @@ async function tryFetchGoogleFinalUrls(
       throw error;
     }
     const message = error instanceof Error ? error.message : "Failed to load Google Ads final URL data.";
+    return { rows: [], warnings: [`Google Ads API: ${message}${googleErrorHint(message)}`] };
+  }
+}
+
+async function tryFetchGoogleImageCreativeRows(
+  customerId: string | null,
+  apiVersion: string,
+  developerToken: string | null,
+  accessToken: string | null,
+  refreshToken: string | null,
+  clientId: string | null,
+  clientSecret: string | null,
+  loginCustomerId: string | null,
+  accessPath: string | null,
+  fallbackLoginCustomerId: string | null,
+  startDate: string,
+  endDate: string
+): Promise<{ rows: GoogleImageCreativePerformanceRow[]; warnings: string[] }> {
+  if (!customerId) {
+    return { rows: [], warnings: [] };
+  }
+
+  const credentialWarnings = getGoogleCredentialWarnings(
+    developerToken,
+    accessToken,
+    refreshToken,
+    clientId,
+    clientSecret
+  );
+  if (credentialWarnings.length > 0) {
+    return { rows: [], warnings: credentialWarnings };
+  }
+
+  const cacheKey = createGoogleFetchCacheKey("image-creatives", {
+    customerId,
+    apiVersion,
+    loginCustomerId,
+    accessPath,
+    fallbackLoginCustomerId,
+    startDate,
+    endDate,
+    credentials: fingerprintGoogleCredentials(
+      developerToken,
+      accessToken,
+      refreshToken,
+      clientId,
+      clientSecret
+    ),
+  });
+
+  try {
+    const rows = await readThroughMemoryCache(
+      googleImageCreativeRowsCache,
+      cacheKey,
+      () =>
+        fetchGoogleImageCreativePerformanceRows({
+          customerId,
+          apiVersion,
+          developerToken: developerToken!,
+          accessToken,
+          refreshToken,
+          clientId,
+          clientSecret,
+          loginCustomerId,
+          accessPath,
+          fallbackLoginCustomerId,
+          startDate,
+          endDate,
+        }),
+      {
+        ttlMs: GOOGLE_FETCH_CACHE_TTL_MS,
+        maxEntries: GOOGLE_FETCH_CACHE_MAX_ENTRIES,
+      }
+    );
+
+    return { rows, warnings: [] };
+  } catch (error) {
+    if (isGoogleAdsAccessPathError(error)) {
+      throw error;
+    }
+    const message = error instanceof Error ? error.message : "Failed to load Google Ads image creative data.";
+    return { rows: [], warnings: [`Google Ads API: ${message}${googleErrorHint(message)}`] };
+  }
+}
+
+async function tryFetchGoogleVideoCreativeRows(
+  customerId: string | null,
+  apiVersion: string,
+  developerToken: string | null,
+  accessToken: string | null,
+  refreshToken: string | null,
+  clientId: string | null,
+  clientSecret: string | null,
+  loginCustomerId: string | null,
+  accessPath: string | null,
+  fallbackLoginCustomerId: string | null,
+  startDate: string,
+  endDate: string
+): Promise<{ rows: GoogleVideoCreativePerformanceRow[]; warnings: string[] }> {
+  if (!customerId) {
+    return { rows: [], warnings: [] };
+  }
+
+  const credentialWarnings = getGoogleCredentialWarnings(
+    developerToken,
+    accessToken,
+    refreshToken,
+    clientId,
+    clientSecret
+  );
+  if (credentialWarnings.length > 0) {
+    return { rows: [], warnings: credentialWarnings };
+  }
+
+  const cacheKey = createGoogleFetchCacheKey("video-creatives", {
+    customerId,
+    apiVersion,
+    loginCustomerId,
+    accessPath,
+    fallbackLoginCustomerId,
+    startDate,
+    endDate,
+    credentials: fingerprintGoogleCredentials(
+      developerToken,
+      accessToken,
+      refreshToken,
+      clientId,
+      clientSecret
+    ),
+  });
+
+  try {
+    const rows = await readThroughMemoryCache(
+      googleVideoCreativeRowsCache,
+      cacheKey,
+      () =>
+        fetchGoogleVideoCreativePerformanceRows({
+          customerId,
+          apiVersion,
+          developerToken: developerToken!,
+          accessToken,
+          refreshToken,
+          clientId,
+          clientSecret,
+          loginCustomerId,
+          accessPath,
+          fallbackLoginCustomerId,
+          startDate,
+          endDate,
+        }),
+      {
+        ttlMs: GOOGLE_FETCH_CACHE_TTL_MS,
+        maxEntries: GOOGLE_FETCH_CACHE_MAX_ENTRIES,
+      }
+    );
+
+    return { rows, warnings: [] };
+  } catch (error) {
+    if (isGoogleAdsAccessPathError(error)) {
+      throw error;
+    }
+    const message = error instanceof Error ? error.message : "Failed to load Google Ads video creative data.";
     return { rows: [], warnings: [`Google Ads API: ${message}${googleErrorHint(message)}`] };
   }
 }
@@ -2108,6 +2456,102 @@ async function tryFetchGoogleFinalUrlsForAccounts(
   }
 
   return { rows: mergeGoogleFinalUrlSpendRows(rows), warnings };
+}
+
+async function tryFetchGoogleImageCreativeRowsForAccounts(
+  accountIds: string[],
+  apiVersion: string,
+  developerToken: string | null,
+  accessToken: string | null,
+  refreshToken: string | null,
+  clientId: string | null,
+  clientSecret: string | null,
+  loginCustomerIdByAccount: GoogleLoginCustomerIdMap,
+  accessPathByAccount: Record<string, string | null>,
+  fallbackLoginCustomerId: string | null,
+  startDate: string,
+  endDate: string
+): Promise<{ rows: GoogleImageCreativePerformanceRow[]; warnings: string[] }> {
+  if (accountIds.length === 0) {
+    return { rows: [], warnings: [] };
+  }
+
+  const rows: GoogleImageCreativePerformanceRow[] = [];
+  const warnings: string[] = [];
+
+  for (const accountId of accountIds) {
+    const result = await tryFetchGoogleImageCreativeRows(
+      accountId,
+      apiVersion,
+      developerToken,
+      accessToken,
+      refreshToken,
+      clientId,
+      clientSecret,
+      loginCustomerIdByAccount[accountId] ?? null,
+      accessPathByAccount[accountId] ?? null,
+      fallbackLoginCustomerId,
+      startDate,
+      endDate
+    );
+
+    rows.push(...result.rows);
+    const accountWarnings = result.warnings.map((warning) =>
+      annotateWarningWithAccount(warning, "google", accountId)
+    );
+    logGoogleWarningsForTerminal(accountWarnings);
+    warnings.push(...accountWarnings);
+  }
+
+  return { rows: mergeGoogleImageCreativeRows(rows), warnings };
+}
+
+async function tryFetchGoogleVideoCreativeRowsForAccounts(
+  accountIds: string[],
+  apiVersion: string,
+  developerToken: string | null,
+  accessToken: string | null,
+  refreshToken: string | null,
+  clientId: string | null,
+  clientSecret: string | null,
+  loginCustomerIdByAccount: GoogleLoginCustomerIdMap,
+  accessPathByAccount: Record<string, string | null>,
+  fallbackLoginCustomerId: string | null,
+  startDate: string,
+  endDate: string
+): Promise<{ rows: GoogleVideoCreativePerformanceRow[]; warnings: string[] }> {
+  if (accountIds.length === 0) {
+    return { rows: [], warnings: [] };
+  }
+
+  const rows: GoogleVideoCreativePerformanceRow[] = [];
+  const warnings: string[] = [];
+
+  for (const accountId of accountIds) {
+    const result = await tryFetchGoogleVideoCreativeRows(
+      accountId,
+      apiVersion,
+      developerToken,
+      accessToken,
+      refreshToken,
+      clientId,
+      clientSecret,
+      loginCustomerIdByAccount[accountId] ?? null,
+      accessPathByAccount[accountId] ?? null,
+      fallbackLoginCustomerId,
+      startDate,
+      endDate
+    );
+
+    rows.push(...result.rows);
+    const accountWarnings = result.warnings.map((warning) =>
+      annotateWarningWithAccount(warning, "google", accountId)
+    );
+    logGoogleWarningsForTerminal(accountWarnings);
+    warnings.push(...accountWarnings);
+  }
+
+  return { rows: mergeGoogleVideoCreativeRows(rows), warnings };
 }
 
 async function tryFetchGoogleAuctionInsightsForAccounts(
@@ -2672,16 +3116,56 @@ function mergeGoogleFinalUrlSpendRows(rows: GoogleFinalUrlSpendRow[]): GoogleFin
     const key = row.finalUrl.trim();
     const existing = byUrl.get(key);
     if (!existing) {
-      byUrl.set(key, { ...row, campaignNames: [...row.campaignNames], adGroupNames: [...row.adGroupNames] });
+      byUrl.set(key, {
+        ...row,
+        campaignIds: [...row.campaignIds],
+        campaignNames: [...row.campaignNames],
+        adGroupIds: [...row.adGroupIds],
+        adGroupNames: [...row.adGroupNames],
+      });
       return;
     }
 
+    const existingImpressions = existing.impressions;
     existing.impressions += row.impressions;
     existing.clicks += row.clicks;
+    existing.conversions += row.conversions;
     existing.cost += row.cost;
+    existing.impressionShare = mergeNullablePercentByImpressions(
+      existing.impressionShare,
+      existingImpressions,
+      row.impressionShare,
+      row.impressions
+    );
+    existing.lostImpressionShareBudget = mergeNullablePercentByImpressions(
+      existing.lostImpressionShareBudget,
+      existingImpressions,
+      row.lostImpressionShareBudget,
+      row.impressions
+    );
+    existing.lostImpressionShareRank = mergeNullablePercentByImpressions(
+      existing.lostImpressionShareRank,
+      existingImpressions,
+      row.lostImpressionShareRank,
+      row.impressions
+    );
+    existing.impressionShareSource =
+      existing.impressionShareSource === "ad_group" || row.impressionShareSource === "ad_group"
+        ? "ad_group"
+        : existing.impressionShareSource ?? row.impressionShareSource;
+    row.campaignIds.forEach((id) => {
+      if (!existing.campaignIds.includes(id)) {
+        existing.campaignIds.push(id);
+      }
+    });
     row.campaignNames.forEach((name) => {
       if (!existing.campaignNames.includes(name)) {
         existing.campaignNames.push(name);
+      }
+    });
+    row.adGroupIds.forEach((id) => {
+      if (!existing.adGroupIds.includes(id)) {
+        existing.adGroupIds.push(id);
       }
     });
     row.adGroupNames.forEach((name) => {
@@ -2692,6 +3176,102 @@ function mergeGoogleFinalUrlSpendRows(rows: GoogleFinalUrlSpendRow[]): GoogleFin
   });
 
   return Array.from(byUrl.values()).sort((a, b) => b.cost - a.cost);
+}
+
+function mergeNullablePercentByImpressions(
+  currentValue: number | null,
+  currentImpressions: number,
+  nextValue: number | null,
+  nextImpressions: number
+): number | null {
+  const hasCurrent = Number.isFinite(currentValue);
+  const hasNext = Number.isFinite(nextValue);
+  if (!hasCurrent && !hasNext) {
+    return null;
+  }
+  if (!hasCurrent) {
+    return Number(nextValue);
+  }
+  if (!hasNext) {
+    return Number(currentValue);
+  }
+
+  const currentWeight = currentImpressions > 0 ? currentImpressions : 1;
+  const nextWeight = nextImpressions > 0 ? nextImpressions : 1;
+  return (Number(currentValue) * currentWeight + Number(nextValue) * nextWeight) / (currentWeight + nextWeight);
+}
+
+function mergeGoogleImageCreativeRows(
+  rows: GoogleImageCreativePerformanceRow[]
+): GoogleImageCreativePerformanceRow[] {
+  const byId = new Map<string, GoogleImageCreativePerformanceRow>();
+  rows.forEach((row) => {
+    const key = row.id.trim();
+    if (!key || !row.finalUrl.trim() || !row.imageUrl.trim()) {
+      return;
+    }
+    byId.set(key, row);
+  });
+
+  return Array.from(byId.values()).sort(compareGoogleImageCreativeRows);
+}
+
+function compareGoogleImageCreativeRows(
+  left: GoogleImageCreativePerformanceRow,
+  right: GoogleImageCreativePerformanceRow
+): number {
+  if (right.conversions !== left.conversions) {
+    return right.conversions - left.conversions;
+  }
+  const leftCpa = left.cpa ?? Number.POSITIVE_INFINITY;
+  const rightCpa = right.cpa ?? Number.POSITIVE_INFINITY;
+  if (leftCpa !== rightCpa) {
+    return leftCpa - rightCpa;
+  }
+  const leftCtr = left.ctr ?? 0;
+  const rightCtr = right.ctr ?? 0;
+  if (rightCtr !== leftCtr) {
+    return rightCtr - leftCtr;
+  }
+  return right.cost - left.cost;
+}
+
+function mergeGoogleVideoCreativeRows(
+  rows: GoogleVideoCreativePerformanceRow[]
+): GoogleVideoCreativePerformanceRow[] {
+  const byId = new Map<string, GoogleVideoCreativePerformanceRow>();
+  rows.forEach((row) => {
+    const key = row.id.trim();
+    if (!key || !row.finalUrl.trim() || (!row.videoUrl?.trim() && !row.youtubeVideoId?.trim())) {
+      return;
+    }
+    byId.set(key, row);
+  });
+
+  return Array.from(byId.values()).sort(compareGoogleVideoCreativeRows);
+}
+
+function compareGoogleVideoCreativeRows(
+  left: GoogleVideoCreativePerformanceRow,
+  right: GoogleVideoCreativePerformanceRow
+): number {
+  if (right.conversions !== left.conversions) {
+    return right.conversions - left.conversions;
+  }
+  const leftCpa = left.cpa ?? Number.POSITIVE_INFINITY;
+  const rightCpa = right.cpa ?? Number.POSITIVE_INFINITY;
+  if (leftCpa !== rightCpa) {
+    return leftCpa - rightCpa;
+  }
+  const leftCtr = left.ctr ?? 0;
+  const rightCtr = right.ctr ?? 0;
+  if (rightCtr !== leftCtr) {
+    return rightCtr - leftCtr;
+  }
+  if (right.views !== left.views) {
+    return right.views - left.views;
+  }
+  return right.cost - left.cost;
 }
 
 function buildTopKeywordTotals(rows: TopKeywordRow[]): TopKeywordRow {

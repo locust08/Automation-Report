@@ -19,6 +19,7 @@ interface ReportShellProps {
   headerBottomControl?: React.ReactNode;
   activeQuery?: string;
   reportReady?: boolean;
+  suppressExportHeader?: boolean;
   children: React.ReactNode;
 }
 
@@ -33,6 +34,7 @@ export function ReportShell({
   headerBottomControl,
   activeQuery = "",
   reportReady = false,
+  suppressExportHeader = false,
   children,
 }: ReportShellProps) {
   const { screenshotMode } = useScreenshotMode();
@@ -50,8 +52,8 @@ export function ReportShell({
       data-report-ready={reportReady ? "true" : undefined}
     >
       <div className={`${REPORT_PAGE_FRAME_CLASS} ${screenshotMode ? "!min-h-0 !flex-none" : ""}`}>
-        {screenshotMode ? (
-          <ExportReportHeader title={title} dateLabel={dateLabel} activeQuery={activeQuery} />
+        {screenshotMode && !suppressExportHeader ? (
+          <ReportExportHeader title={title} dateLabel={dateLabel} activeQuery={activeQuery} />
         ) : null}
 
         <section
@@ -136,26 +138,7 @@ export function ReportShell({
           <div className={REPORT_INNER_CONTAINER_CLASS}>{children}</div>
         </section>
 
-        <footer
-          className={`${screenshotMode ? "" : "mt-auto "}border-t-4 border-red-600 bg-[#f0f0f0]`}
-          data-report-export-footer="true"
-        >
-          <div
-            className={`${REPORT_INNER_CONTAINER_CLASS} flex flex-col items-center gap-3 py-5 text-center text-base text-[#777] sm:flex-row sm:justify-between sm:text-left`}
-          >
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
-              src="/locus-t-logo-25.png"
-              alt="LOCUS-T logo"
-              width={220}
-              height={40}
-              className="h-10 w-auto max-w-[260px] object-contain"
-              loading="eager"
-              decoding="sync"
-            />
-            <span>LOCUS-T SDN BHD</span>
-          </div>
-        </footer>
+        <ReportFooter screenshotMode={screenshotMode} />
 
         <section
           className={`${REPORT_INNER_CONTAINER_CLASS} hidden pb-8 pt-2`}
@@ -172,21 +155,23 @@ export function ReportShell({
   );
 }
 
-function ExportReportHeader({
+export function ReportExportHeader({
   title,
   dateLabel,
   activeQuery,
+  exportMarker = true,
 }: {
   title: string;
   dateLabel: string;
   activeQuery: string;
+  exportMarker?: boolean;
 }) {
   const accountItems = getExportAccountItems(activeQuery);
 
   return (
     <section
       className="overflow-hidden rounded-[1.5rem] bg-[url('/headerbackground.png')] bg-cover bg-center bg-no-repeat shadow-sm"
-      data-report-export-header-section="true"
+      data-report-export-header-section={exportMarker ? "true" : undefined}
     >
       <div className={`${REPORT_INNER_CONTAINER_CLASS} py-4 sm:py-5`}>
         <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_minmax(220px,360px)] md:items-start">
@@ -225,6 +210,37 @@ function ExportReportHeader({
         </div>
       </div>
     </section>
+  );
+}
+
+export function ReportFooter({
+  screenshotMode,
+  exportMarker = true,
+}: {
+  screenshotMode: boolean;
+  exportMarker?: boolean;
+}) {
+  return (
+    <footer
+      className={`${screenshotMode ? "" : "mt-auto "}border-t-4 border-red-600 bg-[#f0f0f0]`}
+      data-report-export-footer={exportMarker ? "true" : undefined}
+    >
+      <div
+        className={`${REPORT_INNER_CONTAINER_CLASS} flex flex-col items-center gap-3 py-5 text-center text-base text-[#777] sm:flex-row sm:justify-between sm:text-left`}
+      >
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img
+          src="/locus-t-logo-25.png"
+          alt="LOCUS-T logo"
+          width={220}
+          height={40}
+          className="h-10 w-auto max-w-[260px] object-contain"
+          loading="eager"
+          decoding="sync"
+        />
+        <span>LOCUS-T SDN BHD</span>
+      </div>
+    </footer>
   );
 }
 

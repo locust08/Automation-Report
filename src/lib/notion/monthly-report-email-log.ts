@@ -9,6 +9,8 @@ const NOTION_LOG_PROPERTY_ALIASES = {
   clientName: ["client_name", "Client Name"],
   reportType: ["report_type", "Report Type", "platform", "Platform"],
   accountId: ["account_id", "Account ID"],
+  idempotencyKey: ["idempotency_key", "Idempotency Key"],
+  scheduledDate: ["scheduled_date", "Scheduled Date", "Schedule Date"],
   reportMonth: ["report_month", "Report Month"],
   recipientEmail: ["recipient_email", "Recipient Email"],
   ccEmail: ["pic_email", "PIC Email", "cc_email", "CC Email"],
@@ -29,6 +31,7 @@ interface MonthlyReportEmailLogInput {
   account: MonthlyReportAccount;
   reportType: string;
   reportMonthKey: string;
+  scheduledDate?: string;
 }
 
 interface RecordMonthlyReportEmailSentInput extends MonthlyReportEmailLogInput {
@@ -54,9 +57,40 @@ export async function hasMonthlyReportEmailBeenSent(
   const monthProperty = findLogProperty(config.properties, NOTION_LOG_PROPERTY_ALIASES.reportMonth);
   const statusProperty = findLogProperty(config.properties, NOTION_LOG_PROPERTY_ALIASES.sendStatus);
   const reportTypeProperty = findLogProperty(config.properties, NOTION_LOG_PROPERTY_ALIASES.reportType);
+  const idempotencyKeyProperty = findLogProperty(config.properties, NOTION_LOG_PROPERTY_ALIASES.idempotencyKey);
+  const scheduledDateProperty = findLogProperty(config.properties, NOTION_LOG_PROPERTY_ALIASES.scheduledDate);
 
   if (!accountProperty || !monthProperty || !statusProperty || !reportTypeProperty) {
     console.warn("[monthly-report] duplicate-send check skipped: monthly report log schema is missing required properties");
+    return false;
+  }
+
+  const sentStatusFilter = buildTextLikeFilter(statusProperty.name, statusProperty.type, "sent");
+  if (idempotencyKeyProperty) {
+    const idempotencyKey = buildMonthlyReportIdempotencyKey({
+      accountId,
+      reportType: input.reportType,
+      reportMonthKey: input.reportMonthKey,
+      scheduledDate: input.scheduledDate,
+    });
+    const response = await config.notion.dataSources.query({
+      data_source_id: config.dataSourceId,
+      page_size: 1,
+      filter: {
+        and: [
+          buildTextLikeFilter(idempotencyKeyProperty.name, idempotencyKeyProperty.type, idempotencyKey),
+          sentStatusFilter,
+        ],
+      } as Parameters<typeof config.notion.dataSources.query>[0]["filter"],
+    });
+
+    return response.results.length > 0;
+  }
+
+  if (!scheduledDateProperty) {
+    console.warn(
+      "[monthly-report] duplicate-send check skipped: monthly report log schema is missing idempotency_key or scheduled_date"
+    );
     return false;
   }
 
@@ -65,7 +99,12 @@ export async function hasMonthlyReportEmailBeenSent(
       buildTextLikeFilter(accountProperty.name, accountProperty.type, accountId),
       buildTextLikeFilter(monthProperty.name, monthProperty.type, input.reportMonthKey),
       buildTextLikeFilter(reportTypeProperty.name, reportTypeProperty.type, input.reportType),
-      buildTextLikeFilter(statusProperty.name, statusProperty.type, "sent"),
+      buildTextLikeFilter(
+        scheduledDateProperty.name,
+        scheduledDateProperty.type,
+        normalizeScheduledDate(input.scheduledDate)
+      ),
+      sentStatusFilter,
     ],
   } as Parameters<typeof config.notion.dataSources.query>[0]["filter"];
 
@@ -93,6 +132,15 @@ export async function recordMonthlyReportEmailSent(
     clientName: input.account.clientName,
     reportType: input.reportType,
     accountId,
+    idempotencyKey: accountId
+      ? buildMonthlyReportIdempotencyKey({
+          accountId,
+          reportType: input.reportType,
+          reportMonthKey: input.reportMonthKey,
+          scheduledDate: input.scheduledDate,
+        })
+      : null,
+    scheduledDate: normalizeScheduledDate(input.scheduledDate),
     reportMonth: input.reportMonthKey,
     recipientEmail: input.recipientEmail,
     ccEmail: input.ccEmail,
@@ -220,6 +268,15 @@ function buildTextLikeFilter(
     };
   }
 
+  if (type === "date") {
+    return {
+      property,
+      date: {
+        equals: value,
+      },
+    };
+  }
+
   return {
     property,
     rich_text: {
@@ -259,6 +316,34 @@ function buildPropertyValue(type: string, value: string | null): Record<string, 
 
 function resolvePrimaryAccountId(account: MonthlyReportAccount): string | null {
   return account.googleAdsAccountId ?? account.metaAdsAccountId;
+}
+
+function buildMonthlyReportIdempotencyKey(input: {
+  accountId: string;
+  reportType: string;
+  reportMonthKey: string;
+  scheduledDate?: string;
+}): string {
+  return [
+    input.accountId.trim(),
+    input.reportType.trim().toLowerCase(),
+    input.reportMonthKey.trim(),
+    normalizeScheduledDate(input.scheduledDate),
+  ].join(":");
+}
+
+function normalizeScheduledDate(value: string | undefined): string {
+  const trimmed = value?.trim();
+  if (trimmed && /^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
+    return trimmed;
+  }
+  if (trimmed) {
+    const parsed = new Date(trimmed);
+    if (!Number.isNaN(parsed.getTime())) {
+      return parsed.toISOString().slice(0, 10);
+    }
+  }
+  return new Date().toISOString().slice(0, 10);
 }
 
 function normalizePropertyName(value: string): string {

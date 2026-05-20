@@ -167,10 +167,94 @@ export interface TopKeywordRow {
 export interface GoogleFinalUrlSpendRow {
   id: string;
   finalUrl: string;
+  campaignIds: string[];
   campaignNames: string[];
+  adGroupIds: string[];
   adGroupNames: string[];
   impressions: number;
   clicks: number;
+  conversions: number;
+  cost: number;
+  impressionShare: number | null;
+  lostImpressionShareBudget: number | null;
+  lostImpressionShareRank: number | null;
+  impressionShareSource: "ad_group" | "campaign" | null;
+}
+
+export interface GoogleImageCreativePerformanceRow {
+  id: string;
+  source: "image_ad" | "responsive_display_ad" | "performance_max_asset";
+  finalUrl: string;
+  campaignId: string | null;
+  campaignName: string;
+  adGroupId: string | null;
+  adGroupName: string | null;
+  adId: string | null;
+  adName: string;
+  adType: string;
+  assetId: string | null;
+  imageUrl: string;
+  headline: string | null;
+  description: string | null;
+  impressions: number;
+  clicks: number;
+  ctr: number | null;
+  conversions: number;
+  cpa: number | null;
+  cost: number;
+}
+
+export interface GoogleVideoCreativePerformanceRow {
+  id: string;
+  source: "video_responsive_ad" | "performance_max_youtube_asset";
+  finalUrl: string;
+  campaignId: string | null;
+  campaignName: string;
+  adGroupId: string | null;
+  adGroupName: string | null;
+  adId: string | null;
+  adName: string;
+  adType: string;
+  assetId: string | null;
+  videoAssetResourceName: string | null;
+  youtubeVideoId: string | null;
+  videoUrl: string | null;
+  thumbnailUrl: string | null;
+  headline: string | null;
+  description: string | null;
+  impressions: number;
+  views: number;
+  clicks: number;
+  ctr: number | null;
+  conversions: number;
+  cpa: number | null;
+  cost: number;
+}
+
+export interface MetaCreativePerformanceRow {
+  id: string;
+  finalUrl: string;
+  mediaType: "image" | "video";
+  imageUrl: string | null;
+  videoUrl: string | null;
+  thumbnailUrl: string | null;
+  campaignId: string | null;
+  campaignName: string;
+  adSetId: string | null;
+  adSetName: string | null;
+  adId: string | null;
+  adName: string;
+  creativeId: string | null;
+  creativeName: string | null;
+  primaryText: string | null;
+  headline: string | null;
+  description: string | null;
+  impressions: number;
+  reach: number;
+  clicks: number;
+  ctr: number | null;
+  conversions: number;
+  cpa: number | null;
   cost: number;
 }
 
@@ -289,6 +373,7 @@ export interface PreviewCreativeAsset {
   body?: string | null;
   description?: string | null;
   imageUrl?: string | null;
+  videoUrl?: string | null;
   thumbnailUrl?: string | null;
   linkUrl?: string | null;
   callToActionType?: string | null;

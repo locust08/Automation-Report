@@ -66,6 +66,10 @@ Credentials are expected from environment variables (Doppler injects these at ru
   - JSON format example: `{"6972528848":"Soka International School"}`
   - Comma format example: `6972528848:Soka International School,1234567890:Another Company`
   - Example for this account: `{"283341217383189":"<Registered Company Name>"}`
+- `ADVANCED_REPORT_ENABLED` (optional; set `false` to disable only scheduled Advanced Report automation)
+- `OPENAI_API_KEY`, `ADVANCED_REPORT_OPENAI_MODEL`, `ADVANCED_REPORT_CREATIVE_OPENAI_MODEL` (Advanced Report AI discovery/creative analysis)
+- `OPENROUTER_API_KEY`, `ADVANCED_REPORT_VIDEO_OPENROUTER_MODEL` (optional Advanced Report video creative analysis)
+- `DATAFORSEO_LOGIN`, `DATAFORSEO_PASSWORD` (Advanced Report keyword volume and People Also Ask data)
 
 Company name resolution order:
 1. `REPORT_COMPANY_NAME_MAP` (if matched)
@@ -181,3 +185,27 @@ npm run lint
 npm run typecheck
 npm run build
 ```
+
+## Advanced Report Production QA
+
+Advanced Report automation uses the Notion `Advanced Report` checkbox. Basic/Overall monthly automation continues to use `Monthly Email`, and bi-weekly Overall continues to use `Bi-Weekly`.
+
+Required production env vars: reporting platform credentials, `NOTION_TOKEN`, `NOTION_AD_ACCOUNTS_DATABASE_ID` or `NOTION_DATABASE_ID`, `CRON_SECRET` or `REPORT_AUTOMATION_SECRET`, `RESEND_API_KEY`, `RESEND_FROM_MONTHLY_REPORT`, `OPENAI_API_KEY`, `DATAFORSEO_LOGIN`, `DATAFORSEO_PASSWORD`. Optional: `OPENROUTER_API_KEY` for video analysis and `NOTION_MONTHLY_REPORT_LOGS_DATABASE_ID` with `idempotency_key` or `scheduled_date` for duplicate-send prevention.
+
+Test checklist:
+
+```bash
+doppler run -- npm run dev
+# Preview
+open "http://localhost:3000/advanced?accountId=<ACCOUNT_ID>&startDate=YYYY-MM-01&endDate=YYYY-MM-DD&reportMode=advanced&reportType=advanced"
+# Scheduler test mode
+curl -X POST "http://localhost:3000/api/cron/monthly-report" \
+  -H "Authorization: Bearer $CRON_SECRET" -H "Content-Type: application/json" \
+  -d '{"forceTestMode":true,"reportType":"advanced","scheduleDay":10}'
+```
+
+Use the Advanced page download button to verify browser PDF export. For manual email, run the scheduler in test mode with `MONTHLY_REPORT_TEST_RECIPIENT` set to an internal inbox.
+
+Common failure reasons: missing Notion rows or unchecked `Advanced Report`, missing recipient email, inaccessible Google Ads or Meta Ads account, missing OpenAI/DataForSEO/OpenRouter keys, Advanced cache/generation timeout, PDF render failure, Resend failure, or duplicate send blocked by `accountId + reportType + period + scheduledDate`.
+
+Rollback: set `ADVANCED_REPORT_ENABLED=false` in Vercel/Cloudflare Worker env and redeploy/restart the scheduler environment. This disables scheduled Advanced Report automation only; manual `/advanced` preview and browser PDF download remain available.

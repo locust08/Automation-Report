@@ -32,6 +32,8 @@ export async function POST(request: Request) {
           overrideTargetsJson?: string;
           scheduleDay?: number;
           reportType?: string | null;
+          scheduledDate?: string;
+          scheduledTime?: string;
           startDate?: string;
           endDate?: string;
           reportMonthKey?: string;
@@ -43,6 +45,12 @@ export async function POST(request: Request) {
       forceDryRun: parseOptionalBoolean(body?.forceDryRun),
       scheduleDay: typeof body?.scheduleDay === "number" ? body.scheduleDay : undefined,
       reportType: typeof body?.reportType === "string" ? body.reportType : undefined,
+      scheduledDate:
+        typeof body?.scheduledDate === "string"
+          ? body.scheduledDate
+          : typeof body?.scheduledTime === "string"
+            ? body.scheduledTime
+            : undefined,
       dateRange:
         body?.startDate && body.endDate && body.reportMonthKey && body.reportMonthLabel
           ? {

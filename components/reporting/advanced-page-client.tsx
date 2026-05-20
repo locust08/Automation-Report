@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   AlertTriangleIcon,
@@ -10,6 +10,7 @@ import {
   EyeOffIcon,
   FileTextIcon,
   LightbulbIcon,
+  PlayIcon,
   RefreshCwIcon,
   SearchIcon,
   SparklesIcon,
@@ -17,6 +18,7 @@ import {
 } from "lucide-react";
 
 import { ReportDownloadButton } from "@/components/reporting/screenshot-mode-toggle";
+import { AccountReportContent } from "@/components/reporting/overall-page-client";
 import { ReportShell } from "@/components/reporting/report-shell";
 import { useScreenshotMode } from "@/components/reporting/use-screenshot-mode";
 import {
@@ -35,12 +37,19 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import type {
+  AdvancedAuctionVisibilitySection,
+  AdvancedAuctionVisibilityRow,
+  AdvancedFinalUrlPerformanceSection,
+  AdvancedGoogleVideoCreativeSection,
+  AdvancedGoogleVisualCreativeSection,
   AdvancedKeywordMetric,
+  AdvancedMetaCreativeAnalysisSection,
   AdvancedMonthlyPoint,
   AdvancedReportJobResponse,
   AdvancedReportPayload,
   AdvancedSocialCalendarItem,
 } from "@/lib/reporting/advanced-types";
+import type { OverallReportPayload } from "@/lib/reporting/types";
 
 const COUNTRIES = [
   { value: "MY", label: "🇲🇾 MY" },
@@ -76,6 +85,8 @@ export function AdvancedPageClient({
   const { screenshotMode } = useScreenshotMode();
   const queryString = useMemo(() => {
     const params = new URLSearchParams();
+    params.set("reportMode", "advanced");
+    params.set("reportType", "advanced");
     if (initialAccountId) params.set("accountId", initialAccountId);
     if (initialCountry) params.set("country", initialCountry);
     if (initialStartDate) params.set("startDate", initialStartDate);
@@ -126,6 +137,8 @@ export function AdvancedPageClient({
           country: initialCountry ?? "MY",
           startDate: initialStartDate,
           endDate: initialEndDate,
+          reportMode: "advanced",
+          reportType: "advanced",
           regenerate: shouldRegenerate,
         };
         const generated = await requestAdvancedApi(
@@ -337,6 +350,7 @@ function buildTroubleshootingPayload(
     openAi: payload?.diagnostics?.openAi ?? null,
     dataForSeo: payload?.diagnostics?.dataForSeo ?? null,
     googleAds: payload?.diagnostics?.googleAds ?? null,
+    metaAds: payload?.diagnostics?.metaAds ?? null,
     apiCalls: apiDebugRecords,
   };
 }
@@ -397,12 +411,227 @@ function AdvancedReportContent({
       };
     })
     .sort((a, b) => b.value - a.value);
+  const reportSections: Array<{ key: string; node: (sectionNumber: string) => React.ReactNode }> = [];
+
+  if (hasFinalUrlPerformanceRows(payload.finalUrlPerformance)) {
+    reportSections.push({
+      key: "final-url-performance",
+      node: (sectionNumber) => (
+        <FinalUrlPerformanceSection sectionNumber={sectionNumber} section={payload.finalUrlPerformance} />
+      ),
+    });
+  }
+
+  if (hasAuctionVisibilityRows(payload.auctionVisibility)) {
+    reportSections.push({
+      key: "auction-visibility",
+      node: (sectionNumber) => (
+        <AuctionVisibilitySection sectionNumber={sectionNumber} section={payload.auctionVisibility} />
+      ),
+    });
+  }
+
+  if (hasGoogleVisualCreativeRows(payload.googleVisualCreativeAnalysis)) {
+    reportSections.push({
+      key: "google-image-creative",
+      node: (sectionNumber) => (
+        <GoogleVisualCreativeAnalysisSection
+          sectionNumber={sectionNumber}
+          section={payload.googleVisualCreativeAnalysis}
+        />
+      ),
+    });
+  }
+
+  if (hasGoogleVideoCreativeRows(payload.googleVideoCreativeAnalysis)) {
+    reportSections.push({
+      key: "google-video-creative",
+      node: (sectionNumber) => (
+        <GoogleVideoCreativeAnalysisSection
+          sectionNumber={sectionNumber}
+          section={payload.googleVideoCreativeAnalysis}
+        />
+      ),
+    });
+  }
+
+  if (hasMetaCreativeRows(payload.metaCreativeAnalysis)) {
+    reportSections.push({
+      key: "meta-creative",
+      node: (sectionNumber) => (
+        <MetaCreativeAnalysisSection sectionNumber={sectionNumber} section={payload.metaCreativeAnalysis} />
+      ),
+    });
+  }
+
+  reportSections.push(
+    {
+      key: "market",
+      node: (sectionNumber) => (
+        <SectionCard
+          eyebrow={sectionNumber}
+          title="What Changed in the Market"
+          icon={<BarChart3Icon className="size-5" />}
+          status={payload.sectionStatuses.market.status}
+          message={payload.sectionStatuses.market.message}
+        >
+          <div className="grid gap-4 lg:grid-cols-[1.35fr_0.8fr]">
+            <ChartPanel
+              title="Overall Market Search Volume Trend"
+              action={<KeywordDetailsButton label="See All" title="Keywords Used for Overall Market Trend" rows={payload.market.trendKeywords ?? []} cpcLabel={cpcLabel} />}
+            >
+              <LineChart
+                points={[
+                  ...payload.market.searchVolumeTrend.points,
+                  ...payload.market.searchVolumeTrend.forecast,
+                ]}
+              />
+            </ChartPanel>
+            <ChartPanel
+              title="Language Share"
+              action={<LanguageDetailsButton rows={payload.market.languageBreakdown.keywordDetails ?? { English: [], Malay: [], Chinese: [] }} cpcLabel={cpcLabel} />}
+            >
+              <PieChart
+                rows={payload.market.languageBreakdown.share.map((item) => ({
+                  label: item.language,
+                  value: item.value,
+                }))}
+              />
+            </ChartPanel>
+          </div>
+          <div className="grid gap-4 lg:grid-cols-2">
+            <KeywordList
+              title="Top Keywords by Search Volume"
+              rows={payload.market.topKeywords}
+              action={<KeywordDetailsButton label="See All" title="All DataForSEO Keywords" rows={payload.market.allKeywords ?? payload.market.topKeywords} cpcLabel={cpcLabel} />}
+              variant="bar"
+            />
+            <KeywordList
+              title="Unused High-Volume Keywords"
+              rows={payload.market.unusedHighVolumeKeywords}
+              action={<KeywordDetailsButton label="See All" title="Unused High-Volume Keywords" rows={payload.market.unusedHighVolumeKeywords} cpcLabel={cpcLabel} />}
+              emptyMessage="Google Ads account not provided, or no unused high-volume terms found."
+              highlightUnused
+              variant="bar"
+            />
+          </div>
+        </SectionCard>
+      ),
+    },
+    {
+      key: "competitors",
+      node: (sectionNumber) => (
+        <SectionCard
+          eyebrow={sectionNumber}
+          title="What Competitors Are Doing"
+          icon={<UsersIcon className="size-5" />}
+          status={payload.sectionStatuses.competitors.status}
+          message={payload.sectionStatuses.competitors.message}
+        >
+          <div className="grid gap-4 lg:grid-cols-[1.35fr_0.8fr]">
+            <ChartPanel
+              title="Competitor Search Demand"
+              action={<KeywordDetailsButton label="See All" title="Competitor Keywords Used for Trend" rows={payload.competitors.competitorKeywordDetails ?? []} cpcLabel={cpcLabel} />}
+            >
+              <LineChart points={payload.competitors.competitorDemandTrend} />
+            </ChartPanel>
+            <ChartPanel
+              title="Share of Market"
+              action={
+                <MarketShareDetailsButton
+                  marketRows={marketShareRows}
+                  rows={payload.competitors.competitorKeywordDetails ?? []}
+                  cpcLabel={cpcLabel}
+                />
+              }
+            >
+              <PieChart rows={marketShareRows} />
+              {payload.competitors.clientSharePercent !== null ? (
+                <p className="mt-3 text-sm font-semibold text-[#9f0019]">
+                  Client share: {formatDisplayPercent(payload.competitors.clientSharePercent, 1)}
+                </p>
+              ) : null}
+            </ChartPanel>
+          </div>
+        </SectionCard>
+      ),
+    },
+    {
+      key: "customers",
+      node: (sectionNumber) => (
+        <SectionCard
+          eyebrow={sectionNumber}
+          title="What Customers Are Searching or Asking"
+          icon={<SearchIcon className="size-5" />}
+          status={payload.sectionStatuses.customers.status}
+          message={payload.sectionStatuses.customers.message}
+        >
+          <ChartPanel title="Top Customer Search Terms">
+            <HorizontalBarChart
+              rows={payload.customers.topSearchTerms.map((item) => ({
+                label: item.keyword,
+                value: item.searchVolume,
+              }))}
+            />
+          </ChartPanel>
+        </SectionCard>
+      ),
+    },
+    {
+      key: "opportunities",
+      node: (sectionNumber) => (
+        <SectionCard
+          eyebrow={sectionNumber}
+          title="Where the Client Is Losing Opportunities"
+          icon={<LightbulbIcon className="size-5" />}
+          status={payload.sectionStatuses.opportunities.status}
+          message={payload.sectionStatuses.opportunities.message}
+        >
+          <div className="grid gap-4">
+            <OpportunityList title="Product, Offer, and Requirement Gaps" rows={payload.opportunities.keywordGaps} />
+            <RisingKeywordList rows={payload.opportunities.risingKeywords} />
+            <SeasonalList rows={payload.opportunities.seasonalOpportunities} />
+          </div>
+        </SectionCard>
+      ),
+    },
+    {
+      key: "social-calendar",
+      node: (sectionNumber) => (
+        <SectionCard
+          eyebrow={sectionNumber}
+          title="What We Should Test Next: Social Media Marketing"
+          icon={<SparklesIcon className="size-5" />}
+          status={payload.sectionStatuses.socialCalendar.status}
+          message={payload.sectionStatuses.socialCalendar.message}
+        >
+          <SocialCalendar payload={payload} screenshotMode={screenshotMode} />
+        </SectionCard>
+      ),
+    },
+    {
+      key: "decisions",
+      node: (sectionNumber) => (
+        <SectionCard
+          eyebrow={sectionNumber}
+          title="What Decisions We Need from the Client"
+          icon={<FileTextIcon className="size-5" />}
+          status={payload.sectionStatuses.decisions.status}
+          message={payload.sectionStatuses.decisions.message}
+        >
+          <DecisionTable payload={payload} />
+        </SectionCard>
+      ),
+    }
+  );
 
   return (
     <div
       className="space-y-5"
       data-advanced-report-content="true"
       data-advanced-report-ready="true"
+      data-report-mode="advanced"
+      data-report-type="advanced"
     >
       <ReportWarnings warnings={payload.warnings} />
 
@@ -413,141 +642,983 @@ function AdvancedReportContent({
         </div>
       ) : null}
 
-      <SectionCard
-        eyebrow="1"
-        title="What Changed in the Market"
-        icon={<BarChart3Icon className="size-5" />}
-        status={payload.sectionStatuses.market.status}
-        message={payload.sectionStatuses.market.message}
-      >
-        <div className="grid gap-4 lg:grid-cols-[1.35fr_0.8fr]">
-          <ChartPanel
-            title="Overall Market Search Volume Trend"
-            action={<KeywordDetailsButton label="See All" title="Keywords Used for Overall Market Trend" rows={payload.market.trendKeywords ?? []} cpcLabel={cpcLabel} />}
-          >
-            <LineChart
-              points={[
-                ...payload.market.searchVolumeTrend.points,
-                ...payload.market.searchVolumeTrend.forecast,
-              ]}
-            />
-          </ChartPanel>
-          <ChartPanel
-            title="Language Share"
-            action={<LanguageDetailsButton rows={payload.market.languageBreakdown.keywordDetails ?? { English: [], Malay: [], Chinese: [] }} cpcLabel={cpcLabel} />}
-          >
-            <PieChart
-              rows={payload.market.languageBreakdown.share.map((item) => ({
-                label: item.language,
-                value: item.value,
-              }))}
-            />
-          </ChartPanel>
-        </div>
-        <div className="grid gap-4 lg:grid-cols-2">
-          <KeywordList
-            title="Top Keywords by Search Volume"
-            rows={payload.market.topKeywords}
-            action={<KeywordDetailsButton label="See All" title="All DataForSEO Keywords" rows={payload.market.allKeywords ?? payload.market.topKeywords} cpcLabel={cpcLabel} />}
-            variant="bar"
-          />
-          <KeywordList
-            title="Unused High-Volume Keywords"
-            rows={payload.market.unusedHighVolumeKeywords}
-            action={<KeywordDetailsButton label="See All" title="Unused High-Volume Keywords" rows={payload.market.unusedHighVolumeKeywords} cpcLabel={cpcLabel} />}
-            emptyMessage="Google Ads account not provided, or no unused high-volume terms found."
-            highlightUnused
-            variant="bar"
-          />
-        </div>
-      </SectionCard>
+      {screenshotMode ? <EmbeddedBasicOverallReport report={payload.basicOverallReport} /> : null}
 
-      <SectionCard
-        eyebrow="2"
-        title="What Competitors Are Doing"
-        icon={<UsersIcon className="size-5" />}
-        status={payload.sectionStatuses.competitors.status}
-        message={payload.sectionStatuses.competitors.message}
-      >
-        <div className="grid gap-4 lg:grid-cols-[1.35fr_0.8fr]">
-          <ChartPanel
-            title="Competitor Search Demand"
-            action={<KeywordDetailsButton label="See All" title="Competitor Keywords Used for Trend" rows={payload.competitors.competitorKeywordDetails ?? []} cpcLabel={cpcLabel} />}
-          >
-            <LineChart points={payload.competitors.competitorDemandTrend} />
-          </ChartPanel>
-          <ChartPanel
-            title="Share of Market"
-            action={
-              <MarketShareDetailsButton
-                marketRows={marketShareRows}
-                rows={payload.competitors.competitorKeywordDetails ?? []}
-                cpcLabel={cpcLabel}
-              />
-            }
-          >
-            <PieChart rows={marketShareRows} />
-            {payload.competitors.clientSharePercent !== null ? (
-              <p className="mt-3 text-sm font-semibold text-[#9f0019]">
-                Client share: {payload.competitors.clientSharePercent.toFixed(1)}%
-              </p>
-            ) : null}
-          </ChartPanel>
-        </div>
-      </SectionCard>
-
-      <SectionCard
-        eyebrow="3"
-        title="What Customers Are Searching or Asking"
-        icon={<SearchIcon className="size-5" />}
-        status={payload.sectionStatuses.customers.status}
-        message={payload.sectionStatuses.customers.message}
-      >
-        <ChartPanel title="Top Customer Search Terms">
-          <HorizontalBarChart
-            rows={payload.customers.topSearchTerms.map((item) => ({
-              label: item.keyword,
-              value: item.searchVolume,
-            }))}
-          />
-        </ChartPanel>
-      </SectionCard>
-
-      <SectionCard
-        eyebrow="4"
-        title="Where the Client Is Losing Opportunities"
-        icon={<LightbulbIcon className="size-5" />}
-        status={payload.sectionStatuses.opportunities.status}
-        message={payload.sectionStatuses.opportunities.message}
-      >
-        <div className="grid gap-4">
-          <OpportunityList title="Product, Offer, and Requirement Gaps" rows={payload.opportunities.keywordGaps} />
-          <RisingKeywordList rows={payload.opportunities.risingKeywords} />
-          <SeasonalList rows={payload.opportunities.seasonalOpportunities} />
-        </div>
-      </SectionCard>
-
-      <SectionCard
-        eyebrow="5"
-        title="What We Should Test Next: Social Media Marketing"
-        icon={<SparklesIcon className="size-5" />}
-        status={payload.sectionStatuses.socialCalendar.status}
-        message={payload.sectionStatuses.socialCalendar.message}
-      >
-        <SocialCalendar payload={payload} screenshotMode={screenshotMode} />
-      </SectionCard>
-
-      <SectionCard
-        eyebrow="6"
-        title="What Decisions We Need from the Client"
-        icon={<FileTextIcon className="size-5" />}
-        status={payload.sectionStatuses.decisions.status}
-        message={payload.sectionStatuses.decisions.message}
-      >
-        <DecisionTable payload={payload} />
-      </SectionCard>
+      {reportSections.map((section, index) => (
+        <Fragment key={section.key}>{section.node(formatSectionNumber(index + 1))}</Fragment>
+      ))}
     </div>
   );
+}
+
+function formatSectionNumber(value: number): string {
+  return value.toString().padStart(2, "0");
+}
+
+function SectionNumberBadge({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-[#e10600] text-xs font-bold leading-none text-white shadow-sm">
+      {children}
+    </div>
+  );
+}
+
+function hasFinalUrlPerformanceRows(section?: AdvancedFinalUrlPerformanceSection): boolean {
+  return sanitizeFinalUrlRows(section?.rows).length > 0 || Boolean(section?.otherRow);
+}
+
+function hasAuctionVisibilityRows(section?: AdvancedAuctionVisibilitySection): boolean {
+  return normalizeDisplayNumber(section?.shareOfVoice) !== null;
+}
+
+function hasGoogleVisualCreativeRows(section?: AdvancedGoogleVisualCreativeSection): boolean {
+  return (section?.rows ?? []).length > 0;
+}
+
+function hasGoogleVideoCreativeRows(section?: AdvancedGoogleVideoCreativeSection): boolean {
+  return (section?.rows ?? []).length > 0;
+}
+
+function hasMetaCreativeRows(section?: AdvancedMetaCreativeAnalysisSection): boolean {
+  return (section?.rows ?? []).length > 0;
+}
+
+function EmbeddedBasicOverallReport({ report }: { report?: OverallReportPayload }) {
+  if (!report) {
+    return null;
+  }
+
+  const queryString = buildBasicOverallQueryString(report);
+  const forwardQuery = queryString ? `&${queryString}` : "";
+
+  return (
+    <section
+      className="hidden space-y-5"
+      data-advanced-export-only="true"
+      data-advanced-report-section="true"
+      data-basic-overall-report-section="true"
+      data-report-mode="overall"
+    >
+      <AccountReportContent data={report} queryString={forwardQuery} />
+    </section>
+  );
+}
+
+function buildBasicOverallQueryString(report: OverallReportPayload): string {
+  const params = new URLSearchParams();
+  const accountIds = report.accountIds ?? {
+    metaAccountId: null,
+    googleAccountId: null,
+    metaAccountIds: [],
+    googleAccountIds: [],
+  };
+  const metaAccountIds = Array.isArray(accountIds.metaAccountIds) ? accountIds.metaAccountIds : [];
+  const googleAccountIds = Array.isArray(accountIds.googleAccountIds) ? accountIds.googleAccountIds : [];
+  if (metaAccountIds.length > 0) {
+    params.set("metaAccountId", metaAccountIds.join(","));
+  }
+  if (googleAccountIds.length > 0) {
+    params.set("googleAccountId", googleAccountIds.join(","));
+  }
+  if (metaAccountIds.length === 0 && googleAccountIds.length === 0) {
+    if (accountIds.metaAccountId) {
+      params.set("metaAccountId", accountIds.metaAccountId);
+    }
+    if (accountIds.googleAccountId) {
+      params.set("googleAccountId", accountIds.googleAccountId);
+    }
+  }
+  if (report.dateRange?.startDate) {
+    params.set("startDate", report.dateRange.startDate);
+  }
+  if (report.dateRange?.endDate) {
+    params.set("endDate", report.dateRange.endDate);
+  }
+  return params.toString();
+}
+
+function FinalUrlPerformanceSection({
+  sectionNumber,
+  section,
+}: {
+  sectionNumber: string;
+  section?: AdvancedFinalUrlPerformanceSection;
+}) {
+  const topRows = sanitizeFinalUrlRows(section?.rows)
+    .sort(compareFinalUrlDisplayRows)
+    .slice(0, section?.otherRow ? 9 : 10);
+  const rows = [
+    ...topRows,
+    ...(section?.otherRow ? [sanitizeFinalUrlRow(section.otherRow)] : []),
+  ].slice(0, 10);
+  if (rows.length === 0) {
+    return null;
+  }
+
+  return (
+    <section
+      className="space-y-6 rounded-[1.5rem] bg-white p-5 shadow-sm ring-1 ring-black/5 sm:p-7"
+      data-advanced-report-section="true"
+      data-report-export-section="true"
+      data-report-mode="advanced"
+    >
+      <div className="flex items-start gap-4">
+        <SectionNumberBadge>{sectionNumber}</SectionNumberBadge>
+        <div className="min-w-0 flex-1">
+          <h2 className="text-2xl font-semibold leading-tight text-[#111] sm:text-3xl">
+            Final URL Destination Performance
+          </h2>
+          <p className="mt-8 text-base leading-6 text-[#222]">
+            Performance by final URL / landing page
+          </p>
+        </div>
+      </div>
+
+      <div className="overflow-hidden rounded-xl border border-[#d8d8d8] bg-white">
+        <table className="w-full table-fixed text-left text-[10px] leading-5 text-[#111] sm:text-xs">
+          <colgroup>
+            <col className="w-[12%]" />
+            <col className="w-[12%]" />
+            <col className="w-[8%]" />
+            <col className="w-[7%]" />
+            <col className="w-[6%]" />
+            <col className="w-[6%]" />
+            <col className="w-[7%]" />
+            <col className="w-[6%]" />
+            <col className="w-[7%]" />
+            <col className="w-[7%]" />
+            <col className="w-[9%]" />
+            <col className="w-[7%]" />
+            <col className="w-[6%]" />
+          </colgroup>
+          <thead className="bg-[#f8f8f8] text-[#111]">
+            <tr>
+              <FinalUrlHeader>Campaign Name</FinalUrlHeader>
+              <FinalUrlHeader>Final URL</FinalUrlHeader>
+              <FinalUrlHeader align="right">Spend (MYR)</FinalUrlHeader>
+              <FinalUrlHeader align="right">Impr.</FinalUrlHeader>
+              <FinalUrlHeader align="right">Clicks</FinalUrlHeader>
+              <FinalUrlHeader align="right">CTR</FinalUrlHeader>
+              <FinalUrlHeader align="right">CPC (MYR)</FinalUrlHeader>
+              <FinalUrlHeader align="right">Conv.</FinalUrlHeader>
+              <FinalUrlHeader align="right">CPA (MYR)</FinalUrlHeader>
+              <FinalUrlHeader align="right">Conv. Rate</FinalUrlHeader>
+              <FinalUrlHeader align="right">Impression Share</FinalUrlHeader>
+              <FinalUrlHeader align="right">Lost IS (Budget)</FinalUrlHeader>
+              <FinalUrlHeader align="right">Lost IS (Rank)</FinalUrlHeader>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-[#e8e8e8]">
+            {rows.map((row) => (
+              <tr key={row.id} className={row.id === "other-final-urls" ? "bg-[#fafafa] font-semibold" : ""}>
+                <FinalUrlCell>
+                  <span className="block break-words">{row.campaign || "Not available"}</span>
+                </FinalUrlCell>
+                <FinalUrlCell>
+                  <FinalUrlLink row={row} />
+                </FinalUrlCell>
+                <FinalUrlCell align="right">{formatFinalUrlCurrency(row.spend)}</FinalUrlCell>
+                <FinalUrlCell align="right">{formatFinalUrlNumber(row.impressions)}</FinalUrlCell>
+                <FinalUrlCell align="right">{formatFinalUrlNumber(row.clicks)}</FinalUrlCell>
+                <FinalUrlCell align="right">{formatFinalUrlPercent(row.ctr)}</FinalUrlCell>
+                <FinalUrlCell align="right">{formatFinalUrlCurrency(row.cpc)}</FinalUrlCell>
+                <FinalUrlCell align="right">{formatFinalUrlNumber(row.conversions)}</FinalUrlCell>
+                <FinalUrlCell align="right">{formatFinalUrlCurrency(row.cpa)}</FinalUrlCell>
+                <FinalUrlCell align="right">{formatFinalUrlPercent(row.conversionRate)}</FinalUrlCell>
+                <FinalUrlCell align="right">{formatFinalUrlPercent(row.impressionShare)}</FinalUrlCell>
+                <FinalUrlCell align="right">{formatFinalUrlPercent(row.lostImpressionShareBudget, "–")}</FinalUrlCell>
+                <FinalUrlCell align="right">{formatFinalUrlPercent(row.lostImpressionShareRank, "–")}</FinalUrlCell>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  );
+}
+
+function FinalUrlLink({ row }: { row: AdvancedFinalUrlPerformanceSection["rows"][number] }) {
+  const label = row.finalUrl || "Not available";
+  const href = getReachableFinalUrlHref(row);
+
+  if (!href) {
+    return <span className="block break-words font-semibold text-[#e10600]">{label}</span>;
+  }
+
+  return (
+    <a
+      href={href}
+      target="_blank"
+      rel="noopener noreferrer"
+      className="block break-words font-semibold text-[#e10600] underline decoration-[#e10600]/35 underline-offset-2 transition hover:text-[#b00000] hover:decoration-[#b00000]"
+    >
+      {label}
+    </a>
+  );
+}
+
+function getReachableFinalUrlHref(row: AdvancedFinalUrlPerformanceSection["rows"][number]): string | null {
+  if (row.id === "other-final-urls") {
+    return null;
+  }
+
+  return getReachableUrlHref(row.finalUrl);
+}
+
+function sanitizeFinalUrlRows(
+  rows: AdvancedFinalUrlPerformanceSection["rows"] | undefined
+): AdvancedFinalUrlPerformanceSection["rows"] {
+  return (Array.isArray(rows) ? rows : []).map(sanitizeFinalUrlRow);
+}
+
+function sanitizeFinalUrlRow(row: AdvancedFinalUrlPerformanceSection["rows"][number]) {
+  return {
+    ...row,
+    id: row.id?.trim() || `${row.finalUrl || row.campaign || "final-url"}-${row.spend}-${row.clicks}`,
+    campaign: row.campaign?.trim() || "Not available",
+    finalUrl: row.finalUrl?.trim() || "Not available",
+    spend: Number.isFinite(row.spend) ? row.spend : 0,
+    impressions: Number.isFinite(row.impressions) ? row.impressions : 0,
+    clicks: Number.isFinite(row.clicks) ? row.clicks : 0,
+    conversions: Number.isFinite(row.conversions) ? row.conversions : 0,
+  };
+}
+
+function compareFinalUrlDisplayRows(
+  left: AdvancedFinalUrlPerformanceSection["rows"][number],
+  right: AdvancedFinalUrlPerformanceSection["rows"][number]
+): number {
+  if (right.conversions !== left.conversions) {
+    return right.conversions - left.conversions;
+  }
+  return right.spend - left.spend;
+}
+
+function AuctionVisibilitySection({
+  sectionNumber,
+  section,
+}: {
+  sectionNumber: string;
+  section?: AdvancedAuctionVisibilitySection;
+}) {
+  const shareOfVoice = normalizeDisplayNumber(section?.shareOfVoice);
+  const rows = (section?.rows ?? []).filter(isDisplayableAuctionRow).slice(0, 10);
+
+  if (shareOfVoice === null) {
+    return null;
+  }
+
+  return (
+    <section
+      className="space-y-5 rounded-[1.5rem] bg-white p-5 shadow-sm ring-1 ring-black/5 sm:p-7"
+      data-advanced-report-section="true"
+      data-report-export-section="true"
+      data-report-mode="advanced"
+    >
+      <div className="flex items-start gap-4">
+        <SectionNumberBadge>{sectionNumber}</SectionNumberBadge>
+        <div className="min-w-0 flex-1">
+          <h2 className="text-2xl font-semibold leading-tight text-[#111] sm:text-3xl">
+            Auction Insight & Market Visibility
+          </h2>
+        </div>
+      </div>
+
+      <div className="flex items-center gap-4">
+        <div className="flex size-12 shrink-0 items-center justify-center rounded-full bg-[#ffe7e7] text-[#e10600]">
+          <BarChart3Icon className="size-6" />
+        </div>
+        <p className="text-xl leading-8 text-[#111]">
+          Your share of voice in the market is{" "}
+          <span className="font-bold text-[#e10600]">{formatAuctionPercent(shareOfVoice)}</span>
+        </p>
+      </div>
+
+      {rows.length > 0 ? (
+        <div className="overflow-hidden rounded-xl border border-[#d8d8d8] bg-white">
+          <table className="w-full table-fixed text-left text-sm">
+            <colgroup>
+              <col className="w-[22%]" />
+              <col className="w-[25%]" />
+              <col className="w-[18%]" />
+              <col className="w-[18%]" />
+              <col className="w-[17%]" />
+            </colgroup>
+            <thead className="bg-[#f8f8f8] text-[#111]">
+              <tr>
+                <th className="px-5 py-4 font-semibold">Competitor</th>
+                <th className="px-5 py-4 font-semibold">Impression Share</th>
+                <th className="px-5 py-4 font-semibold">Overlap Rate</th>
+                <th className="px-5 py-4 font-semibold">Top of Page Rate</th>
+                <th className="px-5 py-4 font-semibold">Outranking Share</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-[#e8e8e8]">
+              {rows.map((row) => (
+                <tr key={row.id}>
+                  <td className="break-words px-5 py-4 font-medium text-[#111]">{row.competitor}</td>
+                  <td className="px-5 py-4">
+                    <div className="flex items-center gap-3">
+                      <span className="w-16 text-[#111]">{formatAuctionPercentValue(row.impressionShare, row.impressionShareLabel)}</span>
+                      <div className="h-3 min-w-0 flex-1 overflow-hidden rounded-full bg-[#eeeeee]">
+                        <div
+                          className="h-full rounded-full bg-[#e10600]"
+                          style={{ width: `${Math.max(4, Math.min(100, normalizeDisplayNumber(row.impressionShare) ?? 0))}%` }}
+                        />
+                      </div>
+                    </div>
+                  </td>
+                  <td className="px-5 py-4 text-[#111]">{formatAuctionPercentValue(row.overlapRate, row.overlapRateLabel)}</td>
+                  <td className="px-5 py-4 text-[#111]">{formatAuctionPercentValue(row.topOfPageRate, row.topOfPageRateLabel)}</td>
+                  <td className="px-5 py-4 text-[#111]">{formatAuctionPercentValue(row.outrankingShare, row.outrankingShareLabel)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
+function MetaCreativeAnalysisSection({
+  sectionNumber,
+  section,
+}: {
+  sectionNumber: string;
+  section?: AdvancedMetaCreativeAnalysisSection;
+}) {
+  const rows = (section?.rows ?? []).slice(0, 3);
+  if (rows.length === 0) {
+    return null;
+  }
+
+  return (
+    <section
+      className="space-y-4 rounded-[2rem] bg-[#e8e8e8] p-4 shadow-sm sm:p-6"
+      data-advanced-report-section="true"
+      data-report-export-section="true"
+      data-report-mode="advanced"
+    >
+      <div className="flex items-start gap-3">
+        <SectionNumberBadge>{sectionNumber}</SectionNumberBadge>
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2 text-[#9f0019]">
+            <EyeIcon className="size-5" />
+            <h2 className="text-2xl font-semibold leading-tight text-[#333] sm:text-4xl">
+              Meta Creative Analysis
+            </h2>
+          </div>
+          <ClientFriendlyNote>
+            These are the strongest Meta ads to learn from. The reasons explain what to repeat, adapt, or challenge in the next creative round.
+          </ClientFriendlyNote>
+        </div>
+      </div>
+
+      <div className="grid gap-4">
+        {rows.map((row, index) => (
+          <div key={row.id} className="overflow-hidden rounded-2xl border border-[#d8d8d8] bg-white shadow-sm">
+            <div className="grid gap-0 lg:grid-cols-[280px_1fr]">
+              <div className="bg-[#f3f3f3] p-3">
+                <div className="aspect-[1.91/1] overflow-hidden rounded-xl border border-[#d8d8d8] bg-white">
+                  {row.mediaType === "video" && row.videoUrl ? (
+                    <a href={row.videoUrl} target="_blank" rel="noreferrer" className="group relative block size-full">
+                      {row.thumbnailUrl || row.imageUrl ? (
+                        /* eslint-disable-next-line @next/next/no-img-element */
+                        <img
+                          src={row.thumbnailUrl || row.imageUrl || ""}
+                          alt=""
+                          className="size-full object-cover"
+                          loading="eager"
+                          decoding="async"
+                        />
+                      ) : (
+                        <div className="flex size-full items-center justify-center p-4 text-center text-xs font-semibold uppercase tracking-wide text-[#777]">
+                          Video preview unavailable
+                        </div>
+                      )}
+                      <span className="absolute inset-0 flex items-center justify-center bg-black/10 text-xs font-semibold uppercase tracking-wide text-white">
+                        Video
+                      </span>
+                    </a>
+                  ) : row.imageUrl ? (
+                    /* eslint-disable-next-line @next/next/no-img-element */
+                    <img
+                      src={row.imageUrl}
+                      alt=""
+                      className="size-full object-contain"
+                      loading="eager"
+                      decoding="async"
+                    />
+                  ) : (
+                    <div className="flex size-full items-center justify-center p-4 text-center text-xs font-semibold uppercase tracking-wide text-[#777]">
+                      Preview unavailable
+                    </div>
+                  )}
+                </div>
+                <p className="mt-3 break-all text-xs leading-5 text-[#666]">{row.finalUrl}</p>
+              </div>
+              <div className="space-y-4 p-4">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <p className="text-xs font-semibold uppercase tracking-wide text-[#777]">
+                      Top Meta creative #{index + 1}
+                    </p>
+                    <h3 className="mt-1 line-clamp-2 text-lg font-bold leading-tight text-[#333]">
+                      {row.campaignName}
+                    </h3>
+                    <p className="mt-1 line-clamp-2 text-sm text-[#666]">{row.adName}</p>
+                  </div>
+                  <div className="rounded-xl bg-[#f7f7f7] px-3 py-2 text-xs font-semibold text-[#555]">
+                    {formatMetaAnalysisSource(row.analysisSource)}
+                  </div>
+                </div>
+
+                <div className="grid gap-3 sm:grid-cols-3">
+                  <CreativeCopyBlock label="Primary text" value={row.primaryText} />
+                  <CreativeCopyBlock label="Headline" value={row.headline} />
+                  <CreativeCopyBlock label="Description" value={row.description} />
+                </div>
+
+                <div className="grid gap-2 sm:grid-cols-3 lg:grid-cols-7">
+                  <CreativeMetric label="Spend" value={formatFinalUrlCurrency(row.spend)} />
+                  <CreativeMetric label="Impressions" value={formatFinalUrlNumber(row.impressions)} />
+                  <CreativeMetric label="Reach" value={formatFinalUrlNumber(row.reach)} />
+                  <CreativeMetric label="Clicks" value={formatFinalUrlNumber(row.clicks)} />
+                  <CreativeMetric label="CTR" value={formatFinalUrlPercent(row.ctr)} />
+                  <CreativeMetric label="Leads / Conv." value={formatFinalUrlNumber(row.conversions)} />
+                  <CreativeMetric label="CPA" value={formatFinalUrlCurrency(row.cpa)} />
+                </div>
+
+                {row.themes.length > 0 ? (
+                  <div className="flex flex-wrap gap-2">
+                    {row.themes.map((theme) => (
+                      <span
+                        key={`${row.id}-theme-${theme}`}
+                        className="rounded-full bg-[#ffe8e8] px-3 py-1 text-xs font-semibold text-[#9f0019]"
+                      >
+                        {theme}
+                      </span>
+                    ))}
+                  </div>
+                ) : null}
+
+                <div className="rounded-2xl bg-[#f7f7f7] p-3">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-[#777]">Why it performed best</p>
+                  <ol className="mt-2 space-y-2 text-sm leading-6 text-[#555]">
+                    {formatCreativeReasons(row.reasons).map((reason, reasonIndex) => (
+                      <li key={`${row.id}-reason-${reasonIndex}`} className="flex gap-2">
+                        <span className="font-bold text-[#9f0019]">{reasonIndex + 1}.</span>
+                        <span>{reason}</span>
+                      </li>
+                    ))}
+                  </ol>
+                </div>
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function GoogleVisualCreativeAnalysisSection({
+  sectionNumber,
+  section,
+}: {
+  sectionNumber: string;
+  section?: AdvancedGoogleVisualCreativeSection;
+}) {
+  const rows = (section?.rows ?? []).slice(0, 3);
+  if (rows.length === 0) {
+    return null;
+  }
+
+  return (
+    <section
+      className="overflow-hidden rounded-3xl bg-white shadow-sm ring-1 ring-black/5"
+      data-advanced-report-section="true"
+      data-report-export-section="true"
+      data-report-mode="advanced"
+    >
+      <div className="border-b border-[#e8e8e8] bg-[#f6f6f6] p-5 sm:p-6">
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div className="flex min-w-0 items-start gap-3">
+            <SectionNumberBadge>{sectionNumber}</SectionNumberBadge>
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-2 text-[#9f0019]">
+                <EyeIcon className="size-5 shrink-0" />
+                <h2 className="text-2xl font-semibold leading-tight text-[#222] sm:text-4xl">
+                  Google Image Creative Analysis
+                </h2>
+              </div>
+              <ClientFriendlyNote>
+                These image ads show which visual and message combinations earned the clearest performance signals.
+              </ClientFriendlyNote>
+            </div>
+          </div>
+          <div className="rounded-lg bg-white px-3 py-2 text-xs font-semibold uppercase tracking-wide text-[#555] ring-1 ring-[#e1e1e1]">
+            Top {rows.length} image ads
+          </div>
+        </div>
+      </div>
+
+      <div className="grid gap-4 p-4 sm:p-6">
+        {rows.map((row, index) => (
+          <div key={row.id} className="overflow-hidden rounded-lg border border-[#d8d8d8] bg-white shadow-sm">
+            <div className="grid gap-0 lg:grid-cols-[minmax(260px,340px)_1fr]">
+              <div className="bg-[#f7f7f7] p-4">
+                <div className="mx-auto aspect-square w-full max-w-[320px] overflow-hidden rounded-lg border border-[#d8d8d8] bg-white shadow-inner">
+                  {row.imageUrl?.trim() ? (
+                    /* eslint-disable-next-line @next/next/no-img-element */
+                    <img
+                      src={row.imageUrl}
+                      alt=""
+                      className="size-full object-contain"
+                      loading="eager"
+                      decoding="async"
+                    />
+                  ) : (
+                    <div className="flex size-full items-center justify-center p-4 text-center text-xs font-semibold uppercase tracking-wide text-[#777]">
+                      Preview unavailable
+                    </div>
+                  )}
+                </div>
+                <CreativeDestinationLink url={row.finalUrl} />
+              </div>
+              <div className="space-y-4 p-4 sm:p-5">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <p className="text-xs font-semibold uppercase tracking-wide text-[#777]">
+                      Top creative #{index + 1}
+                    </p>
+                    <h3 className="mt-1 line-clamp-2 text-lg font-bold leading-tight text-[#333]">
+                      {row.campaignName}
+                    </h3>
+                    <p className="mt-1 line-clamp-2 text-sm text-[#666]">{row.adName}</p>
+                  </div>
+                  <div className="rounded-xl bg-[#f7f7f7] px-3 py-2 text-xs font-semibold text-[#555]">
+                    {row.analysisSource === "openai_image" ? "Image + metrics" : "Metrics only"}
+                  </div>
+                </div>
+
+                <div className="grid gap-2 sm:grid-cols-3">
+                  <CreativeSignal label="CTR" value={formatFinalUrlPercent(row.ctr)} />
+                  <CreativeSignal label="Conversions" value={formatFinalUrlNumber(row.conversions)} />
+                  <CreativeSignal label="CPA" value={formatCreativeSignalValue(formatFinalUrlCurrency(row.cpa))} />
+                </div>
+
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <CreativeCopyBlock label="Headline" value={row.headline} />
+                  <CreativeCopyBlock label="Description" value={row.description} />
+                </div>
+
+                <div className="grid gap-2 sm:grid-cols-3 xl:grid-cols-6">
+                  <CreativeMetric label="Spend" value={formatFinalUrlCurrency(row.spend)} />
+                  <CreativeMetric label="Impressions" value={formatFinalUrlNumber(row.impressions)} />
+                  <CreativeMetric label="Clicks" value={formatFinalUrlNumber(row.clicks)} />
+                  <CreativeMetric label="CTR" value={formatFinalUrlPercent(row.ctr)} />
+                  <CreativeMetric label="Conversions" value={formatFinalUrlNumber(row.conversions)} />
+                  <CreativeMetric label="CPA" value={formatFinalUrlCurrency(row.cpa)} />
+                </div>
+
+                <div className="rounded-lg border border-[#f4cccc] bg-[#fff7f7] p-4">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-[#9f0019]">Why it performed best</p>
+                  <ol className="mt-2 space-y-2 text-sm leading-6 text-[#555]">
+                    {formatCreativeReasons(row.reasons).map((reason, reasonIndex) => (
+                      <li key={`${row.id}-reason-${reasonIndex}`} className="flex gap-2">
+                        <span className="flex size-5 shrink-0 items-center justify-center rounded-full bg-[#e10600] text-[11px] font-bold leading-none text-white">
+                          {reasonIndex + 1}
+                        </span>
+                        <span>{reason}</span>
+                      </li>
+                    ))}
+                  </ol>
+                </div>
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function GoogleVideoCreativeAnalysisSection({
+  sectionNumber,
+  section,
+}: {
+  sectionNumber: string;
+  section?: AdvancedGoogleVideoCreativeSection;
+}) {
+  const rows = (section?.rows ?? []).slice(0, 3);
+  if (rows.length === 0) {
+    return null;
+  }
+
+  return (
+    <section
+      className="overflow-hidden rounded-3xl bg-white shadow-sm ring-1 ring-black/5"
+      data-advanced-report-section="true"
+      data-report-export-section="true"
+      data-report-mode="advanced"
+    >
+      <div className="border-b border-[#e8e8e8] bg-[#f6f6f6] p-5 sm:p-6">
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div className="flex min-w-0 items-start gap-3">
+            <SectionNumberBadge>{sectionNumber}</SectionNumberBadge>
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-2 text-[#9f0019]">
+                <EyeIcon className="size-5 shrink-0" />
+                <h2 className="text-2xl font-semibold leading-tight text-[#222] sm:text-4xl">
+                  Google Video Creative Analysis
+                </h2>
+              </div>
+              <ClientFriendlyNote>
+                These videos show which message and viewing signals are worth using as benchmarks for the next video tests.
+              </ClientFriendlyNote>
+            </div>
+          </div>
+          <div className="rounded-lg bg-white px-3 py-2 text-xs font-semibold uppercase tracking-wide text-[#555] ring-1 ring-[#e1e1e1]">
+            Top {rows.length} video ads
+          </div>
+        </div>
+      </div>
+
+      <div className="grid gap-4 p-4 sm:p-6">
+        {rows.map((row, index) => (
+          <div key={row.id} className="overflow-hidden rounded-lg border border-[#d8d8d8] bg-white shadow-sm">
+            <div className="grid gap-0 lg:grid-cols-[minmax(300px,390px)_1fr]">
+              <div className="bg-[#f7f7f7] p-4">
+                <div className="mx-auto aspect-video w-full max-w-[360px] overflow-hidden rounded-lg border border-[#d8d8d8] bg-white shadow-inner">
+                  {row.thumbnailUrl ? (
+                    row.videoUrl ? (
+                      <a href={row.videoUrl} target="_blank" rel="noreferrer" className="group relative block size-full">
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img
+                          src={row.thumbnailUrl}
+                          alt=""
+                          className="size-full object-cover"
+                          loading="eager"
+                          decoding="async"
+                        />
+                        <span className="absolute inset-0 flex items-center justify-center bg-black/20 text-white transition group-hover:bg-black/30">
+                          <span className="flex size-12 items-center justify-center rounded-full bg-white/95 text-[#111] shadow-lg">
+                            <PlayIcon className="ml-0.5 size-5 fill-current" />
+                          </span>
+                        </span>
+                      </a>
+                    ) : (
+                      /* eslint-disable-next-line @next/next/no-img-element */
+                      <img
+                        src={row.thumbnailUrl}
+                        alt=""
+                        className="size-full object-cover"
+                        loading="eager"
+                        decoding="async"
+                      />
+                    )
+                  ) : (
+                    <div className="flex size-full items-center justify-center p-4 text-center text-xs font-semibold uppercase tracking-wide text-[#777]">
+                      Preview unavailable
+                    </div>
+                  )}
+                </div>
+                <CreativeDestinationLink url={row.finalUrl} />
+              </div>
+              <div className="space-y-4 p-4 sm:p-5">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <p className="text-xs font-semibold uppercase tracking-wide text-[#777]">
+                      Top video #{index + 1}
+                    </p>
+                    <h3 className="mt-1 line-clamp-2 text-lg font-bold leading-tight text-[#333]">
+                      {row.campaignName}
+                    </h3>
+                    <p className="mt-1 line-clamp-2 text-sm text-[#666]">{row.adName}</p>
+                  </div>
+                  <div className="rounded-xl bg-[#f7f7f7] px-3 py-2 text-xs font-semibold text-[#555]">
+                    {row.analysisSource === "openrouter_gemini_video" ? "Video + metrics" : "Metrics only"}
+                  </div>
+                </div>
+
+                <div className="grid gap-2 sm:grid-cols-3">
+                  <CreativeSignal label="Views" value={formatFinalUrlNumber(row.views)} />
+                  <CreativeSignal label="CTR" value={formatFinalUrlPercent(row.ctr)} />
+                  <CreativeSignal label="CPA" value={formatCreativeSignalValue(formatFinalUrlCurrency(row.cpa))} />
+                </div>
+
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <CreativeCopyBlock label="Headline" value={row.headline} />
+                  <CreativeCopyBlock label="Description" value={row.description} />
+                </div>
+
+                <div className="grid gap-2 sm:grid-cols-3 xl:grid-cols-7">
+                  <CreativeMetric label="Spend" value={formatFinalUrlCurrency(row.spend)} />
+                  <CreativeMetric label="Impressions" value={formatFinalUrlNumber(row.impressions)} />
+                  <CreativeMetric label="Views" value={formatFinalUrlNumber(row.views)} />
+                  <CreativeMetric label="Clicks" value={formatFinalUrlNumber(row.clicks)} />
+                  <CreativeMetric label="CTR" value={formatFinalUrlPercent(row.ctr)} />
+                  <CreativeMetric label="Conversions" value={formatFinalUrlNumber(row.conversions)} />
+                  <CreativeMetric label="CPA" value={formatFinalUrlCurrency(row.cpa)} />
+                </div>
+
+                <div className="rounded-lg border border-[#f4cccc] bg-[#fff7f7] p-4">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-[#9f0019]">Why it performed best</p>
+                  <ol className="mt-2 space-y-2 text-sm leading-6 text-[#555]">
+                    {formatCreativeReasons(row.reasons).map((reason, reasonIndex) => (
+                      <li key={`${row.id}-reason-${reasonIndex}`} className="flex gap-2">
+                        <span className="flex size-5 shrink-0 items-center justify-center rounded-full bg-[#e10600] text-[11px] font-bold leading-none text-white">
+                          {reasonIndex + 1}
+                        </span>
+                        <span>{reason}</span>
+                      </li>
+                    ))}
+                  </ol>
+                </div>
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function CreativeCopyBlock({ label, value }: { label: string; value: string | null | undefined }) {
+  return (
+    <div className="rounded-2xl border border-[#eeeeee] bg-[#fafafa] p-3">
+      <p className="text-xs font-semibold uppercase tracking-wide text-[#777]">{label}</p>
+      <p className="mt-2 line-clamp-3 text-sm leading-6 text-[#555]">{value?.trim() || "Not available"}</p>
+    </div>
+  );
+}
+
+function CreativeSignal({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-lg bg-[#111] px-3 py-2 text-white">
+      <p className="text-[11px] font-semibold uppercase tracking-wide text-white/65">{label}</p>
+      <p className="mt-1 break-words text-lg font-bold leading-tight">{value}</p>
+    </div>
+  );
+}
+
+function formatCreativeSignalValue(value: string): string {
+  return value === "Not available" ? "N/A" : value;
+}
+
+function CreativeMetric({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="min-h-[68px] rounded-lg border border-[#eeeeee] bg-[#fafafa] p-3">
+      <p className="text-[11px] font-semibold uppercase tracking-wide text-[#777]">{label}</p>
+      <p className="mt-2 break-words text-sm font-bold leading-tight text-[#333]">{value}</p>
+    </div>
+  );
+}
+
+function CreativeDestinationLink({ url }: { url: string | null | undefined }) {
+  const label = url?.trim();
+  const href = getReachableUrlHref(label);
+
+  if (!label) {
+    return <p className="mt-3 text-xs leading-5 text-[#777]">Destination not available</p>;
+  }
+
+  if (!href) {
+    return <p className="mt-3 break-all text-xs leading-5 text-[#666]">{label}</p>;
+  }
+
+  return (
+    <a
+      href={href}
+      target="_blank"
+      rel="noopener noreferrer"
+      className="mt-3 block break-all text-xs font-medium leading-5 text-[#9f0019] underline decoration-[#9f0019]/30 underline-offset-2 hover:text-[#e10600]"
+    >
+      {label}
+    </a>
+  );
+}
+
+function getReachableUrlHref(value: string | null | undefined): string | null {
+  const trimmed = value?.trim();
+  if (!trimmed || trimmed === "Not available") {
+    return null;
+  }
+
+  const candidate = /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
+  try {
+    const url = new URL(candidate);
+    return url.protocol === "http:" || url.protocol === "https:" ? url.toString() : null;
+  } catch {
+    return null;
+  }
+}
+
+function ClientFriendlyNote({ children }: { children: React.ReactNode }) {
+  return (
+    <p className="mt-2 text-sm leading-6 text-[#666]">
+      {children}
+    </p>
+  );
+}
+
+function formatMetaAnalysisSource(source: "openai_image" | "openrouter_gemini_video" | "metric_fallback"): string {
+  if (source === "openai_image") {
+    return "Image + metrics";
+  }
+  if (source === "openrouter_gemini_video") {
+    return "Video + metrics";
+  }
+  return "Metrics only";
+}
+
+function FinalUrlHeader({
+  children,
+  align = "left",
+}: {
+  children: React.ReactNode;
+  align?: "left" | "right";
+}) {
+  return (
+    <th className={`break-words px-2 py-4 font-semibold ${align === "right" ? "text-right" : "text-left"}`}>
+      {children}
+    </th>
+  );
+}
+
+function FinalUrlCell({
+  children,
+  align = "left",
+  className = "",
+}: {
+  children: React.ReactNode;
+  align?: "left" | "right";
+  className?: string;
+}) {
+  return (
+    <td className={`px-2 py-5 align-middle text-[#111] ${align === "right" ? "text-right" : "text-left"} ${className}`}>
+      {children}
+    </td>
+  );
+}
+
+function formatFinalUrlNumber(value: number | null | undefined): string {
+  if (!Number.isFinite(value)) {
+    return "Not available";
+  }
+  return new Intl.NumberFormat("en-MY", { maximumFractionDigits: 0 }).format(Number(value));
+}
+
+function formatFinalUrlCurrency(value: number | null | undefined): string {
+  if (!Number.isFinite(value)) {
+    return "Not available";
+  }
+  return `RM${new Intl.NumberFormat("en-MY", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(Number(value))}`;
+}
+
+function formatFinalUrlPercent(value: number | null | undefined, fallback = "Not available"): string {
+  if (!Number.isFinite(value)) {
+    return fallback;
+  }
+  return `${new Intl.NumberFormat("en-MY", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(Number(value))}%`;
+}
+
+function formatAuctionPercentValue(value: number | null | undefined, label?: string): string {
+  if (typeof label === "string" && label.trim()) {
+    return label;
+  }
+  return formatAuctionPercent(value);
+}
+
+function formatAuctionPercent(value: number | null | undefined): string {
+  const numericValue = normalizeDisplayNumber(value);
+  if (numericValue === null) {
+    return "Not available";
+  }
+  return `${new Intl.NumberFormat("en-MY", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(numericValue)}%`;
+}
+
+function normalizeDisplayNumber(value: number | null | undefined): number | null {
+  return Number.isFinite(value) ? Number(value) : null;
+}
+
+function formatDisplayPercent(value: number | null | undefined, digits = 2): string {
+  const numericValue = normalizeDisplayNumber(value);
+  if (numericValue === null) {
+    return "Not available";
+  }
+  return `${new Intl.NumberFormat("en-MY", {
+    minimumFractionDigits: digits,
+    maximumFractionDigits: digits,
+  }).format(numericValue)}%`;
+}
+
+function formatSignedPercent(value: number | null | undefined, digits = 1): string {
+  const numericValue = normalizeDisplayNumber(value);
+  if (numericValue === null) {
+    return "Not available";
+  }
+  return `${numericValue >= 0 ? "+" : ""}${formatDisplayPercent(numericValue, digits)}`;
+}
+
+function formatCreativeReasons(reasons: string[]): string[] {
+  const pads = [
+    "It produced enough performance data to be useful for the next creative test.",
+    "It gives the team a clear benchmark for future creative direction.",
+    "It should be compared against a fresh variation in the next round.",
+  ];
+  return dedupeDisplayStrings([...reasons.map(toShortSentence), ...pads]).slice(0, 3);
+}
+
+function toShortSentence(value: string): string {
+  const normalized = value.replace(/\s+/g, " ").trim();
+  if (!normalized) {
+    return "";
+  }
+  const firstSentence = normalized.match(/^.*?[.!?](?:\s|$)/)?.[0]?.trim() ?? normalized;
+  const shortened = firstSentence.length > 140 ? `${firstSentence.slice(0, 137).trim()}...` : firstSentence;
+  return /[.!?]$/.test(shortened) ? shortened : `${shortened}.`;
+}
+
+function dedupeDisplayStrings(values: string[]): string[] {
+  const seen = new Set<string>();
+  const results: string[] = [];
+  values.forEach((value) => {
+    const normalized = value.trim();
+    const key = normalized.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+    if (!normalized || !key || seen.has(key)) {
+      return;
+    }
+    seen.add(key);
+    results.push(normalized);
+  });
+  return results;
+}
+
+function isDisplayableAuctionRow(row: AdvancedAuctionVisibilityRow): boolean {
+  if (!row.competitor?.trim()) {
+    return false;
+  }
+
+  return [
+    row.impressionShare,
+    row.overlapRate,
+    row.positionAboveRate,
+    row.topOfPageRate,
+    row.absoluteTopOfPageRate,
+    row.outrankingShare,
+  ].every((value) => Number.isFinite(value));
 }
 
 function SectionCard({
@@ -572,9 +1643,7 @@ function SectionCard({
       data-report-export-section="true"
     >
       <div className="flex items-start gap-3">
-        <div className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-[#e10600] text-sm font-bold text-white">
-          {eyebrow}
-        </div>
+        <SectionNumberBadge>{eyebrow}</SectionNumberBadge>
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2 text-[#9f0019]">
             {icon}
@@ -751,16 +1820,33 @@ function PieChart({
   rows: Array<{ label: string; value: number; intent?: "client" | "competitor" }>;
 }) {
   const [hoveredSlice, setHoveredSlice] = useState<string | null>(null);
-  const total = rows.reduce((sum, row) => sum + row.value, 0);
+  const normalizedRows = rows.map((row) => ({
+    ...row,
+    value: Number.isFinite(row.value) && row.value > 0 ? row.value : 0,
+  }));
+  const total = normalizedRows.reduce((sum, row) => sum + row.value, 0);
   if (!total) {
     return <p className="text-sm text-[#777]">No share data available.</p>;
   }
   const colors = ["#e10600", "#9f0019", "#c2410c", "#f97316", "#be123c", "#7f1d1d", "#fb7185", "#64748b", "#f59e0b", "#b45309"];
-  const slices = rows.reduce<{
+  const displayRows = normalizedRows.map((row, index) => ({
+    ...row,
+    color:
+      row.intent === "client"
+        ? "#e10600"
+        : row.intent === "competitor"
+          ? colors[(index % (colors.length - 1)) + 1]
+          : colors[index % colors.length],
+    percent: (row.value / total) * 100,
+  }));
+  const slices = displayRows.reduce<{
     cumulative: number;
-    items: Array<(typeof rows)[number] & { color: string; path: string; percent: number }>;
+    items: Array<(typeof displayRows)[number] & { path: string }>;
   }>(
-    (accumulator, row, index) => {
+    (accumulator, row) => {
+      if (row.value <= 0) {
+        return accumulator;
+      }
       const start = accumulator.cumulative / total;
       const nextCumulative = accumulator.cumulative + row.value;
       const end = nextCumulative / total;
@@ -770,21 +1856,14 @@ function PieChart({
           ...accumulator.items,
           {
             ...row,
-            color:
-              row.intent === "client"
-                ? "#e10600"
-                : row.intent === "competitor"
-                  ? colors[(index % (colors.length - 1)) + 1]
-                  : colors[index % colors.length],
             path: describeArc(80, 80, 52, start * 360, end * 360),
-            percent: (row.value / total) * 100,
           },
         ],
       };
     },
     { cumulative: 0, items: [] }
   ).items;
-  const activeSlice = slices.find((slice) => slice.label === hoveredSlice) ?? null;
+  const activeSlice = displayRows.find((slice) => slice.label === hoveredSlice) ?? null;
 
   return (
     <div className="grid min-w-0 gap-4 sm:grid-cols-[minmax(120px,170px)_minmax(0,1fr)] sm:items-center">
@@ -828,7 +1907,7 @@ function PieChart({
         ) : null}
       </div>
       <div className="min-w-0 space-y-2">
-        {slices.map((slice) => {
+        {displayRows.map((slice) => {
           const isHovered = hoveredSlice === slice.label;
           return (
             <div
@@ -1161,7 +2240,7 @@ function KeywordDetailsModal({
                   </td>
                   <td className="px-3 py-2 text-[#666]">{row.language ?? "-"}</td>
                   <td className="px-3 py-2 text-right font-semibold text-[#9f0019]">{formatNumber(row.searchVolume)}</td>
-                  <td className="px-3 py-2 text-right text-[#666]">{row.cpc === null || row.cpc === undefined ? "-" : row.cpc.toFixed(2)}</td>
+                  <td className="px-3 py-2 text-right text-[#666]">{formatFinalUrlCurrency(row.cpc)}</td>
                 </tr>
                 );
               })}
@@ -1277,7 +2356,7 @@ function RisingKeywordList({
               {formatNumber(row.previousVolume)} → {formatNumber(row.currentVolume)}
             </p>
             <p className="mt-1 font-semibold text-[#009b7a]">
-              {row.growthPercent === null ? "New growth" : `+${row.growthPercent.toFixed(1)}%`}
+              {row.growthPercent === null ? "New growth" : formatSignedPercent(row.growthPercent)}
             </p>
             <CollapsibleReason text={row.reason} />
             {row.history.length > 1 ? <MiniLineChart points={row.history.slice(-12)} /> : null}
@@ -2012,13 +3091,19 @@ function formatCompact(value: number): string {
 
 function formatPercentChange(current: number | undefined, previous: number | undefined): string {
   if (!Number.isFinite(current) || !Number.isFinite(previous) || !previous) {
-    return "n/a";
+    return "Not available";
   }
   const change = (((current ?? 0) - previous) / previous) * 100;
-  return `${change >= 0 ? "+" : ""}${change.toFixed(1)}%`;
+  return formatSignedPercent(change);
 }
 
 function describeArc(cx: number, cy: number, radius: number, startAngle: number, endAngle: number): string {
+  if (endAngle - startAngle >= 359.999) {
+    const top = polarToCartesian(cx, cy, radius, 0);
+    const bottom = polarToCartesian(cx, cy, radius, 180);
+    return ["M", top.x, top.y, "A", radius, radius, 0, 1, 0, bottom.x, bottom.y, "A", radius, radius, 0, 1, 0, top.x, top.y].join(" ");
+  }
+
   const start = polarToCartesian(cx, cy, radius, endAngle);
   const end = polarToCartesian(cx, cy, radius, startAngle);
   const largeArcFlag = endAngle - startAngle <= 180 ? "0" : "1";
