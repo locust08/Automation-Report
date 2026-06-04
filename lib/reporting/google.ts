@@ -4106,6 +4106,7 @@ function buildGooglePreviewHierarchyData(input: {
         id: campaignId,
         name: result.campaign?.name?.trim() || `Campaign ${campaignId}`,
         status: humanizeStatus(result.campaign?.status),
+        type: humanizeEnum(result.campaign?.advertisingChannelType) || "Other",
         details: compactDetailFields([
           detailField("Campaign ID", campaignId),
           detailField("Channel", humanizeEnum(result.campaign?.advertisingChannelType)),
@@ -4230,6 +4231,7 @@ function buildGooglePreviewHierarchyData(input: {
       id: campaign.id,
       name: campaign.name,
       status: campaign.status,
+      type: campaign.type,
       details: campaign.details,
       children: (adGroupsByCampaign.get(campaign.id) ?? [])
         .sort((a, b) => a.name.localeCompare(b.name))

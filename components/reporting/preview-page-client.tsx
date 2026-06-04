@@ -3,6 +3,7 @@
 import { useMemo } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 
+import { AccountStructureFlowchart } from "@/components/reporting/account-structure-flowchart";
 import { PreviewHierarchy } from "@/components/reporting/preview-hierarchy";
 import { ReportSuccessScreen } from "@/components/reporting/report-loading-screen";
 import { ReportDownloadButton } from "@/components/reporting/screenshot-mode-toggle";
@@ -12,7 +13,6 @@ import { ReportShell } from "@/components/reporting/report-shell";
 import {
   ReportEmptyState,
   ReportErrorState,
-  ReportLoadingState,
   ReportWarnings,
 } from "@/components/reporting/report-state";
 import { usePreviewReport } from "@/components/reporting/use-report-data";
@@ -25,10 +25,26 @@ export function PreviewPageClient() {
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
-  const { filters, hasAccountId, setFilters } = useReportFilters();
-  const selectedCampaignId = searchParams.get("campaignId")?.trim() || null;
-  const selectedCampaignName = searchParams.get("campaignName")?.trim() ?? "";
   const selectedPlatform = searchParams.get("platform");
+  const hasExplicitDateRange =
+    Boolean(searchParams.get("startDate")?.trim()) ||
+    Boolean(searchParams.get("endDate")?.trim());
+  const selectedCampaignId = hasExplicitDateRange
+    ? searchParams.get("campaignId")?.trim() || null
+    : null;
+  const selectedCampaignName = hasExplicitDateRange
+    ? searchParams.get("campaignName")?.trim() ?? ""
+    : "";
+  const googlePreviewDefaultDates = useMemo(() => {
+    const today = toLocalIsoDate(new Date());
+    return { startDate: today, endDate: today };
+  }, []);
+  const shouldUseGooglePreviewDefaultDate =
+    selectedPlatform === "google" ||
+    Boolean(searchParams.get("googleAccountId")?.trim());
+  const { filters, hasAccountId, setFilters } = useReportFilters(
+    shouldUseGooglePreviewDefaultDate ? googlePreviewDefaultDates : undefined
+  );
 
   const queryString = useMemo(() => {
     const params = new URLSearchParams();
@@ -98,34 +114,33 @@ export function PreviewPageClient() {
     const currentPlatform = params.get("platform");
     const currentCampaignId = params.get("campaignId");
     const currentCampaignName = params.get("campaignName");
+    const currentStartDate = params.get("startDate");
+    const currentEndDate = params.get("endDate");
     if (
       currentPlatform === next.platform &&
       currentCampaignId === next.campaignId &&
-      currentCampaignName === next.campaignName
+      currentCampaignName === next.campaignName &&
+      currentStartDate === filters.startDate &&
+      currentEndDate === filters.endDate
     ) {
       return;
     }
     params.set("platform", next.platform);
     params.set("campaignId", next.campaignId);
     params.set("campaignName", next.campaignName);
+    params.set("startDate", filters.startDate);
+    params.set("endDate", filters.endDate);
     const query = params.toString();
     router.replace(query ? `${pathname}?${query}` : pathname);
-  }
-
-  if (hasAccountId && loading) {
-    return (
-      <ReportLoadingState
-        kind="preview"
-        message="Loading live Google Ads and Meta Ads hierarchy..."
-        fullPage
-        onRetry={retry}
-      />
-    );
   }
 
   if (showReadyState) {
     return <ReportSuccessScreen kind="preview" fullPage />;
   }
+
+  const flowchartPlatform =
+    selectedPlatform === "meta" || selectedPlatform === "google" ? selectedPlatform : null;
+  const flowchartError = error ? `Unable to load live account hierarchy. ${error}` : null;
 
   return (
     <ReportShell
@@ -170,6 +185,24 @@ export function PreviewPageClient() {
         ) : null}
 
         {error ? <ReportErrorState kind="preview" message={error} onRetry={retry} /> : null}
+
+        {hasAccountId && (loading || error) ? (
+          <AccountStructureFlowchart
+            sections={data?.sections ?? []}
+            requestedPlatform={flowchartPlatform}
+            loading={loading}
+            error={flowchartError}
+            accountIds={{
+              metaAccountId:
+                data?.accountIds.metaAccountId ??
+                (filters.metaAccountId || filters.accountId || null),
+              googleAccountId:
+                data?.accountIds.googleAccountId ??
+                (filters.googleAccountId || filters.accountId || null),
+            }}
+            onRetry={retry}
+          />
+        ) : null}
 
         {data && metaFatalError ? (
           <ReportErrorState
@@ -229,6 +262,19 @@ export function PreviewPageClient() {
                 section={previewResolution.section}
                 initialCampaignId={previewResolution.campaign.id}
                 companyName={data.companyName}
+                structureFlowchart={
+                  <AccountStructureFlowchart
+                    sections={data.sections}
+                    requestedPlatform={previewResolution.section.platform}
+                    loading={false}
+                    error={null}
+                    accountIds={{
+                      metaAccountId: data.accountIds.metaAccountId,
+                      googleAccountId: data.accountIds.googleAccountId,
+                    }}
+                    onRetry={retry}
+                  />
+                }
                 onCampaignChange={handleCampaignChange}
               />
             ) : null}
@@ -237,4 +283,11 @@ export function PreviewPageClient() {
       </div>
     </ReportShell>
   );
+}
+
+function toLocalIsoDate(date: Date): string {
+  const year = date.getFullYear();
+  const month = `${date.getMonth() + 1}`.padStart(2, "0");
+  const day = `${date.getDate()}`.padStart(2, "0");
+  return `${year}-${month}-${day}`;
 }

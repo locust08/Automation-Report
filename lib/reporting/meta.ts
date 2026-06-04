@@ -963,6 +963,7 @@ export async function fetchMetaPreviewData({
       id: campaignId,
       name: campaign.name?.trim() || `Campaign ${campaignId}`,
       status: metaStatus(campaign.status, campaign.effective_status),
+      objective: humanizeMetaValue(campaign.objective) || "Other",
       details: compactDetailFields([
         detailField("Campaign ID", campaignId),
         detailField("Objective", humanizeMetaValue(campaign.objective)),

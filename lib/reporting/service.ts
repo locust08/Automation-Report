@@ -518,12 +518,14 @@ export async function getPreviewReport(input: OverallInput): Promise<PreviewRepo
   );
   warnings.push(...googleManagerContext.messages);
 
-  const companyName = await resolveCompanyNameForReport({
+  const previewNames = await resolvePreviewNames({
     credentials,
     accountId: input.accountId,
     resolvedAccountIds,
     googleLoginCustomerIdByAccount: googleManagerContext.loginCustomerIdByAccount,
   });
+  const companyName = previewNames.companyName;
+  const fetchedAt = new Date().toISOString();
 
   const [metaSections, googleSections] = await Promise.all([
     tryFetchMetaPreviewSections(
@@ -561,6 +563,9 @@ export async function getPreviewReport(input: OverallInput): Promise<PreviewRepo
       platform: "meta",
       title: "Meta Ads Manager Preview",
       logoPath: "/MetaLogo.png",
+      accountId: firstOrNull(resolvedAccountIds.metaAccountIds),
+      accountName: previewNames.metaAccountName,
+      fetchedAt,
       childLabel: "Ad Set",
       campaigns: metaSections.campaigns,
     },
@@ -568,6 +573,9 @@ export async function getPreviewReport(input: OverallInput): Promise<PreviewRepo
       platform: "google",
       title: "Google Ads Preview",
       logoPath: "/GoogleLogo.png",
+      accountId: firstOrNull(resolvedAccountIds.googleAccountIds),
+      accountName: previewNames.googleAccountName,
+      fetchedAt,
       childLabel: "Ad Group",
       campaigns: googleSections.campaigns,
     },
@@ -2860,6 +2868,19 @@ async function resolveCompanyNameForReport(input: {
   resolvedAccountIds: ResolvedAccountIds;
   googleLoginCustomerIdByAccount: GoogleLoginCustomerIdMap;
 }): Promise<string> {
+  return (await resolvePreviewNames(input)).companyName;
+}
+
+async function resolvePreviewNames(input: {
+  credentials: ReturnType<typeof getCredentials>;
+  accountId: string | null;
+  resolvedAccountIds: ResolvedAccountIds;
+  googleLoginCustomerIdByAccount: GoogleLoginCustomerIdMap;
+}): Promise<{
+  companyName: string;
+  metaAccountName: string | null;
+  googleAccountName: string | null;
+}> {
   const { credentials, accountId, resolvedAccountIds, googleLoginCustomerIdByAccount } = input;
 
   const mappedCompanyName = resolveCompanyNameFromAccountId(
@@ -2896,7 +2917,11 @@ async function resolveCompanyNameForReport(input: {
       ? resolvedGoogleAccountName ?? resolvedMetaAccountName
       : resolvedMetaAccountName ?? resolvedGoogleAccountName;
 
-  return mappedCompanyName ?? preferredLiveCompanyName ?? fallbackCompanyName;
+  return {
+    companyName: mappedCompanyName ?? preferredLiveCompanyName ?? fallbackCompanyName,
+    metaAccountName: resolvedMetaAccountName,
+    googleAccountName: resolvedGoogleAccountName,
+  };
 }
 
 async function resolveGoogleManagerContext(

@@ -48,11 +48,13 @@ export function PreviewHierarchy({
   section,
   initialCampaignId,
   companyName,
+  structureFlowchart,
   onCampaignChange,
 }: {
   section: PreviewPlatformSection;
   initialCampaignId: string;
   companyName?: string | null;
+  structureFlowchart?: ReactNode;
   onCampaignChange?: (next: {
     platform: "meta" | "google";
     campaignId: string;
@@ -65,6 +67,7 @@ export function PreviewHierarchy({
         section={section}
         initialCampaignId={initialCampaignId}
         companyName={companyName}
+        structureFlowchart={structureFlowchart}
         onCampaignChange={onCampaignChange}
       />
     );
@@ -74,6 +77,7 @@ export function PreviewHierarchy({
     <GoogleAdsPreviewWorkspace
       section={section}
       initialCampaignId={initialCampaignId}
+      structureFlowchart={structureFlowchart}
       onCampaignChange={onCampaignChange}
     />
   );
@@ -83,6 +87,7 @@ function MetaAdsPreviewWorkspace({
   section,
   initialCampaignId,
   companyName,
+  structureFlowchart,
   onCampaignChange,
 }: WorkspaceProps & { companyName?: string | null }) {
   const {
@@ -108,10 +113,13 @@ function MetaAdsPreviewWorkspace({
     [selectedAd?.previewLinks]
   );
   const [activePlacementKey, setActivePlacementKey] = useState("");
+  const [hoveredField, setHoveredField] = useState<MetaPreviewField | null>(null);
+  const [activeField, setActiveField] = useState<MetaPreviewField | null>(null);
   const activePlacement =
     previewPlacements.find((placement) => placement.key === activePlacementKey) ??
     previewPlacements[0] ??
     null;
+  const highlightedField = hoveredField || activeField;
   const companyLabel = companyName?.trim() || section.title;
   const quickSummaryCards = [
     {
@@ -148,21 +156,24 @@ function MetaAdsPreviewWorkspace({
   const previewSummaryCards = [
     {
       label: "Headline",
-      value: creative?.title || getDetailFieldValue(adDetails, "Headline") || "Not available",
+      value: "Synced with preview",
       accent: "violet" as const,
       icon: <FileTextIcon className="size-5" />,
+      field: "headline" as const,
     },
     {
       label: "Primary Text",
-      value: creative?.body || getDetailFieldValue(adDetails, "Primary text") || "Not available",
+      value: "Synced with preview",
       accent: "blue" as const,
       icon: <FileTextIcon className="size-5" />,
+      field: "primaryText" as const,
     },
     {
       label: "Call to Action",
       value: getDetailFieldValue(adDetails, "Call to action") || "Not available",
       accent: "green" as const,
       icon: <MegaphoneIcon className="size-5" />,
+      field: "cta" as const,
     },
     {
       label: "Destination URL",
@@ -244,6 +255,24 @@ function MetaAdsPreviewWorkspace({
     },
   ];
 
+  useEffect(() => {
+    if (!activeField) {
+      return;
+    }
+
+    function handlePointerDown(event: PointerEvent) {
+      const target = event.target;
+      if (target instanceof Element && target.closest("[data-meta-preview-summary-field='true']")) {
+        return;
+      }
+
+      setActiveField(null);
+    }
+
+    document.addEventListener("pointerdown", handlePointerDown);
+    return () => document.removeEventListener("pointerdown", handlePointerDown);
+  }, [activeField]);
+
   return (
     <section className="mx-auto max-w-[1360px] space-y-6 px-1 sm:px-2">
       <div className="rounded-[28px] border border-[#e7edf5] bg-white p-5 shadow-[0_18px_50px_rgba(15,23,42,0.05)] sm:p-6">
@@ -307,6 +336,8 @@ function MetaAdsPreviewWorkspace({
         </div>
       </div>
 
+      {structureFlowchart}
+
       {children.length === 0 ? (
         <EmptyState message="No ad sets are available under the selected campaign." />
       ) : null}
@@ -346,6 +377,8 @@ function MetaAdsPreviewWorkspace({
             adName={selectedAd?.name ?? "Ad"}
             creative={creative}
             activePlacement={activePlacement}
+            highlightedField={highlightedField}
+            activeField={activeField}
           />
           <div className="rounded-[24px] border border-[#edf2f7] bg-[#fbfdff] p-5">
             <h3 className="text-[1.6rem] font-semibold tracking-[-0.03em] text-[#0f172a]">
@@ -353,7 +386,18 @@ function MetaAdsPreviewWorkspace({
             </h3>
             <div className="mt-5 space-y-4">
               {previewSummaryCards.map((card) => (
-                <MetaPreviewSummaryTile key={card.label} {...card} />
+                <MetaPreviewSummaryTile
+                  key={card.label}
+                  {...card}
+                  isActive={card.field === activeField}
+                  isHighlighted={card.field === highlightedField}
+                  onHoverChange={card.field ? setHoveredField : undefined}
+                  onToggleActive={
+                    card.field
+                      ? (field) => setActiveField((current) => (current === field ? null : field))
+                      : undefined
+                  }
+                />
               ))}
             </div>
           </div>
@@ -462,6 +506,7 @@ function MetaAdsPreviewWorkspace({
 }
 
 type MetaAccent = "rose" | "blue" | "green" | "violet" | "amber";
+type MetaPreviewField = "headline" | "primaryText" | "cta";
 
 interface MetaPreviewPlacementDescriptor {
   key: string;
@@ -597,12 +642,16 @@ function MetaAdPreviewCard({
   adName,
   creative,
   activePlacement,
+  highlightedField,
+  activeField,
 }: {
   companyLabel: string;
   campaignName: string;
   adName: string;
   creative: PreviewAdNode["creative"] | null;
   activePlacement: MetaPreviewPlacementDescriptor | null;
+  highlightedField: MetaPreviewField | null;
+  activeField: MetaPreviewField | null;
 }) {
   const bodyText = creative?.body?.trim() || "No primary text available for this ad.";
   const headline = creative?.title?.trim() || campaignName;
@@ -630,7 +679,16 @@ function MetaAdPreviewCard({
           <EllipsisVerticalIcon className="size-5 shrink-0 text-[#64748b]" />
         </div>
 
-        <p className="mt-5 text-[1.15rem] leading-9 text-[#111827]">{bodyText}</p>
+        <p
+          data-field="primaryText"
+          className={`mt-5 text-[1.15rem] leading-9 text-[#111827] ${metaPreviewFieldClassName(
+            "primaryText",
+            highlightedField,
+            activeField
+          )}`}
+        >
+          {bodyText}
+        </p>
 
         <div className="mt-5 overflow-hidden rounded-[20px] border border-[#e7edf5] bg-[#f8fafc]">
           {imageUrl ? (
@@ -661,7 +719,14 @@ function MetaAdPreviewCard({
           <div className="flex flex-col gap-4 border-t border-[#e7edf5] bg-white p-4 sm:flex-row sm:items-center sm:justify-between">
             <div className="min-w-0">
               <p className="text-sm uppercase tracking-[0.08em] text-[#94a3b8]">{domainLabel}</p>
-              <p className="mt-1 truncate text-[1.45rem] font-semibold tracking-[-0.03em] text-[#0f172a]">
+              <p
+                data-field="headline"
+                className={`mt-1 truncate text-[1.45rem] font-semibold tracking-[-0.03em] text-[#0f172a] ${metaPreviewFieldClassName(
+                  "headline",
+                  highlightedField,
+                  activeField
+                )}`}
+              >
                 {headline}
               </p>
               {creative?.description ? (
@@ -682,7 +747,12 @@ function MetaAdPreviewCard({
               ) : null}
               <button
                 type="button"
-                className="rounded-[16px] border border-[#d8e0ea] bg-[#f8fafc] px-5 py-3 text-[1.05rem] font-semibold text-[#0f172a]"
+                data-field="cta"
+                className={`rounded-[16px] border border-[#d8e0ea] bg-[#f8fafc] px-5 py-3 text-[1.05rem] font-semibold text-[#0f172a] ${metaPreviewFieldClassName(
+                  "cta",
+                  highlightedField,
+                  activeField
+                )}`}
               >
                 {callToAction}
               </button>
@@ -710,24 +780,65 @@ function MetaPreviewSummaryTile({
   value,
   accent,
   icon,
+  field,
+  isActive,
+  isHighlighted,
+  onHoverChange,
+  onToggleActive,
 }: {
   label: string;
   value: string;
   accent: MetaAccent;
   icon: ReactNode;
+  field?: MetaPreviewField;
+  isActive?: boolean;
+  isHighlighted?: boolean;
+  onHoverChange?: (field: MetaPreviewField | null) => void;
+  onToggleActive?: (field: MetaPreviewField) => void;
 }) {
-  return (
-    <div className="rounded-[20px] border border-[#edf2f7] bg-white p-4 shadow-[0_8px_18px_rgba(15,23,42,0.03)]">
-      <div className="flex items-start gap-4">
-        <span className={`flex size-14 items-center justify-center rounded-2xl ${metaAccentIconClassName(accent)}`}>
-          {icon}
-        </span>
-        <div className="min-w-0">
-          <p className="text-[1.05rem] font-semibold text-[#0f172a]">{label}</p>
-          <p className="mt-2 break-words text-[1.05rem] leading-8 text-[#1f2937]">{value}</p>
-        </div>
+  const tileClassName = `w-full rounded-[20px] border p-4 text-left shadow-[0_8px_18px_rgba(15,23,42,0.03)] transition duration-200 ${
+    isActive
+      ? "border-[#93c5fd] bg-[#eff6ff] shadow-[0_12px_28px_rgba(37,99,235,0.12)]"
+      : isHighlighted
+        ? "border-[#bfdbfe] bg-[#f8fbff]"
+        : "border-[#edf2f7] bg-white"
+  }`;
+
+  const content = (
+    <div className="flex items-start gap-4">
+      <span className={`flex size-14 items-center justify-center rounded-2xl ${metaAccentIconClassName(accent)}`}>
+        {icon}
+      </span>
+      <div className="min-w-0">
+        <p className="text-[1.05rem] font-semibold text-[#0f172a]">{label}</p>
+        <p className="mt-2 break-words text-[1.05rem] leading-8 text-[#1f2937]">{value}</p>
       </div>
     </div>
+  );
+
+  if (!field) {
+    return <div className={tileClassName}>{content}</div>;
+  }
+
+  return (
+    <button
+      type="button"
+      data-meta-preview-summary-field="true"
+      className={`${tileClassName} cursor-pointer hover:border-[#93c5fd] hover:bg-[#f8fbff] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#93c5fd] focus-visible:ring-offset-2`}
+      aria-pressed={isActive}
+      onPointerEnter={() => onHoverChange?.(field)}
+      onPointerLeave={() => onHoverChange?.(null)}
+      onFocus={() => onHoverChange?.(field)}
+      onBlur={() => onHoverChange?.(null)}
+      onClick={() => {
+        if (isActive) {
+          onHoverChange?.(null);
+        }
+        onToggleActive?.(field);
+      }}
+    >
+      {content}
+    </button>
   );
 }
 
@@ -981,6 +1092,28 @@ function metaAccentIconClassName(accent: MetaAccent): string {
   return "bg-[#f5f3ff] text-[#7c3aed]";
 }
 
+function metaPreviewFieldClassName(
+  field: MetaPreviewField,
+  highlightedField: MetaPreviewField | null,
+  activeField: MetaPreviewField | null
+): string {
+  const baseClassName =
+    "rounded-[14px] ring-1 ring-transparent transition-[background-color,box-shadow] duration-200 ease-out";
+
+  if (highlightedField !== field) {
+    return baseClassName;
+  }
+
+  const glowClassName =
+    "!bg-[#eff6ff]/80 ring-[#93c5fd] shadow-[0_0_0_4px_rgba(147,197,253,0.24),0_10px_22px_rgba(37,99,235,0.10)]";
+
+  if (activeField === field) {
+    return `${baseClassName} !bg-[#eff6ff]/90 ring-[#60a5fa] shadow-[0_0_0_4px_rgba(147,197,253,0.32),0_0_22px_rgba(37,99,235,0.18)]`;
+  }
+
+  return `${baseClassName} ${glowClassName}`;
+}
+
 function getMetaDisplayDomain(url: string | null): string {
   if (!url) {
     return "meta preview";
@@ -1008,6 +1141,7 @@ function humanizeMetaCta(value: string | null | undefined): string | null {
 function GoogleAdsPreviewWorkspace({
   section,
   initialCampaignId,
+  structureFlowchart,
   onCampaignChange,
 }: WorkspaceProps) {
   const searchParams = useSearchParams();
@@ -1030,8 +1164,8 @@ function GoogleAdsPreviewWorkspace({
   );
   const selectedCampaignDetails = selectedCampaign?.details ?? [];
   const editHref = buildGoogleEditDraftHref(searchParams, selectedCampaign?.id, selectedChild?.id, selectedAd?.id);
+  const campaignStatus = selectedCampaign?.status || "Unknown";
   const campaignOverviewFields = [
-    { label: "Campaign status", value: selectedCampaign?.status || "Unknown" },
     { label: "Networks", value: getDetailFieldValue(selectedCampaignDetails, "Networks") },
     { label: "Budget", value: getDetailFieldValue(selectedCampaignDetails, "Budget") },
     { label: "Locations", value: getDetailFieldValue(selectedCampaignDetails, "Locations") },
@@ -1041,59 +1175,51 @@ function GoogleAdsPreviewWorkspace({
     { label: "Bidding strategy", value: getDetailFieldValue(selectedCampaignDetails, "Bidding Strategy") },
     { label: "Start date", value: getDetailFieldValue(selectedCampaignDetails, "Start Date") },
     { label: "End date", value: getDetailFieldValue(selectedCampaignDetails, "End Date") },
-    { label: "Ad group status", value: selectedChild?.status || "Unknown" },
-    { label: "Ad status", value: selectedAd?.status || "Unknown" },
+    ...buildDifferingGoogleStatusFields(campaignStatus, [
+      { label: "Ad group", value: selectedChild?.status },
+      { label: "Ad", value: selectedAd?.status },
+    ]),
   ];
   return (
-    <section className="mx-auto max-w-[1360px] space-y-6 px-6">
-      <div className="rounded-[20px] border border-[#E2E8F0] bg-white p-6 shadow-[0_12px_30px_rgba(15,23,42,0.05)]">
-        <div className="flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
+    <section className="w-full space-y-6">
+      <div className="rounded-[18px] border border-[#E2E8F0] bg-white p-5 shadow-[0_10px_24px_rgba(15,23,42,0.04)] sm:p-6">
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
           <div className="min-w-0">
             <div className="flex items-center gap-4">
               <GoogleMark />
               <div className="min-w-0">
-                <h2 className="truncate text-[2rem] font-semibold text-[#1f2937]">
+                <h2 className="break-words text-[26px] font-semibold leading-tight text-[#1f2937] sm:text-[28px]">
                   Google Ads Preview
                 </h2>
-                <p className="mt-1 text-[15px] leading-7 text-[#64748b]">
+                <p className="mt-1.5 text-[15px] leading-6 text-[#64748b]">
                   Review campaign setup, ad assets, and live search preview from the Google Ads hierarchy.
                 </p>
               </div>
             </div>
-            <div className="mt-5 flex flex-wrap gap-2">
+            <div className="mt-4 flex flex-wrap gap-2">
               <MetricPill label="Campaigns" value={section.campaigns.length} accent="blue" />
               <MetricPill label="Ad Groups" value={adGroupCount} accent="green" />
               <MetricPill label="Ads" value={adCount} accent="amber" />
             </div>
           </div>
-          <div className="flex flex-col gap-3 rounded-[16px] border border-[#E2E8F0] bg-[#F8FAFC] px-5 py-4">
-            <div>
-              <p className="text-[12px] font-semibold uppercase tracking-[0.14em] text-[#64748b]">Selected path</p>
-              <p className="mt-2 max-w-[420px] text-[14px] leading-7 text-[#334155]">
-                <span className="font-semibold text-[#0f172a]">{selectedCampaign?.name || "Campaign"}</span>
-                {" / "}
-                <span className="font-semibold text-[#0f172a]">{selectedChild?.name || "Ad Group"}</span>
-                {" / "}
-                <span className="font-semibold text-[#0f172a]">{selectedAd?.name || "Ad"}</span>
-              </p>
-            </div>
-            <Link
-              href={editHref}
-              aria-disabled={!selectedCampaign || !selectedChild || !selectedAd}
-              className={`inline-flex min-h-11 items-center justify-center gap-2 rounded-[14px] border px-4 py-2 text-sm font-semibold transition ${
-                selectedCampaign && selectedChild && selectedAd
-                  ? "border-[#1a73e8] bg-[#1a73e8] text-white hover:bg-[#1557b0]"
-                  : "pointer-events-none border-[#cbd5e1] bg-white text-[#94a3b8]"
-              }`}
-            >
-              <PencilIcon className="size-4" />
-              Edit
-            </Link>
-          </div>
+          <Link
+            href={editHref}
+            aria-disabled={!selectedCampaign || !selectedChild || !selectedAd}
+            className={`inline-flex h-9 shrink-0 self-start items-center justify-center gap-1.5 rounded-[10px] border px-3 text-xs font-medium transition ${
+              selectedCampaign && selectedChild && selectedAd
+                ? "border-[#cbd5e1] bg-white text-[#334155] hover:border-[#94a3b8] hover:bg-[#f8fafc] hover:text-[#0f172a]"
+                : "pointer-events-none border-[#e2e8f0] bg-[#f8fafc] text-[#94a3b8]"
+            }`}
+          >
+            <PencilIcon className="size-3.5" />
+            Edit
+          </Link>
         </div>
       </div>
 
-      <div className="grid gap-4 xl:grid-cols-3">
+      {structureFlowchart}
+
+      <div className="grid min-w-0 gap-4 xl:grid-cols-3">
         <SelectionPicker
           title="Campaign"
           icon={<FolderIcon className="size-4" />}
@@ -1101,6 +1227,8 @@ function GoogleAdsPreviewWorkspace({
           selectedId={selectedCampaign?.id ?? ""}
           selectedLabel={selectedCampaign?.name ?? "Choose campaign"}
           onSelect={selectCampaign}
+          showOnlyNotableStatus
+          size="comfortable"
         />
         <SelectionPicker
           title="Ad Group"
@@ -1110,6 +1238,8 @@ function GoogleAdsPreviewWorkspace({
           selectedLabel={selectedChild?.name ?? "Choose ad group"}
           onSelect={selectChild}
           emptyMessage="No ad groups were returned for the selected campaign."
+          showOnlyNotableStatus
+          size="comfortable"
         />
         <SelectionPicker
           title="Ad"
@@ -1119,35 +1249,48 @@ function GoogleAdsPreviewWorkspace({
           selectedLabel={selectedAd?.name ?? "Choose ad"}
           onSelect={selectAd}
           emptyMessage="No ads were returned for the selected ad group."
+          showOnlyNotableStatus
+          size="comfortable"
         />
       </div>
 
       {children.length === 0 ? <EmptyState message="No ad groups are available under the selected campaign." /> : null}
 
-      <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_minmax(440px,480px)] 2xl:grid-cols-[minmax(0,1fr)_500px]">
-        <div className="space-y-6">
+      <div className="grid min-w-0 grid-cols-1 gap-6 xl:grid-cols-[minmax(0,1fr)_minmax(440px,480px)] 2xl:grid-cols-[minmax(0,1fr)_500px]">
+        <div className="min-w-0 space-y-6">
+          <div className="google-preview-sticky-panel xl:hidden">
+            <GoogleSearchPreviewPanel
+              key={`mobile:${selectedAd?.id ?? "empty"}`}
+              slides={previewSlides}
+              externalPreviewUrl={selectedAd?.previewLinks?.[0]?.url ?? null}
+              context={{
+                campaign: selectedCampaign,
+                adGroup: selectedChild,
+                ad: selectedAd,
+              }}
+            />
+          </div>
+
           <GoogleSectionCard
             title="Campaign Overview"
-            subtitle="Live campaign metadata from the selected Google Ads entities."
+            subtitle="Live metadata for the selected campaign."
             icon={<BarChart3Icon className="size-6" />}
-            badge={selectedCampaign?.status || "Unknown"}
-            badgeTone={selectedCampaign?.status === "Enabled" ? "green" : "slate"}
+            badge={campaignStatus}
+            badgeTone={isGoogleStatusActive(campaignStatus) ? "green" : "slate"}
           >
-            <div className="grid overflow-hidden rounded-[16px] border border-[#E2E8F0] md:grid-cols-2">
-              {campaignOverviewFields.map((field, index) => (
+            <dl className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
+              {campaignOverviewFields.map((field) => (
                 <div
                   key={field.label}
-                  className={`border-[#E2E8F0] px-5 py-4 ${
-                    index < campaignOverviewFields.length - 2 ? "border-b" : ""
-                  } ${index % 2 === 0 ? "border-r" : ""}`}
+                  className="min-w-0 rounded-[10px] border border-[#E2E8F0] bg-[#F8FAFC] px-3 py-2.5"
                 >
-                  <p className="text-[12px] font-medium text-[#64748b]">{field.label}</p>
-                  <p className="mt-1.5 text-[15px] font-semibold text-[#0f172a]">
+                  <dt className="text-[12px] font-medium uppercase tracking-[0.06em] text-[#64748b]">{field.label}</dt>
+                  <dd className="mt-1.5 break-words text-[14px] font-semibold leading-5 text-[#0f172a]" title={field.value || "Not available"}>
                     {field.value || "Not available"}
-                  </p>
+                  </dd>
                 </div>
               ))}
-            </div>
+            </dl>
           </GoogleSectionCard>
 
           <GoogleSectionCard
@@ -1271,9 +1414,9 @@ function GoogleAdsPreviewWorkspace({
           </GoogleSectionCard>
         </div>
 
-        <div className="xl:sticky xl:top-6 xl:self-start">
+        <div className="hidden min-w-0 self-start xl:sticky xl:top-6 xl:block">
           <GoogleSearchPreviewPanel
-            key={selectedAd?.id ?? "empty"}
+            key={`desktop:${selectedAd?.id ?? "empty"}`}
             slides={previewSlides}
             externalPreviewUrl={selectedAd?.previewLinks?.[0]?.url ?? null}
             context={{
@@ -1309,24 +1452,24 @@ function GoogleSectionCard({
       : "border-[#e5e7eb] bg-[#f8fafc] text-[#475569]";
 
   return (
-    <section className="rounded-[18px] border border-[#E2E8F0] bg-white p-6 shadow-[0_10px_24px_rgba(15,23,42,0.04)]">
-      <div className="flex flex-wrap items-start justify-between gap-4">
-        <div className="flex items-start gap-4">
-          <div className="flex size-12 items-center justify-center rounded-[14px] border border-[#dbe7ff] bg-[#edf4ff] text-[#1A73E8]">
+    <section className="rounded-[16px] border border-[#E2E8F0] bg-white p-5 shadow-[0_8px_20px_rgba(15,23,42,0.035)] sm:p-6">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="flex items-start gap-3">
+          <div className="flex size-10 items-center justify-center rounded-[11px] border border-[#dbe7ff] bg-[#edf4ff] text-[#1A73E8] [&_svg]:size-5">
             {icon}
           </div>
           <div>
-            <h3 className="text-[24px] font-semibold text-[#0f172a]">{title}</h3>
-            {subtitle ? <p className="mt-1 text-[14px] leading-6 text-[#64748b]">{subtitle}</p> : null}
+            <h3 className="text-[22px] font-semibold leading-tight text-[#0f172a]">{title}</h3>
+            {subtitle ? <p className="mt-1 text-[14px] leading-5 text-[#64748b]">{subtitle}</p> : null}
           </div>
         </div>
         {badge ? (
-          <span className={`rounded-full border px-4 py-2 text-sm font-medium ${badgeClassName}`}>
+          <span className={`rounded-full border px-3.5 py-1.5 text-sm font-medium ${badgeClassName}`}>
             {badge}
           </span>
         ) : null}
       </div>
-      <div className="mt-6">{children}</div>
+      <div className="mt-5">{children}</div>
     </section>
   );
 }
@@ -1481,6 +1624,7 @@ function GoogleSearchPreviewPanel({
   context: GoogleFullPreviewContext;
 }) {
   const [index, setIndex] = useState(0);
+  const [slideDirection, setSlideDirection] = useState<"next" | "previous">("next");
   const [showFullPreview, setShowFullPreview] = useState(false);
   const safeIndex = Math.min(index, Math.max(slides.length - 1, 0));
   const slide = slides[safeIndex] ?? null;
@@ -1490,19 +1634,29 @@ function GoogleSearchPreviewPanel({
   const dotWindowStart = Math.max(0, Math.min(safeIndex - Math.floor(maxVisibleDots / 2), slides.length - visibleDotCount));
   const visibleDotIndexes = Array.from({ length: visibleDotCount }, (_, offset) => dotWindowStart + offset);
 
+  function goToPreview(nextIndex: number) {
+    const clampedIndex = Math.max(0, Math.min(slides.length - 1, nextIndex));
+    if (clampedIndex === safeIndex) {
+      return;
+    }
+
+    setSlideDirection(clampedIndex > safeIndex ? "next" : "previous");
+    setIndex(clampedIndex);
+  }
+
   return (
     <>
-    <section className="min-w-0 rounded-[30px] border border-[#E2E8F0] bg-white px-6 py-7 shadow-[0_22px_60px_rgba(15,23,42,0.05)] sm:px-8 sm:py-8">
-      <div className="flex flex-col gap-5">
-        <div className="flex items-start gap-4">
-          <div className="flex size-16 shrink-0 items-center justify-center rounded-[20px] border border-[#dbe3ef] bg-[linear-gradient(180deg,#ffffff_0%,#f8fbff_100%)] text-[#2563eb] shadow-[0_12px_30px_rgba(15,23,42,0.06)]">
-            <SmartphoneIcon className="size-7" />
+    <section className="min-w-0 rounded-[16px] border border-[#E2E8F0] bg-white px-4 py-4 shadow-[0_14px_34px_rgba(15,23,42,0.05)] sm:rounded-[18px] sm:px-6 sm:py-6">
+      <div className="flex flex-col gap-3 sm:gap-4">
+        <div className="flex items-start gap-2.5 sm:gap-3">
+          <div className="flex size-9 shrink-0 items-center justify-center rounded-[10px] border border-[#dbe3ef] bg-[#f8fbff] text-[#2563eb] shadow-[0_8px_18px_rgba(15,23,42,0.045)] sm:size-11 sm:rounded-[12px]">
+            <SmartphoneIcon className="size-4 sm:size-5" />
           </div>
           <div className="min-w-0 flex-1">
-            <div className="flex flex-col gap-4">
+            <div className="flex flex-col gap-2.5 sm:gap-3">
               <div>
-                <h3 className="text-[2rem] font-semibold tracking-[-0.04em] text-[#0f172a]">Preview</h3>
-                <p className="mt-1 max-w-[420px] text-[15px] leading-7 text-[#64748b]">
+                <h3 className="text-[18px] font-semibold text-[#0f172a] sm:text-[28px]">Preview</h3>
+                <p className="mt-0.5 max-w-[380px] text-[11px] leading-4 text-[#64748b] sm:mt-1 sm:text-[15px] sm:leading-6">
                   See how your ad may appear on Google Search results.
                 </p>
               </div>
@@ -1516,7 +1670,7 @@ function GoogleSearchPreviewPanel({
                   }}
                   disabled={!hasPreview}
                   title={hasPreview ? "Open full preview" : "Full preview is not available for this ad."}
-                  className="inline-flex min-h-12 items-center justify-center rounded-[16px] border border-[#2563eb] bg-white px-5 py-3 text-base font-medium text-[#2563eb] transition hover:bg-[#f8fbff] disabled:cursor-not-allowed disabled:border-[#cbd5e1] disabled:text-[#94a3b8] disabled:hover:bg-white"
+                  className="inline-flex h-8 items-center justify-center rounded-[9px] border border-[#2563eb] bg-white px-3 text-xs font-medium text-[#2563eb] transition hover:bg-[#f8fbff] disabled:cursor-not-allowed disabled:border-[#cbd5e1] disabled:text-[#94a3b8] disabled:hover:bg-white sm:h-9 sm:rounded-[10px] sm:px-3.5 sm:text-sm"
                 >
                   Full Preview
                 </button>
@@ -1526,9 +1680,13 @@ function GoogleSearchPreviewPanel({
         </div>
       </div>
 
-      <div className="mt-8 rounded-[28px] bg-[radial-gradient(circle_at_center,rgba(255,255,255,1)_0%,rgba(248,250,252,0.92)_48%,rgba(255,255,255,1)_100%)] px-4 py-6 sm:px-8 sm:py-8">
+      <div className="mt-3 rounded-[14px] bg-[#fbfcfe] px-2 py-3 sm:mt-5 sm:rounded-[16px] sm:px-5 sm:py-5">
         {slide ? (
-          <div className="flex justify-center">
+          <div
+            key={slide.id}
+            className="google-preview-slide-motion flex justify-center"
+            data-direction={slideDirection}
+          >
             <GoogleMobilePreviewCard slide={slide} />
           </div>
         ) : (
@@ -1539,25 +1697,25 @@ function GoogleSearchPreviewPanel({
       </div>
 
       {slide && slides.length > 1 ? (
-        <div className="mx-auto mt-6 max-w-[360px]">
-          <div className="flex items-center justify-center gap-5">
+        <div className="mx-auto mt-3 max-w-[300px] sm:mt-5 sm:max-w-[340px]">
+          <div className="flex items-center justify-center gap-3 sm:gap-4">
             <button
               type="button"
-              onClick={() => setIndex((current) => Math.max(0, current - 1))}
+              onClick={() => goToPreview(safeIndex - 1)}
               disabled={safeIndex === 0}
-              className="flex size-12 items-center justify-center rounded-full border border-[#d7dbe3] bg-white text-[#7b8794] shadow-[0_8px_20px_rgba(15,23,42,0.06)] transition hover:border-[#aecbfa] disabled:cursor-not-allowed disabled:opacity-40"
+              className="flex size-8 items-center justify-center rounded-full border border-[#d7dbe3] bg-white text-[#7b8794] shadow-[0_6px_14px_rgba(15,23,42,0.05)] transition hover:border-[#aecbfa] disabled:cursor-not-allowed disabled:opacity-40 sm:size-10"
               aria-label="Previous preview"
             >
-              <ChevronLeftIcon className="size-5" />
+              <ChevronLeftIcon className="size-3.5 sm:size-4" />
             </button>
-            <div className="flex items-center gap-4">
+            <div className="flex items-center gap-2.5 sm:gap-3">
               {visibleDotIndexes.map((dotIndex) => (
                 <button
                   key={dotIndex}
                   type="button"
-                  onClick={() => setIndex(dotIndex)}
+                  onClick={() => goToPreview(dotIndex)}
                   className={`rounded-full transition-all ${
-                    dotIndex === safeIndex ? "size-3 bg-[#2563eb]" : "size-2.5 bg-[#d6dbe3]"
+                    dotIndex === safeIndex ? "size-2.5 bg-[#2563eb]" : "size-2 bg-[#d6dbe3]"
                   }`}
                   aria-label={`Go to preview ${dotIndex + 1}`}
                 />
@@ -1565,22 +1723,22 @@ function GoogleSearchPreviewPanel({
             </div>
             <button
               type="button"
-              onClick={() => setIndex((current) => Math.min(slides.length - 1, current + 1))}
+              onClick={() => goToPreview(safeIndex + 1)}
               disabled={safeIndex >= slides.length - 1}
-              className="flex size-12 items-center justify-center rounded-full border border-[#d7dbe3] bg-white text-[#7b8794] shadow-[0_8px_20px_rgba(15,23,42,0.06)] transition hover:border-[#aecbfa] disabled:cursor-not-allowed disabled:opacity-40"
+              className="flex size-8 items-center justify-center rounded-full border border-[#d7dbe3] bg-white text-[#7b8794] shadow-[0_6px_14px_rgba(15,23,42,0.05)] transition hover:border-[#aecbfa] disabled:cursor-not-allowed disabled:opacity-40 sm:size-10"
               aria-label="Next preview"
             >
-              <ChevronRightIcon className="size-5" />
+              <ChevronRightIcon className="size-3.5 sm:size-4" />
             </button>
           </div>
 
-          <p className="mt-3 text-center text-[13px] font-medium text-[#64748b]">
+          <p className="mt-2 text-center text-[11px] font-medium text-[#64748b] sm:mt-2.5 sm:text-[12px]">
             Preview {safeIndex + 1} of {slides.length}
           </p>
         </div>
       ) : null}
 
-      <p className="mx-auto mt-8 max-w-[520px] text-center text-base leading-8 text-[#5f6368]">
+      <p className="mx-auto mt-5 hidden max-w-[420px] text-center text-[13px] leading-6 text-[#5f6368] sm:block">
         This preview shows how your ad may appear on Google Search results across supported devices.
       </p>
     </section>
@@ -1891,22 +2049,28 @@ function GoogleMobilePreviewCard({
   const displayUrlLabel = slide.displayPath
     ? `${slide.displayDomain} / ${slide.displayPath}`
     : slide.displayDomain;
-  const maxWidthClass = fullSize ? "max-w-[420px]" : compact ? "max-w-[280px]" : "max-w-[360px]";
+  const maxWidthClass = fullSize ? "max-w-[420px]" : compact ? "max-w-[280px]" : "max-w-[324px]";
+  const outerSizeClass = fullSize
+    ? "max-w-[560px]"
+    : compact
+      ? "max-w-[280px]"
+      : "h-[414px] max-w-[324px] sm:h-auto sm:max-w-[390px]";
+  const frameScaleClass = !fullSize && !compact ? "origin-top scale-[0.62] sm:scale-100" : "";
   const frameRadius = "rounded-[46px]";
   const screenRadius = "rounded-[40px]";
-  const chromePadding = compact ? "px-4 pb-3 pt-3" : "px-5 pb-4 pt-3";
-  const googleLogoSize = compact ? "text-[20px]" : "text-[34px]";
+  const chromePadding = compact ? "px-4 pb-3 pt-3" : "px-5 pb-3 pt-3";
+  const googleLogoSize = compact ? "text-[20px]" : "text-[32px]";
   const searchBoxClass = compact
     ? "mt-3 rounded-full border border-[#e3e6ea] bg-white px-3 py-2 shadow-[0_3px_10px_rgba(60,64,67,0.12)]"
-    : "mt-5 rounded-full border border-[#e3e6ea] bg-white px-4 py-3 shadow-[0_4px_12px_rgba(60,64,67,0.1)]";
-  const adPadding = compact ? "px-4 pb-4 pt-3" : "px-5 pb-5 pt-4";
-  const headlineClass = compact ? "text-[18px] leading-[1.16]" : "text-[20px] leading-[1.2]";
-  const descriptionClass = compact ? "mt-2 text-[11px] leading-[1.45]" : "mt-3 text-[14px] leading-[1.55]";
+    : "mt-4 rounded-full border border-[#e3e6ea] bg-white px-4 py-2.5 shadow-[0_4px_12px_rgba(60,64,67,0.1)]";
+  const adPadding = compact ? "px-4 pb-4 pt-3" : "px-5 pb-3 pt-3";
+  const headlineClass = compact ? "text-[18px] leading-[1.16]" : "text-[19px] leading-[1.16]";
+  const descriptionClass = compact ? "mt-2 text-[11px] leading-[1.45]" : "mt-2.5 text-[13px] leading-[1.45]";
 
   return (
-    <div className={`mx-auto ${fullSize ? "max-w-[560px]" : compact ? "max-w-[280px]" : "max-w-[470px]"}`}>
+    <div className={`mx-auto ${outerSizeClass}`}>
       <div
-        className={`mx-auto w-full aspect-[78/160.9] ${frameRadius} border-[4px] border-[#111111] bg-[#111111] p-[5px] shadow-[0_20px_48px_rgba(15,23,42,0.20)] ${maxWidthClass}`}
+        className={`mx-auto w-full aspect-[78/160.9] ${frameRadius} border-[4px] border-[#111111] bg-[#111111] p-[5px] shadow-[0_20px_48px_rgba(15,23,42,0.20)] ${maxWidthClass} ${frameScaleClass}`}
       >
         <div className={`flex h-full flex-col overflow-hidden ${screenRadius} border border-[#101010] bg-white`}>
           <div className={chromePadding}>
@@ -1946,7 +2110,7 @@ function GoogleMobilePreviewCard({
                   </div>
                 </div>
 
-                <div className="mt-4 flex items-center justify-center" aria-label="Google">
+                <div className="mt-3 flex items-center justify-center" aria-label="Google">
                   <span className={`${googleLogoSize} font-medium leading-none tracking-[-0.04em]`}>
                     <span className="text-[#4285f4]">G</span>
                     <span className="text-[#ea4335]">o</span>
@@ -1974,11 +2138,11 @@ function GoogleMobilePreviewCard({
               </div>
             </div>
 
-            <div className={`${compact ? "mt-3 gap-4 text-[9px]" : "mt-5 gap-5 text-[13px]"} flex overflow-hidden whitespace-nowrap text-[#6b7280]`}>
+            <div className={`${compact ? "mt-3 gap-4 text-[9px]" : "mt-4 gap-5 text-[12px]"} flex overflow-hidden whitespace-nowrap text-[#6b7280]`}>
               {searchTabs.map((tab, index) => (
                 <div key={tab} className="flex flex-col items-center">
                   <span className={index === 0 ? "font-medium text-[#2563eb]" : ""}>{tab}</span>
-                  <span className={`${compact ? "mt-1.5 w-7" : "mt-2 w-8"} h-0.5 rounded-full ${index === 0 ? "bg-[#2563eb]" : "bg-transparent"}`} />
+                  <span className={`${compact ? "mt-1.5 w-7" : "mt-1.5 w-8"} h-0.5 rounded-full ${index === 0 ? "bg-[#2563eb]" : "bg-transparent"}`} />
                 </div>
               ))}
             </div>
@@ -1986,7 +2150,7 @@ function GoogleMobilePreviewCard({
 
           <div className={`border-t border-[#edf1f4] ${adPadding}`}>
             <p className={`${compact ? "text-[10px]" : "text-[13px]"} font-medium text-[#111827]`}>Sponsored</p>
-            <div className={`${compact ? "mt-3 gap-2" : "mt-4 gap-3"} flex items-start justify-between`}>
+            <div className={`${compact ? "mt-3 gap-2" : "mt-3 gap-3"} flex items-start justify-between`}>
               <div className={`${compact ? "gap-2" : "gap-3"} flex min-w-0`}>
                 {slide.businessLogoUrl ? (
                   /* eslint-disable-next-line @next/next/no-img-element */
@@ -2014,10 +2178,10 @@ function GoogleMobilePreviewCard({
             </div>
 
             {slide.sitelinks.length > 0 ? (
-              <div className={`${compact ? "mt-3" : "mt-5"} border-t border-[#edf1f4]`}>
+              <div className={`${compact ? "mt-3" : "mt-4"} border-t border-[#edf1f4]`}>
                 {slide.sitelinks.slice(0, 4).map((sitelink) => (
-                  <div key={sitelink.id} className={`${compact ? "py-2.5" : "py-4"} flex items-center justify-between border-b border-[#edf1f4]`}>
-                    <span className={`${compact ? "text-[10px]" : "text-[15px]"} truncate font-medium text-[#1a73e8]`}>{sitelink.linkText}</span>
+                  <div key={sitelink.id} className={`${compact ? "py-2.5" : "py-3"} flex items-center justify-between border-b border-[#edf1f4]`}>
+                    <span className={`${compact ? "text-[10px]" : "text-[14px]"} truncate font-medium text-[#1a73e8]`}>{sitelink.linkText}</span>
                     <ChevronRightIcon className={`${compact ? "size-3" : "size-4"} text-[#6b7280]`} />
                   </div>
                 ))}
@@ -2055,6 +2219,50 @@ function getDetailFieldValue(fields: PreviewDetailField[], label: string): strin
   return fields.find((field) => field.label === label)?.value ?? "";
 }
 
+function buildDifferingGoogleStatusFields(
+  campaignStatus: string,
+  entityStatuses: Array<{ label: string; value?: string | null }>
+): Array<{ label: string; value: string }> {
+  return entityStatuses
+    .map((status) => ({
+      label: status.label,
+      value: status.value?.trim() ?? "",
+    }))
+    .filter((status) => {
+      if (!status.value || /^unknown$/i.test(status.value)) {
+        return false;
+      }
+
+      return normalizeGoogleStatusMeaning(status.value) !== normalizeGoogleStatusMeaning(campaignStatus);
+    });
+}
+
+function getPickerStatusLabel(status: string, showOnlyNotableStatus: boolean): string | null {
+  const normalized = status.trim();
+  if (!normalized || /^unknown$/i.test(normalized)) {
+    return null;
+  }
+
+  if (showOnlyNotableStatus && isGoogleStatusActive(normalized)) {
+    return null;
+  }
+
+  return normalized;
+}
+
+function isGoogleStatusActive(value: string): boolean {
+  return normalizeGoogleStatusMeaning(value) === "active";
+}
+
+function normalizeGoogleStatusMeaning(value: string): string {
+  const normalized = value.trim().toLowerCase();
+  if (normalized === "enabled" || normalized === "active") {
+    return "active";
+  }
+
+  return normalized || "unknown";
+}
+
 function buildGoogleEditDraftHref(
   searchParams: URLSearchParams,
   campaignId: string | null | undefined,
@@ -2087,6 +2295,7 @@ function detailField(label: string, value: string | null | undefined): PreviewDe
 interface WorkspaceProps {
   section: PreviewPlatformSection;
   initialCampaignId: string;
+  structureFlowchart?: ReactNode;
   onCampaignChange?: (next: {
     platform: "meta" | "google";
     campaignId: string;
@@ -2177,6 +2386,8 @@ function SelectionPicker({
   selectedLabel,
   onSelect,
   emptyMessage,
+  showOnlyNotableStatus = false,
+  size = "default",
 }: {
   title: string;
   icon: ReactNode;
@@ -2185,8 +2396,32 @@ function SelectionPicker({
   selectedLabel: string;
   onSelect: (id: string) => void;
   emptyMessage?: string;
+  showOnlyNotableStatus?: boolean;
+  size?: "default" | "comfortable";
 }) {
   const [open, setOpen] = useState(false);
+  const isComfortable = size === "comfortable";
+  const containerClassName = isComfortable
+    ? "min-w-0 self-start rounded-[18px] border border-[#dde6f1] bg-[#F8FAFC] p-4 shadow-[0_8px_18px_rgba(15,23,42,0.035)]"
+    : "min-w-0 self-start rounded-[16px] border border-[#dde6f1] bg-[#F8FAFC] p-3 shadow-[0_8px_18px_rgba(15,23,42,0.035)]";
+  const titleClassName = isComfortable
+    ? "mb-3 flex items-center gap-2.5 text-[16px] font-semibold text-[#334155]"
+    : "mb-2.5 flex items-center gap-2 text-sm font-semibold text-[#334155]";
+  const iconClassName = isComfortable
+    ? "flex size-8 items-center justify-center rounded-xl bg-white text-[#4b5563] shadow-sm ring-1 ring-[#e2e8f0] [&_svg]:size-5"
+    : "flex size-7 items-center justify-center rounded-xl bg-white text-[#4b5563] shadow-sm ring-1 ring-[#e2e8f0]";
+  const triggerClassName = isComfortable
+    ? "flex w-full items-center justify-between rounded-[14px] border border-[#d4deea] bg-white px-4 py-3.5 text-left shadow-[0_6px_14px_rgba(15,23,42,0.035)] transition hover:border-[#bfdbfe]"
+    : "flex w-full items-center justify-between rounded-[12px] border border-[#d4deea] bg-white px-3 py-2.5 text-left shadow-[0_6px_14px_rgba(15,23,42,0.035)] transition hover:border-[#bfdbfe]";
+  const selectedLabelClassName = isComfortable
+    ? "whitespace-normal break-words text-[18px] font-semibold leading-6 text-[#0f172a]"
+    : "whitespace-normal break-words text-sm font-semibold leading-5 text-[#0f172a]";
+  const helperClassName = isComfortable
+    ? "mt-1 text-[14px] leading-5 text-[#64748b]"
+    : "mt-1 text-xs text-[#64748b]";
+  const optionLabelClassName = isComfortable
+    ? "whitespace-normal break-words text-[15px] font-semibold leading-5"
+    : "whitespace-normal break-words text-sm font-semibold leading-5";
 
   function handleSelect(id: string) {
     onSelect(id);
@@ -2194,9 +2429,9 @@ function SelectionPicker({
   }
 
   return (
-    <div className="self-start rounded-[24px] border border-[#dde6f1] bg-[linear-gradient(180deg,#f8fbff_0%,#f3f7fc_100%)] p-3 shadow-[0_10px_24px_rgba(15,23,42,0.04)]">
-      <div className="mb-2.5 flex items-center gap-2 text-sm font-semibold text-[#334155]">
-        <span className="flex size-7 items-center justify-center rounded-xl bg-white text-[#4b5563] shadow-sm ring-1 ring-[#e2e8f0]">
+    <div className={containerClassName}>
+      <div className={titleClassName}>
+        <span className={iconClassName}>
           {icon}
         </span>
         <span>{title}</span>
@@ -2206,12 +2441,12 @@ function SelectionPicker({
           <button
             type="button"
             onClick={() => setOpen((current) => !current)}
-            className="flex w-full items-center justify-between rounded-2xl border border-[#d4deea] bg-white px-3 py-3 text-left shadow-[0_6px_16px_rgba(15,23,42,0.04)] transition hover:border-[#bfdbfe]"
+            className={triggerClassName}
             aria-expanded={open}
           >
             <div className="min-w-0">
-              <p className="truncate text-sm font-semibold text-[#0f172a]">{selectedLabel}</p>
-              <p className="mt-1 text-xs text-[#64748b]">
+              <p className={selectedLabelClassName}>{selectedLabel}</p>
+              <p className={helperClassName}>
                 {open ? `Hide ${title.toLowerCase()} options` : `Choose ${title.toLowerCase()}`}
               </p>
             </div>
@@ -2229,13 +2464,17 @@ function SelectionPicker({
                   onClick={() => handleSelect(item.id)}
                   className={`flex w-full items-start justify-between gap-3 rounded-2xl border px-3 py-2.5 text-left transition ${
                     item.id === selectedId
-                      ? "border-[#1b74e4] bg-[#e7f0fe] text-[#0f172a] shadow-[0_8px_18px_rgba(27,116,228,0.12)]"
+                      ? "border-[#1b74e4] bg-[#e7f0fe] text-[#0f172a] shadow-[0_6px_14px_rgba(27,116,228,0.10)]"
                       : "border-[#e5e7eb] bg-white text-[#334155] hover:border-[#bfdbfe]"
                   }`}
                 >
                   <div className="min-w-0">
-                    <p className="truncate text-sm font-semibold">{item.name}</p>
-                    <p className="mt-1 text-xs text-[#64748b]">{item.status}</p>
+                    <p className={optionLabelClassName}>{item.name}</p>
+                    {getPickerStatusLabel(item.status, showOnlyNotableStatus) ? (
+                      <p className="mt-1 text-xs text-[#64748b]">
+                        {getPickerStatusLabel(item.status, showOnlyNotableStatus)}
+                      </p>
+                    ) : null}
                   </div>
                   {item.id === selectedId ? <CheckIcon className="mt-0.5 size-4 shrink-0 text-[#1b74e4]" /> : null}
                 </button>

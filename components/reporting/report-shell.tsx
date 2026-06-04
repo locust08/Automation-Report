@@ -24,8 +24,8 @@ interface ReportShellProps {
 }
 
 const REPORT_PAGE_FRAME_CLASS =
-  "mx-auto flex min-h-screen w-full max-w-[1440px] flex-1 flex-col px-4 pb-5 pt-4 sm:px-6 sm:pb-6 sm:pt-6 lg:px-10 lg:pb-8 lg:pt-8";
-const REPORT_INNER_CONTAINER_CLASS = "w-full px-4 sm:px-6 lg:px-8";
+  "mx-auto flex min-h-screen w-full max-w-[1440px] flex-1 flex-col px-3 pb-5 pt-4 sm:px-6 sm:pb-6 sm:pt-6 lg:px-10 lg:pb-8 lg:pt-8";
+const REPORT_INNER_CONTAINER_CLASS = "w-full px-3 sm:px-6 lg:px-8";
 
 export function ReportShell({
   title,
@@ -47,7 +47,7 @@ export function ReportShell({
 
   return (
     <main
-      className="flex min-h-screen flex-col bg-[#f0f0f0] text-[#111]"
+      className="flex min-h-screen flex-col overflow-x-clip bg-[#f0f0f0] text-[#111]"
       data-report-capture-root="true"
       data-report-ready={reportReady ? "true" : undefined}
     >

@@ -437,6 +437,8 @@ export interface PreviewCampaignNode {
   id: string;
   name: string;
   status: string;
+  type?: string | null;
+  objective?: string | null;
   details: PreviewDetailField[];
   performance?: PreviewPerformanceSummary | null;
   demographics?: PreviewDemographicRow[];
@@ -447,6 +449,9 @@ export interface PreviewPlatformSection {
   platform: "meta" | "google";
   title: string;
   logoPath: string;
+  accountId?: string | null;
+  accountName?: string | null;
+  fetchedAt?: string;
   childLabel: "Ad Group" | "Ad Set";
   campaigns: PreviewCampaignNode[];
 }
