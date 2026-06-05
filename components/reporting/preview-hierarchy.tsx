@@ -580,28 +580,36 @@ function MetaSelectionCard({
 
       {open && items.length > 0 ? (
         <div className="mt-4 max-h-64 space-y-2 overflow-y-auto pr-1">
-          {items.map((item) => (
-            <button
-              key={item.id}
-              type="button"
-              onClick={() => handleSelect(item.id)}
-              className={`flex w-full items-start justify-between gap-3 rounded-2xl border px-3 py-3 text-left transition ${
-                item.id === selectedId
-                  ? "border-[#bfdbfe] bg-[#eff6ff]"
-                  : "border-[#e5e7eb] bg-white hover:border-[#cbd5e1]"
-              }`}
-            >
-              <span className="min-w-0">
-                <span className="block truncate text-sm font-semibold text-[#0f172a]">
-                  {item.name}
+          {items.map((item) => {
+            const isSelected = item.id === selectedId;
+            const isPaused = isPausedStatus(item.status);
+
+            return (
+              <button
+                key={item.id}
+                type="button"
+                onClick={() => handleSelect(item.id)}
+                className={`flex w-full items-start justify-between gap-3 rounded-2xl border px-3 py-3 text-left transition ${selectionOptionClassName(
+                  isSelected,
+                  isPaused
+                )}`}
+              >
+                <span className="min-w-0">
+                  <span className="block truncate text-sm font-semibold text-[#0f172a]">
+                    {item.name}
+                  </span>
+                  <span className={`mt-1 block text-xs ${isPaused ? "font-medium text-[#b45309]" : "text-[#64748b]"}`}>
+                    {item.status}
+                  </span>
                 </span>
-                <span className="mt-1 block text-xs text-[#64748b]">{item.status}</span>
-              </span>
-              {item.id === selectedId ? (
-                <CheckIcon className="mt-0.5 size-4 shrink-0 text-[#2563eb]" />
-              ) : null}
-            </button>
-          ))}
+                {isSelected ? (
+                  <CheckIcon
+                    className={`mt-0.5 size-4 shrink-0 ${isPaused ? "text-[#d97706]" : "text-[#2563eb]"}`}
+                  />
+                ) : null}
+              </button>
+            );
+          })}
         </div>
       ) : null}
     </div>
@@ -1576,19 +1584,19 @@ function SitelinkGrid({
 
   return (
     <div>
-      <div className="grid gap-3 lg:grid-cols-2">
+      <div className="grid gap-2.5 lg:grid-cols-2">
         {visibleItems.map((item) => (
           <a
             key={item.id}
             href={item.finalUrl || "#"}
             target={item.finalUrl ? "_blank" : undefined}
             rel={item.finalUrl ? "noreferrer" : undefined}
-            className="flex h-full min-h-[132px] flex-col justify-between rounded-[16px] border border-[#E2E8F0] bg-white p-4 transition hover:border-[#bfdbfe]"
+            className="flex h-full min-h-[104px] flex-col justify-between rounded-[12px] border border-[#E2E8F0] bg-white px-3.5 py-3 transition hover:border-[#bfdbfe]"
           >
-            <div className="flex items-start justify-between gap-3">
+            <div className="flex items-start justify-between gap-2.5">
               <div className="min-w-0">
                 <p className="text-[15px] font-semibold text-[#1A73E8]">{item.linkText}</p>
-                <p className="mt-2 overflow-hidden text-[14px] leading-6 text-[#4b5563] [display:-webkit-box] [-webkit-box-orient:vertical] [-webkit-line-clamp:2]">
+                <p className="mt-1.5 overflow-hidden text-[14px] leading-6 text-[#4b5563] [display:-webkit-box] [-webkit-box-orient:vertical] [-webkit-line-clamp:2]">
                   {[item.description1, item.description2].filter(Boolean).join(" ") || "No sitelink description available"}
                 </p>
               </div>
@@ -2250,6 +2258,22 @@ function getPickerStatusLabel(status: string, showOnlyNotableStatus: boolean): s
   return normalized;
 }
 
+function selectionOptionClassName(isSelected: boolean, isPaused: boolean): string {
+  if (isPaused) {
+    return isSelected
+      ? "border-[#f59e0b] bg-[#fff7ed] text-[#0f172a] shadow-[0_6px_14px_rgba(245,158,11,0.14)]"
+      : "border-[#fed7aa] bg-[#fffaf0] text-[#334155] hover:border-[#f59e0b] hover:bg-[#fff7ed]";
+  }
+
+  return isSelected
+    ? "border-[#1b74e4] bg-[#e7f0fe] text-[#0f172a] shadow-[0_6px_14px_rgba(27,116,228,0.10)]"
+    : "border-[#e5e7eb] bg-white text-[#334155] hover:border-[#bfdbfe]";
+}
+
+function isPausedStatus(status: string): boolean {
+  return status.trim().toLowerCase().includes("pause");
+}
+
 function isGoogleStatusActive(value: string): boolean {
   return normalizeGoogleStatusMeaning(value) === "active";
 }
@@ -2457,28 +2481,35 @@ function SelectionPicker({
 
           {open ? (
             <div className="max-h-64 space-y-2 overflow-y-auto pr-1">
-              {items.map((item) => (
-                <button
-                  key={item.id}
-                  type="button"
-                  onClick={() => handleSelect(item.id)}
-                  className={`flex w-full items-start justify-between gap-3 rounded-2xl border px-3 py-2.5 text-left transition ${
-                    item.id === selectedId
-                      ? "border-[#1b74e4] bg-[#e7f0fe] text-[#0f172a] shadow-[0_6px_14px_rgba(27,116,228,0.10)]"
-                      : "border-[#e5e7eb] bg-white text-[#334155] hover:border-[#bfdbfe]"
-                  }`}
-                >
-                  <div className="min-w-0">
-                    <p className={optionLabelClassName}>{item.name}</p>
-                    {getPickerStatusLabel(item.status, showOnlyNotableStatus) ? (
-                      <p className="mt-1 text-xs text-[#64748b]">
-                        {getPickerStatusLabel(item.status, showOnlyNotableStatus)}
-                      </p>
+              {items.map((item) => {
+                const isSelected = item.id === selectedId;
+                const isPaused = isPausedStatus(item.status);
+                const statusLabel = getPickerStatusLabel(item.status, showOnlyNotableStatus);
+
+                return (
+                  <button
+                    key={item.id}
+                    type="button"
+                    onClick={() => handleSelect(item.id)}
+                    className={`flex w-full items-start justify-between gap-3 rounded-2xl border px-3 py-2.5 text-left transition ${selectionOptionClassName(
+                      isSelected,
+                      isPaused
+                    )}`}
+                  >
+                    <div className="min-w-0">
+                      <p className={optionLabelClassName}>{item.name}</p>
+                      {statusLabel ? (
+                        <p className={`mt-1 text-xs ${isPaused ? "font-medium text-[#b45309]" : "text-[#64748b]"}`}>
+                          {statusLabel}
+                        </p>
+                      ) : null}
+                    </div>
+                    {isSelected ? (
+                      <CheckIcon className={`mt-0.5 size-4 shrink-0 ${isPaused ? "text-[#d97706]" : "text-[#1b74e4]"}`} />
                     ) : null}
-                  </div>
-                  {item.id === selectedId ? <CheckIcon className="mt-0.5 size-4 shrink-0 text-[#1b74e4]" /> : null}
-                </button>
-              ))}
+                  </button>
+                );
+              })}
             </div>
           ) : null}
         </div>
