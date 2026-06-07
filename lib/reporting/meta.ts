@@ -1795,6 +1795,11 @@ function pickResultMetric(input: {
     return salesResultMetric;
   }
 
+  const leadResultMetric = pickLeadResultMetric(input);
+  if (leadResultMetric) {
+    return leadResultMetric;
+  }
+
   const objectiveResultMetric = pickObjectiveResultMetric(
     input.objectiveResults,
     input.costPerResult,
@@ -1802,6 +1807,15 @@ function pickResultMetric(input: {
   );
   if (objectiveResultMetric) {
     return objectiveResultMetric;
+  }
+
+  if (isLeadResult(input.objective, input.optimizationGoal)) {
+    return {
+      actionType: "lead",
+      label: "Lead",
+      value: 0,
+      costPerResult: null,
+    };
   }
 
   const actions = input.actions;
@@ -2004,6 +2018,28 @@ function pickTrafficResultMetric(input: {
   return null;
 }
 
+function pickLeadResultMetric(input: {
+  objective?: string;
+  optimizationGoal?: string;
+  actions?: MetaActionMetric[];
+  costs?: MetaActionMetric[];
+}): { actionType: string; label: string; value: number; costPerResult: number | null } | null {
+  if (!isLeadResult(input.objective, input.optimizationGoal)) {
+    return null;
+  }
+
+  for (const actionType of META_LEAD_RESULT_ACTION_PRIORITY) {
+    const matched = input.actions?.find(
+      (action) => action.action_type === actionType && toNumber(action.value) > 0
+    );
+    if (matched) {
+      return createResultMetric(actionType, matched, input.costs);
+    }
+  }
+
+  return null;
+}
+
 function pickSalesResultMetric(input: {
   objective?: string;
   optimizationGoal?: string;
@@ -2100,6 +2136,20 @@ function resultActionPriorityForObjective(
   }
 
   return [];
+}
+
+function isLeadResult(
+  objective: string | undefined,
+  optimizationGoal: string | undefined
+): boolean {
+  const normalizedObjective = objective?.trim().toUpperCase() ?? "";
+  const normalizedOptimizationGoal = optimizationGoal?.trim().toUpperCase() ?? "";
+
+  return (
+    normalizedObjective.includes("LEAD") ||
+    normalizedOptimizationGoal.includes("LEAD") ||
+    normalizedOptimizationGoal.includes("FORM")
+  );
 }
 
 function findMatchingObjectiveCost(
