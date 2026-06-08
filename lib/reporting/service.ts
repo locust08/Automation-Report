@@ -41,6 +41,7 @@ import {
   AudienceClickBreakdownResponse,
   AuctionInsightRow,
   AuctionInsightsPayload,
+  CampaignGroup,
   CampaignComparisonPayload,
   CampaignRow,
   GoogleFinalUrlSpendRow,
@@ -66,7 +67,7 @@ import {
 } from "@/lib/reporting/types";
 import { isNotionIntegrationError, resolveGoogleAccountsFromNotion } from "@/lib/reporting/notion";
 
-interface OverallInput {
+export interface OverallInput {
   accountId: string | null;
   metaAccountId: string | null;
   googleAccountId: string | null;
@@ -86,6 +87,59 @@ interface ResolvedAccountIds {
 }
 
 type GoogleLoginCustomerIdMap = Record<string, string | null>;
+
+export interface OverallSummaryStagePayload {
+  companyName: string;
+  dateRange: OverallReportPayload["dateRange"];
+  accountIds: OverallReportPayload["accountIds"];
+  summaries: SummarySection[];
+  warnings: string[];
+  diagnostics?: ReportPerformanceDiagnostic[];
+}
+
+export interface OverallCampaignPerformanceStagePayload {
+  companyName: string;
+  dateRange: OverallReportPayload["dateRange"];
+  accountIds: OverallReportPayload["accountIds"];
+  campaignGroups: CampaignGroup[];
+  warnings: string[];
+  diagnostics?: ReportPerformanceDiagnostic[];
+}
+
+export interface OverallAudienceBreakdownStagePayload {
+  companyName: string;
+  dateRange: OverallReportPayload["dateRange"];
+  accountIds: OverallReportPayload["accountIds"];
+  audienceClickBreakdown: AudienceClickBreakdownResponse;
+  warnings: string[];
+  diagnostics?: ReportPerformanceDiagnostic[];
+}
+
+interface OverallReportBaseContext {
+  credentials: ReturnType<typeof getCredentials>;
+  dateRange: OverallReportPayload["dateRange"];
+  resolvedAccountIds: ResolvedAccountIds;
+  googleManagerContext: {
+    googleAccountIds: string[];
+    loginCustomerIdByAccount: GoogleLoginCustomerIdMap;
+    accessPathByAccount: Record<string, string | null>;
+    messages: string[];
+  };
+  companyName: string;
+  warnings: string[];
+  diagnostics: ReportPerformanceDiagnostic[];
+  reportRequestId: string;
+  reportStartedAt: number;
+}
+
+interface OverallPerformanceData extends Omit<OverallReportBaseContext, "reportStartedAt"> {
+  metaCurrent: CampaignRow[];
+  metaPrevious: CampaignRow[];
+  googleCurrent: CampaignRow[];
+  googlePrevious: CampaignRow[];
+  youtubeCurrent: CampaignRow[];
+  youtubePrevious: CampaignRow[];
+}
 
 const GOOGLE_FETCH_CACHE_TTL_MS = parsePositiveIntegerEnv(
   process.env.REPORTING_GOOGLE_CACHE_TTL_MS,
@@ -119,6 +173,7 @@ const googleVideoCreativeRowsCache = new Map<string, MemoryCacheEntry<GoogleVide
 const googleAuctionInsightRowsCache = new Map<string, MemoryCacheEntry<AuctionInsightRow[]>>();
 const googleAccountNameCache = new Map<string, MemoryCacheEntry<string | null>>();
 const metaCreativeRowsCache = new Map<string, MemoryCacheEntry<MetaCreativePerformanceRow[]>>();
+const overallPerformanceStageCache = new Map<string, MemoryCacheEntry<OverallPerformanceData>>();
 
 function parsePositiveIntegerEnv(rawValue: string | undefined, fallback: number): number {
   const parsed = Number.parseInt(rawValue ?? "", 10);
@@ -505,6 +560,354 @@ export async function getOverallReport(input: OverallInput): Promise<OverallRepo
     warnings: dedupeWarnings(warnings),
     diagnostics,
   };
+}
+
+export async function getOverallSummaryStage(
+  input: OverallInput
+): Promise<OverallSummaryStagePayload> {
+  const performance = await getOverallPerformanceStageData(input);
+  const googleAccountCurrent = [...performance.googleCurrent, ...performance.youtubeCurrent];
+  const googleAccountPrevious = [...performance.googlePrevious, ...performance.youtubePrevious];
+  const summaries: SummarySection[] = [
+    {
+      platform: "meta",
+      title: "Meta",
+      logoPath: "/MetaLogo.png",
+      metrics: buildMetaSummary(performance.metaCurrent, performance.metaPrevious),
+    },
+    {
+      platform: "google",
+      title: "Google Ads",
+      logoPath: "/GoogleLogo.png",
+      metrics: buildGoogleSummary(googleAccountCurrent, googleAccountPrevious),
+    },
+  ];
+
+  return {
+    companyName: performance.companyName,
+    dateRange: performance.dateRange,
+    accountIds: buildOverallAccountIds(performance.resolvedAccountIds),
+    summaries,
+    warnings: dedupeWarnings(performance.warnings),
+    diagnostics: performance.diagnostics,
+  };
+}
+
+export async function getOverallCampaignPerformanceStage(
+  input: OverallInput
+): Promise<OverallCampaignPerformanceStagePayload> {
+  const performance = await getOverallPerformanceStageData(input);
+  const campaignGroups = buildGroups([
+    ...performance.metaCurrent,
+    ...performance.googleCurrent,
+    ...performance.youtubeCurrent,
+  ]);
+  const warnings = [...performance.warnings];
+
+  if (campaignGroups.length === 0 && warnings.length === 0) {
+    warnings.push(
+      `No campaign rows with spend greater than RM${MIN_REPORTING_CAMPAIGN_SPEND} were returned for the selected accounts and date range. Verify account IDs and API access permissions.`
+    );
+  }
+
+  return {
+    companyName: performance.companyName,
+    dateRange: performance.dateRange,
+    accountIds: buildOverallAccountIds(performance.resolvedAccountIds),
+    campaignGroups,
+    warnings: dedupeWarnings(warnings),
+    diagnostics: performance.diagnostics,
+  };
+}
+
+export async function getOverallAudienceBreakdownStage(
+  input: OverallInput
+): Promise<OverallAudienceBreakdownStagePayload> {
+  const base = await resolveOverallReportBaseContext(input);
+  const {
+    credentials,
+    dateRange,
+    resolvedAccountIds,
+    googleManagerContext,
+    diagnostics,
+    reportRequestId,
+  } = base;
+
+  const [metaAudienceBreakdownResult, googleAudienceBreakdownResult] = await Promise.all([
+    timeOverallReportStage(reportRequestId, diagnostics, "meta_audience", () =>
+      tryFetchMetaAudienceBreakdownForAccounts(
+        resolvedAccountIds.metaAccountIds,
+        credentials.metaAccessToken,
+        dateRange.startDate,
+        dateRange.endDate
+      )
+    ),
+    timeOverallReportStage(reportRequestId, diagnostics, "google_audience", () =>
+      tryFetchGoogleAudienceBreakdownForAccounts(
+        resolvedAccountIds.googleAccountIds,
+        credentials.googleAdsApiVersion,
+        credentials.googleDeveloperToken,
+        credentials.googleAccessToken,
+        credentials.googleRefreshToken,
+        credentials.googleClientId,
+        credentials.googleClientSecret,
+        googleManagerContext.loginCustomerIdByAccount,
+        googleManagerContext.accessPathByAccount,
+        credentials.googleLoginCustomerId,
+        dateRange.startDate,
+        dateRange.endDate
+      )
+    ),
+  ]);
+
+  const warnings = finalizeOverallStageWarnings(
+    [
+      ...base.warnings,
+      ...metaAudienceBreakdownResult.warnings,
+      ...googleAudienceBreakdownResult.warnings,
+    ],
+    diagnostics,
+    base.reportStartedAt,
+    reportRequestId
+  );
+
+  return {
+    companyName: base.companyName,
+    dateRange,
+    accountIds: buildOverallAccountIds(resolvedAccountIds),
+    audienceClickBreakdown: mergeAudienceClickBreakdownResponses(
+      metaAudienceBreakdownResult.breakdown,
+      googleAudienceBreakdownResult.breakdown
+    ),
+    warnings: dedupeWarnings(warnings),
+    diagnostics,
+  };
+}
+
+async function getOverallPerformanceStageData(input: OverallInput): Promise<OverallPerformanceData> {
+  const cacheKey = createGoogleFetchCacheKey("overall-performance-stage", {
+    accountId: input.accountId,
+    metaAccountId: input.metaAccountId,
+    googleAccountId: input.googleAccountId,
+    startDate: input.startDate,
+    endDate: input.endDate,
+  });
+
+  return readThroughMemoryCache(
+    overallPerformanceStageCache,
+    cacheKey,
+    () => fetchOverallPerformanceStageData(input),
+    {
+      ttlMs: GOOGLE_FETCH_CACHE_TTL_MS,
+      maxEntries: GOOGLE_FETCH_CACHE_MAX_ENTRIES,
+    }
+  );
+}
+
+async function fetchOverallPerformanceStageData(input: OverallInput): Promise<OverallPerformanceData> {
+  const base = await resolveOverallReportBaseContext(input);
+  const {
+    credentials,
+    dateRange,
+    resolvedAccountIds,
+    googleManagerContext,
+    diagnostics,
+    reportRequestId,
+  } = base;
+
+  const [metaCurrentResult, metaPreviousResult] = await Promise.all([
+    timeOverallReportStage(reportRequestId, diagnostics, "meta_current", () =>
+      tryFetchMetaForAccounts(
+        resolvedAccountIds.metaAccountIds,
+        credentials.metaAccessToken,
+        dateRange.startDate,
+        dateRange.endDate
+      )
+    ),
+    timeOverallReportStage(reportRequestId, diagnostics, "meta_previous", () =>
+      tryFetchMetaForAccounts(
+        resolvedAccountIds.metaAccountIds,
+        credentials.metaAccessToken,
+        dateRange.previousStartDate,
+        dateRange.previousEndDate
+      )
+    ),
+  ]);
+
+  const googleCurrentResult = await timeOverallReportStage(
+    reportRequestId,
+    diagnostics,
+    "google_current",
+    () =>
+      tryFetchGoogleForAccounts(
+        resolvedAccountIds.googleAccountIds,
+        credentials.googleAdsApiVersion,
+        credentials.googleDeveloperToken,
+        credentials.googleAccessToken,
+        credentials.googleRefreshToken,
+        credentials.googleClientId,
+        credentials.googleClientSecret,
+        googleManagerContext.loginCustomerIdByAccount,
+        googleManagerContext.accessPathByAccount,
+        credentials.googleLoginCustomerId,
+        dateRange.startDate,
+        dateRange.endDate,
+        true
+      )
+  );
+  const googlePreviousResult = await timeOverallReportStage(
+    reportRequestId,
+    diagnostics,
+    "google_previous",
+    () =>
+      tryFetchGoogleForAccounts(
+        resolvedAccountIds.googleAccountIds,
+        credentials.googleAdsApiVersion,
+        credentials.googleDeveloperToken,
+        credentials.googleAccessToken,
+        credentials.googleRefreshToken,
+        credentials.googleClientId,
+        credentials.googleClientSecret,
+        googleManagerContext.loginCustomerIdByAccount,
+        googleManagerContext.accessPathByAccount,
+        credentials.googleLoginCustomerId,
+        dateRange.previousStartDate,
+        dateRange.previousEndDate,
+        true
+      )
+  );
+
+  const warnings = finalizeOverallStageWarnings(
+    [
+      ...base.warnings,
+      ...metaCurrentResult.warnings,
+      ...metaPreviousResult.warnings,
+      ...googleCurrentResult.warnings,
+      ...googlePreviousResult.warnings,
+    ],
+    diagnostics,
+    base.reportStartedAt,
+    reportRequestId
+  );
+
+  if (resolvedAccountIds.metaAccountIds.length > 0 && metaCurrentResult.rows.length === 0) {
+    warnings.push(
+      `Meta Ads returned no campaign rows with spend greater than RM${MIN_REPORTING_CAMPAIGN_SPEND} for the selected account and date range. If this account spent during the period, verify the account ID and token permissions.`
+    );
+  }
+
+  if (resolvedAccountIds.googleAccountIds.length > 0 && googleCurrentResult.rows.length === 0) {
+    warnings.push(
+      `Google Ads returned no campaign rows with spend greater than RM${MIN_REPORTING_CAMPAIGN_SPEND} for the selected account and date range. If this account spent during the period, verify that the selected Access Path can read it.`
+    );
+  }
+
+  return {
+    credentials,
+    dateRange,
+    resolvedAccountIds,
+    googleManagerContext,
+    companyName: base.companyName,
+    warnings: dedupeWarnings(warnings),
+    diagnostics,
+    reportRequestId,
+    metaCurrent: metaCurrentResult.rows,
+    metaPrevious: metaPreviousResult.rows,
+    googleCurrent: googleCurrentResult.rows.filter((row) => row.platform === "google"),
+    googlePrevious: googlePreviousResult.rows.filter((row) => row.platform === "google"),
+    youtubeCurrent: googleCurrentResult.rows.filter((row) => row.platform === "googleYoutube"),
+    youtubePrevious: googlePreviousResult.rows.filter((row) => row.platform === "googleYoutube"),
+  };
+}
+
+async function resolveOverallReportBaseContext(input: OverallInput): Promise<OverallReportBaseContext> {
+  const reportRequestId = createReportRequestId();
+  const reportStartedAt = Date.now();
+  const diagnostics: ReportPerformanceDiagnostic[] = [];
+  const credentials = getCredentials();
+  const dateRange = buildDateRange(input.startDate, input.endDate);
+
+  const { resolvedAccountIds, googleManagerContext } = await timeOverallReportStage(
+    reportRequestId,
+    diagnostics,
+    "notion_resolution",
+    () => resolveReportAccountContext(input, credentials)
+  );
+  const mappedCompanyName = resolveCompanyNameFromAccountId(
+    {
+      companyName: credentials.companyName,
+      companyNameMap: credentials.companyNameMap,
+      accountId: input.accountId,
+      metaAccountId: resolvedAccountIds.metaAccountIds,
+      googleAccountId: resolvedAccountIds.googleAccountIds,
+    },
+    { fallback: false }
+  );
+  const [resolvedMetaAccountName, resolvedGoogleAccountName] = await timeOverallReportStage(
+    reportRequestId,
+    diagnostics,
+    "account_names",
+    () =>
+      Promise.all([
+        tryFetchMetaAccountNames(resolvedAccountIds.metaAccountIds, credentials.metaAccessToken),
+        tryFetchGoogleAccountNames(
+          resolvedAccountIds.googleAccountIds,
+          credentials,
+          googleManagerContext.loginCustomerIdByAccount
+        ),
+      ])
+  );
+  const fallbackCompanyName =
+    resolveCompanyNameFromAccountId({
+      companyName: credentials.companyName,
+      companyNameMap: credentials.companyNameMap,
+      accountId: input.accountId,
+      metaAccountId: resolvedAccountIds.metaAccountIds,
+      googleAccountId: resolvedAccountIds.googleAccountIds,
+    }) ?? credentials.companyName;
+  const preferredLiveCompanyName =
+    resolvedAccountIds.googleAccountIds.length > 0 && resolvedAccountIds.metaAccountIds.length === 0
+      ? resolvedGoogleAccountName ?? resolvedMetaAccountName
+      : resolvedMetaAccountName ?? resolvedGoogleAccountName;
+
+  return {
+    credentials,
+    dateRange,
+    resolvedAccountIds,
+    googleManagerContext,
+    companyName: mappedCompanyName ?? preferredLiveCompanyName ?? fallbackCompanyName,
+    warnings: [...googleManagerContext.messages],
+    diagnostics,
+    reportRequestId,
+    reportStartedAt,
+  };
+}
+
+function buildOverallAccountIds(resolvedAccountIds: ResolvedAccountIds): OverallReportPayload["accountIds"] {
+  return {
+    metaAccountId: firstOrNull(resolvedAccountIds.metaAccountIds),
+    googleAccountId: firstOrNull(resolvedAccountIds.googleAccountIds),
+    metaAccountIds: resolvedAccountIds.metaAccountIds,
+    googleAccountIds: resolvedAccountIds.googleAccountIds,
+  };
+}
+
+function finalizeOverallStageWarnings(
+  warnings: string[],
+  diagnostics: ReportPerformanceDiagnostic[],
+  reportStartedAt: number,
+  reportRequestId: string
+): string[] {
+  const totalDurationMs = Date.now() - reportStartedAt;
+  diagnostics.push({ stage: "total", durationMs: totalDurationMs });
+  console.info(`[overall-report] request=${reportRequestId} stage=total duration_ms=${totalDurationMs}`);
+  const slowStageWarning = buildSlowStageWarning(
+    diagnostics.filter((diagnostic) => diagnostic.stage !== "total")
+  );
+  if (slowStageWarning) {
+    warnings.push(slowStageWarning);
+  }
+  return warnings;
 }
 
 export async function getPreviewReport(input: OverallInput): Promise<PreviewReportPayload> {

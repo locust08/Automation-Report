@@ -19,7 +19,12 @@ import {
   ReportFilters,
   useReportFilters,
 } from "@/components/reporting/use-report-filters";
-import { useOverallReport } from "@/components/reporting/use-report-data";
+import {
+  useOverallAudienceBreakdownStage,
+  useOverallCampaignPerformanceStage,
+  useOverallReport,
+  useOverallSummaryStage,
+} from "@/components/reporting/use-report-data";
 import { useScreenshotMode } from "@/components/reporting/use-screenshot-mode";
 import { useReportReadyTransition } from "@/components/reporting/use-report-ready-transition";
 import { OverallReportPayload } from "@/lib/reporting/types";
@@ -75,15 +80,35 @@ export function OverallPageClient({
   );
   const splitByAccount = accountReportEntries.length > 1;
 
-  const { data, error, loading, retry, successToken } = useOverallReport(
+  const accountKey = useMemo(
+    () => filters.metaAccountId || filters.googleAccountId || filters.accountId || "-",
+    [filters.accountId, filters.googleAccountId, filters.metaAccountId]
+  );
+  const summaryQuery = useOverallSummaryStage(
+    accountKey,
     queryString,
     hasAccountId && !splitByAccount
   );
+  const campaignQuery = useOverallCampaignPerformanceStage(
+    accountKey,
+    queryString,
+    hasAccountId && !splitByAccount
+  );
+  const data = summaryQuery.data;
   const overallReady =
-    hasAccountId && !splitByAccount && !loading && !error && Boolean(data) && (data?.warnings.length ?? 0) === 0;
+    hasAccountId &&
+    !splitByAccount &&
+    !summaryQuery.loading &&
+    !campaignQuery.loading &&
+    !summaryQuery.error &&
+    !campaignQuery.error &&
+    Boolean(summaryQuery.data) &&
+    Boolean(campaignQuery.data) &&
+    (summaryQuery.data?.warnings.length ?? 0) === 0 &&
+    (campaignQuery.data?.warnings.length ?? 0) === 0;
   const { showReadyState } = useReportReadyTransition({
     ready: overallReady,
-    transitionKey: successToken,
+    transitionKey: summaryQuery.successToken,
   });
 
   const handleAccountResolved = useCallback((label: ResolvedAccountLabel) => {
@@ -116,7 +141,7 @@ export function OverallPageClient({
   );
   const reportReady = splitByAccount
     ? accountReportEntries.length > 0 && accountReportEntries.every((entry) => readyAccountKeys[entry.key])
-    : Boolean(data && !loading && !error);
+    : Boolean(summaryQuery.data && campaignQuery.data && !summaryQuery.loading && !campaignQuery.loading);
   const firstResolvedCompanyName = resolvedLabels.find((label) =>
     activeAccountKeys.has(label.key)
   )?.companyName;
@@ -125,17 +150,6 @@ export function OverallPageClient({
   } Monthly Performance`;
   const dateLabel =
     data?.dateRange.currentLabel ?? `${filters.startDate} - ${filters.endDate}`;
-
-  if (hasAccountId && !splitByAccount && loading) {
-    return (
-      <ReportLoadingState
-        kind="overall"
-        message="Loading overview data from Meta and Google APIs..."
-        fullPage
-        onRetry={retry}
-      />
-    );
-  }
 
   if (showReadyState) {
     return <ReportSuccessScreen kind="overall" fullPage />;
@@ -184,8 +198,6 @@ export function OverallPageClient({
           />
         ) : null}
 
-        {error ? <ReportErrorState kind="overall" message={error} onRetry={retry} /> : null}
-
         {splitByAccount ? (
           <div className="space-y-8">
             {accountReportEntries.map((entry, index) => (
@@ -199,19 +211,61 @@ export function OverallPageClient({
               />
             ))}
           </div>
-        ) : data ? (
+        ) : hasAccountId ? (
           <>
-            <ReportWarnings warnings={data.warnings} />
-            {data.summaries.map((section) => (
-              <MetricSection key={section.platform} section={section} />
-            ))}
-            <OverallCampaignGroupsTable
-              groups={data.campaignGroups}
-              queryString={forwardQuery}
-            />
-            <AudienceClickBreakdownSection
-              breakdown={data.audienceClickBreakdown}
-              pdfLocationTab={resolvePdfAudienceLocationTab(data)}
+            {summaryQuery.loading ? (
+              <ReportLoadingState
+                kind="overall"
+                message="Loading summary metrics..."
+                onRetry={summaryQuery.retry}
+              />
+            ) : null}
+            {summaryQuery.error ? (
+              <ReportErrorState
+                kind="overall"
+                message={summaryQuery.error}
+                onRetry={summaryQuery.retry}
+              />
+            ) : null}
+            {summaryQuery.data ? (
+              <>
+                <ReportWarnings warnings={summaryQuery.data.warnings} />
+                {summaryQuery.data.summaries.map((section) => (
+                  <MetricSection key={section.platform} section={section} />
+                ))}
+              </>
+            ) : null}
+
+            {campaignQuery.loading ? (
+              <ReportLoadingState
+                kind="overall"
+                message="Loading campaign performance..."
+                onRetry={campaignQuery.retry}
+              />
+            ) : null}
+            {campaignQuery.error ? (
+              <ReportErrorState
+                kind="overall"
+                message={campaignQuery.error}
+                onRetry={campaignQuery.retry}
+              />
+            ) : null}
+            {campaignQuery.data ? (
+              <>
+                <ReportWarnings warnings={campaignQuery.data.warnings} />
+                <OverallCampaignGroupsTable
+                  groups={campaignQuery.data.campaignGroups}
+                  queryString={forwardQuery}
+                />
+              </>
+            ) : null}
+
+            <LazyAudienceBreakdown
+              accountKey={accountKey}
+              queryString={queryString}
+              enabled={hasAccountId}
+              screenshotMode={screenshotMode}
+              summaryData={summaryQuery.data}
             />
           </>
         ) : null}
@@ -308,8 +362,82 @@ export function AccountReportContent({
   );
 }
 
+function LazyAudienceBreakdown({
+  accountKey,
+  queryString,
+  enabled,
+  screenshotMode,
+  summaryData,
+}: {
+  accountKey: string;
+  queryString: string;
+  enabled: boolean;
+  screenshotMode: boolean;
+  summaryData: Pick<OverallReportPayload, "accountIds"> | null;
+}) {
+  const [visible, setVisible] = useState(screenshotMode);
+  const shouldLoad = enabled && (visible || screenshotMode);
+  const { data, error, loading, retry } = useOverallAudienceBreakdownStage(
+    accountKey,
+    queryString,
+    shouldLoad
+  );
+
+  const markerRef = useCallback((node: HTMLDivElement | null) => {
+    if (!node || screenshotMode) {
+      return;
+    }
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((entry) => entry.isIntersecting)) {
+          setVisible(true);
+          observer.disconnect();
+        }
+      },
+      { rootMargin: "320px 0px" }
+    );
+    observer.observe(node);
+  }, [screenshotMode]);
+
+  return (
+    <div ref={markerRef} className="space-y-5">
+      {!shouldLoad ? (
+        <ReportLoadingState
+          kind="overall"
+          message="Audience breakdown will load when this section is visible."
+        />
+      ) : null}
+      {loading ? (
+        <ReportLoadingState
+          kind="overall"
+          message="Loading audience click breakdown..."
+          onRetry={retry}
+        />
+      ) : null}
+      {error ? <ReportErrorState kind="overall" message={error} onRetry={retry} /> : null}
+      {data ? (
+        <>
+          <ReportWarnings warnings={data.warnings} />
+          <AudienceClickBreakdownSection
+            breakdown={data.audienceClickBreakdown}
+            pdfLocationTab={resolvePdfAudienceLocationTab({
+              accountIds: data.accountIds ??
+                summaryData?.accountIds ?? {
+                  metaAccountId: null,
+                  googleAccountId: null,
+                  metaAccountIds: [],
+                  googleAccountIds: [],
+                },
+            })}
+          />
+        </>
+      ) : null}
+    </div>
+  );
+}
+
 function resolvePdfAudienceLocationTab(
-  data: OverallReportPayload
+  data: Pick<OverallReportPayload, "accountIds">
 ): "region" | "city" | undefined {
   const hasMeta = data.accountIds.metaAccountIds.length > 0 || Boolean(data.accountIds.metaAccountId);
   const hasGoogle = data.accountIds.googleAccountIds.length > 0 || Boolean(data.accountIds.googleAccountId);

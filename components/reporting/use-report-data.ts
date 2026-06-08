@@ -13,6 +13,11 @@ import {
   PreviewReportPayload,
   TopKeywordsPayload,
 } from "@/lib/reporting/types";
+import type {
+  OverallAudienceBreakdownStagePayload as ServiceOverallAudienceBreakdownStagePayload,
+  OverallCampaignPerformanceStagePayload as ServiceOverallCampaignPerformanceStagePayload,
+  OverallSummaryStagePayload as ServiceOverallSummaryStagePayload,
+} from "@/lib/reporting/service";
 
 interface LoadingState<T> {
   data: T | null;
@@ -40,9 +45,22 @@ interface ReportingErrorPayload {
 interface QueryState<T> {
   data: T | null;
   error: string | null;
+  loading: boolean;
   queryKey: string | null;
   successToken: string | null;
 }
+
+type CachedQueryValue<T> = {
+  data: T;
+  successToken: string;
+};
+
+type InFlightQueryValue = {
+  promise: Promise<unknown>;
+};
+
+const queryResponseCache = new Map<string, CachedQueryValue<unknown>>();
+const inFlightQueries = new Map<string, InFlightQueryValue>();
 
 function extractErrorMessage(
   payload: ReportingErrorPayload | null | undefined,
@@ -76,6 +94,7 @@ function useReportQuery<T>(
   const [state, setState] = useState<QueryState<T>>({
     data: null,
     error: null,
+    loading: false,
     queryKey: null,
     successToken: null,
   });
@@ -86,54 +105,83 @@ function useReportQuery<T>(
       return;
     }
 
-    const controller = new AbortController();
+    let ignoreResponse = false;
+    const cached = queryResponseCache.get(queryKey) as CachedQueryValue<T> | undefined;
 
-    fetch(queryKey, {
-      cache: "no-store",
-      signal: controller.signal,
-    })
-      .then(async (response) => {
-        const json = (await response.json()) as T & ReportingErrorPayload;
-        if (!response.ok) {
-          throw new Error(extractErrorMessage(json, fallbackMessage));
-        }
-        return json;
+    const existingRequest = inFlightQueries.get(queryKey);
+    const requestPromise =
+      existingRequest?.promise ??
+      fetch(queryKey, {
+        cache: "no-store",
       })
+        .then(async (response) => {
+          const json = (await response.json()) as T & ReportingErrorPayload;
+          if (!response.ok) {
+            throw new Error(extractErrorMessage(json, fallbackMessage));
+          }
+          return json;
+        })
+        .finally(() => {
+          inFlightQueries.delete(queryKey);
+        });
+
+    if (!existingRequest) {
+      inFlightQueries.set(queryKey, { promise: requestPromise });
+    }
+
+    requestPromise
       .then((json) => {
+        if (ignoreResponse) {
+          return;
+        }
+        const successToken = `${queryKey}::${requestVersion}`;
+        queryResponseCache.set(queryKey, {
+          data: json as T,
+          successToken,
+        });
         setState({
-          data: json,
+          data: json as T,
           error: null,
+          loading: false,
           queryKey,
-          successToken: `${queryKey}::${requestVersion}`,
+          successToken,
         });
       })
       .catch((fetchError: unknown) => {
-        if (fetchError instanceof DOMException && fetchError.name === "AbortError") {
+        if (ignoreResponse) {
           return;
         }
 
         setState({
-          data: null,
+          data: cached?.data ?? null,
           error: fetchError instanceof Error ? fetchError.message : fallbackMessage,
+          loading: false,
           queryKey,
-          successToken: null,
+          successToken: cached?.successToken ?? null,
         });
       });
 
-    return () => controller.abort();
+    return () => {
+      ignoreResponse = true;
+    };
   }, [enabled, fallbackMessage, queryKey, requestVersion]);
 
   const isCurrentQuery = state.queryKey === queryKey;
-  const data = enabled && isCurrentQuery ? state.data : null;
+  const cached = enabled
+    ? (queryResponseCache.get(queryKey) as CachedQueryValue<T> | undefined)
+    : undefined;
+  const data = enabled && isCurrentQuery ? state.data : cached?.data ?? null;
   const error = enabled && isCurrentQuery ? state.error : null;
-  const loading = enabled && !isCurrentQuery;
-  const successToken = enabled && isCurrentQuery ? state.successToken : null;
+  const loading = enabled && isCurrentQuery ? state.loading : enabled && !cached;
+  const successToken = enabled && isCurrentQuery ? state.successToken : cached?.successToken ?? null;
   const retry = () => {
+    queryResponseCache.delete(queryKey);
     setState((current) =>
       current.queryKey === queryKey
         ? {
             data: null,
             error: null,
+            loading: true,
             queryKey: null,
             successToken: null,
           }
@@ -145,12 +193,60 @@ function useReportQuery<T>(
   return { data, error, loading, retry, successToken };
 }
 
+export function useReportSectionQuery<T>(
+  requestPath: string,
+  queryString: string,
+  enabled: boolean,
+  fallbackMessage: string
+): LoadingState<T> {
+  return useReportQuery<T>(requestPath, queryString, enabled, fallbackMessage);
+}
+
 export function useOverallReport(queryString: string, enabled: boolean): LoadingState<OverallReportPayload> {
   return useReportQuery<OverallReportPayload>(
     "/api/reporting",
     queryString,
     enabled,
     "Unable to load overall report."
+  );
+}
+
+export function useOverallSummaryStage(
+  accountKey: string,
+  queryString: string,
+  enabled: boolean
+): LoadingState<ServiceOverallSummaryStagePayload> {
+  return useReportQuery<ServiceOverallSummaryStagePayload>(
+    `/api/reports/${encodeURIComponent(accountKey || "-")}/summary`,
+    queryString,
+    enabled,
+    "Unable to load summary metrics."
+  );
+}
+
+export function useOverallCampaignPerformanceStage(
+  accountKey: string,
+  queryString: string,
+  enabled: boolean
+): LoadingState<ServiceOverallCampaignPerformanceStagePayload> {
+  return useReportQuery<ServiceOverallCampaignPerformanceStagePayload>(
+    `/api/reports/${encodeURIComponent(accountKey || "-")}/campaign-performance`,
+    queryString,
+    enabled,
+    "Unable to load campaign performance."
+  );
+}
+
+export function useOverallAudienceBreakdownStage(
+  accountKey: string,
+  queryString: string,
+  enabled: boolean
+): LoadingState<ServiceOverallAudienceBreakdownStagePayload> {
+  return useReportQuery<ServiceOverallAudienceBreakdownStagePayload>(
+    `/api/reports/${encodeURIComponent(accountKey || "-")}/tables`,
+    queryString,
+    enabled,
+    "Unable to load breakdown tables."
   );
 }
 

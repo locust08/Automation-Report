@@ -462,7 +462,7 @@ export async function generateAdvancedReport(input: AdvancedGenerationInput): Pr
   return payload;
 }
 
-function buildFinalUrlPerformanceSection(rows: GoogleFinalUrlSpendRow[]): AdvancedFinalUrlPerformanceSection {
+export function buildFinalUrlPerformanceSection(rows: GoogleFinalUrlSpendRow[]): AdvancedFinalUrlPerformanceSection {
   const sortedRows = rows
     .map(createFinalUrlPerformanceRow)
     .sort(compareFinalUrlPerformanceRows);
@@ -582,7 +582,7 @@ function formatFinalUrlCampaignNames(campaignNames: string[]): string {
   return `${names.slice(0, 2).join(", ")} +${names.length - 2}`;
 }
 
-function buildAuctionVisibilitySection(input: {
+export function buildAuctionVisibilitySection(input: {
   accountId: string;
   accountPlatform: "google" | "meta" | "unknown";
   auctionRows: AuctionInsightRow[];

@@ -20,6 +20,7 @@ import {
 import { ReportDownloadButton } from "@/components/reporting/screenshot-mode-toggle";
 import { AccountReportContent } from "@/components/reporting/overall-page-client";
 import { ReportShell } from "@/components/reporting/report-shell";
+import { useReportSectionQuery } from "@/components/reporting/use-report-data";
 import { useScreenshotMode } from "@/components/reporting/use-screenshot-mode";
 import {
   ReportEmptyState,
@@ -102,6 +103,32 @@ export function AdvancedPageClient({
   const [debugModalOpen, setDebugModalOpen] = useState(false);
   const [switchAccountId, setSwitchAccountId] = useState(initialAccountId ?? "");
   const [switchCountry, setSwitchCountry] = useState(initialCountry ?? "MY");
+  const advancedStageQueryString = useMemo(() => {
+    const params = new URLSearchParams();
+    if (initialStartDate) params.set("startDate", initialStartDate);
+    if (initialEndDate) params.set("endDate", initialEndDate);
+    if (initialCountry) params.set("country", initialCountry);
+    return params.toString();
+  }, [initialCountry, initialEndDate, initialStartDate]);
+  const advancedAccountKey = initialAccountId ?? "-";
+  const finalUrlStage = useReportSectionQuery<{
+    section: AdvancedFinalUrlPerformanceSection;
+    warnings: string[];
+  }>(
+    `/api/advanced/${encodeURIComponent(advancedAccountKey)}/final-url-performance`,
+    advancedStageQueryString,
+    Boolean(initialAccountId),
+    "Unable to load Final URL Destination Performance."
+  );
+  const auctionStage = useReportSectionQuery<{
+    section: AdvancedAuctionVisibilitySection | null;
+    warnings: string[];
+  }>(
+    `/api/advanced/${encodeURIComponent(advancedAccountKey)}/auction-insight`,
+    advancedStageQueryString,
+    Boolean(initialAccountId),
+    "Unable to load Auction Insight."
+  );
 
   const loadReport = useCallback(
     async (options?: { regenerate?: boolean }) => {
@@ -250,7 +277,6 @@ export function AdvancedPageClient({
         <ReportLoadingState
           kind="insights"
           message="Generating advanced market, competitor, keyword, and content planning sections..."
-          fullPage
         />
       ) : null}
 
@@ -268,6 +294,11 @@ export function AdvancedPageClient({
           payload={payload}
           regenerating={regenerating}
           screenshotMode={screenshotMode}
+        />
+      ) : initialAccountId ? (
+        <AdvancedSourceStages
+          finalUrlStage={finalUrlStage}
+          auctionStage={auctionStage}
         />
       ) : null}
       {payload ? (
@@ -383,6 +414,69 @@ function TroubleshootingModal({ payload, onClose }: { payload: unknown; onClose:
           </pre>
         </div>
       </div>
+    </div>
+  );
+}
+
+type SectionQuery<T> = {
+  data: T | null;
+  error: string | null;
+  loading: boolean;
+  retry: () => void;
+};
+
+function AdvancedSourceStages({
+  finalUrlStage,
+  auctionStage,
+}: {
+  finalUrlStage: SectionQuery<{
+    section: AdvancedFinalUrlPerformanceSection;
+    warnings: string[];
+  }>;
+  auctionStage: SectionQuery<{
+    section: AdvancedAuctionVisibilitySection | null;
+    warnings: string[];
+  }>;
+}) {
+  return (
+    <div className="space-y-5" data-advanced-report-content="true" data-report-mode="advanced">
+      {finalUrlStage.loading ? (
+        <ReportLoadingState
+          kind="insights"
+          message="Loading Final URL Destination Performance..."
+          onRetry={finalUrlStage.retry}
+        />
+      ) : null}
+      {finalUrlStage.error ? (
+        <ReportErrorState kind="insights" message={finalUrlStage.error} onRetry={finalUrlStage.retry} />
+      ) : null}
+      {finalUrlStage.data ? (
+        <>
+          <ReportWarnings warnings={finalUrlStage.data.warnings} />
+          {hasFinalUrlPerformanceRows(finalUrlStage.data.section) ? (
+            <FinalUrlPerformanceSection sectionNumber="01" section={finalUrlStage.data.section} />
+          ) : null}
+        </>
+      ) : null}
+
+      {auctionStage.loading ? (
+        <ReportLoadingState
+          kind="insights"
+          message="Loading Auction Insight..."
+          onRetry={auctionStage.retry}
+        />
+      ) : null}
+      {auctionStage.error ? (
+        <ReportErrorState kind="insights" message={auctionStage.error} onRetry={auctionStage.retry} />
+      ) : null}
+      {auctionStage.data ? (
+        <>
+          <ReportWarnings warnings={auctionStage.data.warnings} />
+          {hasAuctionVisibilityRows(auctionStage.data.section ?? undefined) ? (
+            <AuctionVisibilitySection sectionNumber="02" section={auctionStage.data.section ?? undefined} />
+          ) : null}
+        </>
+      ) : null}
     </div>
   );
 }
