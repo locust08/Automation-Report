@@ -29,6 +29,15 @@ interface MetaFetchInput {
   endDate: string;
 }
 
+type MetaPreviewStage = "campaigns" | "ad-groups" | "ads" | "preview" | "assets" | "full";
+
+interface MetaPreviewSelection {
+  platform: "meta" | "google" | null;
+  campaignId: string | null;
+  adGroupId: string | null;
+  adId: string | null;
+}
+
 interface MetaAccountNameInput {
   accountId: string;
   accessToken: string;
@@ -114,6 +123,9 @@ interface MetaCreativeRow {
   image_url?: string;
   thumbnail_url?: string;
   object_type?: string;
+  effective_object_story_id?: string;
+  instagram_permalink_url?: string;
+  effective_instagram_media_id?: string;
   object_story_spec?: {
     link_data?: {
       link?: string;
@@ -345,7 +357,9 @@ const META_PREVIEW_AD_FIELDS = [
   "creative{id,name}",
 ] as const;
 
-const META_PREVIEW_CREATIVE_FIELDS = [
+const META_PREVIEW_ACTIVE_STATUSES = ["ACTIVE", "IN_PROCESS", "WITH_ISSUES"] as const;
+
+const META_PREVIEW_CREATIVE_BASE_FIELDS = [
   "id",
   "name",
   "title",
@@ -354,6 +368,17 @@ const META_PREVIEW_CREATIVE_FIELDS = [
   "thumbnail_url",
   "object_type",
   "object_story_spec",
+] as const;
+
+const META_PREVIEW_CREATIVE_PUBLIC_LINK_FIELDS = [
+  "effective_object_story_id",
+  "instagram_permalink_url",
+  "effective_instagram_media_id",
+] as const;
+
+const META_PREVIEW_CREATIVE_FIELDS = [
+  ...META_PREVIEW_CREATIVE_BASE_FIELDS,
+  ...META_PREVIEW_CREATIVE_PUBLIC_LINK_FIELDS,
 ] as const;
 
 const META_ADVANCED_CREATIVE_INSIGHT_FIELDS = [
@@ -417,13 +442,6 @@ const META_PREVIEW_LINK_FORMATS = [
     placementKey: "facebookFeed",
     placementLabel: "Facebook Feed",
     device: "desktop",
-  },
-  {
-    adFormat: "MOBILE_FEED_STANDARD",
-    label: "Mobile Feed Preview",
-    placementKey: "mobile",
-    placementLabel: "Mobile Feed",
-    device: "mobile",
   },
   {
     adFormat: "INSTAGRAM_STANDARD",
@@ -718,10 +736,24 @@ export async function fetchMetaPreviewData({
   accessToken,
   startDate,
   endDate,
-}: MetaFetchInput): Promise<MetaPreviewResponse> {
+  previewStage = "full",
+  previewSelection = {
+    platform: null,
+    campaignId: null,
+    adGroupId: null,
+    adId: null,
+  },
+}: MetaFetchInput & {
+  previewStage?: MetaPreviewStage;
+  previewSelection?: MetaPreviewSelection;
+}): Promise<MetaPreviewResponse> {
   const diagnostics: MetaPreviewBlockDiagnostic[] = [];
   const warnings: MetaPreviewBlockIssue[] = [];
   const fatalErrors: MetaPreviewBlockIssue[] = [];
+  const selectedCampaignId =
+    previewSelection.platform === "google" ? null : previewSelection.campaignId?.trim() || null;
+  const selectedAdGroupId = previewSelection.adGroupId?.trim() || null;
+  const selectedAdId = previewSelection.adId?.trim() || null;
 
   const campaignsBlock = await runMetaPreviewBlock({
     accountId,
@@ -740,21 +772,21 @@ export async function fetchMetaPreviewData({
     fatalErrors.push(campaignsBlock.issue);
   }
 
-  const adSetsBlock = await runMetaPreviewBlock({
-    accountId,
-    label: "meta-preview-adsets",
-    required: true,
-    fields: [...META_PREVIEW_ADSET_FIELDS],
-    load: () =>
-      fetchMetaAdSetCollection({
-        accountId,
-        accessToken,
-        fields: [...META_PREVIEW_ADSET_FIELDS],
-      }),
-  });
-  diagnostics.push(adSetsBlock.diagnostic);
-  if (adSetsBlock.issue) {
-    fatalErrors.push(adSetsBlock.issue);
+  if (!campaignsBlock.data) {
+    return { data: [], diagnostics, warnings, fatalErrors };
+  }
+
+  const campaigns = selectedCampaignId
+    ? campaignsBlock.data.filter((campaign) => campaign.id?.trim() === selectedCampaignId)
+    : campaignsBlock.data;
+
+  if (previewStage === "campaigns") {
+    return {
+      data: buildMetaPreviewCampaignNodes(campaigns, new Map()),
+      diagnostics,
+      warnings,
+      fatalErrors,
+    };
   }
 
   const adsBlock = await runMetaPreviewBlock({
@@ -767,6 +799,8 @@ export async function fetchMetaPreviewData({
         accountId,
         accessToken,
         fields: [...META_PREVIEW_AD_FIELDS],
+        campaignId: selectedCampaignId,
+        adSetId: selectedAdGroupId,
       }),
   });
   diagnostics.push(adsBlock.diagnostic);
@@ -774,33 +808,61 @@ export async function fetchMetaPreviewData({
     fatalErrors.push(adsBlock.issue);
   }
 
-  if (!campaignsBlock.data || !adSetsBlock.data || !adsBlock.data) {
+  if (!adsBlock.data) {
     return { data: [], diagnostics, warnings, fatalErrors };
   }
 
-  const campaigns = campaignsBlock.data;
-  const adSets = adSetsBlock.data;
-  const ads = adsBlock.data;
+  const ads = selectedAdId
+    ? adsBlock.data.filter((ad) => ad.id?.trim() === selectedAdId)
+    : adsBlock.data;
   const visibleCampaignIds = new Set(campaigns.map((campaign) => campaign.id).filter(Boolean) as string[]);
-  const visibleAdSets = adSets.filter(
-    (adSet) =>
-      Boolean(
-        adSet.id?.trim() &&
-          adSet.campaign_id?.trim() &&
-          visibleCampaignIds.has(adSet.campaign_id.trim())
-      )
-  );
-  const visibleAdSetIds = new Set(visibleAdSets.map((adSet) => adSet.id?.trim()).filter(Boolean) as string[]);
-  const visibleAds = ads.filter(
+  const campaignAds = ads.filter(
     (ad) =>
       Boolean(
         ad.id?.trim() &&
           ad.campaign_id?.trim() &&
           ad.adset_id?.trim() &&
-          visibleCampaignIds.has(ad.campaign_id.trim()) &&
-          visibleAdSetIds.has(ad.adset_id.trim())
+          visibleCampaignIds.has(ad.campaign_id.trim())
       )
   );
+
+  const adSetIds = Array.from(
+    new Set(campaignAds.map((ad) => ad.adset_id?.trim()).filter(Boolean) as string[])
+  );
+  const adSetsBlock = await runMetaPreviewBlock({
+    accountId,
+    label: "meta-preview-adsets",
+    required: false,
+    fields: [...META_PREVIEW_ADSET_FIELDS],
+    load: () =>
+      fetchMetaAdSetCollectionByIds({
+        accessToken,
+        adSetIds,
+        fields: [...META_PREVIEW_ADSET_FIELDS],
+      }),
+  });
+  diagnostics.push(adSetsBlock.diagnostic);
+  if (adSetsBlock.issue) {
+    warnings.push(adSetsBlock.issue);
+  }
+
+  const visibleAdSets = buildVisiblePreviewAdSets(campaignAds, adSetsBlock.data ?? []);
+  const visibleAdSetIds = new Set(visibleAdSets.map((adSet) => adSet.id?.trim()).filter(Boolean) as string[]);
+  const visibleAds = campaignAds.filter((ad) => visibleAdSetIds.has(ad.adset_id?.trim() || ""));
+
+  if (previewStage === "ad-groups") {
+    const adSetsByCampaign = buildMetaPreviewAdSetsByCampaign(visibleAdSets, new Map());
+    return {
+      data: buildMetaPreviewCampaignNodes(campaigns, adSetsByCampaign),
+      diagnostics,
+      warnings,
+      fatalErrors,
+    };
+  }
+
+  const includeCreativeDetails = previewStage === "preview" || previewStage === "assets" || previewStage === "full";
+  const includePreviewLinks = previewStage === "assets" || previewStage === "full";
+  const includePerformance = previewStage === "preview" || previewStage === "assets" || previewStage === "full";
   const creativeIds = Array.from(
     new Set(visibleAds.map((ad) => ad.creative?.id?.trim()).filter(Boolean) as string[])
   );
@@ -810,7 +872,10 @@ export async function fetchMetaPreviewData({
     label: "meta-preview-ad-creatives",
     required: false,
     fields: [...META_PREVIEW_CREATIVE_FIELDS],
-    load: () => fetchMetaCreativeCollection({ accessToken, creativeIds }),
+    load: () =>
+      includeCreativeDetails
+        ? fetchMetaCreativeCollection({ accessToken, creativeIds })
+        : Promise.resolve(new Map<string, PreviewCreativeAsset>()),
   });
   diagnostics.push(creativesBlock.diagnostic);
   if (creativesBlock.issue) {
@@ -823,10 +888,12 @@ export async function fetchMetaPreviewData({
     required: false,
     fields: ["body"],
     load: () =>
-      fetchMetaPreviewLinks({
-        accessToken,
-        adIds: visibleAds.map((ad) => ad.id?.trim() || ""),
-      }),
+      includePreviewLinks
+        ? fetchMetaPreviewLinks({
+            accessToken,
+            adIds: visibleAds.map((ad) => ad.id?.trim() || ""),
+          })
+        : Promise.resolve(new Map<string, PreviewLinkAsset[]>()),
   });
   diagnostics.push(previewLinksBlock.diagnostic);
   if (previewLinksBlock.issue) {
@@ -839,14 +906,16 @@ export async function fetchMetaPreviewData({
     required: false,
     fields: [...META_PREVIEW_INSIGHT_FIELDS],
     load: () =>
-      fetchMetaInsightsCollection({
-        accountId,
-        accessToken,
-        startDate,
-        endDate,
-        breakdowns: [],
-        fields: [...META_PREVIEW_INSIGHT_FIELDS],
-      }),
+      includePerformance
+        ? fetchMetaInsightsCollection({
+            accountId,
+            accessToken,
+            startDate,
+            endDate,
+            breakdowns: [],
+            fields: [...META_PREVIEW_INSIGHT_FIELDS],
+          })
+        : Promise.resolve([]),
   });
   diagnostics.push(insightsBlock.diagnostic);
   if (insightsBlock.issue) {
@@ -859,14 +928,16 @@ export async function fetchMetaPreviewData({
     required: false,
     fields: [...META_PREVIEW_DEMOGRAPHIC_FIELDS],
     load: () =>
-      fetchMetaInsightsCollection({
-        accountId,
-        accessToken,
-        startDate,
-        endDate,
-        breakdowns: ["age", "gender"],
-        fields: [...META_PREVIEW_DEMOGRAPHIC_FIELDS],
-      }),
+      includePerformance
+        ? fetchMetaInsightsCollection({
+            accountId,
+            accessToken,
+            startDate,
+            endDate,
+            breakdowns: ["age", "gender"],
+            fields: [...META_PREVIEW_DEMOGRAPHIC_FIELDS],
+          })
+        : Promise.resolve([]),
   });
   diagnostics.push(demographicsBlock.diagnostic);
   if (demographicsBlock.issue) {
@@ -887,6 +958,7 @@ export async function fetchMetaPreviewData({
     }
 
     const creative = creativeMap.get(ad.creative?.id?.trim() || "");
+    const previewLinks = resolveMetaPreviewLinksForCreative(previewLinkMap.get(adId) ?? [], creative);
     const items = adsByAdSet.get(adSetId) ?? [];
     items.push({
       id: adId,
@@ -902,7 +974,7 @@ export async function fetchMetaPreviewData({
         detailField("Destination URL", creative?.linkUrl),
       ]),
       creative: creative ?? null,
-      previewLinks: previewLinkMap.get(adId) ?? [],
+      previewLinks,
       performance: adPerformanceMap.get(adId) ?? null,
       demographics: adDemographicMap.get(adId) ?? [],
       finalUrl: creative?.linkUrl ?? null,
@@ -910,7 +982,23 @@ export async function fetchMetaPreviewData({
     adsByAdSet.set(adSetId, items);
   });
 
+  const adSetsByCampaign = buildMetaPreviewAdSetsByCampaign(visibleAdSets, adsByAdSet);
+  const data = buildMetaPreviewCampaignNodes(campaigns, adSetsByCampaign);
+
+  return {
+    data,
+    diagnostics,
+    warnings,
+    fatalErrors,
+  };
+}
+
+function buildMetaPreviewAdSetsByCampaign(
+  visibleAdSets: MetaAdSetRow[],
+  adsByAdSet: Map<string, PreviewCampaignNode["children"][number]["ads"]>
+): Map<string, PreviewCampaignNode["children"]> {
   const adSetsByCampaign = new Map<string, PreviewCampaignNode["children"]>();
+
   visibleAdSets.forEach((adSet) => {
     const campaignId = adSet.campaign_id?.trim();
     const adSetId = adSet.id?.trim();
@@ -949,7 +1037,15 @@ export async function fetchMetaPreviewData({
     adSetsByCampaign.set(campaignId, items);
   });
 
+  return adSetsByCampaign;
+}
+
+function buildMetaPreviewCampaignNodes(
+  campaigns: MetaCampaignRow[],
+  adSetsByCampaign: Map<string, PreviewCampaignNode["children"]>
+): PreviewCampaignNode[] {
   const data: PreviewCampaignNode[] = [];
+
   campaigns.forEach((campaign) => {
     const campaignId = campaign.id?.trim();
     if (!campaignId) {
@@ -976,14 +1072,8 @@ export async function fetchMetaPreviewData({
       children,
     });
   });
-  data.sort((left, right) => left.name.localeCompare(right.name));
 
-  return {
-    data,
-    diagnostics,
-    warnings,
-    fatalErrors,
-  };
+  return data.sort((left, right) => left.name.localeCompare(right.name));
 }
 
 export async function fetchMetaAccountName({
@@ -1019,6 +1109,7 @@ async function fetchMetaCampaignCollection(input: {
     access_token: input.accessToken,
     limit: "200",
     fields: input.fields.join(","),
+    filtering: buildMetaEffectiveStatusFilter(),
   });
 
   return fetchMetaCollection<MetaCampaignRow>(
@@ -1026,36 +1117,85 @@ async function fetchMetaCampaignCollection(input: {
   );
 }
 
-async function fetchMetaAdSetCollection(input: {
-  accountId: string;
+async function fetchMetaAdSetCollectionByIds(input: {
   accessToken: string;
+  adSetIds: string[];
   fields: string[];
 }): Promise<MetaAdSetRow[]> {
-  const params = new URLSearchParams({
-    access_token: input.accessToken,
-    limit: "200",
-    fields: input.fields.join(","),
-  });
+  const rows: MetaAdSetRow[] = [];
+  const chunks = chunkItems(input.adSetIds.filter(Boolean), 50);
 
-  return fetchMetaCollection<MetaAdSetRow>(
-    `${META_GRAPH_API_BASE_URL}/act_${input.accountId}/adsets?${params.toString()}`
-  );
+  for (const chunk of chunks) {
+    const params = new URLSearchParams({
+      access_token: input.accessToken,
+      ids: chunk.join(","),
+      fields: input.fields.join(","),
+    });
+    const response = await fetch(`${META_GRAPH_API_BASE_URL}/?${params.toString()}`, {
+      cache: "no-store",
+    });
+    const parsed = await parseMetaResponse<Record<string, MetaAdSetRow | { error?: MetaApiErrorShape }>>(
+      response
+    );
+
+    if (parsed.parseError) {
+      throw new MetaApiError(
+        `Meta API returned non-JSON response (status ${parsed.status}, content-type ${parsed.contentType || "unknown"}). ${parsed.parseError}. Response starts with: ${parsed.textSnippet}`
+      );
+    }
+
+    const json = (parsed.json ?? {}) as Record<string, MetaAdSetRow | { error?: MetaApiErrorShape }> & {
+      error?: MetaApiErrorShape;
+    };
+    if (!parsed.ok && json.error) {
+      throw new MetaApiError(
+        json.error.message ?? `Meta API request failed with status ${parsed.status}.`,
+        json.error.code,
+        json.error.error_subcode
+      );
+    }
+
+    for (const adSetId of chunk) {
+      const row = json[adSetId];
+      if (!row || !isMetaAdSetRow(row)) {
+        continue;
+      }
+      rows.push(row);
+    }
+  }
+
+  return rows;
 }
 
 async function fetchMetaAdCollection(input: {
   accountId: string;
   accessToken: string;
   fields: string[];
+  campaignId?: string | null;
+  adSetId?: string | null;
 }): Promise<MetaAdRow[]> {
   const params = new URLSearchParams({
     access_token: input.accessToken,
     limit: "200",
     fields: input.fields.join(","),
+    filtering: buildMetaEffectiveStatusFilter(),
   });
+  const parentId = input.adSetId?.trim() || input.campaignId?.trim();
+  const endpoint = parentId
+    ? `${META_GRAPH_API_BASE_URL}/${parentId}/ads?${params.toString()}`
+    : `${META_GRAPH_API_BASE_URL}/act_${input.accountId}/ads?${params.toString()}`;
 
-  return fetchMetaCollection<MetaAdRow>(
-    `${META_GRAPH_API_BASE_URL}/act_${input.accountId}/ads?${params.toString()}`
-  );
+  return fetchMetaCollection<MetaAdRow>(endpoint);
+}
+
+function buildMetaEffectiveStatusFilter(): string {
+  return JSON.stringify([
+    {
+      field: "effective_status",
+      operator: "IN",
+      value: [...META_PREVIEW_ACTIVE_STATUSES],
+    },
+  ]);
 }
 
 async function fetchMetaCreativeCollection(input: {
@@ -1066,34 +1206,25 @@ async function fetchMetaCreativeCollection(input: {
   const chunks = chunkItems(input.creativeIds.filter(Boolean), 25);
 
   for (const chunk of chunks) {
-    const params = new URLSearchParams({
-      access_token: input.accessToken,
-      ids: chunk.join(","),
-      fields: META_PREVIEW_CREATIVE_FIELDS.join(","),
-    });
-    const response = await fetch(`${META_GRAPH_API_BASE_URL}/?${params.toString()}`, {
-      cache: "no-store",
-    });
-    const parsed = await parseMetaResponse<Record<string, MetaCreativeRow | { error?: MetaApiErrorShape }>>(
-      response
-    );
+    const json = await fetchMetaCreativeChunk({
+      accessToken: input.accessToken,
+      creativeIds: chunk,
+      fields: [...META_PREVIEW_CREATIVE_FIELDS],
+    }).catch((error) => {
+      if (!isUnsupportedMetaCreativePublicLinkFieldError(error)) {
+        throw error;
+      }
 
-    if (parsed.parseError) {
-      throw new MetaApiError(
-        `Meta API returned non-JSON response (status ${parsed.status}, content-type ${parsed.contentType || "unknown"}). ${parsed.parseError}. Response starts with: ${parsed.textSnippet}`
+      console.warn(
+        `[meta-preview] creative public link fields unavailable; retrying with base creative fields. message="${escapeLogMessage(error.message)}"`
       );
-    }
 
-    const json = (parsed.json ?? {}) as Record<string, MetaCreativeRow | { error?: MetaApiErrorShape }> & {
-      error?: MetaApiErrorShape;
-    };
-    if (!parsed.ok && json.error) {
-      throw new MetaApiError(
-        json.error.message ?? `Meta API request failed with status ${parsed.status}.`,
-        json.error.code,
-        json.error.error_subcode
-      );
-    }
+      return fetchMetaCreativeChunk({
+        accessToken: input.accessToken,
+        creativeIds: chunk,
+        fields: [...META_PREVIEW_CREATIVE_BASE_FIELDS],
+      });
+    });
 
     for (const creativeId of chunk) {
       const row = json[creativeId];
@@ -1105,6 +1236,43 @@ async function fetchMetaCreativeCollection(input: {
   }
 
   return assets;
+}
+
+async function fetchMetaCreativeChunk(input: {
+  accessToken: string;
+  creativeIds: string[];
+  fields: string[];
+}): Promise<Record<string, MetaCreativeRow | { error?: MetaApiErrorShape }>> {
+  const params = new URLSearchParams({
+    access_token: input.accessToken,
+    ids: input.creativeIds.join(","),
+    fields: input.fields.join(","),
+  });
+  const response = await fetch(`${META_GRAPH_API_BASE_URL}/?${params.toString()}`, {
+    cache: "no-store",
+  });
+  const parsed = await parseMetaResponse<Record<string, MetaCreativeRow | { error?: MetaApiErrorShape }>>(
+    response
+  );
+
+  if (parsed.parseError) {
+    throw new MetaApiError(
+      `Meta API returned non-JSON response (status ${parsed.status}, content-type ${parsed.contentType || "unknown"}). ${parsed.parseError}. Response starts with: ${parsed.textSnippet}`
+    );
+  }
+
+  const json = (parsed.json ?? {}) as Record<string, MetaCreativeRow | { error?: MetaApiErrorShape }> & {
+    error?: MetaApiErrorShape;
+  };
+  if (!parsed.ok && json.error) {
+    throw new MetaApiError(
+      json.error.message ?? `Meta API request failed with status ${parsed.status}.`,
+      json.error.code,
+      json.error.error_subcode
+    );
+  }
+
+  return json;
 }
 
 async function fetchMetaPreviewLinks(input: {
@@ -1159,6 +1327,9 @@ async function fetchMetaPreviewLinks(input: {
         placementLabel: format.placementLabel,
         device: format.device,
         adFormat: format.adFormat,
+        previewUrl: url,
+        publicPostUrl: null,
+        linkKind: "metaPreview",
       });
     }
 
@@ -1168,6 +1339,29 @@ async function fetchMetaPreviewLinks(input: {
   }
 
   return linksByAdId;
+}
+
+function resolveMetaPreviewLinksForCreative(
+  previewLinks: PreviewLinkAsset[],
+  creative: PreviewCreativeAsset | null | undefined
+): PreviewLinkAsset[] {
+  return previewLinks.map((link) => {
+    const publicPostUrl =
+      link.placementKey === "instagramFeed" || link.placementKey === "story"
+        ? creative?.instagramPermalinkUrl?.trim() || null
+        : link.placementKey === "facebookFeed"
+          ? creative?.facebookPermalinkUrl?.trim() || null
+          : null;
+    const previewUrl = link.previewUrl?.trim() || link.url.trim();
+
+    return {
+      ...link,
+      url: previewUrl,
+      previewUrl,
+      publicPostUrl,
+      linkKind: publicPostUrl ? "publicPost" : "metaPreview",
+    };
+  });
 }
 
 async function fetchMetaInsightsCollection(input: {
@@ -1457,6 +1651,19 @@ function isUnsupportedMetaInsightFieldError(error: unknown): error is Error {
   );
 }
 
+function isUnsupportedMetaCreativePublicLinkFieldError(error: unknown): error is Error {
+  if (!(error instanceof MetaApiError)) {
+    return false;
+  }
+
+  const message = error.message.toLowerCase();
+  return (
+    error.code === 100 &&
+    message.includes("field") &&
+    META_PREVIEW_CREATIVE_PUBLIC_LINK_FIELDS.some((field) => message.includes(field))
+  );
+}
+
 function escapeLogMessage(message: string): string {
   return message.replaceAll('"', '\\"').replaceAll("\n", " ");
 }
@@ -1623,6 +1830,8 @@ function mapCreativeAsset(row: MetaCreativeRow): PreviewCreativeAsset {
     row.object_story_spec?.video_data?.image_url?.trim() ||
     row.object_story_spec?.video_data?.thumbnail_url?.trim() ||
     null;
+  const effectiveObjectStoryId = row.effective_object_story_id?.trim() || null;
+  const instagramPermalinkUrl = row.instagram_permalink_url?.trim() || null;
 
   return {
     id: row.id?.trim() || "",
@@ -1647,6 +1856,10 @@ function mapCreativeAsset(row: MetaCreativeRow): PreviewCreativeAsset {
       row.object_story_spec?.video_data?.call_to_action?.type?.trim() ||
       null,
     objectType: row.object_type?.trim() || null,
+    effectiveObjectStoryId,
+    instagramPermalinkUrl,
+    effectiveInstagramMediaId: row.effective_instagram_media_id?.trim() || null,
+    facebookPermalinkUrl: effectiveObjectStoryId ? `https://www.facebook.com/${effectiveObjectStoryId}` : null,
   };
 }
 
@@ -1654,6 +1867,39 @@ function isMetaCreativeRow(
   value: MetaCreativeRow | { error?: MetaApiErrorShape }
 ): value is MetaCreativeRow {
   return !("error" in value);
+}
+
+function isMetaAdSetRow(value: MetaAdSetRow | { error?: MetaApiErrorShape }): value is MetaAdSetRow {
+  return !("error" in value);
+}
+
+function buildVisiblePreviewAdSets(ads: MetaAdRow[], adSets: MetaAdSetRow[]): MetaAdSetRow[] {
+  const adSetsById = new Map<string, MetaAdSetRow>();
+
+  adSets.forEach((adSet) => {
+    const adSetId = adSet.id?.trim();
+    if (!adSetId) {
+      return;
+    }
+    adSetsById.set(adSetId, adSet);
+  });
+
+  ads.forEach((ad) => {
+    const adSetId = ad.adset_id?.trim();
+    const campaignId = ad.campaign_id?.trim();
+    if (!adSetId || !campaignId || adSetsById.has(adSetId)) {
+      return;
+    }
+    adSetsById.set(adSetId, {
+      id: adSetId,
+      name: `Ad Set ${adSetId}`,
+      campaign_id: campaignId,
+      status: ad.status,
+      effective_status: ad.effective_status,
+    });
+  });
+
+  return Array.from(adSetsById.values());
 }
 
 function finalizePerformanceSummary(input: {

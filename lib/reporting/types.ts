@@ -378,6 +378,10 @@ export interface PreviewCreativeAsset {
   linkUrl?: string | null;
   callToActionType?: string | null;
   objectType?: string | null;
+  effectiveObjectStoryId?: string | null;
+  instagramPermalinkUrl?: string | null;
+  effectiveInstagramMediaId?: string | null;
+  facebookPermalinkUrl?: string | null;
 }
 
 export interface PreviewLinkAsset {
@@ -387,6 +391,9 @@ export interface PreviewLinkAsset {
   placementLabel?: string | null;
   device?: "desktop" | "mobile" | null;
   adFormat?: string | null;
+  previewUrl?: string | null;
+  publicPostUrl?: string | null;
+  linkKind?: "publicPost" | "metaPreview" | null;
 }
 
 export interface PreviewImageAsset {

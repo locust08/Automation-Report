@@ -81,6 +81,12 @@ export function PreviewPageClient() {
     hasAccountId,
     "Unable to load active campaigns."
   );
+  const structureQuery = useReportSectionQuery<PreviewReportPayload>(
+    `/api/accounts/${encodeURIComponent(accountKey)}/structure`,
+    queryString,
+    hasAccountId,
+    "Unable to load account structure."
+  );
   const campaignResolution = useMemo(
     () =>
       campaignsQuery.data
@@ -160,6 +166,13 @@ export function PreviewPageClient() {
     adsQuery.data ??
     adGroupsQuery.data ??
     campaignsQuery.data;
+  const displayData = useMemo(
+    () =>
+      data && campaignsQuery.data
+        ? mergePreviewCampaignOptions(data, campaignsQuery.data)
+        : data,
+    [campaignsQuery.data, data]
+  );
   const error =
     campaignsQuery.error ??
     adGroupsQuery.error ??
@@ -183,8 +196,8 @@ export function PreviewPageClient() {
   const googleFatalError = data?.googleFatalErrors?.[0] ?? null;
   const previewResolution = useMemo(
     () =>
-      data
-        ? resolvePreviewEntry(data.sections, {
+      displayData
+        ? resolvePreviewEntry(displayData.sections, {
             platform:
               selectedPlatform === "meta" || selectedPlatform === "google"
                 ? selectedPlatform
@@ -193,18 +206,18 @@ export function PreviewPageClient() {
             campaignName: selectedCampaignName || null,
           })
         : null,
-    [data, selectedCampaignId, selectedCampaignName, selectedPlatform]
+    [displayData, selectedCampaignId, selectedCampaignName, selectedPlatform]
   );
 
-  const title = `${data?.companyName ?? "Company Name"} Campaign Preview`;
+  const title = `${displayData?.companyName ?? "Company Name"} Campaign Preview`;
   const dateLabel =
-    data?.dateRange.currentLabel ?? `${filters.startDate} - ${filters.endDate}`;
+    displayData?.dateRange.currentLabel ?? `${filters.startDate} - ${filters.endDate}`;
   const previewReady =
     hasAccountId &&
     !loading &&
     !error &&
     Boolean(assetsQuery.data ?? previewQuery.data) &&
-    (data?.warnings.length ?? 0) === 0 &&
+    (displayData?.warnings.length ?? 0) === 0 &&
     !metaFatalError &&
     !googleFatalError &&
     previewResolution?.status === "ready" &&
@@ -246,7 +259,27 @@ export function PreviewPageClient() {
 
   const flowchartPlatform =
     selectedPlatform === "meta" || selectedPlatform === "google" ? selectedPlatform : null;
-  const flowchartError = error ? `Unable to load live account hierarchy. ${error}` : null;
+  const structureFlowchartPlatform = previewResolution?.section?.platform ?? flowchartPlatform;
+  const flowchartError = structureQuery.error
+    ? `Unable to load live account hierarchy. ${structureQuery.error}`
+    : null;
+  const structureFlowchart = hasAccountId ? (
+    <AccountStructureFlowchart
+      sections={structureQuery.data?.sections ?? []}
+      requestedPlatform={structureFlowchartPlatform}
+      loading={structureQuery.loading}
+      error={flowchartError}
+      accountIds={{
+        metaAccountId:
+          structureQuery.data?.accountIds.metaAccountId ??
+          (filters.metaAccountId || filters.accountId || null),
+        googleAccountId:
+          structureQuery.data?.accountIds.googleAccountId ??
+          (filters.googleAccountId || filters.accountId || null),
+      }}
+      onRetry={structureQuery.retry}
+    />
+  ) : null;
   const previewMarkerRef = usePreviewVisibilityMarker(setPreviewVisible);
 
   if (showReadyState) {
@@ -302,24 +335,6 @@ export function PreviewPageClient() {
           <ReportErrorState kind="preview" message={campaignsQuery.error} onRetry={campaignsQuery.retry} />
         ) : null}
 
-        {hasAccountId && (loading || error) ? (
-          <AccountStructureFlowchart
-            sections={data?.sections ?? []}
-            requestedPlatform={flowchartPlatform}
-            loading={loading}
-            error={flowchartError}
-            accountIds={{
-              metaAccountId:
-                data?.accountIds.metaAccountId ??
-                (filters.metaAccountId || filters.accountId || null),
-              googleAccountId:
-                data?.accountIds.googleAccountId ??
-                (filters.googleAccountId || filters.accountId || null),
-            }}
-            onRetry={retry}
-          />
-        ) : null}
-
         {adGroupsQuery.loading ? (
           <ReportLoadingState kind="preview" message="Loading ad groups or ad sets..." onRetry={adGroupsQuery.retry} />
         ) : null}
@@ -333,7 +348,7 @@ export function PreviewPageClient() {
           <ReportErrorState kind="preview" message={adsQuery.error} onRetry={adsQuery.retry} />
         ) : null}
 
-        {data && metaFatalError ? (
+        {displayData && metaFatalError ? (
           <ReportErrorState
             kind="preview"
             message={`Required Meta block failed: [${metaFatalError.label}] fields=${metaFatalError.fields.join(",")} code=${
@@ -343,7 +358,7 @@ export function PreviewPageClient() {
           />
         ) : null}
 
-        {data && googleFatalError ? (
+        {displayData && googleFatalError ? (
           <ReportErrorState
             kind="preview"
             message={
@@ -367,9 +382,9 @@ export function PreviewPageClient() {
           />
         ) : null}
 
-        {data && !metaFatalError && !googleFatalError ? (
+        {displayData && !metaFatalError && !googleFatalError ? (
           <>
-            <ReportWarnings warnings={data.warnings} />
+            <ReportWarnings warnings={displayData.warnings} />
             {previewResolution?.status === "invalid-campaign" ? (
               <ReportErrorState
                 kind="preview"
@@ -403,20 +418,8 @@ export function PreviewPageClient() {
                 key={`${previewResolution.section.platform}:${previewResolution.campaign.id}`}
                 section={previewResolution.section}
                 initialCampaignId={previewResolution.campaign.id}
-                companyName={data.companyName}
-                structureFlowchart={
-                  <AccountStructureFlowchart
-                    sections={data.sections}
-                    requestedPlatform={previewResolution.section.platform}
-                    loading={false}
-                    error={null}
-                    accountIds={{
-                      metaAccountId: data.accountIds.metaAccountId,
-                      googleAccountId: data.accountIds.googleAccountId,
-                    }}
-                    onRetry={retry}
-                  />
-                }
+                companyName={displayData.companyName}
+                structureFlowchart={structureFlowchart}
                 onCampaignChange={handleCampaignChange}
               />
             ) : null}
@@ -467,6 +470,36 @@ function buildPreviewStageQuery(
     params.set("adGroupId", selection.adGroupId);
   }
   return params.toString();
+}
+
+function mergePreviewCampaignOptions(
+  payload: PreviewReportPayload,
+  campaignOptionsPayload: PreviewReportPayload
+): PreviewReportPayload {
+  return {
+    ...payload,
+    sections: payload.sections.map((section) => {
+      const optionSection = campaignOptionsPayload.sections.find(
+        (item) => item.platform === section.platform
+      );
+      if (!optionSection) {
+        return section;
+      }
+
+      const selectedCampaignsById = new Map(
+        section.campaigns.map((campaign) => [campaign.id, campaign])
+      );
+      const optionCampaignIds = new Set(optionSection.campaigns.map((campaign) => campaign.id));
+
+      return {
+        ...section,
+        campaigns: [
+          ...optionSection.campaigns.map((campaign) => selectedCampaignsById.get(campaign.id) ?? campaign),
+          ...section.campaigns.filter((campaign) => !optionCampaignIds.has(campaign.id)),
+        ],
+      };
+    }),
+  };
 }
 
 function toLocalIsoDate(date: Date): string {

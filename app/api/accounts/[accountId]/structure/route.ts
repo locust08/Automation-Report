@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { buildReportingErrorResponse } from "@/lib/reporting/api-error";
-import { buildPreviewCampaignsStage } from "@/lib/reporting/preview-stages";
+import { buildPreviewStructureStage } from "@/lib/reporting/preview-stages";
 import { parseRequestContext } from "@/lib/reporting/request";
 import { getPreviewReport } from "@/lib/reporting/service";
 
@@ -24,18 +24,11 @@ export async function GET(
       startDate: context.startDate,
       endDate: context.endDate,
       diagnosticsMode: searchParams.get("diagnostics") === "1",
-      previewStage: "campaigns",
-      previewSelection: {
-        platform: null,
-        campaignId: null,
-        adGroupId: null,
-        adId: null,
-      },
     });
 
-    return NextResponse.json(buildPreviewCampaignsStage(payload));
+    return NextResponse.json(buildPreviewStructureStage(payload));
   } catch (error) {
-    return buildReportingErrorResponse(error, "Unexpected error while loading active campaigns.");
+    return buildReportingErrorResponse(error, "Unexpected error while loading account structure.");
   }
 }
 
