@@ -20,7 +20,6 @@ import {
   FileTextIcon,
   FolderIcon,
   HeartIcon,
-  HouseIcon,
   ImageIcon,
   InfoIcon,
   LayersIcon,
@@ -101,6 +100,7 @@ function MetaAdsPreviewWorkspace({
   structureFlowchart,
   onCampaignChange,
 }: WorkspaceProps & { companyName?: string | null }) {
+  const searchParams = useSearchParams();
   const {
     selectedCampaign,
     selectedChild,
@@ -129,6 +129,14 @@ function MetaAdsPreviewWorkspace({
     previewPlacements[0] ??
     null;
   const companyLabel = companyName?.trim() || section.title;
+  const adSetCount = section.campaigns.reduce((count, campaign) => count + campaign.children.length, 0);
+  const adCount = section.campaigns.reduce(
+    (count, campaign) =>
+      count + campaign.children.reduce((childCount, child) => childCount + child.ads.length, 0),
+    0
+  );
+  const editHref = buildMetaEditDraftHref(searchParams, selectedCampaign?.id, selectedChild?.id, selectedAd?.id);
+  const editDisabled = !selectedCampaign || !selectedChild || !selectedAd;
   const quickSummaryCards = [
     {
       label: "Objective",
@@ -263,18 +271,45 @@ function MetaAdsPreviewWorkspace({
 
   return (
     <section className="mx-auto max-w-[1360px] space-y-6 px-1 sm:px-2">
-      <div className="rounded-[28px] border border-[#e7edf5] bg-white p-5 shadow-[0_18px_50px_rgba(15,23,42,0.05)] sm:p-6">
-        <div className="flex flex-wrap items-center gap-3 text-sm text-[#64748b]">
-          <span className="flex size-9 items-center justify-center rounded-2xl bg-[#f8fafc] text-[#64748b] shadow-sm ring-1 ring-[#e5e7eb]">
-            <HouseIcon className="size-4" />
-          </span>
-          <span>Home</span>
-          <ChevronRightIcon className="size-4 text-[#c0cad6]" />
-          <span>Campaigns</span>
-          <ChevronRightIcon className="size-4 text-[#c0cad6]" />
-          <span className="truncate">{companyLabel}</span>
-          <ChevronRightIcon className="size-4 text-[#c0cad6]" />
-          <span className="font-semibold text-[#ef4444]">Campaign Preview</span>
+      <div className="rounded-[28px] border border-[#e7edf5] bg-white p-4 shadow-[0_20px_55px_rgba(15,23,42,0.06)] sm:p-5">
+        <div className="rounded-[26px] border border-[#eef3f8] bg-[linear-gradient(180deg,#ffffff_0%,#fbfdff_100%)] p-5 shadow-[inset_0_1px_0_rgba(255,255,255,0.9)] sm:p-6">
+          <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
+            <div className="flex min-w-0 gap-4">
+              <MetaMark />
+              <div className="min-w-0">
+                <h1 className="text-[2rem] font-semibold leading-tight tracking-[-0.04em] text-[#0f172a] sm:text-[2.15rem]">
+                  Meta Ads Preview
+                </h1>
+                <p className="mt-2 max-w-4xl text-[1rem] leading-7 text-[#64748b]">
+                  Review campaign setup, ad assets, and live preview from the Meta Ads hierarchy.
+                </p>
+                <div className="mt-5 flex flex-wrap gap-3">
+                  <MetricPill label="Campaigns" value={section.campaigns.length} accent="blue" />
+                  <MetricPill label="Ad Sets" value={adSetCount} accent="green" />
+                  <MetricPill label="Ads" value={adCount} accent="amber" />
+                </div>
+              </div>
+            </div>
+            {editDisabled ? (
+              <button
+                type="button"
+                disabled
+                className="inline-flex items-center justify-center gap-2 rounded-2xl border border-[#dbe3ec] bg-[#f8fafc] px-5 py-3 text-sm font-semibold text-[#94a3b8]"
+                title="Select a campaign, ad set, and ad before editing"
+              >
+                <PencilIcon className="size-4" />
+                Edit
+              </button>
+            ) : (
+              <Link
+                href={editHref}
+                className="inline-flex items-center justify-center gap-2 rounded-2xl border border-[#cfd9e6] bg-white px-5 py-3 text-sm font-semibold text-[#0f172a] shadow-[0_8px_18px_rgba(15,23,42,0.04)] transition hover:-translate-y-0.5 hover:border-[#9db5d1] hover:bg-[#f8fbff] hover:shadow-[0_14px_26px_rgba(15,23,42,0.08)]"
+              >
+                <PencilIcon className="size-4" />
+                Edit
+              </Link>
+            )}
+          </div>
         </div>
 
         <div className="mt-5 grid gap-4 xl:grid-cols-3">
@@ -309,9 +344,9 @@ function MetaAdsPreviewWorkspace({
           />
         </div>
 
-        <div className="mt-6 rounded-[24px] border border-[#edf2f7] bg-[linear-gradient(180deg,#ffffff_0%,#fbfdff_100%)] p-4">
+        <div className="mt-5 rounded-[24px] border border-[#edf2f7] bg-[linear-gradient(180deg,#ffffff_0%,#fbfdff_100%)] p-4">
           <div className="flex items-center gap-2">
-            <h2 className="text-[1.55rem] font-semibold tracking-[-0.03em] text-[#0f172a]">
+            <h2 className="text-[1.5rem] font-semibold tracking-[-0.03em] text-[#0f172a]">
               Quick Summary
             </h2>
             <InfoIcon className="size-4 text-[#94a3b8]" />
@@ -464,25 +499,25 @@ function MetaSelectionCard({
   }
 
   return (
-    <div className="rounded-[20px] border border-[#e8eef5] bg-white p-3.5 shadow-[0_8px_22px_rgba(15,23,42,0.035)]">
-      <div className="flex items-start gap-3.5">
-        <span className={`flex size-12 shrink-0 items-center justify-center rounded-2xl ${metaAccentIconClassName(accent)}`}>
+    <div className="min-h-[150px] rounded-[24px] border border-[#e8eef5] bg-white p-5 shadow-[0_10px_26px_rgba(15,23,42,0.04)]">
+      <div className="flex items-start gap-4">
+        <span className={`flex size-14 shrink-0 items-center justify-center rounded-[18px] ${metaAccentIconClassName(accent)}`}>
           {icon}
         </span>
         <div className="min-w-0 flex-1">
-          <p className="text-sm font-semibold text-[#0f172a]">{title}</p>
+          <p className="text-[0.95rem] font-semibold text-[#0f172a]">{title}</p>
           {items.length > 0 ? (
             <button
               type="button"
               onClick={() => setOpen((current) => !current)}
-              className="mt-1 flex w-full items-start justify-between gap-3 text-left"
+              className="mt-1.5 flex w-full items-start justify-between gap-4 text-left"
               aria-expanded={open}
             >
               <span className="min-w-0">
-                <span className="block whitespace-normal break-words text-[1rem] font-medium leading-6 text-[#0f172a]">
+                <span className="block whitespace-normal break-words text-[1.15rem] font-semibold leading-7 text-[#0f172a]">
                   {selectedLabel}
                 </span>
-                <span className="mt-1 block text-xs text-[#64748b]">
+                <span className="mt-2 block text-sm text-[#64748b]">
                   {open ? "Hide options" : "Choose"}
                 </span>
               </span>
@@ -579,6 +614,8 @@ function MetaAdPreviewCard({
     companyLabel,
     campaignName,
     creative,
+    placementKey: activePlacement?.key ?? "facebookFeed",
+    placementExternalUrl: activePlacement?.publicPostUrl || activePlacement?.url || null,
     placementLabel: activePlacement?.placementLabel ?? "Facebook Feed",
   };
 
@@ -599,6 +636,8 @@ interface MetaLocalPreviewTemplateProps {
   companyLabel: string;
   campaignName: string;
   creative: PreviewAdNode["creative"] | null;
+  placementKey: string;
+  placementExternalUrl: string | null;
   placementLabel: string;
 }
 
@@ -606,8 +645,10 @@ function MetaFacebookFeedPreviewTemplate({
   companyLabel,
   campaignName,
   creative,
+  placementKey,
+  placementExternalUrl,
 }: MetaLocalPreviewTemplateProps) {
-  const model = buildMetaLocalPreviewModel(companyLabel, campaignName, creative);
+  const model = buildMetaLocalPreviewModel(companyLabel, campaignName, creative, placementKey, placementExternalUrl);
   const [textExpanded, setTextExpanded] = useState(false);
 
   return (
@@ -633,9 +674,10 @@ function MetaFacebookFeedPreviewTemplate({
       />
 
       <MetaPreviewMedia
-        imageUrl={model.imageUrl}
+        media={model.media}
         headline={model.headline}
-        className="aspect-[1/1] w-full bg-[#eef0f3]"
+        className="aspect-[1/1] w-full bg-[#000]"
+        imageClassName="h-full w-full object-contain"
       />
 
       <div className="flex items-center justify-between gap-3 border-b border-[#dadde1] bg-[#f0f2f5] px-3 py-3">
@@ -666,8 +708,10 @@ function MetaInstagramFeedPreviewTemplate({
   companyLabel,
   campaignName,
   creative,
+  placementKey,
+  placementExternalUrl,
 }: MetaLocalPreviewTemplateProps) {
-  const model = buildMetaLocalPreviewModel(companyLabel, campaignName, creative);
+  const model = buildMetaLocalPreviewModel(companyLabel, campaignName, creative, placementKey, placementExternalUrl);
   const instagramName = normalizeInstagramHandle(companyLabel);
   const [captionExpanded, setCaptionExpanded] = useState(false);
 
@@ -683,7 +727,7 @@ function MetaInstagramFeedPreviewTemplate({
       </div>
 
       <MetaPreviewMedia
-        imageUrl={model.imageUrl}
+        media={model.media}
         headline={model.headline}
         className="min-h-[260px] w-full bg-[#000]"
         imageClassName="h-auto max-h-[585px] w-full object-contain"
@@ -724,8 +768,10 @@ function MetaStoryPreviewTemplate({
   companyLabel,
   campaignName,
   creative,
+  placementKey,
+  placementExternalUrl,
 }: MetaLocalPreviewTemplateProps) {
-  const model = buildMetaLocalPreviewModel(companyLabel, campaignName, creative);
+  const model = buildMetaLocalPreviewModel(companyLabel, campaignName, creative, placementKey, placementExternalUrl);
   const instagramName = normalizeInstagramHandle(companyLabel);
   const [isPlaying, setIsPlaying] = useState(true);
   const [textExpanded, setTextExpanded] = useState(false);
@@ -733,7 +779,7 @@ function MetaStoryPreviewTemplate({
   return (
     <article className="relative mx-auto aspect-[9/16] w-full max-w-[360px] overflow-hidden rounded-[2px] bg-black font-sans text-white shadow-[0_18px_40px_rgba(15,23,42,0.16)]">
       <MetaPreviewMedia
-        imageUrl={model.imageUrl}
+        media={model.media}
         headline={model.headline}
         className="absolute inset-0 h-full w-full bg-[#dfe6dc]"
         imageClassName="h-full w-full object-cover"
@@ -842,22 +888,49 @@ function ExpandableMetaText({
   );
 }
 
+interface MetaPreviewMediaModel {
+  mediaType: "image" | "video";
+  imageUrl: string | null;
+  posterUrl: string | null;
+  externalPostUrl: string | null;
+  mediaWarning: string | null;
+}
+
 function MetaPreviewMedia({
-  imageUrl,
+  media,
   headline,
   className,
-  imageClassName = "h-full w-full object-cover",
+  imageClassName = "h-full w-full object-contain",
 }: {
-  imageUrl: string | null;
+  media: MetaPreviewMediaModel;
   headline: string;
   className: string;
   imageClassName?: string;
 }) {
+  const posterUrl = media.posterUrl || media.imageUrl;
+  const displayImageUrl = media.mediaType === "video" ? posterUrl : media.imageUrl || posterUrl;
+
   return (
     <div className={`relative overflow-hidden ${className}`}>
-      {imageUrl ? (
-        // eslint-disable-next-line @next/next/no-img-element
-        <img src={imageUrl} alt={headline} className={imageClassName} />
+      {displayImageUrl ? (
+        <>
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src={displayImageUrl} alt={headline} className={imageClassName} />
+          {media.externalPostUrl ? (
+            <a
+              href={media.externalPostUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="absolute inset-0 flex items-center justify-center bg-black/10 text-white transition hover:bg-black/20"
+              aria-label={media.mediaType === "video" ? "Open real video post" : "Open real post"}
+            >
+              <span className="flex size-16 items-center justify-center rounded-full bg-black/70 shadow-[0_12px_30px_rgba(0,0,0,0.35)] transition-transform hover:scale-105">
+                <PlayIcon className="ml-1 size-8 fill-white" />
+              </span>
+              <span className="sr-only">{media.mediaWarning ?? "Open real post"}</span>
+            </a>
+          ) : null}
+        </>
       ) : (
         <div className="flex h-full w-full items-center justify-center bg-[#eef0f3] px-6 text-center text-[#64748b]">
           <p className="text-[18px] font-semibold leading-6">{headline}</p>
@@ -890,21 +963,45 @@ function MetaAvatar({
 function buildMetaLocalPreviewModel(
   companyLabel: string,
   campaignName: string,
-  creative: PreviewAdNode["creative"] | null
+  creative: PreviewAdNode["creative"] | null,
+  placementKey: string,
+  placementExternalUrl: string | null
 ) {
   const bodyText = creative?.body || "No primary text available for this ad.";
   const headline = creative?.title?.trim() || campaignName;
   const linkUrl = creative?.linkUrl?.trim() || null;
+  const mediaType = creative?.mediaType ?? (creative?.videoSourceUrl || creative?.videoUrl ? "video" : "image");
+  const imageUrl = creative?.imageUrl?.trim() || null;
+  const posterUrl = creative?.posterUrl?.trim() || imageUrl || creative?.thumbnailUrl?.trim() || null;
+  const externalPostUrl = placementExternalUrl || getMetaPlacementPostUrl(creative, placementKey);
 
   return {
     bodyText,
     headline,
     linkUrl,
-    imageUrl: creative?.imageUrl?.trim() || creative?.thumbnailUrl?.trim() || null,
+    media: {
+      mediaType,
+      imageUrl,
+      posterUrl,
+      externalPostUrl,
+      mediaWarning: creative?.mediaWarning?.trim() || null,
+    } satisfies MetaPreviewMediaModel,
     domainLabel: getMetaDisplayDomain(linkUrl),
     callToAction: humanizeMetaCta(creative?.callToActionType) || "Book now",
     accountName: companyLabel,
   };
+}
+
+function getMetaPlacementPostUrl(creative: PreviewAdNode["creative"] | null, placementKey: string): string | null {
+  const instagramUrl = creative?.instagramPermalinkUrl?.trim() || null;
+  const facebookUrl = creative?.facebookPermalinkUrl?.trim() || null;
+  const videoUrl = creative?.videoPermalinkUrl?.trim() || creative?.videoUrl?.trim() || null;
+
+  if (placementKey === "instagramFeed" || placementKey === "story") {
+    return instagramUrl || videoUrl || facebookUrl;
+  }
+
+  return facebookUrl || videoUrl || instagramUrl;
 }
 
 function normalizeInstagramHandle(label: string): string {
@@ -2371,6 +2468,26 @@ function buildGoogleEditDraftHref(
   return `/preview/edit?${params.toString()}`;
 }
 
+function buildMetaEditDraftHref(
+  searchParams: URLSearchParams,
+  campaignId: string | null | undefined,
+  adGroupId: string | null | undefined,
+  adId: string | null | undefined
+): string {
+  const params = new URLSearchParams(searchParams.toString());
+  params.set("platform", "meta");
+  if (campaignId) {
+    params.set("campaignId", campaignId);
+  }
+  if (adGroupId) {
+    params.set("adGroupId", adGroupId);
+  }
+  if (adId) {
+    params.set("adId", adId);
+  }
+  return `/preview/edit?${params.toString()}`;
+}
+
 function detailField(label: string, value: string | null | undefined): PreviewDetailField | null {
   const normalized = value?.trim();
   if (!normalized) {
@@ -2651,6 +2768,20 @@ function GoogleMark() {
         fill
         className="object-contain"
         sizes="68px"
+      />
+    </div>
+  );
+}
+
+function MetaMark() {
+  return (
+    <div className="relative flex size-20 shrink-0 items-center justify-center overflow-hidden rounded-[22px] border border-[#dbe7f3] bg-white shadow-[0_10px_24px_rgba(15,23,42,0.06)]">
+      <Image
+        src="/MetaLogo.png"
+        alt="Meta logo"
+        fill
+        className="object-contain p-3"
+        sizes="80px"
       />
     </div>
   );

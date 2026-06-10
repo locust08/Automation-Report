@@ -157,7 +157,7 @@ export function PreviewPageClient() {
   const assetsQuery = useReportSectionQuery<PreviewReportPayload>(
     `/api/ads/${encodeURIComponent(selectedAd?.id ?? "-")}/assets`,
     previewQueryString,
-    hasAccountId && Boolean(selectedAd) && previewVisible,
+    hasAccountId && Boolean(selectedAd) && previewVisible && Boolean(previewQuery.data),
     "Unable to load creative assets."
   );
   const data =
@@ -284,6 +284,17 @@ export function PreviewPageClient() {
 
   if (showReadyState) {
     return <ReportSuccessScreen kind="preview" fullPage />;
+  }
+
+  if (hasAccountId && campaignsQuery.loading && !campaignsQuery.data) {
+    return (
+      <ReportLoadingState
+        kind="preview"
+        message="Loading active campaigns..."
+        fullPage
+        onRetry={campaignsQuery.retry}
+      />
+    );
   }
 
   return (

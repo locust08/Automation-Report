@@ -152,6 +152,19 @@ interface MetaCreativeRow {
   };
 }
 
+interface MetaVideoRow {
+  id?: string;
+  source?: string;
+  permalink_url?: string;
+  picture?: string;
+  thumbnails?: {
+    data?: Array<{
+      uri?: string;
+      is_preferred?: boolean;
+    }>;
+  };
+}
+
 interface MetaInsightRow {
   campaign_id?: string;
   campaign_name?: string;
@@ -604,15 +617,21 @@ export async function fetchMetaCreativePerformanceRows({
     const nextImpressions = (existing?.impressions ?? 0) + impressions;
     const nextConversions = (existing?.conversions ?? 0) + resultMetric.value;
     const mediaType =
-      creative?.videoUrl || creative?.objectType?.toUpperCase().includes("VIDEO") ? "video" : "image";
+      creative?.mediaType ??
+      (creative?.videoUrl || creative?.objectType?.toUpperCase().includes("VIDEO") ? "video" : "image");
 
     rowsByAdId.set(adId, {
       id: existing?.id ?? `${accountId}:${adId}`,
       finalUrl,
       mediaType,
-      imageUrl: creative?.imageUrl?.trim() || creative?.thumbnailUrl?.trim() || null,
-      videoUrl: creative?.videoUrl?.trim() || null,
-      thumbnailUrl: creative?.thumbnailUrl?.trim() || creative?.imageUrl?.trim() || null,
+      imageUrl: creative?.imageUrl?.trim() || creative?.posterUrl?.trim() || creative?.thumbnailUrl?.trim() || null,
+      videoUrl: creative?.videoUrl?.trim() || creative?.videoPermalinkUrl?.trim() || null,
+      videoId: creative?.videoId?.trim() || null,
+      videoSourceUrl: creative?.videoSourceUrl?.trim() || null,
+      videoPermalinkUrl: creative?.videoPermalinkUrl?.trim() || null,
+      thumbnailUrl: creative?.thumbnailUrl?.trim() || creative?.posterUrl?.trim() || creative?.imageUrl?.trim() || null,
+      posterUrl: creative?.posterUrl?.trim() || creative?.imageUrl?.trim() || creative?.thumbnailUrl?.trim() || null,
+      mediaWarning: creative?.mediaWarning?.trim() || null,
       campaignId: insight.campaign_id?.trim() || ad?.campaign_id?.trim() || null,
       campaignName: insight.campaign_name?.trim() || "Meta campaign",
       adSetId: insight.adset_id?.trim() || ad?.adset_id?.trim() || null,
@@ -1235,6 +1254,8 @@ async function fetchMetaCreativeCollection(input: {
     }
   }
 
+  await enrichMetaVideoCreativeAssets(input.accessToken, assets);
+
   return assets;
 }
 
@@ -1273,6 +1294,108 @@ async function fetchMetaCreativeChunk(input: {
   }
 
   return json;
+}
+
+async function enrichMetaVideoCreativeAssets(
+  accessToken: string,
+  assets: Map<string, PreviewCreativeAsset>
+): Promise<void> {
+  const videoIds = Array.from(
+    new Set(
+      Array.from(assets.values())
+        .map((asset) => asset.videoId?.trim())
+        .filter(Boolean) as string[]
+    )
+  );
+
+  if (videoIds.length === 0) {
+    return;
+  }
+
+  const videoDetails = await fetchMetaVideoDetailsCollection({ accessToken, videoIds }).catch((error) => {
+    console.warn(
+      `[meta-preview] video source fields unavailable; using poster fallback. message="${escapeLogMessage(
+        error instanceof Error ? error.message : String(error)
+      )}"`
+    );
+    return new Map<string, MetaVideoRow>();
+  });
+
+  assets.forEach((asset) => {
+    if (asset.mediaType !== "video" || !asset.videoId) {
+      return;
+    }
+
+    const video = videoDetails.get(asset.videoId);
+    const videoSourceUrl = video?.source?.trim() || null;
+    const videoPermalinkUrl = video?.permalink_url?.trim() || asset.videoPermalinkUrl || asset.videoUrl || null;
+    const posterUrl = pickMetaVideoPosterUrl(video, asset.posterUrl || asset.imageUrl || asset.thumbnailUrl || null);
+
+    asset.videoSourceUrl = videoSourceUrl;
+    asset.videoPermalinkUrl = videoPermalinkUrl;
+    asset.videoUrl = videoSourceUrl || videoPermalinkUrl;
+    asset.posterUrl = posterUrl;
+    asset.imageUrl = asset.imageUrl || posterUrl;
+    asset.thumbnailUrl = asset.thumbnailUrl || posterUrl;
+    asset.mediaWarning = videoSourceUrl
+      ? null
+      : "Meta did not expose a direct playable video source for this creative. Open the Meta post/video to play it.";
+  });
+}
+
+async function fetchMetaVideoDetailsCollection(input: {
+  accessToken: string;
+  videoIds: string[];
+}): Promise<Map<string, MetaVideoRow>> {
+  const details = new Map<string, MetaVideoRow>();
+  const chunks = chunkItems(input.videoIds.filter(Boolean), 25);
+
+  for (const chunk of chunks) {
+    const params = new URLSearchParams({
+      access_token: input.accessToken,
+      ids: chunk.join(","),
+      fields: "id,source,permalink_url,picture,thumbnails{uri,is_preferred}",
+    });
+    const response = await fetch(`${META_GRAPH_API_BASE_URL}/?${params.toString()}`, {
+      cache: "no-store",
+    });
+    const parsed = await parseMetaResponse<Record<string, MetaVideoRow | { error?: MetaApiErrorShape }>>(
+      response
+    );
+
+    if (parsed.parseError) {
+      throw new MetaApiError(
+        `Meta API returned non-JSON response (status ${parsed.status}, content-type ${parsed.contentType || "unknown"}). ${parsed.parseError}. Response starts with: ${parsed.textSnippet}`
+      );
+    }
+
+    const json = (parsed.json ?? {}) as Record<string, MetaVideoRow | { error?: MetaApiErrorShape }> & {
+      error?: MetaApiErrorShape;
+    };
+    if (!parsed.ok && json.error) {
+      throw new MetaApiError(
+        json.error.message ?? `Meta API video request failed with status ${parsed.status}.`,
+        json.error.code,
+        json.error.error_subcode
+      );
+    }
+
+    for (const videoId of chunk) {
+      const row = json[videoId];
+      if (!row || isMetaErrorRow(row)) {
+        continue;
+      }
+      details.set(videoId, row as MetaVideoRow);
+    }
+  }
+
+  return details;
+}
+
+function pickMetaVideoPosterUrl(video: MetaVideoRow | undefined, fallback: string | null): string | null {
+  const preferred = video?.thumbnails?.data?.find((thumbnail) => thumbnail.is_preferred && thumbnail.uri?.trim());
+  const first = video?.thumbnails?.data?.find((thumbnail) => thumbnail.uri?.trim());
+  return preferred?.uri?.trim() || first?.uri?.trim() || video?.picture?.trim() || fallback;
 }
 
 async function fetchMetaPreviewLinks(input: {
@@ -1824,14 +1947,25 @@ function mapCreativeAsset(row: MetaCreativeRow): PreviewCreativeAsset {
   const storyLink = row.object_story_spec?.link_data?.link?.trim();
   const videoLink = row.object_story_spec?.video_data?.call_to_action?.value?.link?.trim();
   const videoId = row.object_story_spec?.video_data?.video_id?.trim();
-  const imageUrl =
-    row.image_url?.trim() ||
-    row.thumbnail_url?.trim() ||
+  const isVideo = Boolean(videoId || row.object_type?.toUpperCase().includes("VIDEO"));
+  const primaryImageUrl = row.image_url?.trim() || null;
+  const videoPosterUrl =
     row.object_story_spec?.video_data?.image_url?.trim() ||
+    primaryImageUrl ||
     row.object_story_spec?.video_data?.thumbnail_url?.trim() ||
+    row.thumbnail_url?.trim() ||
+    null;
+  const imageUrl = isVideo ? videoPosterUrl : primaryImageUrl || row.thumbnail_url?.trim() || null;
+  const thumbnailUrl =
+    row.thumbnail_url?.trim() ||
+    row.object_story_spec?.video_data?.thumbnail_url?.trim() ||
+    videoPosterUrl ||
+    imageUrl ||
     null;
   const effectiveObjectStoryId = row.effective_object_story_id?.trim() || null;
   const instagramPermalinkUrl = row.instagram_permalink_url?.trim() || null;
+  const facebookPermalinkUrl = effectiveObjectStoryId ? `https://www.facebook.com/${effectiveObjectStoryId}` : null;
+  const videoPermalinkUrl = videoId ? `https://www.facebook.com/watch/?v=${encodeURIComponent(videoId)}` : null;
 
   return {
     id: row.id?.trim() || "",
@@ -1847,9 +1981,17 @@ function mapCreativeAsset(row: MetaCreativeRow): PreviewCreativeAsset {
       row.object_story_spec?.video_data?.message?.trim() ||
       null,
     description: row.object_story_spec?.link_data?.description?.trim() || null,
+    mediaType: isVideo ? "video" : "image",
     imageUrl,
-    videoUrl: videoId ? `https://www.facebook.com/watch/?v=${encodeURIComponent(videoId)}` : null,
-    thumbnailUrl: row.thumbnail_url?.trim() || row.object_story_spec?.video_data?.thumbnail_url?.trim() || null,
+    videoUrl: videoPermalinkUrl,
+    videoId: videoId || null,
+    videoSourceUrl: null,
+    videoPermalinkUrl,
+    thumbnailUrl,
+    posterUrl: isVideo ? videoPosterUrl : imageUrl,
+    mediaWarning: isVideo
+      ? "Meta did not expose a direct playable video source for this creative yet."
+      : null,
     linkUrl: storyLink || videoLink || null,
     callToActionType:
       row.object_story_spec?.link_data?.call_to_action?.type?.trim() ||
@@ -1859,18 +2001,27 @@ function mapCreativeAsset(row: MetaCreativeRow): PreviewCreativeAsset {
     effectiveObjectStoryId,
     instagramPermalinkUrl,
     effectiveInstagramMediaId: row.effective_instagram_media_id?.trim() || null,
-    facebookPermalinkUrl: effectiveObjectStoryId ? `https://www.facebook.com/${effectiveObjectStoryId}` : null,
+    facebookPermalinkUrl,
   };
 }
 
 function isMetaCreativeRow(
   value: MetaCreativeRow | { error?: MetaApiErrorShape }
 ): value is MetaCreativeRow {
-  return !("error" in value);
+  return !isMetaErrorRow(value);
+}
+
+function isMetaErrorRow(value: unknown): value is { error: MetaApiErrorShape } {
+  return Boolean(
+    value &&
+      typeof value === "object" &&
+      "error" in value &&
+      (value as { error?: MetaApiErrorShape }).error
+  );
 }
 
 function isMetaAdSetRow(value: MetaAdSetRow | { error?: MetaApiErrorShape }): value is MetaAdSetRow {
-  return !("error" in value);
+  return !isMetaErrorRow(value);
 }
 
 function buildVisiblePreviewAdSets(ads: MetaAdRow[], adSets: MetaAdSetRow[]): MetaAdSetRow[] {

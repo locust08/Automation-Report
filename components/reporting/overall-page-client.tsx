@@ -155,6 +155,17 @@ export function OverallPageClient({
     return <ReportSuccessScreen kind="overall" fullPage />;
   }
 
+  if (hasAccountId && !splitByAccount && summaryQuery.loading && !summaryQuery.data) {
+    return (
+      <ReportLoadingState
+        kind="overall"
+        message="Loading summary metrics..."
+        fullPage
+        onRetry={summaryQuery.retry}
+      />
+    );
+  }
+
   return (
     <ReportShell
       title={title}

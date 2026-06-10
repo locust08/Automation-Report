@@ -133,6 +133,7 @@ function AdsEditDraftWorkspace({
   const changeSet = useMemo(() => buildAdsChangeSet(originalData, draftData), [draftData, originalData]);
   const dirtyPaths = useMemo(() => new Set(changeSet.changes.map((change) => change.path)), [changeSet]);
   const saveDisabled = changeSet.changes.length === 0 || !validation.valid || syncState === "syncing" || syncState === "validating";
+  const isMetaDraft = draftData.locked.platform === "meta";
 
   function updateCampaignSetting(key: keyof AdsDraftData["campaignSettings"], value: string) {
     setDraftData((current) => ({
@@ -145,6 +146,13 @@ function AdsEditDraftWorkspace({
     setDraftData((current) => ({
       ...current,
       adContent: { ...current.adContent, [key]: value },
+    }));
+  }
+
+  function updateMetaCreative(key: keyof AdsDraftData["metaCreative"], value: string) {
+    setDraftData((current) => ({
+      ...current,
+      metaCreative: { ...current.metaCreative, [key]: value },
     }));
   }
 
@@ -224,12 +232,12 @@ function AdsEditDraftWorkspace({
         <LockedFieldsPanel draftData={draftData} />
         <StatusPanel syncState={syncState} validation={validation} changeSet={changeSet} message={resultMessage} warnings={resultWarnings} error={syncError} />
 
-        <DraftSection title="Campaign Settings" description="Editable campaign/ad group labels and delivery settings. Locked identifiers and historical metrics are shown above only.">
+        <DraftSection title={isMetaDraft ? "Campaign & Ad Set Settings" : "Campaign Settings"} description={isMetaDraft ? "Editable campaign, ad set, and ad labels plus delivery context. Locked identifiers and historical metrics are shown above only." : "Editable campaign/ad group labels and delivery settings. Locked identifiers and historical metrics are shown above only."}>
           <div className="grid gap-4 md:grid-cols-2">
             <DraftInput label="Campaign name" dirty={dirtyPaths.has("campaignSettings.campaignName")} value={draftData.campaignSettings.campaignName} onChange={(value) => updateCampaignSetting("campaignName", value)} />
             <DraftInput label="Campaign status" dirty={dirtyPaths.has("campaignSettings.campaignStatus")} value={draftData.campaignSettings.campaignStatus} onChange={(value) => updateCampaignSetting("campaignStatus", value)} />
-            <DraftInput label="Ad group name" dirty={dirtyPaths.has("campaignSettings.adGroupName")} value={draftData.campaignSettings.adGroupName} onChange={(value) => updateCampaignSetting("adGroupName", value)} />
-            <DraftInput label="Ad group status" dirty={dirtyPaths.has("campaignSettings.adGroupStatus")} value={draftData.campaignSettings.adGroupStatus} onChange={(value) => updateCampaignSetting("adGroupStatus", value)} />
+            <DraftInput label={isMetaDraft ? "Ad set name" : "Ad group name"} dirty={dirtyPaths.has("campaignSettings.adGroupName")} value={draftData.campaignSettings.adGroupName} onChange={(value) => updateCampaignSetting("adGroupName", value)} />
+            <DraftInput label={isMetaDraft ? "Ad set status" : "Ad group status"} dirty={dirtyPaths.has("campaignSettings.adGroupStatus")} value={draftData.campaignSettings.adGroupStatus} onChange={(value) => updateCampaignSetting("adGroupStatus", value)} />
             <DraftInput label="Ad name" dirty={dirtyPaths.has("campaignSettings.adName")} value={draftData.campaignSettings.adName} onChange={(value) => updateCampaignSetting("adName", value)} />
             <DraftInput label="Ad status" dirty={dirtyPaths.has("campaignSettings.adStatus")} value={draftData.campaignSettings.adStatus} onChange={(value) => updateCampaignSetting("adStatus", value)} />
             <DraftInput label="Budget" dirty={dirtyPaths.has("campaignSettings.budget")} value={draftData.campaignSettings.budget} onChange={(value) => updateCampaignSetting("budget", value)} />
@@ -241,78 +249,95 @@ function AdsEditDraftWorkspace({
           </div>
         </DraftSection>
 
-        <DraftSection title="Ad Content" description="Changing copy, URLs, or paths may send ads back into review before serving.">
-          <div className="space-y-5">
-            <DraftInput label="Final URL" dirty={dirtyPaths.has("adContent.finalUrl")} value={draftData.adContent.finalUrl} onChange={(value) => updateAdContent("finalUrl", value)} />
-            <DraftInput
-              label="Display path parts"
-              dirty={dirtyPaths.has("adContent.displayPathParts")}
-              value={draftData.adContent.displayPathParts.join(" / ")}
-              onChange={(value) => updateAdContent("displayPathParts", value.split("/").map((part) => part.trim()).filter(Boolean))}
-            />
-            <TextAssetEditor
-              title="Headlines"
-              dirty={dirtyPaths.has("adContent.headlines")}
-              values={draftData.adContent.headlines.map((headline) => headline.text)}
-              maxItems={15}
-              onChange={(values) => updateAdContent("headlines", values.map((text) => ({ text })))}
-            />
-            <TextAssetEditor
-              title="Descriptions"
-              dirty={dirtyPaths.has("adContent.descriptions")}
-              values={draftData.adContent.descriptions.map((description) => description.text)}
-              maxItems={4}
-              onChange={(values) => updateAdContent("descriptions", values.map((text) => ({ text })))}
-            />
-          </div>
-        </DraftSection>
+        {draftData.locked.platform === "meta" ? (
+          <DraftSection title="Meta Creative" description="Changing Meta copy, CTA, URL, or image creates a replacement creative and may send the ad back through review.">
+            <div className="space-y-5">
+              <DraftTextarea label="Primary text" dirty={dirtyPaths.has("metaCreative.primaryText")} value={draftData.metaCreative.primaryText} onChange={(value) => updateMetaCreative("primaryText", value)} />
+              <div className="grid gap-4 md:grid-cols-2">
+                <DraftInput label="Headline" dirty={dirtyPaths.has("metaCreative.headline")} value={draftData.metaCreative.headline} onChange={(value) => updateMetaCreative("headline", value)} />
+                <DraftInput label="Call to action" dirty={dirtyPaths.has("metaCreative.callToAction")} value={draftData.metaCreative.callToAction} onChange={(value) => updateMetaCreative("callToAction", value)} />
+                <DraftInput label="Destination URL" dirty={dirtyPaths.has("metaCreative.finalUrl")} value={draftData.metaCreative.finalUrl} onChange={(value) => updateMetaCreative("finalUrl", value)} />
+                <DraftInput label="Image URL" dirty={dirtyPaths.has("metaCreative.imageUrl")} value={draftData.metaCreative.imageUrl} onChange={(value) => updateMetaCreative("imageUrl", value)} />
+              </div>
+              <DraftTextarea label="Description" dirty={dirtyPaths.has("metaCreative.description")} value={draftData.metaCreative.description} onChange={(value) => updateMetaCreative("description", value)} />
+            </div>
+          </DraftSection>
+        ) : (
+          <>
+            <DraftSection title="Ad Content" description="Changing copy, URLs, or paths may send ads back into review before serving.">
+              <div className="space-y-5">
+                <DraftInput label="Final URL" dirty={dirtyPaths.has("adContent.finalUrl")} value={draftData.adContent.finalUrl} onChange={(value) => updateAdContent("finalUrl", value)} />
+                <DraftInput
+                  label="Display path parts"
+                  dirty={dirtyPaths.has("adContent.displayPathParts")}
+                  value={draftData.adContent.displayPathParts.join(" / ")}
+                  onChange={(value) => updateAdContent("displayPathParts", value.split("/").map((part) => part.trim()).filter(Boolean))}
+                />
+                <TextAssetEditor
+                  title="Headlines"
+                  dirty={dirtyPaths.has("adContent.headlines")}
+                  values={draftData.adContent.headlines.map((headline) => headline.text)}
+                  maxItems={15}
+                  onChange={(values) => updateAdContent("headlines", values.map((text) => ({ text })))}
+                />
+                <TextAssetEditor
+                  title="Descriptions"
+                  dirty={dirtyPaths.has("adContent.descriptions")}
+                  values={draftData.adContent.descriptions.map((description) => description.text)}
+                  maxItems={4}
+                  onChange={(values) => updateAdContent("descriptions", values.map((text) => ({ text })))}
+                />
+              </div>
+            </DraftSection>
 
-        <DraftSection title="Keywords" description="Edit keyword text as one keyword per line. Sync sends only the changed keyword collection.">
-          <DraftTextarea
-            label="Keywords"
-            dirty={dirtyPaths.has("keywords")}
-            value={draftData.keywords.join("\n")}
-            onChange={(value) => setDraftData((current) => ({ ...current, keywords: lines(value) }))}
-          />
-        </DraftSection>
+            <DraftSection title="Keywords" description="Edit keyword text as one keyword per line. Sync sends only the changed keyword collection.">
+              <DraftTextarea
+                label="Keywords"
+                dirty={dirtyPaths.has("keywords")}
+                value={draftData.keywords.join("\n")}
+                onChange={(value) => setDraftData((current) => ({ ...current, keywords: lines(value) }))}
+              />
+            </DraftSection>
 
-        <DraftSection title="Assets" description="Edit image URL metadata, business name, and logo URL as draft-only values until sync.">
-          <div className="grid gap-4 md:grid-cols-2">
-            <DraftInput label="Business name" dirty={dirtyPaths.has("assets.businessName")} value={draftData.assets.businessName} onChange={(value) => updateAssets("businessName", value)} />
-            <DraftInput label="Business logo URL" dirty={dirtyPaths.has("assets.businessLogoUrl")} value={draftData.assets.businessLogoUrl} onChange={(value) => updateAssets("businessLogoUrl", value)} />
-          </div>
-          <DraftTextarea
-            label="Image URLs"
-            dirty={dirtyPaths.has("assets.images")}
-            value={draftData.assets.images.map((image) => image.url).join("\n")}
-            onChange={(value) =>
-              setDraftData((current) => ({
-                ...current,
-                assets: {
-                  ...current.assets,
-                  images: lines(value).map((url, index) => ({ id: current.assets.images[index]?.id ?? `draft-image-${index + 1}`, url, alt: current.assets.images[index]?.alt ?? `Draft image ${index + 1}` })),
-                },
-              }))
-            }
-          />
-        </DraftSection>
+            <DraftSection title="Assets" description="Edit image URL metadata, business name, and logo URL as draft-only values until sync.">
+              <div className="grid gap-4 md:grid-cols-2">
+                <DraftInput label="Business name" dirty={dirtyPaths.has("assets.businessName")} value={draftData.assets.businessName} onChange={(value) => updateAssets("businessName", value)} />
+                <DraftInput label="Business logo URL" dirty={dirtyPaths.has("assets.businessLogoUrl")} value={draftData.assets.businessLogoUrl} onChange={(value) => updateAssets("businessLogoUrl", value)} />
+              </div>
+              <DraftTextarea
+                label="Image URLs"
+                dirty={dirtyPaths.has("assets.images")}
+                value={draftData.assets.images.map((image) => image.url).join("\n")}
+                onChange={(value) =>
+                  setDraftData((current) => ({
+                    ...current,
+                    assets: {
+                      ...current.assets,
+                      images: lines(value).map((url, index) => ({ id: current.assets.images[index]?.id ?? `draft-image-${index + 1}`, url, alt: current.assets.images[index]?.alt ?? `Draft image ${index + 1}` })),
+                    },
+                  }))
+                }
+              />
+            </DraftSection>
 
-        <DraftSection title="Site Links" description="Edit sitelinks as rows in the format Link text | Description 1 | Description 2 | Final URL.">
-          <DraftTextarea
-            label="Site links"
-            dirty={dirtyPaths.has("sitelinks")}
-            value={draftData.sitelinks.map((item) => [item.linkText, item.description1 ?? "", item.description2 ?? "", item.finalUrl ?? ""].join(" | ")).join("\n")}
-            onChange={(value) =>
-              setDraftData((current) => ({
-                ...current,
-                sitelinks: lines(value).map((line, index) => {
-                  const [linkText = "", description1 = "", description2 = "", finalUrl = ""] = line.split("|").map((part) => part.trim());
-                  return { id: current.sitelinks[index]?.id ?? `draft-sitelink-${index + 1}`, linkText, description1, description2, finalUrl };
-                }),
-              }))
-            }
-          />
-        </DraftSection>
+            <DraftSection title="Site Links" description="Edit sitelinks as rows in the format Link text | Description 1 | Description 2 | Final URL.">
+              <DraftTextarea
+                label="Site links"
+                dirty={dirtyPaths.has("sitelinks")}
+                value={draftData.sitelinks.map((item) => [item.linkText, item.description1 ?? "", item.description2 ?? "", item.finalUrl ?? ""].join(" | ")).join("\n")}
+                onChange={(value) =>
+                  setDraftData((current) => ({
+                    ...current,
+                    sitelinks: lines(value).map((line, index) => {
+                      const [linkText = "", description1 = "", description2 = "", finalUrl = ""] = line.split("|").map((part) => part.trim());
+                      return { id: current.sitelinks[index]?.id ?? `draft-sitelink-${index + 1}`, linkText, description1, description2, finalUrl };
+                    }),
+                  }))
+                }
+              />
+            </DraftSection>
+          </>
+        )}
       </div>
 
       {reviewOpen ? (
