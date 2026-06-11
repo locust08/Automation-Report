@@ -1,7 +1,7 @@
 import { runMonthlyReportJob } from "@/src/lib/cron/run-monthly-report-job";
 
 export const runtime = "nodejs";
-export const maxDuration = 900;
+export const maxDuration = 300;
 
 type ManualReportType = "monthly" | "advanced" | "biweekly";
 
