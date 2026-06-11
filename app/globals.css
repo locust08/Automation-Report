@@ -311,6 +311,15 @@
   }
 }
 
+@keyframes metaStoryProgress {
+  0% {
+    transform: scaleX(0);
+  }
+  100% {
+    transform: scaleX(1);
+  }
+}
+
 @keyframes google-preview-slide-previous {
   0% {
     opacity: 0;

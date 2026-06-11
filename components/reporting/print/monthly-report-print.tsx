@@ -66,7 +66,7 @@ export function MonthlyReportPrint({
 
         <footer className={styles.footer}>
           {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src="/locus-t-logo-25.png" alt="LOCUS-T logo" width={220} height={40} />
+          <img src="/icon-192.png" alt="Automation Report logo" width={40} height={40} />
           <span>LOCUS-T SDN BHD</span>
         </footer>
       </div>

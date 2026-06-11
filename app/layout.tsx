@@ -15,9 +15,13 @@ const jetbrainsMono = JetBrains_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Automation Reporting System",
+  title: "Automation Report",
   description:
     "Multi-page automated reporting dashboard connected to Meta Ads Manager and Google Ads Manager data.",
+  icons: {
+    icon: "/favicon.ico",
+    apple: "/apple-touch-icon.png",
+  },
 };
 
 export default function RootLayout({
