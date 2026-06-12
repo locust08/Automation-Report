@@ -57,6 +57,15 @@ interface GoogleFetchInput {
   endDate: string;
 }
 
+type GooglePreviewStage = "campaigns" | "ad-groups" | "ads" | "preview" | "assets" | "full";
+
+interface GooglePreviewSelection {
+  platform: "meta" | "google" | null;
+  campaignId: string | null;
+  adGroupId: string | null;
+  adId: string | null;
+}
+
 interface GoogleAccountNameInput {
   customerId: string;
   apiVersion: string;
@@ -1926,8 +1935,19 @@ export async function fetchGooglePreviewHierarchy({
 }
 
 export async function fetchGooglePreviewData(
-  input: GoogleFetchInput & { accessPath?: string | null }
+  input: GoogleFetchInput & {
+    accessPath?: string | null;
+    previewStage?: GooglePreviewStage;
+    previewSelection?: GooglePreviewSelection;
+  }
 ): Promise<GooglePreviewFetchResult> {
+  const previewStage = input.previewStage ?? "full";
+  const previewSelection = input.previewSelection ?? {
+    platform: null,
+    campaignId: null,
+    adGroupId: null,
+    adId: null,
+  };
   const context = await resolveGooglePreviewAccountContext({
     customerId: input.customerId,
     apiVersion: input.apiVersion,
@@ -1955,41 +1975,100 @@ export async function fetchGooglePreviewData(
       {
         label: "preview-campaigns",
         required: true,
-        queries: buildGooglePreviewCampaignQueries(input.startDate, input.endDate),
+        queries: buildGooglePreviewCampaignQueries(input.startDate, input.endDate, previewSelection),
       },
       context,
       input
     );
     diagnostics.blocks.push(campaignsBlock.diagnostic);
 
+    if (previewStage === "campaigns") {
+      return {
+        data: buildGooglePreviewHierarchyData({
+          customerId: context.customerId,
+          campaignResults: campaignsBlock.results,
+          adGroupResults: [],
+          adResults: [],
+          keywordResults: [],
+          adGroupAssetResults: [],
+          campaignAssetResults: [],
+          customerAssetResults: [],
+          campaignCriterionResults: [],
+        }),
+        warnings: [],
+        fatalError: null,
+        diagnostics,
+      };
+    }
+
     const adGroupsBlock = await runGooglePreviewBlock(
       {
         label: "preview-ad-groups",
         required: true,
-        queries: buildGooglePreviewAdGroupQueries(input.startDate, input.endDate),
+        queries: buildGooglePreviewAdGroupQueries(input.startDate, input.endDate, previewSelection),
       },
       context,
       input
     );
     diagnostics.blocks.push(adGroupsBlock.diagnostic);
 
+    if (previewStage === "ad-groups") {
+      return {
+        data: buildGooglePreviewHierarchyData({
+          customerId: context.customerId,
+          campaignResults: campaignsBlock.results,
+          adGroupResults: adGroupsBlock.results,
+          adResults: [],
+          keywordResults: [],
+          adGroupAssetResults: [],
+          campaignAssetResults: [],
+          customerAssetResults: [],
+          campaignCriterionResults: [],
+        }),
+        warnings: [],
+        fatalError: null,
+        diagnostics,
+      };
+    }
+
     const adsBlock = await runGooglePreviewBlock(
       {
         label: "preview-ads",
         required: true,
-        queries: buildGooglePreviewAdQueries(input.startDate, input.endDate),
+        queries: buildGooglePreviewAdQueries(input.startDate, input.endDate, previewSelection),
       },
       context,
       input
     );
     diagnostics.blocks.push(adsBlock.diagnostic);
 
+    if (previewStage === "ads") {
+      return {
+        data: buildGooglePreviewHierarchyData({
+          customerId: context.customerId,
+          campaignResults: campaignsBlock.results,
+          adGroupResults: adGroupsBlock.results,
+          adResults: adsBlock.results,
+          keywordResults: [],
+          adGroupAssetResults: [],
+          campaignAssetResults: [],
+          customerAssetResults: [],
+          campaignCriterionResults: [],
+        }),
+        warnings: [],
+        fatalError: null,
+        diagnostics,
+      };
+    }
+
+    const includeAssetBlocks = previewStage === "assets" || previewStage === "full";
+
     const optionalResults = await Promise.all([
       runGoogleOptionalPreviewBlock(
         {
           label: "preview-keywords",
           required: false,
-          queries: buildGooglePreviewKeywordQueries(input.startDate, input.endDate),
+          queries: buildGooglePreviewKeywordQueries(input.startDate, input.endDate, previewSelection),
         },
         context,
         input
@@ -1998,7 +2077,7 @@ export async function fetchGooglePreviewData(
         {
           label: "preview-ad-group-assets",
           required: false,
-          queries: buildGooglePreviewAdGroupAssetQueries(),
+          queries: includeAssetBlocks ? buildGooglePreviewAdGroupAssetQueries(previewSelection) : [],
         },
         context,
         input
@@ -2007,7 +2086,7 @@ export async function fetchGooglePreviewData(
         {
           label: "preview-campaign-assets",
           required: false,
-          queries: buildGooglePreviewCampaignAssetQueries(),
+          queries: includeAssetBlocks ? buildGooglePreviewCampaignAssetQueries(previewSelection) : [],
         },
         context,
         input
@@ -2016,7 +2095,7 @@ export async function fetchGooglePreviewData(
         {
           label: "preview-customer-assets",
           required: false,
-          queries: buildGooglePreviewCustomerAssetQueries(),
+          queries: includeAssetBlocks ? buildGooglePreviewCustomerAssetQueries() : [],
         },
         context,
         input
@@ -2025,7 +2104,7 @@ export async function fetchGooglePreviewData(
         {
           label: "preview-campaign-locations",
           required: false,
-          queries: buildGooglePreviewCampaignLocationQueries(),
+          queries: includeAssetBlocks ? buildGooglePreviewCampaignLocationQueries(previewSelection) : [],
         },
         context,
         input
@@ -2034,7 +2113,7 @@ export async function fetchGooglePreviewData(
         {
           label: "preview-campaign-languages",
           required: false,
-          queries: buildGooglePreviewCampaignLanguageQueries(),
+          queries: includeAssetBlocks ? buildGooglePreviewCampaignLanguageQueries(previewSelection) : [],
         },
         context,
         input
@@ -3706,6 +3785,24 @@ async function runGoogleOptionalPreviewBlock(
   warnings: GooglePreviewWarning[];
   diagnostic: GooglePreviewBlockDiagnostic;
 }> {
+  if (block.queries.length === 0) {
+    return {
+      results: [],
+      warnings: [],
+      diagnostic: {
+        label: block.label,
+        required: block.required,
+        status: "empty",
+        customerId: context.customerId,
+        loginCustomerId: context.loginCustomerId,
+        rowCount: 0,
+        requestId: null,
+        errorCode: null,
+        message: null,
+      },
+    };
+  }
+
   const gaql = block.queries[0];
   logGooglePreviewInfo(
     `[google-preview] label=${block.label} required=${block.required} accountId=${context.customerId} customerId=${context.customerId} loginCustomerId=${context.loginCustomerId ?? "(none)"} gaql=${JSON.stringify(compactWhitespace(gaql))}`
@@ -3794,6 +3891,24 @@ async function runGooglePreviewCampaignLocationBlock(
   warnings: GooglePreviewWarning[];
   diagnostic: GooglePreviewBlockDiagnostic;
 }> {
+  if (block.queries.length === 0) {
+    return {
+      results: [],
+      warnings: [],
+      diagnostic: {
+        label: block.label,
+        required: block.required,
+        status: "empty",
+        customerId: context.customerId,
+        loginCustomerId: context.loginCustomerId,
+        rowCount: 0,
+        requestId: null,
+        errorCode: null,
+        message: null,
+      },
+    };
+  }
+
   const gaql = block.queries[0];
   logGooglePreviewInfo(
     `[google-preview] label=${block.label} required=${block.required} accountId=${context.customerId} customerId=${context.customerId} loginCustomerId=${context.loginCustomerId ?? "(none)"} gaql=${JSON.stringify(compactWhitespace(gaql))}`
@@ -5124,9 +5239,14 @@ function normalizeCampaignType(channelType: string): string {
     .replace(/\b\w/g, (segment) => segment.toUpperCase());
 }
 
-function buildGooglePreviewCampaignQueries(_startDate: string, _endDate: string): string[] {
+function buildGooglePreviewCampaignQueries(
+  _startDate: string,
+  _endDate: string,
+  selection?: GooglePreviewSelection
+): string[] {
   void _startDate;
   void _endDate;
+  const selectionFilters = buildGooglePreviewSelectionFilters(selection, "campaign");
   return [
     `
       SELECT
@@ -5145,14 +5265,20 @@ function buildGooglePreviewCampaignQueries(_startDate: string, _endDate: string)
         campaign_budget.amount_micros
       FROM campaign
       WHERE campaign.status = 'ENABLED'
+        ${selectionFilters}
       ORDER BY campaign.name
     `,
   ];
 }
 
-function buildGooglePreviewAdGroupQueries(_startDate: string, _endDate: string): string[] {
+function buildGooglePreviewAdGroupQueries(
+  _startDate: string,
+  _endDate: string,
+  selection?: GooglePreviewSelection
+): string[] {
   void _startDate;
   void _endDate;
+  const selectionFilters = buildGooglePreviewSelectionFilters(selection, "ad-group");
   return [
     `
       SELECT
@@ -5165,14 +5291,20 @@ function buildGooglePreviewAdGroupQueries(_startDate: string, _endDate: string):
       FROM ad_group
       WHERE campaign.status = 'ENABLED'
         AND ad_group.status != 'REMOVED'
+        ${selectionFilters}
       ORDER BY campaign.id, ad_group.name
     `,
   ];
 }
 
-function buildGooglePreviewAdQueries(_startDate: string, _endDate: string): string[] {
+function buildGooglePreviewAdQueries(
+  _startDate: string,
+  _endDate: string,
+  selection?: GooglePreviewSelection
+): string[] {
   void _startDate;
   void _endDate;
+  const selectionFilters = buildGooglePreviewSelectionFilters(selection, "ad");
   return [
     `
       SELECT
@@ -5193,14 +5325,20 @@ function buildGooglePreviewAdQueries(_startDate: string, _endDate: string): stri
       WHERE campaign.status = 'ENABLED'
         AND ad_group.status != 'REMOVED'
         AND ad_group_ad.status != 'REMOVED'
+        ${selectionFilters}
       ORDER BY campaign.id, ad_group.id, ad_group_ad.ad.id
     `,
   ];
 }
 
-function buildGooglePreviewKeywordQueries(_startDate: string, _endDate: string): string[] {
+function buildGooglePreviewKeywordQueries(
+  _startDate: string,
+  _endDate: string,
+  selection?: GooglePreviewSelection
+): string[] {
   void _startDate;
   void _endDate;
+  const selectionFilters = buildGooglePreviewSelectionFilters(selection, "ad-group");
   return [
     `
       SELECT
@@ -5212,12 +5350,14 @@ function buildGooglePreviewKeywordQueries(_startDate: string, _endDate: string):
       WHERE campaign.status = 'ENABLED'
         AND ad_group.status = 'ENABLED'
         AND ad_group_criterion.status = 'ENABLED'
+        ${selectionFilters}
       ORDER BY campaign.id, ad_group.id, ad_group_criterion.criterion_id
     `,
   ];
 }
 
-function buildGooglePreviewCampaignLocationQueries(): string[] {
+function buildGooglePreviewCampaignLocationQueries(selection?: GooglePreviewSelection): string[] {
+  const selectionFilters = buildGooglePreviewSelectionFilters(selection, "campaign");
   return [
     `
       SELECT
@@ -5233,6 +5373,7 @@ function buildGooglePreviewCampaignLocationQueries(): string[] {
         AND campaign_criterion.type = 'LOCATION'
         AND campaign_criterion.negative = FALSE
         AND campaign_criterion.status != 'REMOVED'
+        ${selectionFilters}
       ORDER BY campaign.id, campaign_criterion.type, campaign_criterion.criterion_id
     `,
   ];
@@ -5282,7 +5423,8 @@ function buildGoogleCampaignCriteriaLocationDetailQuery(resourceNames: string[])
   `;
 }
 
-function buildGooglePreviewCampaignLanguageQueries(): string[] {
+function buildGooglePreviewCampaignLanguageQueries(selection?: GooglePreviewSelection): string[] {
+  const selectionFilters = buildGooglePreviewSelectionFilters(selection, "campaign");
   return [
     `
       SELECT
@@ -5295,12 +5437,14 @@ function buildGooglePreviewCampaignLanguageQueries(): string[] {
       WHERE campaign.status = 'ENABLED'
         AND campaign_criterion.type = 'LANGUAGE'
         AND campaign_criterion.negative = FALSE
+        ${selectionFilters}
       ORDER BY campaign.id, campaign_criterion.type, campaign_criterion.criterion_id
     `,
   ];
 }
 
-function buildGooglePreviewAdGroupAssetQueries(): string[] {
+function buildGooglePreviewAdGroupAssetQueries(selection?: GooglePreviewSelection): string[] {
+  const selectionFilters = buildGooglePreviewSelectionFilters(selection, "ad-group");
   return [
     `
       SELECT
@@ -5316,11 +5460,13 @@ function buildGooglePreviewAdGroupAssetQueries(): string[] {
         asset.image_asset.full_size.url
       FROM ad_group_asset
       WHERE ad_group_asset.status != 'REMOVED'
+        ${selectionFilters}
     `,
   ];
 }
 
-function buildGooglePreviewCampaignAssetQueries(): string[] {
+function buildGooglePreviewCampaignAssetQueries(selection?: GooglePreviewSelection): string[] {
+  const selectionFilters = buildGooglePreviewSelectionFilters(selection, "campaign");
   return [
     `
       SELECT
@@ -5336,6 +5482,7 @@ function buildGooglePreviewCampaignAssetQueries(): string[] {
         asset.image_asset.full_size.url
       FROM campaign_asset
       WHERE campaign_asset.status != 'REMOVED'
+        ${selectionFilters}
     `,
   ];
 }
@@ -5358,6 +5505,36 @@ function buildGooglePreviewCustomerAssetQueries(): string[] {
       WHERE customer_asset.status != 'REMOVED'
     `,
   ];
+}
+
+function buildGooglePreviewSelectionFilters(
+  selection: GooglePreviewSelection | undefined,
+  level: "campaign" | "ad-group" | "ad"
+): string {
+  if (!selection || selection.platform === "meta") {
+    return "";
+  }
+
+  const filters: string[] = [];
+  const campaignId = selection.campaignId?.trim();
+  const adGroupId = selection.adGroupId?.trim();
+  const adId = selection.adId?.trim();
+
+  if (campaignId) {
+    filters.push(`campaign.id = ${googleIdLiteral(campaignId)}`);
+  }
+  if ((level === "ad-group" || level === "ad") && adGroupId) {
+    filters.push(`ad_group.id = ${googleIdLiteral(adGroupId)}`);
+  }
+  if (level === "ad" && adId) {
+    filters.push(`ad_group_ad.ad.id = ${googleIdLiteral(adId)}`);
+  }
+
+  return filters.length ? filters.map((filter) => `AND ${filter}`).join("\n        ") : "";
+}
+
+function googleIdLiteral(value: string): string {
+  return /^\d+$/.test(value) ? value : `'${escapeGaqlString(value)}'`;
 }
 
 function normalizeGooglePreviewAccessPath(value: string | null): string | null {

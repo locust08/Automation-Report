@@ -19,6 +19,12 @@ const LABELS: Record<string, string> = {
   "adContent.displayPathParts": "Display path",
   "adContent.headlines": "Headlines",
   "adContent.descriptions": "Descriptions",
+  "metaCreative.primaryText": "Primary text",
+  "metaCreative.headline": "Headline",
+  "metaCreative.description": "Description",
+  "metaCreative.callToAction": "Call to action",
+  "metaCreative.finalUrl": "Destination URL",
+  "metaCreative.imageUrl": "Image URL",
   keywords: "Keywords",
   "assets.images": "Images",
   "assets.businessName": "Business name",
@@ -61,7 +67,11 @@ function collectChanges(path: string, originalValue: unknown, draftValue: unknow
         label: LABELS[path] ?? humanizePath(path),
         before: originalValue,
         after: draftValue,
-        reviewWarning: path.startsWith("adContent.") || path.startsWith("assets.") || path === "sitelinks",
+        reviewWarning:
+          path.startsWith("adContent.") ||
+          path.startsWith("metaCreative.") ||
+          path.startsWith("assets.") ||
+          path === "sitelinks",
       });
     }
     return;
