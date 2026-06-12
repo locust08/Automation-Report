@@ -237,7 +237,12 @@ export interface MetaCreativePerformanceRow {
   mediaType: "image" | "video";
   imageUrl: string | null;
   videoUrl: string | null;
+  videoId?: string | null;
+  videoSourceUrl?: string | null;
+  videoPermalinkUrl?: string | null;
   thumbnailUrl: string | null;
+  posterUrl?: string | null;
+  mediaWarning?: string | null;
   campaignId: string | null;
   campaignName: string;
   adSetId: string | null;
@@ -372,12 +377,22 @@ export interface PreviewCreativeAsset {
   title?: string | null;
   body?: string | null;
   description?: string | null;
+  mediaType?: "image" | "video";
   imageUrl?: string | null;
   videoUrl?: string | null;
+  videoId?: string | null;
+  videoSourceUrl?: string | null;
+  videoPermalinkUrl?: string | null;
   thumbnailUrl?: string | null;
+  posterUrl?: string | null;
+  mediaWarning?: string | null;
   linkUrl?: string | null;
   callToActionType?: string | null;
   objectType?: string | null;
+  effectiveObjectStoryId?: string | null;
+  instagramPermalinkUrl?: string | null;
+  effectiveInstagramMediaId?: string | null;
+  facebookPermalinkUrl?: string | null;
 }
 
 export interface PreviewLinkAsset {
@@ -387,6 +402,9 @@ export interface PreviewLinkAsset {
   placementLabel?: string | null;
   device?: "desktop" | "mobile" | null;
   adFormat?: string | null;
+  previewUrl?: string | null;
+  publicPostUrl?: string | null;
+  linkKind?: "publicPost" | "metaPreview" | null;
 }
 
 export interface PreviewImageAsset {
