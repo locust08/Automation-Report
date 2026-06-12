@@ -32,11 +32,16 @@ const LABELS: Record<string, string> = {
   sitelinks: "Site links",
 };
 
+const META_LABELS: Record<string, string> = {
+  "campaignSettings.adGroupName": "Ad set name",
+  "campaignSettings.adGroupStatus": "Ad set status",
+};
+
 export function buildAdsChangeSet(originalData: AdsDraftData, draftData: AdsDraftData): AdsChangeSet {
   assertLockedFieldsMatch(originalData, draftData);
 
   const changes: AdsChange[] = [];
-  collectChanges("", originalData, draftData, changes);
+  collectChanges("", originalData, draftData, changes, originalData.locked.platform);
 
   const warnings = changes.some((change) => change.reviewWarning)
     ? ["Ad content or assets changed. Google Ads or Meta Ads may send affected ads/assets back through review before serving."]
@@ -54,7 +59,13 @@ export function buildAdsChangeSet(originalData: AdsDraftData, draftData: AdsDraf
   };
 }
 
-function collectChanges(path: string, originalValue: unknown, draftValue: unknown, changes: AdsChange[]) {
+function collectChanges(
+  path: string,
+  originalValue: unknown,
+  draftValue: unknown,
+  changes: AdsChange[],
+  platform: AdsDraftData["locked"]["platform"]
+) {
   const topLevelKey = path.split(".")[0];
   if (LOCKED_TOP_LEVEL_KEYS.has(topLevelKey)) {
     return;
@@ -64,7 +75,7 @@ function collectChanges(path: string, originalValue: unknown, draftValue: unknow
     if (!isEqual(originalValue, draftValue)) {
       changes.push({
         path,
-        label: LABELS[path] ?? humanizePath(path),
+        label: getChangeLabel(path, platform),
         before: originalValue,
         after: draftValue,
         reviewWarning:
@@ -84,7 +95,7 @@ function collectChanges(path: string, originalValue: unknown, draftValue: unknow
   const keys = new Set([...Object.keys(originalValue), ...Object.keys(draftValue)]);
   keys.forEach((key) => {
     const nextPath = path ? `${path}.${key}` : key;
-    collectChanges(nextPath, originalValue[key], draftValue[key], changes);
+    collectChanges(nextPath, originalValue[key], draftValue[key], changes, platform);
   });
 }
 
@@ -104,6 +115,13 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
 
 function isEqual(left: unknown, right: unknown): boolean {
   return JSON.stringify(left) === JSON.stringify(right);
+}
+
+function getChangeLabel(path: string, platform: AdsDraftData["locked"]["platform"]): string {
+  if (platform === "meta" && META_LABELS[path]) {
+    return META_LABELS[path];
+  }
+  return LABELS[path] ?? humanizePath(path);
 }
 
 function humanizePath(path: string): string {

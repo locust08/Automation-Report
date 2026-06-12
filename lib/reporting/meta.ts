@@ -86,10 +86,36 @@ interface MetaAdSetRow {
   targeting?: {
     age_min?: number;
     age_max?: number;
+    age_range?: number[];
     genders?: number[];
     geo_locations?: {
       countries?: string[];
+      cities?: Array<{
+        country?: string;
+        key?: string;
+        name?: string;
+        region?: string;
+        region_id?: string;
+      }>;
     };
+    excluded_geo_locations?: {
+      countries?: string[];
+    };
+    custom_audiences?: MetaTargetingItem[];
+    excluded_custom_audiences?: MetaTargetingItem[];
+    interests?: MetaTargetingItem[];
+    behaviors?: MetaTargetingItem[];
+    demographics?: MetaTargetingItem[];
+    education_statuses?: MetaTargetingItem[];
+    relationship_statuses?: MetaTargetingItem[];
+    life_events?: MetaTargetingItem[];
+    industries?: MetaTargetingItem[];
+    income?: MetaTargetingItem[];
+    family_statuses?: MetaTargetingItem[];
+    work_positions?: MetaTargetingItem[];
+    work_employers?: MetaTargetingItem[];
+    flexible_spec?: MetaFlexibleTargetingSpec[];
+    exclusions?: MetaFlexibleTargetingSpec;
     publisher_platforms?: string[];
     facebook_positions?: string[];
     instagram_positions?: string[];
@@ -101,6 +127,29 @@ interface MetaAdSetRow {
     };
   };
 }
+
+interface MetaTargetingItem {
+  id?: string;
+  key?: string;
+  name?: string;
+}
+
+type MetaFlexibleTargetingSpec = Partial<Record<MetaDetailedTargetingCategory, MetaTargetingItem[]>>;
+
+type MetaDetailedTargetingCategory =
+  | "interests"
+  | "behaviors"
+  | "demographics"
+  | "education_statuses"
+  | "relationship_statuses"
+  | "life_events"
+  | "industries"
+  | "income"
+  | "family_statuses"
+  | "work_positions"
+  | "work_employers"
+  | "custom_audiences"
+  | "excluded_custom_audiences";
 
 interface MetaAdRow {
   id?: string;
@@ -1041,7 +1090,7 @@ function buildMetaPreviewAdSetsByCampaign(
         detailField("Minimum age", formatAgeValue(adSet.targeting?.age_min)),
         detailField("Age suggestion", formatAgeSuggestion(adSet.targeting?.age_min, adSet.targeting?.age_max)),
         detailField("Gender", formatGenderLabel(adSet.targeting?.genders)),
-        detailField("Detailed targeting included", adSet.targeting ? "Yes" : null),
+        detailField("Detailed targeting included", formatDetailedTargeting(adSet.targeting)),
         detailField("Targeting expansion", formatTargetingExpansion(adSet.targeting)),
         detailField("Placements", formatPlacementSummary(adSet.targeting)),
         detailField("Performance goal", humanizeMetaValue(adSet.optimization_goal)),
@@ -2863,6 +2912,103 @@ function formatGenderLabel(genders: number[] | undefined): string | null {
     .filter((gender): gender is "Male" | "Female" => gender !== null);
 
   return labels.length > 0 ? labels.join(", ") : "All";
+}
+
+const META_DETAILED_TARGETING_CATEGORIES: Array<{
+  key: MetaDetailedTargetingCategory;
+  label: string;
+}> = [
+  { key: "interests", label: "Interests" },
+  { key: "behaviors", label: "Behaviors" },
+  { key: "demographics", label: "Demographics" },
+  { key: "education_statuses", label: "Education" },
+  { key: "relationship_statuses", label: "Relationship status" },
+  { key: "life_events", label: "Life events" },
+  { key: "industries", label: "Industries" },
+  { key: "income", label: "Income" },
+  { key: "family_statuses", label: "Family status" },
+  { key: "work_positions", label: "Job titles" },
+  { key: "work_employers", label: "Employers" },
+  { key: "custom_audiences", label: "Custom audiences" },
+];
+
+function formatDetailedTargeting(targeting: MetaAdSetRow["targeting"]): string | null {
+  if (!targeting) {
+    return "None";
+  }
+
+  const sections: string[] = [];
+  const directMatches = formatDetailedTargetingGroup(targeting, "People who match:");
+  if (directMatches) {
+    sections.push(directMatches);
+  }
+
+  targeting.flexible_spec?.forEach((spec, index) => {
+    const heading = sections.length === 0 && index === 0 ? "People who match:" : "And must also match:";
+    const group = formatDetailedTargetingGroup(spec, heading);
+    if (group) {
+      sections.push(group);
+    }
+  });
+
+  const exclusions = formatDetailedTargetingExclusions(targeting);
+  if (exclusions) {
+    sections.push(exclusions);
+  }
+
+  return sections.length > 0 ? sections.join("\n\n") : "None";
+}
+
+function formatDetailedTargetingGroup(
+  spec: MetaFlexibleTargetingSpec,
+  heading: string
+): string | null {
+  const lines = META_DETAILED_TARGETING_CATEGORIES
+    .map(({ key, label }) => formatDetailedTargetingCategoryLine(label, spec[key]))
+    .filter((line): line is string => Boolean(line));
+
+  if (lines.length === 0) {
+    return null;
+  }
+
+  return [heading, ...lines].join("\n");
+}
+
+function formatDetailedTargetingExclusions(targeting: MetaAdSetRow["targeting"]): string | null {
+  const lines: string[] = [];
+  const excludedCustomAudiences = formatDetailedTargetingCategoryLine(
+    "Custom audiences",
+    targeting?.excluded_custom_audiences
+  );
+  if (excludedCustomAudiences) {
+    lines.push(excludedCustomAudiences);
+  }
+
+  if (targeting?.exclusions) {
+    const exclusionLines = META_DETAILED_TARGETING_CATEGORIES
+      .filter(({ key }) => key !== "custom_audiences")
+      .map(({ key, label }) => formatDetailedTargetingCategoryLine(label, targeting.exclusions?.[key]))
+      .filter((line): line is string => Boolean(line));
+    lines.push(...exclusionLines);
+  }
+
+  return lines.length > 0 ? ["Exclude people who match:", ...lines].join("\n") : null;
+}
+
+function formatDetailedTargetingCategoryLine(
+  label: string,
+  items: MetaTargetingItem[] | undefined
+): string | null {
+  const names = uniqueNonEmpty(items?.map((item) => item.name?.trim()) ?? []);
+  if (names.length === 0) {
+    return null;
+  }
+
+  return `- ${label}: ${names.join(", ")}`;
+}
+
+function uniqueNonEmpty(values: Array<string | undefined>): string[] {
+  return Array.from(new Set(values.filter((value): value is string => Boolean(value))));
 }
 
 function formatTargetingExpansion(targeting: MetaAdSetRow["targeting"]): string | null {

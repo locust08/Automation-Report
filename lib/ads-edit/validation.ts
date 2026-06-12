@@ -7,12 +7,13 @@ export function validateAdsDraft(draftData: AdsDraftData): AdsDraftValidationRes
   const issues: AdsDraftValidationIssue[] = [];
   const isGoogle = draftData.locked.platform === "google";
   const isMeta = draftData.locked.platform === "meta";
+  const adGroupLabel = isMeta ? "Ad set" : "Ad group";
 
   requireText(issues, "campaignSettings.campaignName", draftData.campaignSettings.campaignName, "Campaign name is required.");
-  requireText(issues, "campaignSettings.adGroupName", draftData.campaignSettings.adGroupName, "Ad group name is required.");
+  requireText(issues, "campaignSettings.adGroupName", draftData.campaignSettings.adGroupName, `${adGroupLabel} name is required.`);
   requireText(issues, "campaignSettings.adName", draftData.campaignSettings.adName, "Ad name is required.");
 
-  if (draftData.adContent.finalUrl.trim()) {
+  if (isGoogle && draftData.adContent.finalUrl.trim()) {
     try {
       const url = new URL(draftData.adContent.finalUrl.trim());
       if (!["http:", "https:"].includes(url.protocol)) {
@@ -54,7 +55,6 @@ export function validateAdsDraft(draftData: AdsDraftData): AdsDraftValidationRes
   }
 
   if (isMeta) {
-    requireText(issues, "metaCreative.primaryText", draftData.metaCreative.primaryText, "Meta primary text is required.");
     validateOptionalUrl(issues, "metaCreative.finalUrl", draftData.metaCreative.finalUrl, "Destination URL must be a valid URL.");
     validateOptionalUrl(issues, "metaCreative.imageUrl", draftData.metaCreative.imageUrl, "Image URL must be a valid URL.");
     validateMetaStatus(issues, "campaignSettings.campaignStatus", draftData.campaignSettings.campaignStatus, "Campaign status");
@@ -62,24 +62,26 @@ export function validateAdsDraft(draftData: AdsDraftData): AdsDraftValidationRes
     validateMetaStatus(issues, "campaignSettings.adStatus", draftData.campaignSettings.adStatus, "Ad status");
   }
 
-  draftData.keywords.forEach((keyword, index) => {
-    if (!keyword.trim()) {
-      issues.push({ path: `keywords.${index}`, message: `Keyword ${index + 1} cannot be empty.` });
-    }
-  });
-
-  draftData.sitelinks.forEach((sitelink, index) => {
-    if (!sitelink.linkText.trim()) {
-      issues.push({ path: `sitelinks.${index}.linkText`, message: `Sitelink ${index + 1} needs link text.` });
-    }
-    if (sitelink.finalUrl?.trim()) {
-      try {
-        new URL(sitelink.finalUrl.trim());
-      } catch {
-        issues.push({ path: `sitelinks.${index}.finalUrl`, message: `Sitelink ${index + 1} has an invalid final URL.` });
+  if (isGoogle) {
+    draftData.keywords.forEach((keyword, index) => {
+      if (!keyword.trim()) {
+        issues.push({ path: `keywords.${index}`, message: `Keyword ${index + 1} cannot be empty.` });
       }
-    }
-  });
+    });
+
+    draftData.sitelinks.forEach((sitelink, index) => {
+      if (!sitelink.linkText.trim()) {
+        issues.push({ path: `sitelinks.${index}.linkText`, message: `Sitelink ${index + 1} needs link text.` });
+      }
+      if (sitelink.finalUrl?.trim()) {
+        try {
+          new URL(sitelink.finalUrl.trim());
+        } catch {
+          issues.push({ path: `sitelinks.${index}.finalUrl`, message: `Sitelink ${index + 1} has an invalid final URL.` });
+        }
+      }
+    });
+  }
 
   return {
     valid: issues.length === 0,
@@ -93,7 +95,8 @@ export function validateAdsChangeSet(changeSet: AdsChangeSet): AdsDraftValidatio
     issues.push({ path: "accountId", message: "Account ID is required for sync." });
   }
   if (!changeSet.campaignId.trim() || !changeSet.adGroupId.trim() || !changeSet.adId.trim()) {
-    issues.push({ path: "entityIds", message: "Campaign, ad group, and ad IDs are required for sync." });
+    const childEntityLabel = changeSet.platform === "meta" ? "ad set" : "ad group";
+    issues.push({ path: "entityIds", message: `Campaign, ${childEntityLabel}, and ad IDs are required for sync.` });
   }
   if (changeSet.changes.length === 0) {
     issues.push({ path: "changes", message: "There are no changes to sync." });

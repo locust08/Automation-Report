@@ -147,7 +147,6 @@ export function AccountStructureFlowchart({
   }
 
   const visibleCampaigns = normalized.campaigns.slice(0, VISIBLE_LIMIT);
-  const hiddenCampaignCount = Math.max(normalized.campaigns.length - VISIBLE_LIMIT, 0);
 
   return (
     <Card className="gap-0 rounded-[18px] border-[#d8e0eb] bg-white py-0 shadow-[0_14px_36px_rgba(15,23,42,0.06)]">
@@ -177,12 +176,6 @@ export function AccountStructureFlowchart({
             />
           ))}
         </div>
-
-        {hiddenCampaignCount > 0 ? (
-          <Badge variant="outline" className="rounded-full border-[#cbd5e1] text-[#475569]">
-            + {hiddenCampaignCount} more campaigns
-          </Badge>
-        ) : null}
       </CardContent>
     </Card>
   );
@@ -250,7 +243,6 @@ function FlowCampaignRow({
             icon={getChildIcon(platform, category)}
           />
         ))}
-        {hiddenChildCount > 0 ? <MoreBadge count={hiddenChildCount} label={getChildColumnLabel(platform)} /> : null}
       </NodeStack>
       <Connector />
       <NodeStack emptyLabel="No ads returned." empty={visibleAds.length === 0 && hiddenAdCount === 0}>
@@ -264,7 +256,6 @@ function FlowCampaignRow({
             icon={getAdIcon(platform, category)}
           />
         ))}
-        {hiddenAdCount > 0 ? <MoreBadge count={hiddenAdCount} label="ads" /> : null}
       </NodeStack>
     </div>
   );
@@ -388,14 +379,6 @@ function FlowLegend({ platform }: { platform: "meta" | "google" }) {
         </span>
       ))}
     </div>
-  );
-}
-
-function MoreBadge({ count, label }: { count: number; label: string }) {
-  return (
-    <Badge variant="outline" className="rounded-full border-[#cbd5e1] bg-white text-[#475569]">
-      + {count} more {label.toLowerCase()}
-    </Badge>
   );
 }
 

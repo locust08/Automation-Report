@@ -36,7 +36,6 @@ import {
   RefreshCwIcon,
   SearchIcon,
   SendIcon,
-  Settings2Icon,
   SlidersHorizontalIcon,
   SmartphoneIcon,
   ThumbsUpIcon,
@@ -115,7 +114,6 @@ function MetaAdsPreviewWorkspace({
     selectedAd?.performance ?? selectedChild?.performance ?? selectedCampaign?.performance ?? null;
   const demographics =
     selectedAd?.demographics ?? selectedChild?.demographics ?? selectedCampaign?.demographics ?? [];
-  const campaignDetails = selectedCampaign?.details ?? [];
   const adSetDetails = selectedChild?.details ?? [];
   const adDetails = selectedAd?.details ?? [];
   const creative = selectedAd?.creative ?? null;
@@ -123,11 +121,10 @@ function MetaAdsPreviewWorkspace({
     () => buildMetaPreviewPlacements(selectedAd?.previewLinks ?? []),
     [selectedAd?.previewLinks]
   );
-  const [activePlacementKey, setActivePlacementKey] = useState("");
-  const activePlacement =
-    previewPlacements.find((placement) => placement.key === activePlacementKey) ??
-    previewPlacements[0] ??
-    null;
+  const previewGalleryPlacements = useMemo(
+    () => buildMetaPreviewPlacementGallery(previewPlacements),
+    [previewPlacements]
+  );
   const companyLabel = companyName?.trim() || section.title;
   const adSetCount = section.campaigns.reduce((count, campaign) => count + campaign.children.length, 0);
   const adCount = section.campaigns.reduce(
@@ -137,68 +134,6 @@ function MetaAdsPreviewWorkspace({
   );
   const editHref = buildMetaEditDraftHref(searchParams, selectedCampaign?.id, selectedChild?.id, selectedAd?.id);
   const editDisabled = !selectedCampaign || !selectedChild || !selectedAd;
-  const quickSummaryCards = [
-    {
-      label: "Objective",
-      value: getDetailFieldValue(campaignDetails, "Objective") || "Not available",
-      accent: "violet" as const,
-      icon: <BarChart3Icon className="size-5" />,
-    },
-    {
-      label: "Status",
-      value: selectedAd?.status || selectedChild?.status || selectedCampaign?.status || "Unknown",
-      accent: "green" as const,
-      icon: <InfoIcon className="size-5" />,
-    },
-    {
-      label: "Schedule",
-      value: buildMetaScheduleSummary(adSetDetails),
-      accent: "blue" as const,
-      icon: <CalendarDaysIcon className="size-5" />,
-    },
-    {
-      label: "CTA",
-      value: getDetailFieldValue(adDetails, "Call to action") || "Not available",
-      accent: "amber" as const,
-      icon: <MegaphoneIcon className="size-5" />,
-    },
-    {
-      label: "Audience",
-      value: buildMetaAudienceSummary(adSetDetails),
-      accent: "rose" as const,
-      icon: <UsersIcon className="size-5" />,
-    },
-  ];
-  const previewSummaryCards = [
-    {
-      label: "Placement",
-      value: activePlacement?.placementLabel ?? "Not available",
-      accent: "violet" as const,
-      icon: <MonitorIcon className="size-5" />,
-    },
-    {
-      label: "Preview Source",
-      value: activePlacement
-        ? activePlacement.linkKind === "publicPost"
-          ? "Real post link available"
-          : "Meta preview fallback"
-        : "Not available",
-      accent: "blue" as const,
-      icon: <ExternalLinkIcon className="size-5" />,
-    },
-    {
-      label: "Call to Action",
-      value: getDetailFieldValue(adDetails, "Call to action") || "Not available",
-      accent: "green" as const,
-      icon: <MegaphoneIcon className="size-5" />,
-    },
-    {
-      label: "Destination URL",
-      value: creative?.linkUrl || getDetailFieldValue(adDetails, "Destination URL") || "Not available",
-      accent: "amber" as const,
-      icon: <Link2Icon className="size-5" />,
-    },
-  ];
   const informationSections = [
     {
       key: "creative",
@@ -210,7 +145,6 @@ function MetaAdsPreviewWorkspace({
       defaultOpen: true,
       fields: compactFields([
         detailField("Creative", getDetailFieldValue(adDetails, "Creative")),
-        detailField("Creative ID", getDetailFieldValue(adDetails, "Creative ID")),
         detailField("Call to action", getDetailFieldValue(adDetails, "Call to action")),
         detailField("Destination URL", creative?.linkUrl || getDetailFieldValue(adDetails, "Destination URL")),
       ]),
@@ -252,20 +186,6 @@ function MetaAdsPreviewWorkspace({
       icon: <MonitorIcon className="size-5" />,
       defaultOpen: false,
       fields: pickDetailFields(adSetDetails, ["Placements", "Conversion location"]),
-    },
-    {
-      key: "advanced",
-      title: "Advanced settings",
-      subtitle: "Bidding and hierarchy identifiers for troubleshooting and review.",
-      icon: <Settings2Icon className="size-5" />,
-      defaultOpen: false,
-      fields: compactFields([
-        detailField("Campaign ID", getDetailFieldValue(campaignDetails, "Campaign ID")),
-        detailField("Ad Set ID", getDetailFieldValue(adSetDetails, "Ad Set ID")),
-        detailField("Ad ID", getDetailFieldValue(adDetails, "Ad ID")),
-        detailField("Buying Type", getDetailFieldValue(campaignDetails, "Buying Type")),
-        detailField("Bid strategy", getDetailFieldValue(adSetDetails, "Bid strategy")),
-      ]),
     },
   ];
 
@@ -344,19 +264,6 @@ function MetaAdsPreviewWorkspace({
           />
         </div>
 
-        <div className="mt-5 rounded-[24px] border border-[#edf2f7] bg-[linear-gradient(180deg,#ffffff_0%,#fbfdff_100%)] p-4">
-          <div className="flex items-center gap-2">
-            <h2 className="text-[1.5rem] font-semibold tracking-[-0.03em] text-[#0f172a]">
-              Quick Summary
-            </h2>
-            <InfoIcon className="size-4 text-[#94a3b8]" />
-          </div>
-          <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-5">
-            {quickSummaryCards.map((card) => (
-              <MetaSummaryCard key={card.label} {...card} />
-            ))}
-          </div>
-        </div>
       </div>
 
       {structureFlowchart}
@@ -365,54 +272,26 @@ function MetaAdsPreviewWorkspace({
         <EmptyState message="No ad sets are available under the selected campaign." />
       ) : null}
 
-      <section className="rounded-[28px] border border-[#e7edf5] bg-white shadow-[0_18px_50px_rgba(15,23,42,0.05)]">
-        <div className="border-b border-[#edf2f7] px-5 py-5 sm:px-6">
+      <section className="rounded-[28px] border border-[#e7edf5] bg-white p-5 shadow-[0_18px_50px_rgba(15,23,42,0.05)] sm:p-6">
+        <div>
           <h2 className="text-[1.8rem] font-semibold tracking-[-0.03em] text-[#0f172a]">
             Ad Preview
           </h2>
+          <p className="mt-2 text-[1rem] leading-7 text-[#64748b]">
+            See how your ad will appear across different placements.
+          </p>
         </div>
 
-        {previewPlacements.length > 0 ? (
-          <div className="border-b border-[#edf2f7] px-4 pt-3 sm:px-6">
-            <div className="flex flex-wrap gap-2">
-              {previewPlacements.map((placement) => (
-                <button
-                  key={placement.key}
-                  type="button"
-                  onClick={() => setActivePlacementKey(placement.key)}
-                  className={`border-b-2 px-3 py-3 text-sm font-medium transition ${
-                    activePlacement?.key === placement.key
-                      ? "border-[#1b74e4] text-[#1b74e4]"
-                      : "border-transparent text-[#64748b] hover:text-[#0f172a]"
-                  }`}
-                >
-                  {placement.label}
-                </button>
-              ))}
-            </div>
-          </div>
-        ) : null}
-
-        <div className="grid gap-6 px-4 py-5 sm:px-6 lg:grid-cols-[minmax(0,1.2fr)_minmax(340px,420px)]">
-          <MetaAdPreviewCard
-            companyLabel={companyLabel}
-            campaignName={selectedCampaign?.name ?? "Campaign"}
-            creative={creative}
-            activePlacement={activePlacement}
-          />
-          <div className="rounded-[24px] border border-[#edf2f7] bg-[#fbfdff] p-5">
-            <h3 className="text-[1.6rem] font-semibold tracking-[-0.03em] text-[#0f172a]">
-              Preview Summary
-            </h3>
-            <div className="mt-5 space-y-4">
-              {previewSummaryCards.map((card) => (
-                <MetaPreviewSummaryTile
-                  key={card.label}
-                  {...card}
-                />
-              ))}
-            </div>
-          </div>
+        <div className="mt-7 grid gap-5 xl:grid-cols-3">
+          {previewGalleryPlacements.map((placement) => (
+            <MetaAdPreviewCard
+              key={placement.key}
+              companyLabel={companyLabel}
+              campaignName={selectedCampaign?.name ?? "Campaign"}
+              creative={creative}
+              activePlacement={placement}
+            />
+          ))}
         </div>
       </section>
 
@@ -447,14 +326,6 @@ function MetaAdsPreviewWorkspace({
         />
       </section>
 
-      <section className="rounded-[28px] border border-[#e7edf5] bg-white p-5 shadow-[0_18px_50px_rgba(15,23,42,0.05)] sm:p-6">
-        <h2 className="text-[1.8rem] font-semibold tracking-[-0.03em] text-[#0f172a]">
-          Preview Links
-        </h2>
-        <div className="mt-5">
-          <MetaPreviewLinksGrid placements={previewPlacements} />
-        </div>
-      </section>
     </section>
   );
 }
@@ -571,34 +442,6 @@ function MetaSelectionCard({
   );
 }
 
-function MetaSummaryCard({
-  label,
-  value,
-  accent,
-  icon,
-}: {
-  label: string;
-  value: string;
-  accent: MetaAccent;
-  icon: ReactNode;
-}) {
-  return (
-    <div className="rounded-[18px] border border-[#edf2f7] bg-white p-3.5 shadow-[0_6px_18px_rgba(15,23,42,0.025)]">
-      <div className="flex items-start gap-3">
-        <span className={`flex size-11 shrink-0 items-center justify-center rounded-[14px] ${metaAccentIconClassName(accent)}`}>
-          {icon}
-        </span>
-        <div className="min-w-0">
-          <p className="text-[0.82rem] font-semibold text-[#0f172a]">{label}</p>
-          <p className="mt-1.5 whitespace-pre-line text-[0.95rem] leading-6 text-[#1f2937]">
-            {value}
-          </p>
-        </div>
-      </div>
-    </div>
-  );
-}
-
 function MetaAdPreviewCard({
   companyLabel,
   campaignName,
@@ -620,15 +463,47 @@ function MetaAdPreviewCard({
   };
 
   return (
-    <div className="rounded-[24px] border border-[#edf2f7] bg-[#fbfdff] p-4">
-      {activePlacement?.key === "story" ? (
-        <MetaStoryPreviewTemplate {...props} />
-      ) : activePlacement?.key === "instagramFeed" ? (
-        <MetaInstagramFeedPreviewTemplate {...props} />
-      ) : (
-        <MetaFacebookFeedPreviewTemplate {...props} />
-      )}
+    <div className="rounded-[24px] border border-[#e1e8f0] bg-[#fbfdff] p-4 shadow-[0_10px_26px_rgba(15,23,42,0.035)] sm:p-5">
+      <div className="mb-5 flex items-center gap-3">
+        <MetaPlacementIcon placementKey={activePlacement?.key ?? "facebookFeed"} />
+        <h3 className="text-[1.05rem] font-semibold text-[#0f172a]">
+          {activePlacement?.placementLabel ?? "Facebook Feed"}
+        </h3>
+      </div>
+      <div className="flex justify-center">
+        {activePlacement?.key === "story" ? (
+          <MetaStoryPreviewTemplate {...props} />
+        ) : activePlacement?.key === "instagramFeed" ? (
+          <MetaInstagramFeedPreviewTemplate {...props} />
+        ) : (
+          <MetaFacebookFeedPreviewTemplate {...props} />
+        )}
+      </div>
     </div>
+  );
+}
+
+function MetaPlacementIcon({ placementKey }: { placementKey: string }) {
+  if (placementKey === "instagramFeed") {
+    return (
+      <span className="flex size-11 shrink-0 items-center justify-center rounded-full bg-[#f7e8ff] text-[#e1306c] shadow-sm">
+        <ImageIcon className="size-6" />
+      </span>
+    );
+  }
+
+  if (placementKey === "story") {
+    return (
+      <span className="flex size-11 shrink-0 items-center justify-center rounded-full bg-[#f3d9ff] text-[#c026d3] shadow-sm">
+        <PlayIcon className="ml-0.5 size-6 fill-current" />
+      </span>
+    );
+  }
+
+  return (
+    <span className="flex size-11 shrink-0 items-center justify-center rounded-full bg-[#e8f1ff] text-[#1877f2] shadow-sm">
+      <span className="font-sans text-[1.7rem] font-bold leading-none">f</span>
+    </span>
   );
 }
 
@@ -1015,32 +890,6 @@ function normalizeInstagramHandle(label: string): string {
   return normalized || "instagram_ad";
 }
 
-function MetaPreviewSummaryTile({
-  label,
-  value,
-  accent,
-  icon,
-}: {
-  label: string;
-  value: string;
-  accent: MetaAccent;
-  icon: ReactNode;
-}) {
-  return (
-    <div className="w-full rounded-[20px] border border-[#edf2f7] bg-white p-4 text-left shadow-[0_8px_18px_rgba(15,23,42,0.03)] transition duration-200">
-      <div className="flex items-start gap-4">
-        <span className={`flex size-14 items-center justify-center rounded-2xl ${metaAccentIconClassName(accent)}`}>
-          {icon}
-        </span>
-        <div className="min-w-0">
-          <p className="text-[1.05rem] font-semibold text-[#0f172a]">{label}</p>
-          <p className="mt-2 break-words text-[1.05rem] leading-8 text-[#1f2937]">{value}</p>
-        </div>
-      </div>
-    </div>
-  );
-}
-
 function MetaInformationAccordionItem({
   title,
   subtitle,
@@ -1081,7 +930,7 @@ function MetaInformationAccordionItem({
                 <dt className="text-xs font-semibold uppercase tracking-[0.12em] text-[#94a3b8]">
                   {field.label}
                 </dt>
-                <dd className="mt-2 text-[1rem] leading-7 text-[#1f2937]">{field.value}</dd>
+                <dd className="mt-2 whitespace-pre-line text-[1rem] leading-7 text-[#1f2937]">{field.value}</dd>
               </div>
             ))}
           </dl>
@@ -1092,50 +941,6 @@ function MetaInformationAccordionItem({
         )}
       </div>
     </details>
-  );
-}
-
-function MetaPreviewLinksGrid({
-  placements,
-}: {
-  placements: MetaPreviewPlacementDescriptor[];
-}) {
-  if (placements.length === 0) {
-    return <EmptyState message="No live Meta preview links are available for the selected ad." />;
-  }
-
-  return (
-    <div className="grid gap-4 lg:grid-cols-3">
-      {placements.map((placement) => (
-        <a
-          key={placement.key}
-          href={placement.url}
-          target="_blank"
-          rel="noreferrer"
-          className="flex min-h-[150px] items-center justify-between gap-4 rounded-[22px] border border-[#edf2f7] bg-white p-4 shadow-[0_10px_24px_rgba(15,23,42,0.04)] transition hover:border-[#bfdbfe]"
-        >
-          <div className="flex min-w-0 items-center gap-4">
-            <span className={`flex size-16 items-center justify-center rounded-[22px] ${metaAccentIconClassName(placement.accent)}`}>
-              {placement.key === "mobile" ? (
-                <SmartphoneIcon className="size-7" />
-              ) : placement.key === "instagramFeed" || placement.key === "story" ? (
-                <ImageIcon className="size-7" />
-              ) : (
-                <MonitorIcon className="size-7" />
-              )}
-            </span>
-            <div className="min-w-0">
-              <p className="text-[1.1rem] font-semibold text-[#0f172a]">{placement.label}</p>
-              <p className="mt-2 text-[1rem] leading-7 text-[#64748b]">
-                {placement.linkKind === "publicPost" ? "Open real post" : "Open Meta preview"}
-              </p>
-              <p className="mt-1 text-sm leading-6 text-[#94a3b8]">{placement.description}</p>
-            </div>
-          </div>
-          <ExternalLinkIcon className="size-5 shrink-0 text-[#2563eb]" />
-        </a>
-      ))}
-    </div>
   );
 }
 
@@ -1176,6 +981,30 @@ function buildMetaPreviewPlacements(
 
   const order = ["facebookFeed", "instagramFeed", "story"];
   return Array.from(placements.values()).sort((left, right) => order.indexOf(left.key) - order.indexOf(right.key));
+}
+
+function buildMetaPreviewPlacementGallery(
+  placements: MetaPreviewPlacementDescriptor[]
+): MetaPreviewPlacementDescriptor[] {
+  const placementsByKey = new Map(placements.map((placement) => [placement.key, placement]));
+  return ["facebookFeed", "instagramFeed", "story"].map((key) => {
+    const existing = placementsByKey.get(key);
+    if (existing) {
+      return existing;
+    }
+
+    return {
+      key,
+      label: defaultPlacementLabel(key),
+      description: defaultPlacementDescription(key),
+      url: "",
+      previewUrl: null,
+      publicPostUrl: null,
+      linkKind: "metaPreview",
+      placementLabel: defaultPlacementLabel(key),
+      accent: placementAccent(key),
+    };
+  });
 }
 
 function normalizePlacementKeyFromLabel(label: string): string | null {
@@ -1238,23 +1067,6 @@ function placementAccent(key: string): MetaAccent {
     return "green";
   }
   return "blue";
-}
-
-function buildMetaScheduleSummary(fields: PreviewDetailField[]): string {
-  const startDate = getDetailFieldValue(fields, "Start date");
-  const endDate = getDetailFieldValue(fields, "End date");
-  if (startDate && endDate) {
-    return `${startDate}\n${endDate}`;
-  }
-  return startDate || endDate || "Not available";
-}
-
-function buildMetaAudienceSummary(fields: PreviewDetailField[]): string {
-  const age = getDetailFieldValue(fields, "Age suggestion");
-  const locations = getDetailFieldValue(fields, "Locations included");
-  const gender = getDetailFieldValue(fields, "Gender");
-  const parts = [age, locations, gender].filter(Boolean);
-  return parts.length > 0 ? parts.join("\n") : "Not available";
 }
 
 function compactFields(fields: Array<PreviewDetailField | null>): PreviewDetailField[] {

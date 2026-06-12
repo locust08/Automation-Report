@@ -4,6 +4,7 @@ import Link from "next/link";
 import {
   BarChart3Icon,
   CalendarDaysIcon,
+  ClipboardListIcon,
   EyeIcon,
   HouseIcon,
   IdCardIcon,
@@ -43,6 +44,7 @@ export function ReportShell({
     overall: withQuery("/overall", activeQuery),
     preview: withQuery("/preview", activeQuery),
     advanced: withQuery("/advanced", activeQuery),
+    mediaPlan: "/dashboard/media-plan",
   };
 
   return (
@@ -107,6 +109,14 @@ export function ReportShell({
                     className="inline-flex size-10 items-center justify-center rounded-md bg-white/10 hover:bg-white/20"
                   >
                     <SparklesIcon className="size-5" />
+                  </Link>
+                  <Link
+                    href={hrefs.mediaPlan}
+                    title="Media Plan"
+                    aria-label="Open Media Plan page"
+                    className="inline-flex size-10 items-center justify-center rounded-md bg-white/10 hover:bg-white/20"
+                  >
+                    <ClipboardListIcon className="size-5" />
                   </Link>
                 </nav>
               </div>

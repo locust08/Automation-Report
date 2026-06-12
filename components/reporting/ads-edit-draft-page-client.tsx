@@ -38,6 +38,7 @@ export function AdsEditDraftPageClient() {
     copyParam(searchParams, params, "googleAccountId");
     copyParam(searchParams, params, "startDate");
     copyParam(searchParams, params, "endDate");
+    copyParam(searchParams, params, "platform");
     return params.toString();
   }, [searchParams]);
   const enabled = Boolean(accountId && campaignId && adGroupId && adId && canOpenAdsEditDraft());
@@ -134,6 +135,8 @@ function AdsEditDraftWorkspace({
   const dirtyPaths = useMemo(() => new Set(changeSet.changes.map((change) => change.path)), [changeSet]);
   const saveDisabled = changeSet.changes.length === 0 || !validation.valid || syncState === "syncing" || syncState === "validating";
   const isMetaDraft = draftData.locked.platform === "meta";
+  const platformLabel = isMetaDraft ? "Meta" : "Google";
+  const selectedTrail = `${selection.campaign.name} / ${selection.adGroup.name} / ${selection.ad.name}`;
 
   function updateCampaignSetting(key: keyof AdsDraftData["campaignSettings"], value: string) {
     setDraftData((current) => ({
@@ -202,15 +205,18 @@ function AdsEditDraftWorkspace({
   }
 
   return (
-    <ReportShell title="Edit Draft" dateLabel={`${selection.campaign.name} / ${selection.adGroup.name} / ${selection.ad.name}`} activeQuery={activeQuery}>
+    <ReportShell title={`${platformLabel} Edit Draft`} dateLabel="Draft mode" activeQuery={activeQuery}>
       <div className="mx-auto max-w-[1280px] space-y-6 px-2">
         <div className="rounded-[24px] border border-[#dbeafe] bg-[#eff6ff] p-5 text-[#1e3a8a]">
           <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-            <div>
+            <div className="min-w-0">
               <p className="text-sm font-semibold uppercase tracking-[0.14em]">Safe local draft</p>
               <h1 className="mt-2 text-3xl font-semibold tracking-[-0.04em] text-[#0f172a]">Edit selected ad draft</h1>
               <p className="mt-2 max-w-3xl text-sm leading-6">
                 Changes stay in local draft state while you type. Nothing is sent to Google Ads or Meta Ads until you review the diff and click Save & Sync.
+              </p>
+              <p className="mt-3 max-w-4xl rounded-2xl border border-[#bfdbfe] bg-white/70 px-4 py-2 text-sm font-semibold leading-6 text-[#334155] [overflow-wrap:anywhere]">
+                {selectedTrail}
               </p>
             </div>
             <div className="flex flex-wrap gap-3">
@@ -232,7 +238,7 @@ function AdsEditDraftWorkspace({
         <LockedFieldsPanel draftData={draftData} />
         <StatusPanel syncState={syncState} validation={validation} changeSet={changeSet} message={resultMessage} warnings={resultWarnings} error={syncError} />
 
-        <DraftSection title={isMetaDraft ? "Campaign & Ad Set Settings" : "Campaign Settings"} description={isMetaDraft ? "Editable campaign, ad set, and ad labels plus delivery context. Locked identifiers and historical metrics are shown above only." : "Editable campaign/ad group labels and delivery settings. Locked identifiers and historical metrics are shown above only."}>
+        <DraftSection title={isMetaDraft ? "Meta Names & Statuses" : "Campaign Settings"} description={isMetaDraft ? "Edit only the Meta fields this sync flow supports: campaign, ad set, and ad names plus delivery statuses." : "Editable campaign/ad group labels and delivery settings. Locked identifiers and historical metrics are shown above only."}>
           <div className="grid gap-4 md:grid-cols-2">
             <DraftInput label="Campaign name" dirty={dirtyPaths.has("campaignSettings.campaignName")} value={draftData.campaignSettings.campaignName} onChange={(value) => updateCampaignSetting("campaignName", value)} />
             <DraftInput label="Campaign status" dirty={dirtyPaths.has("campaignSettings.campaignStatus")} value={draftData.campaignSettings.campaignStatus} onChange={(value) => updateCampaignSetting("campaignStatus", value)} />
@@ -240,12 +246,16 @@ function AdsEditDraftWorkspace({
             <DraftInput label={isMetaDraft ? "Ad set status" : "Ad group status"} dirty={dirtyPaths.has("campaignSettings.adGroupStatus")} value={draftData.campaignSettings.adGroupStatus} onChange={(value) => updateCampaignSetting("adGroupStatus", value)} />
             <DraftInput label="Ad name" dirty={dirtyPaths.has("campaignSettings.adName")} value={draftData.campaignSettings.adName} onChange={(value) => updateCampaignSetting("adName", value)} />
             <DraftInput label="Ad status" dirty={dirtyPaths.has("campaignSettings.adStatus")} value={draftData.campaignSettings.adStatus} onChange={(value) => updateCampaignSetting("adStatus", value)} />
-            <DraftInput label="Budget" dirty={dirtyPaths.has("campaignSettings.budget")} value={draftData.campaignSettings.budget} onChange={(value) => updateCampaignSetting("budget", value)} />
-            <DraftInput label="Bidding strategy" dirty={dirtyPaths.has("campaignSettings.biddingStrategy")} value={draftData.campaignSettings.biddingStrategy} onChange={(value) => updateCampaignSetting("biddingStrategy", value)} />
-            <DraftInput label="Start date" dirty={dirtyPaths.has("campaignSettings.startDate")} value={draftData.campaignSettings.startDate} onChange={(value) => updateCampaignSetting("startDate", value)} />
-            <DraftInput label="End date" dirty={dirtyPaths.has("campaignSettings.endDate")} value={draftData.campaignSettings.endDate} onChange={(value) => updateCampaignSetting("endDate", value)} />
-            <DraftTextarea label="Locations" dirty={dirtyPaths.has("campaignSettings.locations")} value={draftData.campaignSettings.locations} onChange={(value) => updateCampaignSetting("locations", value)} />
-            <DraftTextarea label="Languages" dirty={dirtyPaths.has("campaignSettings.languages")} value={draftData.campaignSettings.languages} onChange={(value) => updateCampaignSetting("languages", value)} />
+            {!isMetaDraft ? (
+              <>
+                <DraftInput label="Budget" dirty={dirtyPaths.has("campaignSettings.budget")} value={draftData.campaignSettings.budget} onChange={(value) => updateCampaignSetting("budget", value)} />
+                <DraftInput label="Bidding strategy" dirty={dirtyPaths.has("campaignSettings.biddingStrategy")} value={draftData.campaignSettings.biddingStrategy} onChange={(value) => updateCampaignSetting("biddingStrategy", value)} />
+                <DraftInput label="Start date" dirty={dirtyPaths.has("campaignSettings.startDate")} value={draftData.campaignSettings.startDate} onChange={(value) => updateCampaignSetting("startDate", value)} />
+                <DraftInput label="End date" dirty={dirtyPaths.has("campaignSettings.endDate")} value={draftData.campaignSettings.endDate} onChange={(value) => updateCampaignSetting("endDate", value)} />
+                <DraftTextarea label="Locations" dirty={dirtyPaths.has("campaignSettings.locations")} value={draftData.campaignSettings.locations} onChange={(value) => updateCampaignSetting("locations", value)} />
+                <DraftTextarea label="Languages" dirty={dirtyPaths.has("campaignSettings.languages")} value={draftData.campaignSettings.languages} onChange={(value) => updateCampaignSetting("languages", value)} />
+              </>
+            ) : null}
           </div>
         </DraftSection>
 
@@ -354,11 +364,12 @@ function AdsEditDraftWorkspace({
 }
 
 function LockedFieldsPanel({ draftData }: { draftData: AdsDraftData }) {
+  const adGroupLabel = draftData.locked.platform === "meta" ? "Ad Set ID" : "Ad Group ID";
   const lockedRows = [
     ["Platform", draftData.locked.platform],
     ["Account ID", draftData.locked.accountId],
     ["Campaign ID", draftData.locked.campaignId],
-    ["Ad Group ID", draftData.locked.adGroupId],
+    [adGroupLabel, draftData.locked.adGroupId],
     ["Ad ID", draftData.locked.adId],
     ["Campaign type", draftData.locked.campaignType],
     ["Ad type", draftData.locked.adType],
