@@ -25,6 +25,13 @@ export async function GET(
       startDate: context.startDate,
       endDate: context.endDate,
       diagnosticsMode: searchParams.get("diagnostics") === "1",
+      previewStage: "ad-groups",
+      previewSelection: {
+        platform,
+        campaignId: decodeURIComponent(routeParams.campaignId),
+        adGroupId: null,
+        adId: null,
+      },
     });
 
     return NextResponse.json(

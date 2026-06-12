@@ -21,11 +21,21 @@ import {
   hasMonthlyReportEmailBeenSent,
   recordMonthlyReportEmailSent,
 } from "@/src/lib/notion/monthly-report-email-log";
+import { updateMonthlyReportAccountSendStatus } from "@/src/lib/notion/monthly-report-account-status";
 import {
   getMonthlyReportAccounts,
   resolveMonthlyReportTargetsFromNotion,
   type MonthlyReportAccount,
 } from "@/src/lib/notion/get-monthly-report-accounts";
+
+export interface MonthlyReportAccountSendResult {
+  notionPageId: string | null;
+  accountId: string | null;
+  accountName: string;
+  email: string | null;
+  status: "sent" | "skipped" | "failed";
+  notes: string | null;
+}
 
 export interface MonthlyReportJobResult {
   totalAccounts: number;
@@ -65,6 +75,7 @@ export interface MonthlyReportJobResult {
     resendEmailId: string | null;
     errorMessage: string | null;
   }>;
+  accountResults: MonthlyReportAccountSendResult[];
 }
 
 export async function runMonthlyReportJob(input?: {
@@ -75,6 +86,7 @@ export async function runMonthlyReportJob(input?: {
   reportType?: string;
   scheduledDate?: string;
   dateRange?: ReturnType<typeof resolveMonthlyReportDateRange>;
+  updateAccountSendStatus?: boolean;
 }): Promise<MonthlyReportJobResult> {
   const startedAt = Date.now();
   console.log("Monthly job started");
@@ -121,6 +133,7 @@ export async function runMonthlyReportJob(input?: {
       testMode,
       pdfResults: [],
       emailResults: [],
+      accountResults: [],
     };
   }
 
@@ -135,7 +148,7 @@ export async function runMonthlyReportJob(input?: {
     const missingEmailTargets = checkedTargets.filter((account) => !account.clientEmail?.trim());
     const emailableTargets = checkedTargets.filter((account) => account.clientEmail?.trim());
     const duplicateFilteredTargets = dryRun || testMode
-      ? { accounts: emailableTargets, skippedAlreadySent: 0 }
+      ? { accounts: emailableTargets, skippedAlreadySent: 0, skippedAccounts: [] }
       : await filterAlreadySentAccounts(emailableTargets, {
           reportType,
           reportMonthKey: dateRange.reportMonthKey,
@@ -171,6 +184,15 @@ export async function runMonthlyReportJob(input?: {
       );
     }
 
+    const skippedAccountResults: MonthlyReportAccountSendResult[] = [
+      ...missingEmailTargets.map((account) =>
+        buildAccountSendResult(account, "skipped", "Missing client email.")
+      ),
+      ...duplicateFilteredTargets.skippedAccounts.map((account) =>
+        buildAccountSendResult(account, "skipped", "Already sent for this report type and month.")
+      ),
+    ];
+
     const pdfBatch = await generateMonthlyReportPdfBatch({
       accounts: accountsToProcess,
       dateRange,
@@ -191,6 +213,15 @@ export async function runMonthlyReportJob(input?: {
           console.error(
             `[monthly-report] advanced email blocked account_id=${pdfResult.accountId ?? "missing"} reason=reportType was not advanced`
           );
+          emailResults.push({
+            accountId: pdfResult.accountId,
+            accountName: pdfResult.accountName,
+            success: false,
+            recipientEmail: null,
+            ccEmail: null,
+            resendEmailId: null,
+            errorMessage: "Advanced email blocked because reportType was not advanced.",
+          });
           continue;
         }
 
@@ -266,6 +297,20 @@ export async function runMonthlyReportJob(input?: {
       skippedMissingEmail +
       duplicateFilteredTargets.skippedAlreadySent;
     const failed = pdfBatch.failed + emailFailures;
+    const accountResults = buildAccountSendResults({
+      skippedAccountResults,
+      pdfResults: pdfBatch.results,
+      emailResults,
+      dryRun,
+    });
+
+    if (input?.updateAccountSendStatus) {
+      await updateAccountStatuses(accountResults, {
+        accounts: [...missingEmailTargets, ...duplicateFilteredTargets.skippedAccounts, ...accountsToProcess],
+        reportType,
+      });
+    }
+
     const result: MonthlyReportJobResult = {
       totalAccounts: targetResolution.accounts.length,
       reportType,
@@ -299,6 +344,7 @@ export async function runMonthlyReportJob(input?: {
         errorMessage: pdfResult.errorMessage,
       })),
       emailResults,
+      accountResults,
     };
 
     console.log(
@@ -334,6 +380,7 @@ export async function runMonthlyReportJob(input?: {
       testMode,
       pdfResults: [],
       emailResults: [],
+      accountResults: [],
     };
   }
 }
@@ -393,8 +440,9 @@ async function filterAlreadySentAccounts(
     reportMonthKey: string;
     scheduledDate: string;
   }
-): Promise<{ accounts: MonthlyReportAccount[]; skippedAlreadySent: number }> {
+): Promise<{ accounts: MonthlyReportAccount[]; skippedAlreadySent: number; skippedAccounts: MonthlyReportAccount[] }> {
   const eligibleAccounts: MonthlyReportAccount[] = [];
+  const skippedAccounts: MonthlyReportAccount[] = [];
   let skippedAlreadySent = 0;
 
   for (const account of accounts) {
@@ -406,6 +454,7 @@ async function filterAlreadySentAccounts(
     });
     if (alreadySent) {
       skippedAlreadySent += 1;
+      skippedAccounts.push(account);
       console.info(
         `[monthly-report] skipped already sent report_type=${input.reportType} report_month=${input.reportMonthKey} page_id=${account.notionPageId} account_id=${resolvePrimaryAccountId(account) ?? "missing"} client=${account.clientName}`
       );
@@ -418,6 +467,7 @@ async function filterAlreadySentAccounts(
   return {
     accounts: eligibleAccounts,
     skippedAlreadySent,
+    skippedAccounts,
   };
 }
 
@@ -455,6 +505,89 @@ function resolveScheduledDate(value: string | undefined): string {
 
 function toErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : "Unknown error.";
+}
+
+function buildAccountSendResults(input: {
+  skippedAccountResults: MonthlyReportAccountSendResult[];
+  pdfResults: MonthlyReportPdfBatchResult["results"];
+  emailResults: MonthlyReportJobResult["emailResults"];
+  dryRun: boolean;
+}): MonthlyReportAccountSendResult[] {
+  const emailResultsByAccountId = new Map(
+    input.emailResults.map((result) => [result.accountId ?? result.accountName, result])
+  );
+  const processedResults = input.pdfResults.map((pdfResult) => {
+    const emailResult = emailResultsByAccountId.get(pdfResult.accountId ?? pdfResult.accountName);
+    if (pdfResult.status === "skipped") {
+      return buildAccountSendResult(pdfResult.account, "skipped", pdfResult.errorMessage);
+    }
+    if (pdfResult.status === "failed") {
+      return buildAccountSendResult(pdfResult.account, "failed", pdfResult.errorMessage);
+    }
+    if (input.dryRun) {
+      return buildAccountSendResult(pdfResult.account, "skipped", "Dry run: email not sent.");
+    }
+    if (emailResult?.success) {
+      return buildAccountSendResult(pdfResult.account, "sent", emailResult.resendEmailId ? `Resend ID: ${emailResult.resendEmailId}` : null);
+    }
+    return buildAccountSendResult(
+      pdfResult.account,
+      "failed",
+      emailResult?.errorMessage ?? "Email send failed."
+    );
+  });
+
+  return [...input.skippedAccountResults, ...processedResults];
+}
+
+function buildAccountSendResult(
+  account: MonthlyReportAccount,
+  status: MonthlyReportAccountSendResult["status"],
+  notes: string | null
+): MonthlyReportAccountSendResult {
+  return {
+    notionPageId: account.notionPageId || null,
+    accountId: resolvePrimaryAccountId(account),
+    accountName: account.clientName,
+    email: account.clientEmail,
+    status,
+    notes,
+  };
+}
+
+async function updateAccountStatuses(
+  results: MonthlyReportAccountSendResult[],
+  input: {
+    accounts: MonthlyReportAccount[];
+    reportType: ScheduledMonthlyReportType;
+  }
+): Promise<void> {
+  const accountsByPageId = new Map(input.accounts.map((account) => [account.notionPageId, account]));
+  const sentDate = new Date().toISOString().slice(0, 10);
+
+  for (const result of results) {
+    if (!result.notionPageId) {
+      continue;
+    }
+
+    const account = accountsByPageId.get(result.notionPageId);
+    if (!account) {
+      continue;
+    }
+
+    await updateMonthlyReportAccountSendStatus({
+      account,
+      reportType: input.reportType,
+      status:
+        result.status === "sent"
+          ? "Sent"
+          : result.status === "failed"
+            ? "Failed"
+            : "Skipped",
+      sentDate: result.status === "sent" ? sentDate : null,
+      errorMessage: result.status === "failed" ? result.notes : null,
+    });
+  }
 }
 
 function isAdvancedReportAutomationEnabled(): boolean {

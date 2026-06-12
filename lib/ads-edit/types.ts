@@ -44,6 +44,14 @@ export interface AdsDraftData {
     headlines: PreviewTextAsset[];
     descriptions: PreviewTextAsset[];
   };
+  metaCreative: {
+    primaryText: string;
+    headline: string;
+    description: string;
+    callToAction: string;
+    finalUrl: string;
+    imageUrl: string;
+  };
   keywords: string[];
   assets: {
     images: PreviewImageAsset[];
@@ -103,7 +111,10 @@ export function createAdsDraftFromPreview(input: {
   ad: PreviewAdNode;
 }): AdsDraftData {
   const campaignDetails = input.campaign.details;
+  const adGroupDetails = input.adGroup.details;
   const adDetails = input.ad.details;
+  const creative = input.ad.creative ?? null;
+  const metaImageUrl = creative?.imageUrl?.trim() || creative?.thumbnailUrl?.trim() || "";
 
   return {
     locked: {
@@ -130,9 +141,9 @@ export function createAdsDraftFromPreview(input: {
       adStatus: input.ad.status,
       budget: getDetailValue(campaignDetails, "Budget"),
       biddingStrategy: getDetailValue(campaignDetails, "Bidding Strategy"),
-      startDate: getDetailValue(campaignDetails, "Start Date"),
-      endDate: getDetailValue(campaignDetails, "End Date"),
-      locations: getDetailValue(campaignDetails, "Locations"),
+      startDate: getDetailValue(campaignDetails, "Start Date") || getDetailValue(adGroupDetails, "Start date"),
+      endDate: getDetailValue(campaignDetails, "End Date") || getDetailValue(adGroupDetails, "End date"),
+      locations: getDetailValue(campaignDetails, "Locations") || getDetailValue(adGroupDetails, "Locations included"),
       languages: getDetailValue(campaignDetails, "Languages"),
     },
     adContent: {
@@ -140,6 +151,14 @@ export function createAdsDraftFromPreview(input: {
       displayPathParts: input.ad.displayPathParts ?? [],
       headlines: input.ad.headlines ?? [],
       descriptions: input.ad.descriptions ?? [],
+    },
+    metaCreative: {
+      primaryText: creative?.body?.trim() || getDetailValue(adDetails, "Primary text"),
+      headline: creative?.title?.trim() || getDetailValue(adDetails, "Headline"),
+      description: creative?.description?.trim() || "",
+      callToAction: creative?.callToActionType?.trim() || getDetailValue(adDetails, "Call to action"),
+      finalUrl: creative?.linkUrl?.trim() || input.ad.finalUrl || getDetailValue(adDetails, "Destination URL"),
+      imageUrl: metaImageUrl,
     },
     keywords: input.ad.keywords ?? [],
     assets: {

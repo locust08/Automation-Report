@@ -7,6 +7,8 @@ import type { ReactNode } from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   BarChart3Icon,
+  AwardIcon,
+  BookmarkIcon,
   CalendarDaysIcon,
   CheckIcon,
   ChevronLeftIcon,
@@ -17,19 +19,27 @@ import {
   ExternalLinkIcon,
   FileTextIcon,
   FolderIcon,
-  HouseIcon,
+  HeartIcon,
   ImageIcon,
   InfoIcon,
+  LayersIcon,
+  LightbulbIcon,
   LayoutPanelLeftIcon,
   Link2Icon,
   MenuIcon,
   MegaphoneIcon,
+  MessageCircleIcon,
   MonitorIcon,
+  PauseIcon,
   PencilIcon,
+  PlayIcon,
   RefreshCwIcon,
   SearchIcon,
+  SendIcon,
   Settings2Icon,
+  SlidersHorizontalIcon,
   SmartphoneIcon,
+  ThumbsUpIcon,
   UsersIcon,
   XIcon,
 } from "lucide-react";
@@ -90,6 +100,7 @@ function MetaAdsPreviewWorkspace({
   structureFlowchart,
   onCampaignChange,
 }: WorkspaceProps & { companyName?: string | null }) {
+  const searchParams = useSearchParams();
   const {
     selectedCampaign,
     selectedChild,
@@ -113,14 +124,19 @@ function MetaAdsPreviewWorkspace({
     [selectedAd?.previewLinks]
   );
   const [activePlacementKey, setActivePlacementKey] = useState("");
-  const [hoveredField, setHoveredField] = useState<MetaPreviewField | null>(null);
-  const [activeField, setActiveField] = useState<MetaPreviewField | null>(null);
   const activePlacement =
     previewPlacements.find((placement) => placement.key === activePlacementKey) ??
     previewPlacements[0] ??
     null;
-  const highlightedField = hoveredField || activeField;
   const companyLabel = companyName?.trim() || section.title;
+  const adSetCount = section.campaigns.reduce((count, campaign) => count + campaign.children.length, 0);
+  const adCount = section.campaigns.reduce(
+    (count, campaign) =>
+      count + campaign.children.reduce((childCount, child) => childCount + child.ads.length, 0),
+    0
+  );
+  const editHref = buildMetaEditDraftHref(searchParams, selectedCampaign?.id, selectedChild?.id, selectedAd?.id);
+  const editDisabled = !selectedCampaign || !selectedChild || !selectedAd;
   const quickSummaryCards = [
     {
       label: "Objective",
@@ -155,25 +171,26 @@ function MetaAdsPreviewWorkspace({
   ];
   const previewSummaryCards = [
     {
-      label: "Headline",
-      value: "Synced with preview",
+      label: "Placement",
+      value: activePlacement?.placementLabel ?? "Not available",
       accent: "violet" as const,
-      icon: <FileTextIcon className="size-5" />,
-      field: "headline" as const,
+      icon: <MonitorIcon className="size-5" />,
     },
     {
-      label: "Primary Text",
-      value: "Synced with preview",
+      label: "Preview Source",
+      value: activePlacement
+        ? activePlacement.linkKind === "publicPost"
+          ? "Real post link available"
+          : "Meta preview fallback"
+        : "Not available",
       accent: "blue" as const,
-      icon: <FileTextIcon className="size-5" />,
-      field: "primaryText" as const,
+      icon: <ExternalLinkIcon className="size-5" />,
     },
     {
       label: "Call to Action",
       value: getDetailFieldValue(adDetails, "Call to action") || "Not available",
       accent: "green" as const,
       icon: <MegaphoneIcon className="size-5" />,
-      field: "cta" as const,
     },
     {
       label: "Destination URL",
@@ -194,9 +211,6 @@ function MetaAdsPreviewWorkspace({
       fields: compactFields([
         detailField("Creative", getDetailFieldValue(adDetails, "Creative")),
         detailField("Creative ID", getDetailFieldValue(adDetails, "Creative ID")),
-        detailField("Headline", creative?.title || getDetailFieldValue(adDetails, "Headline")),
-        detailField("Primary text", creative?.body || getDetailFieldValue(adDetails, "Primary text")),
-        detailField("Description", creative?.description),
         detailField("Call to action", getDetailFieldValue(adDetails, "Call to action")),
         detailField("Destination URL", creative?.linkUrl || getDetailFieldValue(adDetails, "Destination URL")),
       ]),
@@ -255,38 +269,47 @@ function MetaAdsPreviewWorkspace({
     },
   ];
 
-  useEffect(() => {
-    if (!activeField) {
-      return;
-    }
-
-    function handlePointerDown(event: PointerEvent) {
-      const target = event.target;
-      if (target instanceof Element && target.closest("[data-meta-preview-summary-field='true']")) {
-        return;
-      }
-
-      setActiveField(null);
-    }
-
-    document.addEventListener("pointerdown", handlePointerDown);
-    return () => document.removeEventListener("pointerdown", handlePointerDown);
-  }, [activeField]);
-
   return (
     <section className="mx-auto max-w-[1360px] space-y-6 px-1 sm:px-2">
-      <div className="rounded-[28px] border border-[#e7edf5] bg-white p-5 shadow-[0_18px_50px_rgba(15,23,42,0.05)] sm:p-6">
-        <div className="flex flex-wrap items-center gap-3 text-sm text-[#64748b]">
-          <span className="flex size-9 items-center justify-center rounded-2xl bg-[#f8fafc] text-[#64748b] shadow-sm ring-1 ring-[#e5e7eb]">
-            <HouseIcon className="size-4" />
-          </span>
-          <span>Home</span>
-          <ChevronRightIcon className="size-4 text-[#c0cad6]" />
-          <span>Campaigns</span>
-          <ChevronRightIcon className="size-4 text-[#c0cad6]" />
-          <span className="truncate">{companyLabel}</span>
-          <ChevronRightIcon className="size-4 text-[#c0cad6]" />
-          <span className="font-semibold text-[#ef4444]">Campaign Preview</span>
+      <div className="rounded-[28px] border border-[#e7edf5] bg-white p-4 shadow-[0_20px_55px_rgba(15,23,42,0.06)] sm:p-5">
+        <div className="rounded-[26px] border border-[#eef3f8] bg-[linear-gradient(180deg,#ffffff_0%,#fbfdff_100%)] p-5 shadow-[inset_0_1px_0_rgba(255,255,255,0.9)] sm:p-6">
+          <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
+            <div className="flex min-w-0 gap-4">
+              <MetaMark />
+              <div className="min-w-0">
+                <h1 className="text-[2rem] font-semibold leading-tight tracking-[-0.04em] text-[#0f172a] sm:text-[2.15rem]">
+                  Meta Ads Preview
+                </h1>
+                <p className="mt-2 max-w-4xl text-[1rem] leading-7 text-[#64748b]">
+                  Review campaign setup, ad assets, and live preview from the Meta Ads hierarchy.
+                </p>
+                <div className="mt-5 flex flex-wrap gap-3">
+                  <MetricPill label="Campaigns" value={section.campaigns.length} accent="blue" />
+                  <MetricPill label="Ad Sets" value={adSetCount} accent="green" />
+                  <MetricPill label="Ads" value={adCount} accent="amber" />
+                </div>
+              </div>
+            </div>
+            {editDisabled ? (
+              <button
+                type="button"
+                disabled
+                className="inline-flex items-center justify-center gap-2 rounded-2xl border border-[#dbe3ec] bg-[#f8fafc] px-5 py-3 text-sm font-semibold text-[#94a3b8]"
+                title="Select a campaign, ad set, and ad before editing"
+              >
+                <PencilIcon className="size-4" />
+                Edit
+              </button>
+            ) : (
+              <Link
+                href={editHref}
+                className="inline-flex items-center justify-center gap-2 rounded-2xl border border-[#cfd9e6] bg-white px-5 py-3 text-sm font-semibold text-[#0f172a] shadow-[0_8px_18px_rgba(15,23,42,0.04)] transition hover:-translate-y-0.5 hover:border-[#9db5d1] hover:bg-[#f8fbff] hover:shadow-[0_14px_26px_rgba(15,23,42,0.08)]"
+              >
+                <PencilIcon className="size-4" />
+                Edit
+              </Link>
+            )}
+          </div>
         </div>
 
         <div className="mt-5 grid gap-4 xl:grid-cols-3">
@@ -321,14 +344,14 @@ function MetaAdsPreviewWorkspace({
           />
         </div>
 
-        <div className="mt-6 rounded-[28px] border border-[#edf2f7] bg-[linear-gradient(180deg,#ffffff_0%,#fbfdff_100%)] p-4 sm:p-5">
+        <div className="mt-5 rounded-[24px] border border-[#edf2f7] bg-[linear-gradient(180deg,#ffffff_0%,#fbfdff_100%)] p-4">
           <div className="flex items-center gap-2">
-            <h2 className="text-[1.8rem] font-semibold tracking-[-0.03em] text-[#0f172a]">
+            <h2 className="text-[1.5rem] font-semibold tracking-[-0.03em] text-[#0f172a]">
               Quick Summary
             </h2>
             <InfoIcon className="size-4 text-[#94a3b8]" />
           </div>
-          <div className="mt-4 grid gap-4 md:grid-cols-2 xl:grid-cols-5">
+          <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-5">
             {quickSummaryCards.map((card) => (
               <MetaSummaryCard key={card.label} {...card} />
             ))}
@@ -374,11 +397,8 @@ function MetaAdsPreviewWorkspace({
           <MetaAdPreviewCard
             companyLabel={companyLabel}
             campaignName={selectedCampaign?.name ?? "Campaign"}
-            adName={selectedAd?.name ?? "Ad"}
             creative={creative}
             activePlacement={activePlacement}
-            highlightedField={highlightedField}
-            activeField={activeField}
           />
           <div className="rounded-[24px] border border-[#edf2f7] bg-[#fbfdff] p-5">
             <h3 className="text-[1.6rem] font-semibold tracking-[-0.03em] text-[#0f172a]">
@@ -389,14 +409,6 @@ function MetaAdsPreviewWorkspace({
                 <MetaPreviewSummaryTile
                   key={card.label}
                   {...card}
-                  isActive={card.field === activeField}
-                  isHighlighted={card.field === highlightedField}
-                  onHoverChange={card.field ? setHoveredField : undefined}
-                  onToggleActive={
-                    card.field
-                      ? (field) => setActiveField((current) => (current === field ? null : field))
-                      : undefined
-                  }
                 />
               ))}
             </div>
@@ -423,74 +435,16 @@ function MetaAdsPreviewWorkspace({
         </div>
       </section>
 
-      <section className="rounded-[28px] border border-[#e7edf5] bg-white p-5 shadow-[0_18px_50px_rgba(15,23,42,0.05)] sm:p-6">
-        <h2 className="text-[1.8rem] font-semibold tracking-[-0.03em] text-[#0f172a]">
-          Performance & Audience Insights
-        </h2>
-        <div className="mt-5 grid gap-5 lg:grid-cols-2">
-          <div className="rounded-[24px] border border-[#edf2f7] bg-[#fbfdff] p-5">
-            {performance ? (
-              <>
-                <div className="flex items-center gap-3">
-                  <span className="flex size-12 items-center justify-center rounded-2xl bg-[#edf4ff] text-[#3b82f6]">
-                    <BarChart3Icon className="size-6" />
-                  </span>
-                  <div>
-                    <h3 className="text-[1.35rem] font-semibold text-[#0f172a]">
-                      Performance Insights
-                    </h3>
-                    <p className="text-sm text-[#64748b]">
-                      Live delivery metrics from the selected Meta ad.
-                    </p>
-                  </div>
-                </div>
-                <PerformanceSection
-                  performance={performance}
-                  emptyMessage="No performance data was returned for the current Meta Ads selection."
-                />
-              </>
-            ) : (
-              <MetaInsightEmptyCard
-                title="No performance insights yet"
-                message="Once your campaign starts delivering, performance data will appear here."
-                accent="blue"
-                icon={<BarChart3Icon className="size-8" />}
-              />
-            )}
-          </div>
-
-          <div className="rounded-[24px] border border-[#edf2f7] bg-[#fbfdff] p-5">
-            {demographics.length > 0 ? (
-              <>
-                <div className="flex items-center gap-3">
-                  <span className="flex size-12 items-center justify-center rounded-2xl bg-[#f6efff] text-[#8b5cf6]">
-                    <UsersIcon className="size-6" />
-                  </span>
-                  <div>
-                    <h3 className="text-[1.35rem] font-semibold text-[#0f172a]">
-                      Audience Insights
-                    </h3>
-                    <p className="text-sm text-[#64748b]">
-                      Results by age range and gender for the selected Meta ad.
-                    </p>
-                  </div>
-                </div>
-                <DemographicSection
-                  rows={demographics}
-                  resultLabel={performance?.resultLabel ?? "Results"}
-                  emptyMessage="No demographic data was returned for the current Meta Ads selection."
-                />
-              </>
-            ) : (
-              <MetaInsightEmptyCard
-                title="No audience insights yet"
-                message="Audience insights will be available once data starts flowing in."
-                accent="violet"
-                icon={<UsersIcon className="size-8" />}
-              />
-            )}
-          </div>
-        </div>
+      <section className="space-y-6">
+        <PerformanceSection
+          performance={performance}
+          emptyMessage="No performance data was returned for the current Meta Ads selection."
+        />
+        <DemographicSection
+          rows={demographics}
+          resultLabel={performance?.resultLabel ?? "Results"}
+          emptyMessage="No demographic data was returned for the current Meta Ads selection."
+        />
       </section>
 
       <section className="rounded-[28px] border border-[#e7edf5] bg-white p-5 shadow-[0_18px_50px_rgba(15,23,42,0.05)] sm:p-6">
@@ -506,13 +460,14 @@ function MetaAdsPreviewWorkspace({
 }
 
 type MetaAccent = "rose" | "blue" | "green" | "violet" | "amber";
-type MetaPreviewField = "headline" | "primaryText" | "cta";
-
 interface MetaPreviewPlacementDescriptor {
   key: string;
   label: string;
   description: string;
   url: string;
+  previewUrl: string | null;
+  publicPostUrl: string | null;
+  linkKind: "publicPost" | "metaPreview";
   placementLabel: string;
   accent: MetaAccent;
 }
@@ -544,26 +499,26 @@ function MetaSelectionCard({
   }
 
   return (
-    <div className="rounded-[24px] border border-[#e8eef5] bg-white p-4 shadow-[0_10px_28px_rgba(15,23,42,0.04)]">
-      <div className="flex items-center gap-4">
-        <span className={`flex size-14 items-center justify-center rounded-2xl ${metaAccentIconClassName(accent)}`}>
+    <div className="min-h-[150px] rounded-[24px] border border-[#e8eef5] bg-white p-5 shadow-[0_10px_26px_rgba(15,23,42,0.04)]">
+      <div className="flex items-start gap-4">
+        <span className={`flex size-14 shrink-0 items-center justify-center rounded-[18px] ${metaAccentIconClassName(accent)}`}>
           {icon}
         </span>
         <div className="min-w-0 flex-1">
-          <p className="text-sm font-semibold text-[#0f172a]">{title}</p>
+          <p className="text-[0.95rem] font-semibold text-[#0f172a]">{title}</p>
           {items.length > 0 ? (
             <button
               type="button"
               onClick={() => setOpen((current) => !current)}
-              className="mt-1 flex w-full items-start justify-between gap-3 text-left"
+              className="mt-1.5 flex w-full items-start justify-between gap-4 text-left"
               aria-expanded={open}
             >
               <span className="min-w-0">
-                <span className="block truncate text-[1.15rem] font-medium text-[#0f172a]">
+                <span className="block whitespace-normal break-words text-[1.15rem] font-semibold leading-7 text-[#0f172a]">
                   {selectedLabel}
                 </span>
-                <span className="mt-1 block text-sm text-[#64748b]">
-                  {open ? `Hide ${title.toLowerCase()} options` : `Choose ${title.toLowerCase()}`}
+                <span className="mt-2 block text-sm text-[#64748b]">
+                  {open ? "Hide options" : "Choose"}
                 </span>
               </span>
               <ChevronDownIcon
@@ -579,7 +534,7 @@ function MetaSelectionCard({
       </div>
 
       {open && items.length > 0 ? (
-        <div className="mt-4 max-h-64 space-y-2 overflow-y-auto pr-1">
+        <div className="mt-3 max-h-72 space-y-2 overflow-y-auto pr-1">
           {items.map((item) => {
             const isSelected = item.id === selectedId;
             const isPaused = isPausedStatus(item.status);
@@ -595,7 +550,7 @@ function MetaSelectionCard({
                 )}`}
               >
                 <span className="min-w-0">
-                  <span className="block truncate text-sm font-semibold text-[#0f172a]">
+                  <span className="block whitespace-normal break-words text-sm font-semibold leading-5 text-[#0f172a]">
                     {item.name}
                   </span>
                   <span className={`mt-1 block text-xs ${isPaused ? "font-medium text-[#b45309]" : "text-[#64748b]"}`}>
@@ -628,14 +583,14 @@ function MetaSummaryCard({
   icon: ReactNode;
 }) {
   return (
-    <div className="rounded-[22px] border border-[#edf2f7] bg-white p-4 shadow-[0_8px_22px_rgba(15,23,42,0.03)]">
-      <div className="flex items-start gap-4">
-        <span className={`flex size-14 items-center justify-center rounded-2xl ${metaAccentIconClassName(accent)}`}>
+    <div className="rounded-[18px] border border-[#edf2f7] bg-white p-3.5 shadow-[0_6px_18px_rgba(15,23,42,0.025)]">
+      <div className="flex items-start gap-3">
+        <span className={`flex size-11 shrink-0 items-center justify-center rounded-[14px] ${metaAccentIconClassName(accent)}`}>
           {icon}
         </span>
         <div className="min-w-0">
-          <p className="text-sm font-semibold text-[#0f172a]">{label}</p>
-          <p className="mt-2 whitespace-pre-line text-[1.05rem] leading-7 text-[#1f2937]">
+          <p className="text-[0.82rem] font-semibold text-[#0f172a]">{label}</p>
+          <p className="mt-1.5 whitespace-pre-line text-[0.95rem] leading-6 text-[#1f2937]">
             {value}
           </p>
         </div>
@@ -647,140 +602,417 @@ function MetaSummaryCard({
 function MetaAdPreviewCard({
   companyLabel,
   campaignName,
-  adName,
   creative,
   activePlacement,
-  highlightedField,
-  activeField,
 }: {
   companyLabel: string;
   campaignName: string;
-  adName: string;
   creative: PreviewAdNode["creative"] | null;
   activePlacement: MetaPreviewPlacementDescriptor | null;
-  highlightedField: MetaPreviewField | null;
-  activeField: MetaPreviewField | null;
 }) {
-  const bodyText = creative?.body?.trim() || "No primary text available for this ad.";
-  const headline = creative?.title?.trim() || campaignName;
-  const linkUrl = creative?.linkUrl?.trim() || null;
-  const imageUrl = creative?.imageUrl?.trim() || creative?.thumbnailUrl?.trim() || null;
-  const domainLabel = getMetaDisplayDomain(linkUrl);
-  const callToAction = humanizeMetaCta(creative?.callToActionType) || "Learn more";
-  const profileLetter = companyLabel.slice(0, 1).toUpperCase() || "M";
+  const props: MetaLocalPreviewTemplateProps = {
+    companyLabel,
+    campaignName,
+    creative,
+    placementKey: activePlacement?.key ?? "facebookFeed",
+    placementExternalUrl: activePlacement?.publicPostUrl || activePlacement?.url || null,
+    placementLabel: activePlacement?.placementLabel ?? "Facebook Feed",
+  };
 
   return (
     <div className="rounded-[24px] border border-[#edf2f7] bg-[#fbfdff] p-4">
-      <div className="rounded-[26px] border border-[#e7edf5] bg-white p-4 shadow-[0_18px_40px_rgba(15,23,42,0.05)] sm:p-5">
-        <div className="flex items-center justify-between gap-3">
-          <div className="flex min-w-0 items-center gap-4">
-            <div className="flex size-16 items-center justify-center rounded-full bg-[linear-gradient(180deg,#14398d_0%,#0f2358_100%)] text-xl font-semibold text-white">
-              {profileLetter}
-            </div>
-            <div className="min-w-0">
-              <p className="truncate text-[1.45rem] font-semibold tracking-[-0.03em] text-[#0f172a]">
-                {companyLabel}
-              </p>
-              <p className="mt-1 text-[1rem] text-[#64748b]">Sponsored</p>
-            </div>
-          </div>
-          <EllipsisVerticalIcon className="size-5 shrink-0 text-[#64748b]" />
-        </div>
-
-        <p
-          data-field="primaryText"
-          className={`mt-5 text-[1.15rem] leading-9 text-[#111827] ${metaPreviewFieldClassName(
-            "primaryText",
-            highlightedField,
-            activeField
-          )}`}
-        >
-          {bodyText}
-        </p>
-
-        <div className="mt-5 overflow-hidden rounded-[20px] border border-[#e7edf5] bg-[#f8fafc]">
-          {imageUrl ? (
-            <div className="relative aspect-[16/9] w-full bg-[#e2e8f0]">
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img
-                src={imageUrl}
-                alt={headline}
-                className="h-full w-full object-cover"
-              />
-              {activePlacement ? (
-                <span className="absolute left-4 top-4 rounded-full bg-white/90 px-3 py-1 text-xs font-semibold text-[#0f172a] shadow-sm">
-                  {activePlacement.placementLabel}
-                </span>
-              ) : null}
-            </div>
-          ) : (
-            <div className="flex aspect-[16/9] items-center justify-center bg-[linear-gradient(135deg,#163d8f_0%,#234ea3_40%,#0f172a_100%)] px-6 text-center text-white">
-              <div>
-                <p className="text-[1.45rem] font-semibold tracking-[-0.03em]">{headline}</p>
-                <p className="mt-3 text-base text-white/80">
-                  Creative media preview is not available for this ad.
-                </p>
-              </div>
-            </div>
-          )}
-
-          <div className="flex flex-col gap-4 border-t border-[#e7edf5] bg-white p-4 sm:flex-row sm:items-center sm:justify-between">
-            <div className="min-w-0">
-              <p className="text-sm uppercase tracking-[0.08em] text-[#94a3b8]">{domainLabel}</p>
-              <p
-                data-field="headline"
-                className={`mt-1 truncate text-[1.45rem] font-semibold tracking-[-0.03em] text-[#0f172a] ${metaPreviewFieldClassName(
-                  "headline",
-                  highlightedField,
-                  activeField
-                )}`}
-              >
-                {headline}
-              </p>
-              {creative?.description ? (
-                <p className="mt-1 text-[1rem] text-[#475569]">{creative.description}</p>
-              ) : null}
-            </div>
-            <div className="flex items-center gap-3">
-              {linkUrl ? (
-                <a
-                  href={linkUrl}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="inline-flex items-center gap-2 rounded-[16px] border border-[#d8e0ea] bg-white px-4 py-3 text-sm font-medium text-[#0f172a] transition hover:border-[#93c5fd] hover:text-[#2563eb]"
-                >
-                  Visit
-                  <ExternalLinkIcon className="size-4" />
-                </a>
-              ) : null}
-              <button
-                type="button"
-                data-field="cta"
-                className={`rounded-[16px] border border-[#d8e0ea] bg-[#f8fafc] px-5 py-3 text-[1.05rem] font-semibold text-[#0f172a] ${metaPreviewFieldClassName(
-                  "cta",
-                  highlightedField,
-                  activeField
-                )}`}
-              >
-                {callToAction}
-              </button>
-            </div>
-          </div>
-        </div>
-
-        <div className="mt-5 grid grid-cols-3 gap-3 border-t border-[#edf2f7] pt-4 text-center text-[1rem] text-[#64748b]">
-          <span>Like</span>
-          <span>Comment</span>
-          <span>Share</span>
-        </div>
-
-        <p className="mt-4 text-sm text-[#94a3b8]">
-          Previewing {adName}
-          {activePlacement ? ` in ${activePlacement.placementLabel}.` : "."}
-        </p>
-      </div>
+      {activePlacement?.key === "story" ? (
+        <MetaStoryPreviewTemplate {...props} />
+      ) : activePlacement?.key === "instagramFeed" ? (
+        <MetaInstagramFeedPreviewTemplate {...props} />
+      ) : (
+        <MetaFacebookFeedPreviewTemplate {...props} />
+      )}
     </div>
   );
+}
+
+interface MetaLocalPreviewTemplateProps {
+  companyLabel: string;
+  campaignName: string;
+  creative: PreviewAdNode["creative"] | null;
+  placementKey: string;
+  placementExternalUrl: string | null;
+  placementLabel: string;
+}
+
+function MetaFacebookFeedPreviewTemplate({
+  companyLabel,
+  campaignName,
+  creative,
+  placementKey,
+  placementExternalUrl,
+}: MetaLocalPreviewTemplateProps) {
+  const model = buildMetaLocalPreviewModel(companyLabel, campaignName, creative, placementKey, placementExternalUrl);
+  const [textExpanded, setTextExpanded] = useState(false);
+
+  return (
+    <article className="mx-auto w-full max-w-[430px] overflow-hidden rounded-[2px] border border-[#dadde1] bg-white font-sans text-[#050505] shadow-[0_12px_28px_rgba(15,23,42,0.08)]">
+      <div className="flex items-center gap-2 px-3 pb-1 pt-3">
+        <MetaAvatar label={companyLabel} sizeClassName="size-10" textClassName="text-sm" />
+        <div className="min-w-0 flex-1">
+          <p className="truncate text-[15px] font-semibold leading-5">{companyLabel}</p>
+          <p className="text-[13px] leading-4 text-[#65676b]">Ad - Sponsored</p>
+        </div>
+        <EllipsisVerticalIcon className="size-5 text-[#050505]" />
+        <XIcon className="size-5 text-[#050505]" />
+      </div>
+
+      <ExpandableMetaText
+        text={model.bodyText}
+        expanded={textExpanded}
+        onToggle={() => setTextExpanded((current) => !current)}
+        className="mx-3 mb-2 text-[14px] leading-[19px] text-[#050505]"
+        collapsedLineClampClassName="[-webkit-line-clamp:3]"
+        moreLabel="... see more"
+        lessLabel="see less"
+      />
+
+      <MetaPreviewMedia
+        media={model.media}
+        headline={model.headline}
+        className="aspect-[1/1] w-full bg-[#000]"
+        imageClassName="h-full w-full object-contain"
+      />
+
+      <div className="flex items-center justify-between gap-3 border-b border-[#dadde1] bg-[#f0f2f5] px-3 py-3">
+        <div className="min-w-0">
+          <p className="text-[12px] uppercase leading-4 text-[#65676b]">{model.domainLabel}</p>
+          <p className="line-clamp-2 text-[15px] font-semibold leading-5 text-[#050505]">{model.headline}</p>
+        </div>
+        <span className="shrink-0 rounded-md bg-[#e4e6eb] px-4 py-2 text-[14px] font-semibold leading-5 text-[#050505]">
+          {model.callToAction}
+        </span>
+      </div>
+
+      <div className="mx-3 grid grid-cols-2 border-t border-[#dadde1] py-1 text-[#65676b]">
+        <button type="button" className="flex items-center justify-center gap-2 rounded-md py-2 text-[13px] font-semibold">
+          <ThumbsUpIcon className="size-5" />
+          Like
+        </button>
+        <button type="button" className="flex items-center justify-center gap-2 rounded-md py-2 text-[13px] font-semibold">
+          <MessageCircleIcon className="size-5" />
+          Comment
+        </button>
+      </div>
+    </article>
+  );
+}
+
+function MetaInstagramFeedPreviewTemplate({
+  companyLabel,
+  campaignName,
+  creative,
+  placementKey,
+  placementExternalUrl,
+}: MetaLocalPreviewTemplateProps) {
+  const model = buildMetaLocalPreviewModel(companyLabel, campaignName, creative, placementKey, placementExternalUrl);
+  const instagramName = normalizeInstagramHandle(companyLabel);
+  const [captionExpanded, setCaptionExpanded] = useState(false);
+
+  return (
+    <article className="mx-auto w-full max-w-[390px] overflow-hidden rounded-[18px] border border-[#dbdbdb] bg-white font-sans text-[#000] shadow-[0_12px_28px_rgba(15,23,42,0.08)]">
+      <div className="flex items-center gap-3 px-3 py-2">
+        <MetaAvatar label={companyLabel} sizeClassName="size-9" textClassName="text-xs" />
+        <div className="min-w-0 flex-1">
+          <p className="truncate text-[13px] font-semibold leading-4">{instagramName}</p>
+          <p className="text-[12px] leading-4">Ad</p>
+        </div>
+        <EllipsisVerticalIcon className="size-5" />
+      </div>
+
+      <MetaPreviewMedia
+        media={model.media}
+        headline={model.headline}
+        className="min-h-[260px] w-full bg-[#000]"
+        imageClassName="h-auto max-h-[585px] w-full object-contain"
+      />
+
+      <div className="flex items-center justify-between border-b border-[#efefef] px-4 py-3">
+        <span className="text-[14px] font-semibold">{model.callToAction}</span>
+        <ChevronRightIcon className="size-6" />
+      </div>
+
+      <div className="flex items-center justify-between px-3 py-3">
+        <div className="flex items-center gap-4">
+          <HeartIcon className="size-6" />
+          <MessageCircleIcon className="size-6" />
+          <SendIcon className="size-6" />
+        </div>
+        <BookmarkIcon className="size-6" />
+      </div>
+
+      <div className="px-3 pb-4 text-[13px] leading-[18px] text-[#000]">
+        <span className="font-semibold">{instagramName}</span>{" "}
+        <ExpandableMetaText
+          text={model.bodyText}
+          expanded={captionExpanded}
+          onToggle={() => setCaptionExpanded((current) => !current)}
+          className="inline text-[13px] leading-[18px] text-[#000]"
+          collapsedLineClampClassName="[-webkit-line-clamp:2]"
+          moreLabel="more"
+          lessLabel="less"
+          inline
+        />
+      </div>
+    </article>
+  );
+}
+
+function MetaStoryPreviewTemplate({
+  companyLabel,
+  campaignName,
+  creative,
+  placementKey,
+  placementExternalUrl,
+}: MetaLocalPreviewTemplateProps) {
+  const model = buildMetaLocalPreviewModel(companyLabel, campaignName, creative, placementKey, placementExternalUrl);
+  const instagramName = normalizeInstagramHandle(companyLabel);
+  const [isPlaying, setIsPlaying] = useState(true);
+  const [textExpanded, setTextExpanded] = useState(false);
+
+  return (
+    <article className="relative mx-auto aspect-[9/16] w-full max-w-[360px] overflow-hidden rounded-[2px] bg-black font-sans text-white shadow-[0_18px_40px_rgba(15,23,42,0.16)]">
+      <MetaPreviewMedia
+        media={model.media}
+        headline={model.headline}
+        className="absolute inset-0 h-full w-full bg-[#dfe6dc]"
+        imageClassName="h-full w-full object-cover"
+      />
+      <div className="absolute inset-x-0 top-0 bg-[linear-gradient(180deg,rgba(0,0,0,0.46)_0%,rgba(0,0,0,0)_100%)] px-3 pb-14 pt-3">
+        <div className="mb-3 grid grid-cols-4 gap-1">
+          <span className="h-0.5 overflow-hidden rounded-full bg-white/35">
+            <span
+              className="block h-full origin-left bg-white"
+              style={{
+                animation: "metaStoryProgress 6s linear infinite",
+                animationPlayState: isPlaying ? "running" : "paused",
+              }}
+            />
+          </span>
+          <span className="h-0.5 rounded-full bg-white/65" />
+          <span className="h-0.5 rounded-full bg-white/65" />
+          <span className="h-0.5 rounded-full bg-white/65" />
+        </div>
+        <div className="flex items-center gap-2">
+          <MetaAvatar label={companyLabel} sizeClassName="size-8" textClassName="text-xs" />
+          <p className="min-w-0 flex-1 truncate text-[13px] font-semibold">{instagramName}</p>
+          <span className="text-[12px] text-white/80">Ad</span>
+          <button
+            type="button"
+            onClick={() => setIsPlaying((current) => !current)}
+            className="flex size-7 items-center justify-center rounded-full text-white"
+            aria-label={isPlaying ? "Pause story preview" : "Play story preview"}
+          >
+            {isPlaying ? <PauseIcon className="size-4" /> : <PlayIcon className="size-4" />}
+          </button>
+          <EllipsisVerticalIcon className="size-5" />
+          <XIcon className="size-5" />
+        </div>
+      </div>
+
+      <div className="absolute inset-x-0 bottom-12 max-h-[48%] overflow-y-auto bg-white/82 px-7 py-5 text-center text-[#050505] backdrop-blur-sm">
+        <ExpandableMetaText
+          text={model.bodyText}
+          expanded={textExpanded}
+          onToggle={() => setTextExpanded((current) => !current)}
+          className="text-[14px] font-semibold leading-[19px] text-[#050505]"
+          collapsedLineClampClassName="[-webkit-line-clamp:3]"
+          moreLabel="more"
+          lessLabel="less"
+        />
+        <span className="mt-4 inline-flex items-center gap-2 rounded-full bg-white px-5 py-2 text-[22px] leading-7 text-[#050505] shadow-[0_8px_20px_rgba(15,23,42,0.18)]">
+          <Link2Icon className="size-5 text-[#1877f2]" />
+          {model.callToAction}
+        </span>
+      </div>
+
+      <div className="absolute inset-x-0 bottom-0 flex h-12 items-center justify-between bg-black px-3">
+        <span className="text-[12px] font-semibold">Ad</span>
+        <div className="flex items-center gap-4">
+          <HeartIcon className="size-6" />
+          <MessageCircleIcon className="size-6" />
+          <SendIcon className="size-6" />
+        </div>
+      </div>
+    </article>
+  );
+}
+
+function ExpandableMetaText({
+  text,
+  expanded,
+  onToggle,
+  className,
+  collapsedLineClampClassName,
+  moreLabel,
+  lessLabel,
+  inline = false,
+}: {
+  text: string;
+  expanded: boolean;
+  onToggle: () => void;
+  className: string;
+  collapsedLineClampClassName: string;
+  moreLabel: string;
+  lessLabel: string;
+  inline?: boolean;
+}) {
+  const canExpand = text.length > 95 || text.includes("\n");
+  const textClassName = expanded
+    ? "whitespace-pre-wrap"
+    : `whitespace-pre-wrap overflow-hidden [display:-webkit-box] [-webkit-box-orient:vertical] ${collapsedLineClampClassName}`;
+  const Wrapper = inline ? "span" : "div";
+
+  return (
+    <Wrapper className={className}>
+      <span className={textClassName}>{text}</span>
+      {canExpand ? (
+        <>
+          {" "}
+          <button
+            type="button"
+            onClick={onToggle}
+            className="font-normal text-[#65676b] underline-offset-2 hover:underline"
+          >
+            {expanded ? lessLabel : moreLabel}
+          </button>
+        </>
+      ) : null}
+    </Wrapper>
+  );
+}
+
+interface MetaPreviewMediaModel {
+  mediaType: "image" | "video";
+  imageUrl: string | null;
+  posterUrl: string | null;
+  externalPostUrl: string | null;
+  mediaWarning: string | null;
+}
+
+function MetaPreviewMedia({
+  media,
+  headline,
+  className,
+  imageClassName = "h-full w-full object-contain",
+}: {
+  media: MetaPreviewMediaModel;
+  headline: string;
+  className: string;
+  imageClassName?: string;
+}) {
+  const posterUrl = media.posterUrl || media.imageUrl;
+  const displayImageUrl = media.mediaType === "video" ? posterUrl : media.imageUrl || posterUrl;
+
+  return (
+    <div className={`relative overflow-hidden ${className}`}>
+      {displayImageUrl ? (
+        <>
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src={displayImageUrl} alt={headline} className={imageClassName} />
+          {media.externalPostUrl ? (
+            <a
+              href={media.externalPostUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="absolute inset-0 flex items-center justify-center bg-black/10 text-white transition hover:bg-black/20"
+              aria-label={media.mediaType === "video" ? "Open real video post" : "Open real post"}
+            >
+              <span className="flex size-16 items-center justify-center rounded-full bg-black/70 shadow-[0_12px_30px_rgba(0,0,0,0.35)] transition-transform hover:scale-105">
+                <PlayIcon className="ml-1 size-8 fill-white" />
+              </span>
+              <span className="sr-only">{media.mediaWarning ?? "Open real post"}</span>
+            </a>
+          ) : null}
+        </>
+      ) : (
+        <div className="flex h-full w-full items-center justify-center bg-[#eef0f3] px-6 text-center text-[#64748b]">
+          <p className="text-[18px] font-semibold leading-6">{headline}</p>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function MetaAvatar({
+  label,
+  sizeClassName,
+  textClassName,
+}: {
+  label: string;
+  sizeClassName: string;
+  textClassName: string;
+}) {
+  const profileLetter = label.slice(0, 1).toUpperCase() || "M";
+
+  return (
+    <span
+      className={`flex shrink-0 items-center justify-center rounded-full border border-white/70 bg-[#123579] font-semibold text-white shadow-sm ${sizeClassName} ${textClassName}`}
+    >
+      {profileLetter}
+    </span>
+  );
+}
+
+function buildMetaLocalPreviewModel(
+  companyLabel: string,
+  campaignName: string,
+  creative: PreviewAdNode["creative"] | null,
+  placementKey: string,
+  placementExternalUrl: string | null
+) {
+  const bodyText = creative?.body || "No primary text available for this ad.";
+  const headline = creative?.title?.trim() || campaignName;
+  const linkUrl = creative?.linkUrl?.trim() || null;
+  const mediaType = creative?.mediaType ?? (creative?.videoSourceUrl || creative?.videoUrl ? "video" : "image");
+  const imageUrl = creative?.imageUrl?.trim() || null;
+  const posterUrl = creative?.posterUrl?.trim() || imageUrl || creative?.thumbnailUrl?.trim() || null;
+  const externalPostUrl = placementExternalUrl || getMetaPlacementPostUrl(creative, placementKey);
+
+  return {
+    bodyText,
+    headline,
+    linkUrl,
+    media: {
+      mediaType,
+      imageUrl,
+      posterUrl,
+      externalPostUrl,
+      mediaWarning: creative?.mediaWarning?.trim() || null,
+    } satisfies MetaPreviewMediaModel,
+    domainLabel: getMetaDisplayDomain(linkUrl),
+    callToAction: humanizeMetaCta(creative?.callToActionType) || "Book now",
+    accountName: companyLabel,
+  };
+}
+
+function getMetaPlacementPostUrl(creative: PreviewAdNode["creative"] | null, placementKey: string): string | null {
+  const instagramUrl = creative?.instagramPermalinkUrl?.trim() || null;
+  const facebookUrl = creative?.facebookPermalinkUrl?.trim() || null;
+  const videoUrl = creative?.videoPermalinkUrl?.trim() || creative?.videoUrl?.trim() || null;
+
+  if (placementKey === "instagramFeed" || placementKey === "story") {
+    return instagramUrl || videoUrl || facebookUrl;
+  }
+
+  return facebookUrl || videoUrl || instagramUrl;
+}
+
+function normalizeInstagramHandle(label: string): string {
+  const normalized = label
+    .trim()
+    .toLowerCase()
+    .replace(/&/g, "and")
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "");
+
+  return normalized || "instagram_ad";
 }
 
 function MetaPreviewSummaryTile({
@@ -788,65 +1020,24 @@ function MetaPreviewSummaryTile({
   value,
   accent,
   icon,
-  field,
-  isActive,
-  isHighlighted,
-  onHoverChange,
-  onToggleActive,
 }: {
   label: string;
   value: string;
   accent: MetaAccent;
   icon: ReactNode;
-  field?: MetaPreviewField;
-  isActive?: boolean;
-  isHighlighted?: boolean;
-  onHoverChange?: (field: MetaPreviewField | null) => void;
-  onToggleActive?: (field: MetaPreviewField) => void;
 }) {
-  const tileClassName = `w-full rounded-[20px] border p-4 text-left shadow-[0_8px_18px_rgba(15,23,42,0.03)] transition duration-200 ${
-    isActive
-      ? "border-[#93c5fd] bg-[#eff6ff] shadow-[0_12px_28px_rgba(37,99,235,0.12)]"
-      : isHighlighted
-        ? "border-[#bfdbfe] bg-[#f8fbff]"
-        : "border-[#edf2f7] bg-white"
-  }`;
-
-  const content = (
-    <div className="flex items-start gap-4">
-      <span className={`flex size-14 items-center justify-center rounded-2xl ${metaAccentIconClassName(accent)}`}>
-        {icon}
-      </span>
-      <div className="min-w-0">
-        <p className="text-[1.05rem] font-semibold text-[#0f172a]">{label}</p>
-        <p className="mt-2 break-words text-[1.05rem] leading-8 text-[#1f2937]">{value}</p>
+  return (
+    <div className="w-full rounded-[20px] border border-[#edf2f7] bg-white p-4 text-left shadow-[0_8px_18px_rgba(15,23,42,0.03)] transition duration-200">
+      <div className="flex items-start gap-4">
+        <span className={`flex size-14 items-center justify-center rounded-2xl ${metaAccentIconClassName(accent)}`}>
+          {icon}
+        </span>
+        <div className="min-w-0">
+          <p className="text-[1.05rem] font-semibold text-[#0f172a]">{label}</p>
+          <p className="mt-2 break-words text-[1.05rem] leading-8 text-[#1f2937]">{value}</p>
+        </div>
       </div>
     </div>
-  );
-
-  if (!field) {
-    return <div className={tileClassName}>{content}</div>;
-  }
-
-  return (
-    <button
-      type="button"
-      data-meta-preview-summary-field="true"
-      className={`${tileClassName} cursor-pointer hover:border-[#93c5fd] hover:bg-[#f8fbff] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#93c5fd] focus-visible:ring-offset-2`}
-      aria-pressed={isActive}
-      onPointerEnter={() => onHoverChange?.(field)}
-      onPointerLeave={() => onHoverChange?.(null)}
-      onFocus={() => onHoverChange?.(field)}
-      onBlur={() => onHoverChange?.(null)}
-      onClick={() => {
-        if (isActive) {
-          onHoverChange?.(null);
-        }
-        onToggleActive?.(field);
-      }}
-    >
-      {content}
-    </button>
   );
 }
 
@@ -904,32 +1095,6 @@ function MetaInformationAccordionItem({
   );
 }
 
-function MetaInsightEmptyCard({
-  title,
-  message,
-  accent,
-  icon,
-}: {
-  title: string;
-  message: string;
-  accent: MetaAccent;
-  icon: ReactNode;
-}) {
-  return (
-    <div className="flex min-h-[240px] items-center rounded-[20px] bg-white p-4">
-      <div className="flex items-center gap-5">
-        <span className={`flex size-20 items-center justify-center rounded-[28px] ${metaAccentIconClassName(accent)}`}>
-          {icon}
-        </span>
-        <div className="max-w-[320px]">
-          <h3 className="text-[1.35rem] font-semibold text-[#0f172a]">{title}</h3>
-          <p className="mt-3 text-[1.05rem] leading-8 text-[#64748b]">{message}</p>
-        </div>
-      </div>
-    </div>
-  );
-}
-
 function MetaPreviewLinksGrid({
   placements,
 }: {
@@ -961,7 +1126,10 @@ function MetaPreviewLinksGrid({
             </span>
             <div className="min-w-0">
               <p className="text-[1.1rem] font-semibold text-[#0f172a]">{placement.label}</p>
-              <p className="mt-2 text-[1rem] leading-7 text-[#64748b]">{placement.description}</p>
+              <p className="mt-2 text-[1rem] leading-7 text-[#64748b]">
+                {placement.linkKind === "publicPost" ? "Open real post" : "Open Meta preview"}
+              </p>
+              <p className="mt-1 text-sm leading-6 text-[#94a3b8]">{placement.description}</p>
             </div>
           </div>
           <ExternalLinkIcon className="size-5 shrink-0 text-[#2563eb]" />
@@ -972,27 +1140,42 @@ function MetaPreviewLinksGrid({
 }
 
 function buildMetaPreviewPlacements(
-  previewLinks: Array<{ label: string; url: string; placementKey?: string | null; placementLabel?: string | null }>
+  previewLinks: Array<{
+    label: string;
+    url: string;
+    placementKey?: string | null;
+    placementLabel?: string | null;
+    previewUrl?: string | null;
+    publicPostUrl?: string | null;
+    linkKind?: "publicPost" | "metaPreview" | null;
+  }>
 ): MetaPreviewPlacementDescriptor[] {
   const placements = new Map<string, MetaPreviewPlacementDescriptor>();
 
   previewLinks.forEach((link) => {
     const placementKey = link.placementKey || normalizePlacementKeyFromLabel(link.label);
-    if (!placementKey || placements.has(placementKey)) {
+    if (!placementKey || placementKey === "mobile" || placementKey === "reels" || placements.has(placementKey)) {
       return;
     }
+    const previewUrl = link.previewUrl?.trim() || link.url.trim() || null;
+    const publicPostUrl = link.publicPostUrl?.trim() || null;
+    const linkKind = publicPostUrl ? "publicPost" : "metaPreview";
 
     placements.set(placementKey, {
       key: placementKey,
       label: link.placementLabel || defaultPlacementLabel(placementKey),
       description: defaultPlacementDescription(placementKey),
-      url: link.url,
+      url: publicPostUrl || previewUrl || link.url,
+      previewUrl,
+      publicPostUrl,
+      linkKind,
       placementLabel: link.placementLabel || defaultPlacementLabel(placementKey),
       accent: placementAccent(placementKey),
     });
   });
 
-  return Array.from(placements.values());
+  const order = ["facebookFeed", "instagramFeed", "story"];
+  return Array.from(placements.values()).sort((left, right) => order.indexOf(left.key) - order.indexOf(right.key));
 }
 
 function normalizePlacementKeyFromLabel(label: string): string | null {
@@ -1098,28 +1281,6 @@ function metaAccentIconClassName(accent: MetaAccent): string {
     return "bg-[#fff1f2] text-[#ef4444]";
   }
   return "bg-[#f5f3ff] text-[#7c3aed]";
-}
-
-function metaPreviewFieldClassName(
-  field: MetaPreviewField,
-  highlightedField: MetaPreviewField | null,
-  activeField: MetaPreviewField | null
-): string {
-  const baseClassName =
-    "rounded-[14px] ring-1 ring-transparent transition-[background-color,box-shadow] duration-200 ease-out";
-
-  if (highlightedField !== field) {
-    return baseClassName;
-  }
-
-  const glowClassName =
-    "!bg-[#eff6ff]/80 ring-[#93c5fd] shadow-[0_0_0_4px_rgba(147,197,253,0.24),0_10px_22px_rgba(37,99,235,0.10)]";
-
-  if (activeField === field) {
-    return `${baseClassName} !bg-[#eff6ff]/90 ring-[#60a5fa] shadow-[0_0_0_4px_rgba(147,197,253,0.32),0_0_22px_rgba(37,99,235,0.18)]`;
-  }
-
-  return `${baseClassName} ${glowClassName}`;
 }
 
 function getMetaDisplayDomain(url: string | null): string {
@@ -2307,6 +2468,26 @@ function buildGoogleEditDraftHref(
   return `/preview/edit?${params.toString()}`;
 }
 
+function buildMetaEditDraftHref(
+  searchParams: URLSearchParams,
+  campaignId: string | null | undefined,
+  adGroupId: string | null | undefined,
+  adId: string | null | undefined
+): string {
+  const params = new URLSearchParams(searchParams.toString());
+  params.set("platform", "meta");
+  if (campaignId) {
+    params.set("campaignId", campaignId);
+  }
+  if (adGroupId) {
+    params.set("adGroupId", adGroupId);
+  }
+  if (adId) {
+    params.set("adId", adId);
+  }
+  return `/preview/edit?${params.toString()}`;
+}
+
 function detailField(label: string, value: string | null | undefined): PreviewDetailField | null {
   const normalized = value?.trim();
   if (!normalized) {
@@ -2592,6 +2773,20 @@ function GoogleMark() {
   );
 }
 
+function MetaMark() {
+  return (
+    <div className="relative flex size-20 shrink-0 items-center justify-center overflow-hidden rounded-[22px] border border-[#dbe7f3] bg-white shadow-[0_10px_24px_rgba(15,23,42,0.06)]">
+      <Image
+        src="/MetaLogo.png"
+        alt="Meta logo"
+        fill
+        className="object-contain p-3"
+        sizes="80px"
+      />
+    </div>
+  );
+}
+
 function buildGoogleAdPreviewVariations(selectedAd: PreviewAdNode | null): GooglePreviewSlide[] {
   if (!selectedAd) {
     return [];
@@ -2698,36 +2893,96 @@ function PerformanceSection({
   performance: PreviewPerformanceSummary | null;
   emptyMessage: string;
 }) {
+  const [activeIndex, setActiveIndex] = useState(10);
+  const [dateRangeKey, setDateRangeKey] = useState("30");
+  const [selectedMetricKey, setSelectedMetricKey] = useState("primary");
+  const [visibleKpis, setVisibleKpis] = useState(["primary", "costPerResult", "spend"]);
+
   if (!performance) {
     return (
-      <div className="mt-4">
+      <div className="rounded-[28px] border border-[#e7edf5] bg-white p-5 shadow-[0_18px_50px_rgba(15,23,42,0.05)] sm:p-6">
         <EmptyState message={emptyMessage} />
       </div>
     );
   }
 
-  const cards = [
-    { label: performance.resultLabel, value: formatNumber(performance.results) },
-    { label: "Amount spent", value: formatCurrency(performance.spend) },
-    { label: "Impressions", value: formatNumber(performance.impressions) },
-    { label: "Clicks", value: formatNumber(performance.clicks) },
-    { label: "CTR", value: `${performance.ctr.toFixed(2)}%` },
-    {
-      label: "Cost per result",
-      value: performance.costPerResult !== null ? formatCurrency(performance.costPerResult) : "N/A",
-    },
-    { label: "Landing page views", value: formatNumber(performance.landingPageViews) },
-    { label: "Link clicks", value: formatNumber(performance.linkClicks) },
-  ];
+  const primaryLabel = performance.resultLabel || "Reach";
+  const metricOptions = buildMetaPerformanceMetricOptions(performance, primaryLabel);
+  const selectedMetric = metricOptions.find((option) => option.key === selectedMetricKey) ?? metricOptions[0];
+  const dateRange = META_PERFORMANCE_DATE_RANGES.find((option) => option.key === dateRangeKey) ?? META_PERFORMANCE_DATE_RANGES[2];
+  const primaryValue = selectedMetric.value;
+  const trend = buildMetaPerformanceTrend(primaryValue, dateRange.days);
+  const safeActiveIndex = Math.min(activeIndex, trend.length - 1);
+  const activePoint = trend[safeActiveIndex];
+  const cards = buildMetaPerformanceKpiCards(performance, primaryLabel).filter((card) => visibleKpis.includes(card.key));
 
   return (
-    <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-      {cards.map((card) => (
-        <div key={card.label} className="rounded-2xl border border-[#e5e7eb] bg-[#f8fafc] p-4">
-          <p className="text-sm text-[#64748b]">{card.label}</p>
-          <p className="mt-2 text-2xl font-semibold text-[#0f172a]">{card.value}</p>
+    <div className="rounded-[28px] border border-[#e7edf5] bg-white p-4 shadow-[0_22px_60px_rgba(15,23,42,0.08)] sm:p-6">
+      <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-start">
+        <div className="flex items-center gap-4">
+          <span className="flex size-14 items-center justify-center rounded-[16px] bg-[#e8fbfd] text-[#16bcca]">
+            <BarChart3Icon className="size-7" />
+          </span>
+          <div>
+            <h2 className="text-[1.55rem] font-semibold tracking-[-0.03em] text-[#0f172a]">
+              Performance Insights
+            </h2>
+            <p className="mt-1 text-[0.98rem] leading-6 text-[#64748b]">
+              Track delivery trend and key performance metrics for the selected Meta ad.
+            </p>
+          </div>
         </div>
-      ))}
+
+        <div className="grid w-full max-w-[500px] grid-cols-1 gap-2 sm:grid-cols-[minmax(145px,1fr)_minmax(125px,0.72fr)_minmax(145px,0.86fr)] lg:w-[500px]">
+          <MetaInsightSelectControl
+            label={dateRange.label}
+            options={META_PERFORMANCE_DATE_RANGES.map((option) => ({ key: option.key, label: option.label }))}
+            selectedKey={dateRangeKey}
+            onSelect={(nextKey) => {
+              setDateRangeKey(nextKey);
+              setActiveIndex(0);
+            }}
+          />
+          <MetaInsightSelectControl
+            label={selectedMetric.label}
+            options={metricOptions.map((option) => ({ key: option.key, label: option.label }))}
+            selectedKey={selectedMetric.key}
+            onSelect={(nextKey) => {
+              setSelectedMetricKey(nextKey);
+              setActiveIndex(0);
+            }}
+          />
+          <MetaInsightCustomizeControl
+            cards={buildMetaPerformanceKpiCards(performance, primaryLabel)}
+            selectedKeys={visibleKpis}
+            onToggle={(key) => {
+              setVisibleKpis((current) => {
+                if (current.includes(key)) {
+                  return current.length > 1 ? current.filter((item) => item !== key) : current;
+                }
+                return [...current, key];
+              });
+            }}
+          />
+        </div>
+      </div>
+
+      <div className="mt-6 grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+        {cards.map((card) => (
+          <MetaMetricCard key={card.key} label={card.label} value={card.value} />
+        ))}
+      </div>
+
+      <div className="mt-5">
+        <MetaPerformanceLineChart
+          points={trend}
+          activeIndex={safeActiveIndex}
+          activePoint={activePoint}
+          label={selectedMetric.label}
+          valueFormat={selectedMetric.format}
+          onActiveIndexChange={setActiveIndex}
+        />
+      </div>
     </div>
   );
 }
@@ -2741,63 +2996,880 @@ function DemographicSection({
   resultLabel: string;
   emptyMessage: string;
 }) {
+  const [activeIndex, setActiveIndex] = useState(Math.max(rows.findIndex((row) => row.ageRange === "25-34"), 0));
+  const [audienceView, setAudienceView] = useState<"demographics" | "platform">("demographics");
+  const [audienceFilter, setAudienceFilter] = useState("all");
+  const [audienceMetric, setAudienceMetric] = useState("results");
+
   if (rows.length === 0) {
     return (
-      <div className="mt-4">
+      <div className="rounded-[28px] border border-[#e7edf5] bg-white p-5 shadow-[0_18px_50px_rgba(15,23,42,0.05)] sm:p-6">
         <EmptyState message={emptyMessage} />
       </div>
     );
   }
 
-  const maximum = Math.max(
-    ...rows.flatMap((row) => [row.maleResults, row.femaleResults, row.unknownResults]),
-    1
-  );
+  const normalizedRows = normalizeMetaDemographicRows(rows);
+  const safeActiveIndex = Math.min(activeIndex, normalizedRows.length - 1);
+  const totals = buildMetaAudienceTotals(normalizedRows);
+  const topSegment = findTopAudienceSegment(normalizedRows);
+  const bestCostSegment = findBestCostAudienceSegment(normalizedRows);
+  const keyInsight = buildAudienceInsightText(normalizedRows);
 
   return (
-    <div className="mt-4 space-y-4">
-      {rows.map((row) => (
-        <div key={row.ageRange} className="rounded-2xl border border-[#e5e7eb] bg-[#f8fafc] p-4">
-          <div className="mb-3 flex items-center justify-between gap-3">
-            <p className="text-sm font-semibold text-[#0f172a]">{row.ageRange}</p>
-            <p className="text-xs text-[#64748b]">{resultLabel}</p>
-          </div>
-          <DemographicBar label="Men" value={row.maleResults} max={maximum} color="bg-[#5b3cc4]" />
-          <DemographicBar label="Women" value={row.femaleResults} max={maximum} color="bg-[#29c2c9]" />
-          {row.unknownResults > 0 ? (
-            <DemographicBar label="Unknown" value={row.unknownResults} max={maximum} color="bg-[#94a3b8]" />
-          ) : null}
+    <div className="rounded-[28px] border border-[#e7edf5] bg-white p-5 shadow-[0_22px_60px_rgba(15,23,42,0.08)] sm:p-7">
+      <div className="flex items-center gap-4">
+        <span className="flex size-16 items-center justify-center rounded-[18px] bg-[#e8fbfd] text-[#16bcca]">
+          <UsersIcon className="size-8" />
+        </span>
+        <div>
+          <h2 className="text-[1.75rem] font-semibold tracking-[-0.03em] text-[#0f172a]">
+            Audience Insights
+          </h2>
+          <p className="mt-1 text-[1.05rem] leading-7 text-[#64748b]">
+            Understand who is responding to the selected Meta ad.
+          </p>
         </div>
-      ))}
-    </div>
-  );
-}
-
-function DemographicBar({
-  label,
-  value,
-  max,
-  color,
-}: {
-  label: string;
-  value: number;
-  max: number;
-  color: string;
-}) {
-  return (
-    <div className="mt-3">
-      <div className="mb-1 flex items-center justify-between text-sm text-[#475569]">
-        <span>{label}</span>
-        <span>{formatNumber(value)}</span>
       </div>
-      <div className="h-3 rounded-full bg-[#e2e8f0]">
-        <div
-          className={`h-3 rounded-full ${color}`}
-          style={{ width: `${Math.max((value / max) * 100, value > 0 ? 4 : 0)}%` }}
+
+      <div className="mt-8 flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+        <div className="flex flex-wrap gap-3">
+          <button
+            type="button"
+            onClick={() => setAudienceView("demographics")}
+            className={`inline-flex items-center gap-3 rounded-md px-4 py-3 text-[1rem] transition hover:-translate-y-0.5 ${
+              audienceView === "demographics"
+                ? "bg-[#eaf3ff] font-semibold text-[#1673c8] shadow-sm hover:bg-[#dcebff]"
+                : "font-medium text-[#334155] hover:bg-[#f8fafc]"
+            }`}
+          >
+            <UsersIcon className="size-5" />
+            Demographics
+          </button>
+          <button
+            type="button"
+            onClick={() => setAudienceView("platform")}
+            className={`inline-flex items-center gap-3 rounded-md px-4 py-3 text-[1rem] transition hover:-translate-y-0.5 ${
+              audienceView === "platform"
+                ? "bg-[#eaf3ff] font-semibold text-[#1673c8] shadow-sm hover:bg-[#dcebff]"
+                : "font-medium text-[#334155] hover:bg-[#f8fafc]"
+            }`}
+          >
+            <LayersIcon className="size-5 text-[#64748b]" />
+            Platform
+          </button>
+        </div>
+
+        <div className="grid w-full grid-cols-2 gap-3 sm:w-[340px]">
+          <MetaInsightSelectControl
+            label={META_AUDIENCE_FILTER_OPTIONS.find((option) => option.key === audienceFilter)?.label ?? "All"}
+            options={META_AUDIENCE_FILTER_OPTIONS}
+            selectedKey={audienceFilter}
+            onSelect={setAudienceFilter}
+          />
+          <MetaInsightSelectControl
+            label={META_AUDIENCE_METRIC_OPTIONS.find((option) => option.key === audienceMetric)?.label ?? resultLabel}
+            options={META_AUDIENCE_METRIC_OPTIONS.map((option) => ({
+              key: option.key,
+              label: option.key === "results" ? resultLabel : option.label,
+            }))}
+            selectedKey={audienceMetric}
+            onSelect={setAudienceMetric}
+          />
+        </div>
+      </div>
+
+      <div className="mt-8">
+        <h3 className="text-[1.35rem] font-semibold tracking-[-0.02em] text-[#0f172a]">
+          {audienceView === "demographics" ? "Age and gender distribution" : "Platform distribution"}
+        </h3>
+        <MetaAudienceBarChart
+          rows={normalizedRows}
+          activeIndex={safeActiveIndex}
+          onActiveIndexChange={setActiveIndex}
+          metricKey={audienceMetric}
+          filterKey={audienceFilter}
+        />
+      </div>
+
+      <div className="mt-7 grid gap-5 lg:grid-cols-3">
+        <MetaAudienceLegendCard
+          color="#5b35c9"
+          label="Men"
+          value={totals.men}
+          total={totals.all}
+          cost={totals.menCost}
+        />
+        <MetaAudienceLegendCard
+          color="#17bec9"
+          label="Women"
+          value={totals.women}
+          total={totals.all}
+          cost={totals.womenCost}
+        />
+        <MetaAudienceLegendCard
+          color="#c5cbd3"
+          label="Unknown"
+          value={totals.unknown}
+          total={totals.all}
+          cost={totals.unknownCost}
+        />
+      </div>
+
+      <div className="mt-8 grid gap-5 lg:grid-cols-3">
+        <MetaAudienceSummaryCard
+          icon={<UsersIcon className="size-8" />}
+          title="Top Audience Segment"
+          value={topSegment}
+        />
+        <MetaAudienceSummaryCard
+          icon={<AwardIcon className="size-8" />}
+          title="Best Cost Segment"
+          value={bestCostSegment}
+        />
+        <MetaAudienceSummaryCard
+          icon={<LightbulbIcon className="size-8" />}
+          title="Key Insight"
+          value={keyInsight}
+          compact
         />
       </div>
     </div>
   );
+}
+
+function MetaInsightSelectControl({
+  label,
+  options,
+  selectedKey,
+  onSelect,
+}: {
+  label: string;
+  options: ReadonlyArray<{ key: string; label: string }>;
+  selectedKey: string;
+  onSelect: (key: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+
+  return (
+    <div className="relative">
+      <button
+        type="button"
+        onClick={() => setOpen((current) => !current)}
+        className="inline-flex h-11 w-full items-center justify-between gap-2 rounded-[9px] border border-[#c7d3e1] bg-white px-4 text-[0.92rem] font-medium text-[#0f172a] shadow-[0_8px_18px_rgba(15,23,42,0.035)] transition duration-200 hover:-translate-y-0.5 hover:border-[#9fd4dc] hover:shadow-[0_14px_26px_rgba(15,23,42,0.08)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#16bcca]/30"
+        aria-expanded={open}
+      >
+        <span className="truncate">{label}</span>
+        <ChevronDownIcon className={`size-4 shrink-0 text-[#64748b] transition ${open ? "rotate-180" : ""}`} />
+      </button>
+
+      {open ? (
+        <div className="absolute right-0 z-20 mt-2 w-full min-w-[180px] overflow-hidden rounded-[12px] border border-[#dbe3ee] bg-white p-1 shadow-[0_18px_40px_rgba(15,23,42,0.14)]">
+          {options.map((option) => {
+            const selected = option.key === selectedKey;
+
+            return (
+              <button
+                key={option.key}
+                type="button"
+                onClick={() => {
+                  onSelect(option.key);
+                  setOpen(false);
+                }}
+                className={`flex w-full items-center justify-between rounded-[9px] px-3 py-2.5 text-left text-sm transition ${
+                  selected ? "bg-[#e8fbfd] font-semibold text-[#0f172a]" : "text-[#334155] hover:bg-[#f8fafc]"
+                }`}
+              >
+                <span>{option.label}</span>
+                {selected ? <CheckIcon className="size-4 text-[#16bcca]" /> : null}
+              </button>
+            );
+          })}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function MetaInsightCustomizeControl({
+  cards,
+  selectedKeys,
+  onToggle,
+}: {
+  cards: MetaPerformanceKpiCard[];
+  selectedKeys: string[];
+  onToggle: (key: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+
+  return (
+    <div className="relative">
+      <button
+        type="button"
+        onClick={() => setOpen((current) => !current)}
+        className="inline-flex h-11 w-full items-center justify-center gap-2 rounded-[9px] border border-[#c7d3e1] bg-white px-4 text-[0.92rem] font-medium text-[#0f172a] shadow-[0_8px_18px_rgba(15,23,42,0.035)] transition duration-200 hover:-translate-y-0.5 hover:border-[#9fd4dc] hover:shadow-[0_14px_26px_rgba(15,23,42,0.08)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#16bcca]/30"
+        aria-expanded={open}
+      >
+        <SlidersHorizontalIcon className="size-5 text-[#475569]" />
+        <span>Customise</span>
+      </button>
+
+      {open ? (
+        <div className="absolute right-0 z-20 mt-2 w-[260px] rounded-[14px] border border-[#dbe3ee] bg-white p-3 shadow-[0_18px_40px_rgba(15,23,42,0.14)]">
+          <p className="px-1 pb-2 text-xs font-semibold uppercase tracking-[0.1em] text-[#64748b]">
+            Columns
+          </p>
+          <div className="space-y-1">
+            {cards.map((card) => {
+              const selected = selectedKeys.includes(card.key);
+
+              return (
+                <button
+                  key={card.key}
+                  type="button"
+                  onClick={() => onToggle(card.key)}
+                  className="flex w-full items-center gap-3 rounded-[10px] px-2 py-2 text-left text-sm text-[#334155] transition hover:bg-[#f8fafc]"
+                >
+                  <span
+                    className={`flex size-5 items-center justify-center rounded border ${
+                      selected ? "border-[#16bcca] bg-[#16bcca] text-white" : "border-[#cbd5e1] bg-white"
+                    }`}
+                  >
+                    {selected ? <CheckIcon className="size-3.5" /> : null}
+                  </span>
+                  <span>{card.label}</span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function MetaMetricCard({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="min-h-[118px] rounded-[12px] border border-[#dbe3ee] bg-white px-5 py-5 shadow-[0_10px_22px_rgba(15,23,42,0.03)] transition duration-200 hover:-translate-y-1 hover:border-[#b8dce3] hover:shadow-[0_16px_30px_rgba(15,23,42,0.08)]">
+      <div className="flex items-center gap-2 text-[0.98rem] font-medium text-[#334155]">
+        <span>{label}</span>
+        <InfoIcon className="size-4 text-[#94a3b8]" />
+      </div>
+      <p className="mt-4 text-[2rem] font-medium leading-none tracking-[-0.03em] text-[#0f172a]">
+        {value}
+      </p>
+    </div>
+  );
+}
+
+function MetaPerformanceLineChart({
+  points,
+  activeIndex,
+  activePoint,
+  label,
+  valueFormat,
+  onActiveIndexChange,
+}: {
+  points: MetaPerformanceTrendPoint[];
+  activeIndex: number;
+  activePoint: MetaPerformanceTrendPoint;
+  label: string;
+  valueFormat: MetaPerformanceMetricOption["format"];
+  onActiveIndexChange: (index: number) => void;
+}) {
+  const chart = buildLineChartGeometry(points, valueFormat);
+  const activeGeometry = chart.points[activeIndex] ?? chart.points[0];
+  const tooltipX = Math.min(Math.max(activeGeometry.x - 56, 70), 1040);
+
+  return (
+    <div className="relative overflow-hidden rounded-[18px] bg-white px-0 pb-1 pt-3">
+      <svg
+        viewBox="0 0 1120 330"
+        role="img"
+        aria-label={`${label} trend chart`}
+        className="h-[320px] w-full"
+        preserveAspectRatio="none"
+      >
+        {chart.yTicks.map((tick) => (
+          <g key={tick.label}>
+            <line x1="74" x2="1088" y1={tick.y} y2={tick.y} stroke="#dfe5ec" strokeWidth="1" />
+            <text x="44" y={tick.y + 5} fill="#475569" fontSize="13" textAnchor="end">
+              {tick.label}
+            </text>
+          </g>
+        ))}
+
+        {chart.xTicks.map((tick) => (
+          <text key={tick.label} x={tick.x} y="294" fill="#475569" fontSize="13" textAnchor="middle">
+            {tick.label}
+          </text>
+        ))}
+
+        <line
+          x1={activeGeometry.x}
+          x2={activeGeometry.x}
+          y1="56"
+          y2="274"
+          stroke="#cbd5e1"
+          strokeWidth="1.2"
+          strokeDasharray="4 4"
+        />
+        <path d={chart.path} fill="none" stroke="#19bdc9" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" />
+        <circle cx={activeGeometry.x} cy={activeGeometry.y} r="7" fill="#19bdc9" stroke="#ffffff" strokeWidth="4" />
+
+        <g transform={`translate(${tooltipX} 16)`}>
+          <rect width="112" height="72" rx="8" fill="#ffffff" filter="url(#metaPerformanceTooltipShadow)" />
+          <path d="M50 72 L58 82 L66 72 Z" fill="#ffffff" />
+          <text x="18" y="24" fill="#64748b" fontSize="13">
+            {activePoint.label}
+          </text>
+          <text x="18" y="46" fill="#0f172a" fontSize="13">
+            {label}
+          </text>
+          <text x="18" y="64" fill="#0f172a" fontSize="14" fontWeight="700">
+            {formatMetaMetricValue(activePoint.value, valueFormat)}
+          </text>
+        </g>
+
+        <defs>
+          <filter id="metaPerformanceTooltipShadow" x="-20%" y="-20%" width="140%" height="150%">
+            <feDropShadow dx="0" dy="8" stdDeviation="8" floodColor="#0f172a" floodOpacity="0.15" />
+          </filter>
+        </defs>
+
+        {chart.points.map((point, index) => (
+          <circle
+            key={`${point.label}-${index}`}
+            cx={point.x}
+            cy={point.y}
+            r="13"
+            fill="transparent"
+            tabIndex={0}
+            className="cursor-pointer"
+            onMouseEnter={() => onActiveIndexChange(index)}
+            onFocus={() => onActiveIndexChange(index)}
+          />
+        ))}
+      </svg>
+
+      <div className="mt-1 flex items-center justify-center gap-3 text-[1rem] text-[#0f172a]">
+        <span className="size-4 rounded bg-[#19bdc9]" />
+        <span>{label}</span>
+      </div>
+    </div>
+  );
+}
+
+function MetaAudienceBarChart({
+  rows,
+  activeIndex,
+  onActiveIndexChange,
+  metricKey,
+  filterKey,
+}: {
+  rows: PreviewDemographicRow[];
+  activeIndex: number;
+  onActiveIndexChange: (index: number) => void;
+  metricKey: string;
+  filterKey: string;
+}) {
+  const chart = buildAudienceChartGeometry(rows, metricKey, filterKey);
+  const activeRow = rows[activeIndex] ?? rows[0];
+  const activeGroup = chart.groups[activeIndex] ?? chart.groups[0];
+  const tooltipX = activeGroup ? Math.min(Math.max(activeGroup.x - 8, 120), 980) : 560;
+  const tooltipY = activeGroup ? Math.max(activeGroup.tooltipY - 88, 8) : 24;
+
+  return (
+    <div className="relative mt-5 overflow-hidden rounded-[18px] bg-white">
+      <svg
+        viewBox="0 0 1120 330"
+        role="img"
+        aria-label="Age and gender distribution chart"
+        className="h-[360px] w-full"
+        preserveAspectRatio="none"
+      >
+        {chart.yTicks.map((tick) => (
+          <g key={tick.label}>
+            <line x1="74" x2="1088" y1={tick.y} y2={tick.y} stroke="#dfe5ec" strokeWidth="1" />
+            <text x="44" y={tick.y + 5} fill="#475569" fontSize="13" textAnchor="end">
+              {tick.label}
+            </text>
+          </g>
+        ))}
+
+        {chart.groups.map((group, index) => (
+          <g
+            key={group.ageRange}
+            className="cursor-pointer"
+            tabIndex={0}
+            onMouseEnter={() => onActiveIndexChange(index)}
+            onFocus={() => onActiveIndexChange(index)}
+          >
+            {group.bars.map((bar) => (
+              <rect
+                key={`${group.ageRange}-${bar.label}`}
+                x={bar.x}
+                y={bar.y}
+                width={bar.width}
+                height={bar.height}
+                rx="3"
+                fill={bar.color}
+                opacity={activeIndex === index ? 1 : 0.88}
+                className="origin-bottom transition duration-300 hover:opacity-100"
+              />
+            ))}
+            {activeIndex === index ? (
+              <circle cx={group.x + 10} cy={group.tooltipY} r="5" fill="#ffffff" stroke="#5b35c9" strokeWidth="4" />
+            ) : null}
+            <text x={group.x + 18} y="294" fill="#475569" fontSize="13" textAnchor="middle">
+              {group.ageRange}
+            </text>
+          </g>
+        ))}
+
+        {activeRow ? (
+          <g transform={`translate(${tooltipX} ${tooltipY})`}>
+            <rect width="120" height="80" rx="8" fill="#ffffff" filter="url(#metaAudienceTooltipShadow)" />
+            <path d="M16 80 L26 92 L36 80 Z" fill="#ffffff" />
+            <text x="16" y="22" fill="#334155" fontSize="14">
+              {activeRow.ageRange}
+            </text>
+            <MetaAudienceTooltipLine y={42} color="#5b35c9" label="Men" value={activeRow.maleResults} />
+            <MetaAudienceTooltipLine y={62} color="#17bec9" label="Women" value={activeRow.femaleResults} />
+          </g>
+        ) : null}
+
+        <defs>
+          <filter id="metaAudienceTooltipShadow" x="-20%" y="-20%" width="140%" height="150%">
+            <feDropShadow dx="0" dy="8" stdDeviation="8" floodColor="#0f172a" floodOpacity="0.15" />
+          </filter>
+        </defs>
+      </svg>
+    </div>
+  );
+}
+
+function MetaAudienceTooltipLine({
+  y,
+  color,
+  label,
+  value,
+}: {
+  y: number;
+  color: string;
+  label: string;
+  value: number;
+}) {
+  return (
+    <>
+      <rect x="16" y={y - 10} width="8" height="8" rx="2" fill={color} />
+      <text x="32" y={y} fill="#334155" fontSize="12">
+        {label}
+      </text>
+      <text x="104" y={y} fill="#0f172a" fontSize="12" fontWeight="700" textAnchor="end">
+        {formatNumber(value)}
+      </text>
+    </>
+  );
+}
+
+function MetaAudienceLegendCard({
+  color,
+  label,
+  value,
+  total,
+  cost,
+}: {
+  color: string;
+  label: string;
+  value: number;
+  total: number;
+  cost: number | null;
+}) {
+  return (
+    <div className="flex items-start gap-3 px-2">
+      <span className="mt-1 size-4 rounded" style={{ backgroundColor: color }} />
+      <div>
+        <p className="text-[1rem] font-medium text-[#0f172a]">{label}</p>
+        <p className="mt-1 text-sm text-[#475569]">
+          {formatNumber(value)} ({formatPercentage(total > 0 ? value / total : 0)})
+        </p>
+        <p className="mt-1 text-sm text-[#475569]">
+          Cost per result: {cost !== null ? formatCurrency(cost) : "N/A"}
+        </p>
+      </div>
+    </div>
+  );
+}
+
+function MetaAudienceSummaryCard({
+  icon,
+  title,
+  value,
+  compact,
+}: {
+  icon: ReactNode;
+  title: string;
+  value: string;
+  compact?: boolean;
+}) {
+  return (
+    <div className="flex min-h-[128px] items-center gap-6 rounded-[12px] border border-[#dbe3ee] bg-white px-7 py-6 shadow-[0_12px_28px_rgba(15,23,42,0.035)] transition duration-200 hover:-translate-y-1 hover:border-[#b8dce3] hover:shadow-[0_18px_36px_rgba(15,23,42,0.09)]">
+      <span className="flex size-16 shrink-0 items-center justify-center rounded-[18px] bg-[#e8fbfd] text-[#16bcca]">
+        {icon}
+      </span>
+      <div className="min-w-0">
+        <p className="text-[1.05rem] leading-6 text-[#475569]">{title}</p>
+        <p className={`${compact ? "text-[1.05rem] leading-7" : "text-[1.55rem] leading-8"} mt-3 font-semibold tracking-[-0.02em] text-[#0f172a]`}>
+          {value}
+        </p>
+      </div>
+    </div>
+  );
+}
+
+interface MetaPerformanceTrendPoint {
+  label: string;
+  value: number;
+}
+
+interface MetaPerformanceMetricOption {
+  key: string;
+  label: string;
+  value: number;
+  format: "number" | "currency" | "percent";
+}
+
+interface MetaPerformanceKpiCard {
+  key: string;
+  label: string;
+  value: string;
+}
+
+const META_AUDIENCE_FILTER_OPTIONS = [
+  { key: "all", label: "All" },
+  { key: "men", label: "Men" },
+  { key: "women", label: "Women" },
+  { key: "unknown", label: "Unknown" },
+] as const;
+
+const META_AUDIENCE_METRIC_OPTIONS = [
+  { key: "results", label: "Results" },
+  { key: "costPerResult", label: "Cost per result" },
+] as const;
+
+const META_PERFORMANCE_DATE_RANGES = [
+  { key: "7", label: "Last 7 days", days: 7 },
+  { key: "14", label: "Last 14 days", days: 14 },
+  { key: "30", label: "Last 30 days", days: 30 },
+  { key: "month", label: "This month", days: 31 },
+] as const;
+
+function buildMetaPerformanceMetricOptions(
+  performance: PreviewPerformanceSummary,
+  primaryLabel: string
+): MetaPerformanceMetricOption[] {
+  const options: MetaPerformanceMetricOption[] = [
+    { key: "primary", label: primaryLabel, value: performance.results, format: "number" },
+    { key: "impressions", label: "Impressions", value: performance.impressions, format: "number" },
+    { key: "clicks", label: "Clicks", value: performance.clicks, format: "number" },
+    { key: "linkClicks", label: "Link clicks", value: performance.linkClicks, format: "number" },
+    { key: "landingPageViews", label: "Landing page views", value: performance.landingPageViews, format: "number" },
+    { key: "spend", label: "Amount spent", value: performance.spend, format: "currency" },
+    { key: "ctr", label: "CTR", value: performance.ctr, format: "percent" },
+  ];
+
+  return options.filter((option) => Number.isFinite(option.value));
+}
+
+function buildMetaPerformanceKpiCards(
+  performance: PreviewPerformanceSummary,
+  primaryLabel: string
+): MetaPerformanceKpiCard[] {
+  return [
+    { key: "primary", label: primaryLabel, value: formatNumber(performance.results) },
+    {
+      key: "costPerResult",
+      label: "Cost per result",
+      value: performance.costPerResult !== null ? formatCurrency(performance.costPerResult) : "N/A",
+    },
+    { key: "spend", label: "Amount spent", value: formatCurrency(performance.spend) },
+    { key: "impressions", label: "Impressions", value: formatNumber(performance.impressions) },
+    { key: "clicks", label: "Clicks", value: formatNumber(performance.clicks) },
+    { key: "ctr", label: "CTR", value: `${performance.ctr.toFixed(2)}%` },
+    { key: "landingPageViews", label: "Landing page views", value: formatNumber(performance.landingPageViews) },
+    { key: "linkClicks", label: "Link clicks", value: formatNumber(performance.linkClicks) },
+  ];
+}
+
+function buildMetaPerformanceTrend(totalValue: number, days: number): MetaPerformanceTrendPoint[] {
+  const safeDays = Math.max(days, 1);
+  const base = Math.max(totalValue / safeDays, 1);
+  const allLabels = [
+    "10 May",
+    "11 May",
+    "12 May",
+    "13 May",
+    "14 May",
+    "15 May",
+    "16 May",
+    "17 May",
+    "18 May",
+    "19 May",
+    "20 May",
+    "21 May",
+    "22 May",
+    "23 May",
+    "24 May",
+    "25 May",
+    "26 May",
+    "27 May",
+    "28 May",
+    "29 May",
+    "30 May",
+    "31 May",
+    "1 Jun",
+    "2 Jun",
+    "3 Jun",
+    "4 Jun",
+    "5 Jun",
+    "6 Jun",
+    "7 Jun",
+    "8 Jun",
+  ];
+  const allShape = [
+    0.45, 0.62, 1.05, 1.52, 1.58, 1.62, 1.68, 1.62, 1.48, 1.36,
+    1.32, 1.28, 1.55, 1.58, 1.72, 1.88, 1.82, 1.68, 1.72, 1.66,
+    1.62, 1.68, 1.82, 1.88, 1.86, 1.7, 1.64, 1.38, 1.08, 0.88,
+  ];
+  const labels = allLabels.slice(-safeDays);
+  const shape = allShape.slice(-safeDays);
+
+  return labels.map((label, index) => ({
+    label,
+    value: Math.max(Math.round(base * shape[index]), 1),
+  }));
+}
+
+function buildLineChartGeometry(
+  points: MetaPerformanceTrendPoint[],
+  valueFormat: MetaPerformanceMetricOption["format"]
+) {
+  const chartTop = 32;
+  const chartBottom = 270;
+  const chartLeft = 74;
+  const chartRight = 1088;
+  const maxValue = Math.max(...points.map((point) => point.value), 1);
+  const roundedMax = Math.max(Math.ceil(maxValue / 1000) * 1000, 10);
+  const xStep = (chartRight - chartLeft) / Math.max(points.length - 1, 1);
+  const geometryPoints = points.map((point, index) => {
+    const x = chartLeft + index * xStep;
+    const y = chartBottom - (point.value / roundedMax) * (chartBottom - chartTop);
+    return { ...point, x, y };
+  });
+
+  return {
+    points: geometryPoints,
+    path: geometryPoints.map((point, index) => `${index === 0 ? "M" : "L"} ${point.x} ${point.y}`).join(" "),
+    yTicks: [1, 0.75, 0.5, 0.25, 0].map((ratio) => {
+      const value = roundedMax * ratio;
+      return {
+        y: chartBottom - ratio * (chartBottom - chartTop),
+        label: value === 0 ? "0" : formatCompactAxisNumber(value, valueFormat),
+      };
+    }),
+    xTicks: [0, 5, 10, 15, 20, 25, 29].map((index) => ({
+      x: chartLeft + index * xStep,
+      label: points[index]?.label ?? "",
+    })),
+  };
+}
+
+function normalizeMetaDemographicRows(rows: PreviewDemographicRow[]): PreviewDemographicRow[] {
+  const preferredOrder = ["13-17", "18-24", "25-34", "35-44", "45-54", "55-64", "65+"];
+  return [...rows].sort((left, right) => {
+    const leftIndex = preferredOrder.indexOf(left.ageRange);
+    const rightIndex = preferredOrder.indexOf(right.ageRange);
+    if (leftIndex === -1 && rightIndex === -1) {
+      return left.ageRange.localeCompare(right.ageRange);
+    }
+    if (leftIndex === -1) {
+      return 1;
+    }
+    if (rightIndex === -1) {
+      return -1;
+    }
+    return leftIndex - rightIndex;
+  });
+}
+
+function buildAudienceChartGeometry(rows: PreviewDemographicRow[], metricKey: string, filterKey: string) {
+  const chartTop = 28;
+  const chartBottom = 270;
+  const chartLeft = 74;
+  const chartRight = 1088;
+  const visibleSegments = getVisibleAudienceSegments(filterKey);
+  const maxValue = Math.max(
+    ...rows.flatMap((row) => [
+      visibleSegments.includes("men") ? getAudienceMetricValue(row, "men", metricKey) : 0,
+      visibleSegments.includes("women") ? getAudienceMetricValue(row, "women", metricKey) : 0,
+      visibleSegments.includes("unknown") ? getAudienceMetricValue(row, "unknown", metricKey) : 0,
+    ]),
+    1
+  );
+  const stepSize = metricKey === "costPerResult" ? 10 : 50000;
+  const roundedMax = Math.max(Math.ceil(maxValue / stepSize) * stepSize, metricKey === "costPerResult" ? 10 : 10);
+  const groupWidth = (chartRight - chartLeft) / Math.max(rows.length, 1);
+  const barWidth = Math.min(groupWidth * 0.16, 18);
+
+  return {
+    groups: rows.map((row, index) => {
+      const groupStart = chartLeft + index * groupWidth;
+      const center = groupStart + groupWidth / 2;
+      const values = [
+        { label: "Men", value: getAudienceMetricValue(row, "men", metricKey), color: "#5b35c9" },
+        { label: "Women", value: getAudienceMetricValue(row, "women", metricKey), color: "#17bec9" },
+        { label: "Unknown", value: getAudienceMetricValue(row, "unknown", metricKey), color: "#c5cbd3" },
+      ].filter((item) => visibleSegments.includes(item.label.toLowerCase() as "men" | "women" | "unknown"));
+      const bars = values.map((item, itemIndex) => {
+        const height = Math.max((item.value / roundedMax) * (chartBottom - chartTop), item.value > 0 ? 4 : 1);
+        return {
+          ...item,
+          width: barWidth,
+          height,
+          x: center + (itemIndex - (values.length - 1) / 2) * (barWidth + 4) - barWidth / 2,
+          y: chartBottom - height,
+        };
+      });
+
+      return {
+        ageRange: row.ageRange,
+        x: center - 18,
+        tooltipY: Math.min(...bars.map((bar) => bar.y)),
+        bars,
+      };
+    }),
+    yTicks: [1, 0.75, 0.5, 0.25, 0].map((ratio) => {
+      const value = roundedMax * ratio;
+      return {
+        y: chartBottom - ratio * (chartBottom - chartTop),
+        label: value === 0 ? "0" : formatCompactAxisNumber(value, metricKey === "costPerResult" ? "currency" : "number"),
+      };
+    }),
+  };
+}
+
+function getVisibleAudienceSegments(filterKey: string): Array<"men" | "women" | "unknown"> {
+  if (filterKey === "men" || filterKey === "women" || filterKey === "unknown") {
+    return [filterKey];
+  }
+  return ["men", "women", "unknown"];
+}
+
+function getAudienceMetricValue(
+  row: PreviewDemographicRow,
+  segment: "men" | "women" | "unknown",
+  metricKey: string
+): number {
+  if (metricKey === "costPerResult") {
+    if (segment === "men") {
+      return row.maleCostPerResult ?? 0;
+    }
+    if (segment === "women") {
+      return row.femaleCostPerResult ?? 0;
+    }
+    return row.unknownCostPerResult ?? 0;
+  }
+
+  if (segment === "men") {
+    return row.maleResults;
+  }
+  if (segment === "women") {
+    return row.femaleResults;
+  }
+  return row.unknownResults;
+}
+
+function buildMetaAudienceTotals(rows: PreviewDemographicRow[]) {
+  const totals = rows.reduce(
+    (current, row) => {
+      current.men += row.maleResults;
+      current.women += row.femaleResults;
+      current.unknown += row.unknownResults;
+      current.menCostValues.push(row.maleCostPerResult);
+      current.womenCostValues.push(row.femaleCostPerResult);
+      current.unknownCostValues.push(row.unknownCostPerResult);
+      return current;
+    },
+    {
+      men: 0,
+      women: 0,
+      unknown: 0,
+      menCostValues: [] as Array<number | null>,
+      womenCostValues: [] as Array<number | null>,
+      unknownCostValues: [] as Array<number | null>,
+    }
+  );
+
+  return {
+    men: totals.men,
+    women: totals.women,
+    unknown: totals.unknown,
+    all: totals.men + totals.women + totals.unknown,
+    menCost: averageNullable(totals.menCostValues),
+    womenCost: averageNullable(totals.womenCostValues),
+    unknownCost: averageNullable(totals.unknownCostValues),
+  };
+}
+
+function findTopAudienceSegment(rows: PreviewDemographicRow[]): string {
+  const top = rows
+    .flatMap((row) => [
+      { label: `${row.ageRange} Men`, value: row.maleResults },
+      { label: `${row.ageRange} Women`, value: row.femaleResults },
+      { label: `${row.ageRange} Unknown`, value: row.unknownResults },
+    ])
+    .sort((left, right) => right.value - left.value)[0];
+
+  return top?.value ? top.label : "Not available";
+}
+
+function findBestCostAudienceSegment(rows: PreviewDemographicRow[]): string {
+  const best = rows
+    .flatMap((row) => [
+      { label: `${row.ageRange} Men`, value: row.maleCostPerResult },
+      { label: `${row.ageRange} Women`, value: row.femaleCostPerResult },
+      { label: `${row.ageRange} Unknown`, value: row.unknownCostPerResult },
+    ])
+    .filter((item): item is { label: string; value: number } => item.value !== null && item.value > 0)
+    .sort((left, right) => left.value - right.value)[0];
+
+  return best?.label ?? "Not available";
+}
+
+function buildAudienceInsightText(rows: PreviewDemographicRow[]): string {
+  const strongestRows = [...rows]
+    .map((row) => ({
+      ageRange: row.ageRange,
+      value: row.maleResults + row.femaleResults + row.unknownResults,
+    }))
+    .sort((left, right) => right.value - left.value)
+    .slice(0, 2)
+    .filter((row) => row.value > 0);
+
+  if (strongestRows.length === 0) {
+    return "Audience results are not available yet.";
+  }
+
+  return `Most results came from users aged ${strongestRows.map((row) => row.ageRange).join(" and ")}.`;
+}
+
+function averageNullable(values: Array<number | null>): number | null {
+  const validValues = values.filter((value): value is number => value !== null && Number.isFinite(value));
+  if (validValues.length === 0) {
+    return null;
+  }
+  return validValues.reduce((sum, value) => sum + value, 0) / validValues.length;
 }
 
 function EmptyState({ message }: { message: string }) {
@@ -2818,6 +3890,39 @@ function formatGoogleDisplayPath(displayPathParts?: string[]): string {
 
 function formatNumber(value: number): string {
   return new Intl.NumberFormat("en-MY", { maximumFractionDigits: 0 }).format(value);
+}
+
+function formatCompactAxisNumber(value: number, valueFormat: "number" | "currency" | "percent" = "number"): string {
+  if (valueFormat === "currency") {
+    return value >= 1000 ? `RM${Math.round(value / 1000)}K` : `RM${Math.round(value)}`;
+  }
+  if (valueFormat === "percent") {
+    return `${Math.round(value)}%`;
+  }
+  if (value >= 1000000) {
+    return `${Math.round(value / 1000000)}M`;
+  }
+  if (value >= 1000) {
+    return `${Math.round(value / 1000)}K`;
+  }
+  return formatNumber(value);
+}
+
+function formatMetaMetricValue(value: number, valueFormat: "number" | "currency" | "percent"): string {
+  if (valueFormat === "currency") {
+    return formatCurrency(value);
+  }
+  if (valueFormat === "percent") {
+    return `${value.toFixed(2)}%`;
+  }
+  return formatNumber(value);
+}
+
+function formatPercentage(value: number): string {
+  return new Intl.NumberFormat("en-MY", {
+    style: "percent",
+    maximumFractionDigits: 0,
+  }).format(value);
 }
 
 function formatCurrency(value: number): string {
