@@ -5,6 +5,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import {
   ArrowRightIcon,
   CalendarDaysIcon,
+  ClipboardListIcon,
   EyeIcon,
   LinkIcon,
   Loader2Icon,
@@ -100,6 +101,7 @@ export function HomePageClient() {
   const overallHref = `/overall${reportQueryString ? `?${reportQueryString}` : ""}`;
   const previewHref = `/preview${reportQueryString ? `?${reportQueryString}` : ""}`;
   const advancedHref = `/advanced${reportQueryString ? `?${reportQueryString}` : ""}`;
+  const mediaPlanHref = "/dashboard/media-plan";
 
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -224,6 +226,19 @@ export function HomePageClient() {
             </Button>
           </div>
         </form>
+
+        <a
+          href={mediaPlanHref}
+          className="mt-5 grid gap-2 rounded-2xl border border-white/25 bg-white/10 p-4 text-white transition hover:bg-white/15"
+        >
+          <span className="flex items-center gap-2 text-base font-semibold">
+            <ClipboardListIcon className="size-5" />
+            Create Media Plan
+          </span>
+          <span className="text-sm leading-relaxed text-white/78">
+            Generate Google Search campaign plan and create paused campaign after approval.
+          </span>
+        </a>
 
         <a
           href={advancedHref}
