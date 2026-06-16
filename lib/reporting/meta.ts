@@ -2396,8 +2396,18 @@ function pickAwarenessResultMetric(input: {
     return null;
   }
 
+  const reach = toNumber(input.reach);
+  if (optimizationGoal.includes("REACH") && reach > 0) {
+    return {
+      actionType: "reach",
+      label: "Reach",
+      value: reach,
+      costPerResult: toNumber(input.cpp) || null,
+    };
+  }
+
   const thruPlayValue = readMetaActionMetricTotal(input.videoThruPlayWatchedActions);
-  if (thruPlayValue > 0) {
+  if (optimizationGoal.includes("THRUPLAY") && thruPlayValue > 0) {
     return {
       actionType: "video_thruplay_watched_actions",
       label: "ThruPlays",
@@ -2407,7 +2417,7 @@ function pickAwarenessResultMetric(input: {
   }
 
   const estimatedAdRecallers = toNumber(input.estimatedAdRecallers);
-  if (estimatedAdRecallers > 0) {
+  if (optimizationGoal.includes("AD_RECALL") && estimatedAdRecallers > 0) {
     return {
       actionType: "estimated_ad_recallers",
       label: "Estimated ad recall lift",
@@ -2416,8 +2426,7 @@ function pickAwarenessResultMetric(input: {
     };
   }
 
-  const reach = toNumber(input.reach);
-  if (optimizationGoal.includes("REACH") && reach > 0) {
+  if (objective.includes("AWARENESS") && reach > 0) {
     return {
       actionType: "reach",
       label: "Reach",
