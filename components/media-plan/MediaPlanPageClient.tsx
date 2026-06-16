@@ -4,22 +4,32 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { MediaPlanEditor } from "@/components/media-plan/MediaPlanEditor";
 import { MediaPlanForm } from "@/components/media-plan/MediaPlanForm";
+import { MediaPlanProgressCard } from "@/components/media-plan/MediaPlanProgressCard";
 import { MediaPlanStatusBar } from "@/components/media-plan/MediaPlanStatus";
 import { ReportShell } from "@/components/reporting/report-shell";
+import {
+  createEmptyMediaPlanAssets,
+  getMediaPlanAssets,
+} from "@/lib/media-plan/assets";
 import {
   DEFAULT_MEDIA_PLAN_LANGUAGE,
   DEFAULT_MEDIA_PLAN_FORM,
   DEFAULT_NETWORK,
   MediaPlan,
+  MediaPlanAsset,
+  MediaPlanAssetKind,
   MediaPlanApproveAndCreateResponse,
   MediaPlanApproveSuccessResponse,
   MediaPlanCreateCampaignSuccessResponse,
   MediaPlanFormData,
   MediaPlanGenerateResponse,
   MediaPlanLanguage,
+  MediaPlanOperationProgress,
+  MediaPlanProgressStreamEvent,
   MediaPlanStatus,
   SUPPORTED_CAMPAIGN_TYPE,
 } from "@/lib/media-plan/schema";
+import { createApprovalProgress, createGenerationProgress } from "@/lib/media-plan/progress";
 import {
   MediaPlanValidationIssue,
   validateMediaPlan,
@@ -55,8 +65,13 @@ export function MediaPlanPageClient() {
   const [clientRequestId, setClientRequestId] = useState<string | null>(null);
   const [approvalResult, setApprovalResult] = useState<MediaPlanApproveSuccessResponse | null>(null);
   const [campaignResult, setCampaignResult] = useState<MediaPlanCreateCampaignSuccessResponse | null>(null);
+  const [generationProgress, setGenerationProgress] = useState<MediaPlanOperationProgress | null>(null);
+  const [approvalProgress, setApprovalProgress] = useState<MediaPlanOperationProgress | null>(null);
+  const [progressClock, setProgressClock] = useState(Date.now());
   const [planHistory, setPlanHistory] = useState<MediaPlanHistory>(EMPTY_MEDIA_PLAN_HISTORY);
   const planRef = useRef<MediaPlan | null>(null);
+  const assetFilesRef = useRef<Map<string, File>>(new Map());
+  const assetPreviewUrlsRef = useRef<Set<string>>(new Set());
 
   const formValidation = useMemo(() => validateMediaPlanForm(formData), [formData]);
   const planValidation = useMemo(() => validateMediaPlan(plan), [plan]);
@@ -96,15 +111,65 @@ export function MediaPlanPageClient() {
   const canUseHistory = Boolean(plan) && !generating && !savingToNotion && !creatingCampaign;
   const canUndo = canUseHistory && planHistory.past.length > 0;
   const canRedo = canUseHistory && planHistory.future.length > 0;
+  const visibleGenerationProgress = useMemo(
+    () => refreshProgressTiming(generationProgress, progressClock),
+    [generationProgress, progressClock]
+  );
+  const visibleApprovalProgress = useMemo(
+    () => refreshProgressTiming(approvalProgress, progressClock),
+    [approvalProgress, progressClock]
+  );
 
   function resetPlanHistory() {
     setPlanHistory(EMPTY_MEDIA_PLAN_HISTORY);
+  }
+
+  function clearStagedAssetFiles() {
+    assetPreviewUrlsRef.current.forEach((url) => URL.revokeObjectURL(url));
+    assetPreviewUrlsRef.current.clear();
+    assetFilesRef.current.clear();
+  }
+
+  function handleStageAssetFiles(kind: MediaPlanAssetKind, files: File[]): MediaPlanAsset[] {
+    return files.map((file) => {
+      const id = createClientRequestId();
+      const previewUrl = URL.createObjectURL(file);
+      assetFilesRef.current.set(id, file);
+      assetPreviewUrlsRef.current.add(previewUrl);
+      return {
+        id,
+        kind,
+        name: file.name,
+        size: file.size,
+        type: file.type,
+        previewUrl,
+      };
+    });
   }
 
   const setCurrentPlan = useCallback((nextPlan: MediaPlan | null) => {
     planRef.current = nextPlan;
     setPlan(nextPlan);
   }, []);
+
+  useEffect(
+    () => () => {
+      assetPreviewUrlsRef.current.forEach((url) => URL.revokeObjectURL(url));
+      assetPreviewUrlsRef.current.clear();
+      assetFilesRef.current.clear();
+    },
+    []
+  );
+
+  useEffect(() => {
+    const hasRunningProgress =
+      generationProgress?.status === "running" || approvalProgress?.status === "running";
+    if (!hasRunningProgress) {
+      return;
+    }
+    const interval = window.setInterval(() => setProgressClock(Date.now()), 1000);
+    return () => window.clearInterval(interval);
+  }, [approvalProgress?.status, generationProgress?.status]);
 
   async function handleGenerate() {
     setGenerateAttempted(true);
@@ -113,12 +178,20 @@ export function MediaPlanPageClient() {
     setOpenAiMeta(null);
     setApprovalResult(null);
     setCampaignResult(null);
+    setApprovalProgress(null);
     setCampaignErrorLinks([]);
 
     if (!formValidation.valid) {
       return;
     }
 
+    const generationStartedAt = new Date().toISOString();
+    setGenerationProgress(
+      createGenerationProgress({
+        status: "queued",
+        startedAt: generationStartedAt,
+      })
+    );
     setGenerating(true);
     try {
       const response = await fetch("/api/media-plan/generate", {
@@ -133,18 +206,32 @@ export function MediaPlanPageClient() {
       if (!payload) {
         throw new Error("Media plan generation returned an unreadable response.");
       }
+      if (payload.success && payload.progress) {
+        setGenerationProgress(payload.progress);
+      }
 
-      const completedPayload = await resolveGeneratedMediaPlan(payload, formData);
+      const completedPayload = await resolveGeneratedMediaPlan(payload, formData, setGenerationProgress);
 
+      clearStagedAssetFiles();
       setCurrentPlan(completedPayload.plan);
       setPlanSource("generated");
       setOpenAiMeta(completedPayload.openAi);
       setClientRequestId(createClientRequestId());
       setEdited(false);
       resetPlanHistory();
+      if (completedPayload.progress) {
+        setGenerationProgress(completedPayload.progress);
+      }
     } catch (generateError) {
       setServerIssues(readMediaPlanIssues(generateError));
       setError(generateError instanceof Error ? generateError.message : "Unable to generate media plan.");
+      setGenerationProgress(
+        createGenerationProgress({
+          status: "failed",
+          startedAt: generationProgress?.startedAt ?? generationStartedAt,
+          message: generateError instanceof Error ? generateError.message : "Unable to generate media plan.",
+        })
+      );
     } finally {
       setGenerating(false);
     }
@@ -157,8 +244,11 @@ export function MediaPlanPageClient() {
     setOpenAiMeta(null);
     setApprovalResult(null);
     setCampaignResult(null);
+    setGenerationProgress(null);
+    setApprovalProgress(null);
     setCampaignErrorLinks([]);
 
+    clearStagedAssetFiles();
     setCurrentPlan(buildMockupMediaPlan(formData));
     setPlanSource("mockup");
     setClientRequestId(createClientRequestId());
@@ -275,6 +365,7 @@ export function MediaPlanPageClient() {
     setGenerateAttempted(true);
     setError(null);
     setServerIssues([]);
+    setApprovalProgress(null);
 
     if (!plan || !formValidation.valid || !planValidation.valid) {
       return;
@@ -282,26 +373,92 @@ export function MediaPlanPageClient() {
 
     const requestId = clientRequestId || createClientRequestId();
     setClientRequestId(requestId);
+    const approvalStartedAt = new Date().toISOString();
+    setApprovalProgress(
+      createApprovalProgress({
+        startedAt: approvalStartedAt,
+        activeStepId: "validating_media_plan",
+        message: "Preparing approval request.",
+      })
+    );
     setSavingToNotion(true);
     setCreatingCampaign(true);
     try {
-      const response = await fetch("/api/media-plan/approve-and-create", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          mediaPlan: plan,
-          googleCid: formData.googleCid,
-          source: "media-plan",
-          clientRequestId: requestId,
-        }),
-      });
-      const payload = (await response.json().catch(() => null)) as MediaPlanApproveAndCreateResponse | null;
+      const activeAssets = getMediaPlanAssets(plan);
+      const missingAsset = activeAssets.find((asset) => !assetFilesRef.current.has(asset.id));
+      if (missingAsset) {
+        setServerIssues([
+          {
+            path: `assets.${missingAsset.kind}`,
+            message: `Upload ${missingAsset.name} again before approval.`,
+          },
+        ]);
+        throw new Error("One or more staged asset files are no longer available.");
+      }
+
+      const response = await fetch("/api/media-plan/approve-and-create/progress", buildApprovalRequest({
+        mediaPlan: plan,
+        googleCid: formData.googleCid,
+        clientRequestId: requestId,
+        assetFiles: assetFilesRef.current,
+      }));
+      const payload = await readApproveCreateProgressStream(response, setApprovalProgress);
 
       if (!payload) {
-        throw new Error("Media plan approval returned an unreadable response.");
+        const fallbackResponse = await fetch("/api/media-plan/approve-and-create", buildApprovalRequest({
+          mediaPlan: plan,
+          googleCid: formData.googleCid,
+          clientRequestId: requestId,
+          assetFiles: assetFilesRef.current,
+        }));
+        const fallbackPayload = (await fallbackResponse.json().catch(() => null)) as MediaPlanApproveAndCreateResponse | null;
+        if (!fallbackPayload) {
+          throw new Error("Media plan approval returned an unreadable response.");
+        }
+        handleApproveCreatePayload(fallbackPayload);
+        return;
       }
+      handleApproveCreatePayload(payload);
+    } catch (approveError) {
+      const streamedIssues = readMediaPlanIssues(approveError);
+      if (streamedIssues.length > 0) {
+        setServerIssues(streamedIssues);
+      }
+      setApprovalProgress((current) =>
+        current
+          ? {
+              ...current,
+              status: "failed",
+              statusLabel: "Failed",
+              message:
+                approveError instanceof Error
+                  ? approveError.message
+                  : "Unable to save media plan to Notion and create paused campaign.",
+              estimatedRemainingMs: null,
+            }
+          : createApprovalProgress({
+              startedAt: approvalStartedAt,
+              activeStepId: "validating_media_plan",
+              failedStepId: "validating_media_plan",
+              status: "failed",
+              statusLabel: "Failed",
+              message:
+                approveError instanceof Error
+                  ? approveError.message
+                  : "Unable to save media plan to Notion and create paused campaign.",
+            })
+      );
+      setError(
+        approveError instanceof Error
+          ? approveError.message
+          : "Unable to save media plan to Notion and create paused campaign."
+      );
+    } finally {
+      setSavingToNotion(false);
+      setCreatingCampaign(false);
+    }
+
+    function handleApproveCreatePayload(payload: MediaPlanApproveAndCreateResponse) {
       if (!payload.success) {
         setServerIssues(payload.issues ?? []);
         setCampaignErrorLinks(payload.notionPageUrls ?? []);
@@ -330,15 +487,25 @@ export function MediaPlanPageClient() {
       });
       setEdited(false);
       resetPlanHistory();
-    } catch (approveError) {
-      setError(
-        approveError instanceof Error
-          ? approveError.message
-          : "Unable to save media plan to Notion and create paused campaign."
+      clearStagedAssetFiles();
+      setApprovalProgress((current) =>
+        current?.status === "completed"
+          ? current
+          : createApprovalProgress({
+              startedAt: current?.startedAt ?? new Date().toISOString(),
+              completedStepIds: [
+                "validating_media_plan",
+                "uploading_assets",
+                "creating_notion_rows",
+                "connecting_google_ads",
+                "creating_paused_campaign",
+                "returning_review_link",
+              ],
+              status: "completed",
+              statusLabel: "Completed",
+              message: "Paused campaign created successfully.",
+            })
       );
-    } finally {
-      setSavingToNotion(false);
-      setCreatingCampaign(false);
     }
   }
 
@@ -372,6 +539,13 @@ export function MediaPlanPageClient() {
           onGenerate={handleGenerate}
           onMockup={handleMockup}
         />
+
+        {visibleGenerationProgress?.status === "running" ? (
+          <MediaPlanProgressCard progress={visibleGenerationProgress} />
+        ) : null}
+        {visibleApprovalProgress?.status === "running" ? (
+          <MediaPlanProgressCard progress={visibleApprovalProgress} />
+        ) : null}
 
         {error ? (
           <section className="rounded-2xl border border-[#fecdd3] bg-[#fff1f2] p-4 text-[#9f1239] shadow-sm">
@@ -417,6 +591,7 @@ export function MediaPlanPageClient() {
           canUndo={canUndo}
           canRedo={canRedo}
           onChange={handlePlanChange}
+          onStageAssetFiles={handleStageAssetFiles}
           onUndo={handleUndo}
           onRedo={handleRedo}
           onApprove={handleApprove}
@@ -466,6 +641,52 @@ function buildMockupMediaPlan(formData: MediaPlanFormData): MediaPlan {
       assumptions: [],
       warnings: [],
     },
+    assets: createEmptyMediaPlanAssets(),
+  };
+}
+
+function buildApprovalRequest({
+  mediaPlan,
+  googleCid,
+  clientRequestId,
+  assetFiles,
+}: {
+  mediaPlan: MediaPlan;
+  googleCid: string;
+  clientRequestId: string;
+  assetFiles: Map<string, File>;
+}): RequestInit {
+  const assets = getMediaPlanAssets(mediaPlan);
+  if (assets.length === 0) {
+    return {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        mediaPlan,
+        googleCid,
+        source: "media-plan",
+        clientRequestId,
+      }),
+    };
+  }
+
+  const formData = new FormData();
+  formData.append("mediaPlan", JSON.stringify(mediaPlan));
+  formData.append("googleCid", googleCid);
+  formData.append("source", "media-plan");
+  formData.append("clientRequestId", clientRequestId);
+  for (const asset of assets) {
+    const file = assetFiles.get(asset.id);
+    if (file) {
+      formData.append(`assetFile:${asset.id}`, file, asset.name);
+    }
+  }
+
+  return {
+    method: "POST",
+    body: formData,
   };
 }
 
@@ -497,13 +718,17 @@ function resolveGenerateButtonLabel(planSource: MediaPlanSource, hasPlan: boolea
 
 async function resolveGeneratedMediaPlan(
   payload: MediaPlanGenerateResponse,
-  formData: MediaPlanFormData
+  formData: MediaPlanFormData,
+  onProgress?: (progress: MediaPlanOperationProgress) => void
 ): Promise<Extract<MediaPlanGenerateResponse, { success: true; status: "completed" }>> {
   if (!payload.success) {
     throwMediaPlanResponseError(payload);
   }
 
   if (payload.status === "completed") {
+    if (payload.progress) {
+      onProgress?.(payload.progress);
+    }
     return payload;
   }
 
@@ -532,12 +757,130 @@ async function resolveGeneratedMediaPlan(
       }
       throwMediaPlanResponseError(nextPayload);
     }
+    if (nextPayload.progress) {
+      onProgress?.(nextPayload.progress);
+    }
     if (nextPayload.status === "completed") {
       return nextPayload;
     }
 
     current = nextPayload;
   }
+}
+
+async function readApproveCreateProgressStream(
+  response: Response,
+  onProgress: (progress: MediaPlanOperationProgress) => void
+): Promise<MediaPlanApproveAndCreateResponse | null> {
+  if (!response.body) {
+    return null;
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+
+  while (true) {
+    const { value, done } = await reader.read();
+    buffer += decoder.decode(value ?? new Uint8Array(), { stream: !done });
+    const lines = buffer.split("\n");
+    buffer = lines.pop() ?? "";
+
+    for (const line of lines) {
+      const event = parseProgressStreamEvent(line);
+      if (!event) {
+        continue;
+      }
+      if (event.type === "progress") {
+        onProgress(event.progress);
+      }
+      if (event.type === "result") {
+        return event.result;
+      }
+      if (event.type === "error") {
+        if (event.progress) {
+          onProgress(event.progress);
+        }
+        const error = new Error(event.error) as Error & {
+          issues?: MediaPlanValidationIssue[];
+          notionPageUrls?: string[];
+        };
+        error.issues = event.issues;
+        throw error;
+      }
+    }
+
+    if (done) {
+      break;
+    }
+  }
+
+  const finalEvent = parseProgressStreamEvent(buffer);
+  if (finalEvent?.type === "result") {
+    return finalEvent.result;
+  }
+  if (finalEvent?.type === "progress") {
+    onProgress(finalEvent.progress);
+  }
+  if (finalEvent?.type === "error") {
+    if (finalEvent.progress) {
+      onProgress(finalEvent.progress);
+    }
+    throw new Error(finalEvent.error);
+  }
+
+  return null;
+}
+
+function parseProgressStreamEvent(value: string): MediaPlanProgressStreamEvent | null {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return null;
+  }
+  try {
+    return JSON.parse(trimmed) as MediaPlanProgressStreamEvent;
+  } catch {
+    return null;
+  }
+}
+
+function refreshProgressTiming(
+  progress: MediaPlanOperationProgress | null,
+  now: number
+): MediaPlanOperationProgress | null {
+  if (!progress) {
+    return null;
+  }
+  if (progress.operation === "generate" && progress.status === "running") {
+    return createGenerationProgress({
+      status: progress.statusLabel === "Queued" ? "queued" : "in_progress",
+      startedAt: progress.startedAt,
+      message: progress.message,
+      now,
+    });
+  }
+
+  if (progress.operation === "approve_create") {
+    const activeStep = progress.steps.find((step) => step.status === "in_progress");
+    const failedStep = progress.steps.find((step) => step.status === "failed");
+    return createApprovalProgress({
+      startedAt: progress.startedAt,
+      activeStepId: activeStep?.id,
+      completedStepIds: progress.steps
+        .filter((step) => step.status === "completed")
+        .map((step) => step.id),
+      failedStepId: failedStep?.id,
+      status: progress.status,
+      statusLabel: progress.statusLabel,
+      message: progress.message,
+      now,
+    });
+  }
+
+  return {
+    ...progress,
+    elapsedMs: Math.max(0, now - Date.parse(progress.startedAt)),
+  };
 }
 
 function throwMediaPlanResponseError(payload: Extract<MediaPlanGenerateResponse, { success: false }>): never {

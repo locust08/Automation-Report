@@ -279,6 +279,8 @@ function normalizeOpenAIResponse(
         openAi: {
           responseId,
           model: parsed.model ?? options.fallbackModel,
+          startedAt: readStartedAt(parsed.metadata),
+          status: status as MediaPlanGenerationStatus,
         },
       };
     }
@@ -360,6 +362,8 @@ function normalizeOpenAIResponse(
     openAi: {
       responseId,
       model: parsed.model ?? options.fallbackModel,
+      startedAt: readStartedAt(parsed.metadata),
+      status: "completed",
     },
   };
 }
@@ -420,12 +424,18 @@ function buildPromptVariables(form: MediaPlanFormData): Record<string, string> {
 
 function buildResponseMetadata(form: MediaPlanFormData): Record<string, string> {
   return {
+    media_plan_started_at: new Date().toISOString(),
     media_plan_website_url: form.websiteUrl.trim(),
     media_plan_ad_budget: form.adBudget.trim(),
     media_plan_google_cid: form.googleCid.trim(),
     media_plan_target_location: form.targetLocation.trim(),
     media_plan_language: form.language.trim(),
   };
+}
+
+function readStartedAt(metadata: Record<string, string> | undefined): string | null {
+  const value = metadata?.media_plan_started_at;
+  return value && !Number.isNaN(Date.parse(value)) ? value : null;
 }
 
 function buildRuntimeInstruction(form: MediaPlanFormData): string {

@@ -31,20 +31,22 @@ export async function POST(request: Request): Promise<NextResponse<MediaPlanAppr
     | null = null;
 
   try {
-    const body = await request.json().catch(() => ({} as Record<string, unknown>));
-    const googleCid = readString((body as Record<string, unknown>).googleCid);
+    const body = await readApprovalRequest(request);
+    const googleCid = body.googleCid;
     console.info("[media-plan:approve-and-create-route] request_started", {
-      hasMediaPlan: Boolean((body as Record<string, unknown>).mediaPlan),
+      hasMediaPlan: Boolean(body.mediaPlan),
       hasGoogleCid: Boolean(googleCid),
-      clientRequestId: readString((body as Record<string, unknown>).clientRequestId) || null,
+      assetFileCount: body.assetFiles.size,
+      clientRequestId: body.clientRequestId || null,
     });
 
     approved = await approveMediaPlanToNotion({
-      mediaPlan: (body as Record<string, unknown>).mediaPlan as never,
+      mediaPlan: body.mediaPlan as never,
       googleCid,
       source: "media-plan",
-      clientRequestId: readString((body as Record<string, unknown>).clientRequestId) || undefined,
-      batchId: readString((body as Record<string, unknown>).batchId) || undefined,
+      clientRequestId: body.clientRequestId || undefined,
+      batchId: body.batchId || undefined,
+      assetFiles: body.assetFiles,
     });
 
     console.info("[media-plan:approve-and-create-route] notion_approval_success", {
@@ -160,6 +162,53 @@ export async function POST(request: Request): Promise<NextResponse<MediaPlanAppr
       },
       { status: 500 }
     );
+  }
+}
+
+async function readApprovalRequest(request: Request): Promise<{
+  mediaPlan: unknown;
+  googleCid: string;
+  source: string;
+  clientRequestId: string;
+  batchId: string;
+  assetFiles: Map<string, File>;
+}> {
+  const contentType = request.headers.get("content-type") || "";
+  if (contentType.includes("multipart/form-data")) {
+    const formData = await request.formData();
+    const mediaPlanText = readString(formData.get("mediaPlan"));
+    const assetFiles = new Map<string, File>();
+    for (const [key, value] of formData.entries()) {
+      if (key.startsWith("assetFile:") && value instanceof File && value.size > 0) {
+        assetFiles.set(key.slice("assetFile:".length), value);
+      }
+    }
+    return {
+      mediaPlan: safeJsonParse(mediaPlanText),
+      googleCid: readString(formData.get("googleCid")),
+      source: readString(formData.get("source")),
+      clientRequestId: readString(formData.get("clientRequestId")),
+      batchId: readString(formData.get("batchId")),
+      assetFiles,
+    };
+  }
+
+  const body = await request.json().catch(() => ({} as Record<string, unknown>));
+  return {
+    mediaPlan: (body as Record<string, unknown>).mediaPlan,
+    googleCid: readString((body as Record<string, unknown>).googleCid),
+    source: readString((body as Record<string, unknown>).source),
+    clientRequestId: readString((body as Record<string, unknown>).clientRequestId),
+    batchId: readString((body as Record<string, unknown>).batchId),
+    assetFiles: new Map(),
+  };
+}
+
+function safeJsonParse(value: string): unknown {
+  try {
+    return value ? JSON.parse(value) : null;
+  } catch {
+    return null;
   }
 }
 

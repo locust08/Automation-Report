@@ -2,6 +2,7 @@ import {
   DEFAULT_MEDIA_PLAN_LANGUAGE,
   DEFAULT_NETWORK,
   DEFAULT_TARGET_LOCATION,
+  MEDIA_PLAN_ASSET_ACCEPTED_MIME_TYPES,
   MEDIA_PLAN_LANGUAGE_OPTIONS,
   MEDIA_PLAN_LIMITS,
   MEDIA_PLAN_TARGET_LOCATION_OPTIONS,
@@ -36,6 +37,7 @@ const CAMPAIGN_OBJECTIVES = new Set<MediaPlanCampaignObjective>([
 const BIDDING_STRATEGIES = new Set<MediaPlanBiddingStrategy>(["Conversions", "Clicks"]);
 const LANGUAGES = new Set<MediaPlanLanguage>(MEDIA_PLAN_LANGUAGE_OPTIONS);
 const MATCH_TYPES = new Set<MediaPlanKeywordMatchType>(["BROAD", "PHRASE", "EXACT"]);
+const ASSET_MIME_TYPES = new Set<string>(MEDIA_PLAN_ASSET_ACCEPTED_MIME_TYPES);
 const MAX_SPECIAL_REMARKS_LENGTH = 4000;
 const MALAYSIA_LOCATION_OPTIONS = new Set<string>(MEDIA_PLAN_TARGET_LOCATION_OPTIONS);
 const UNSUPPORTED_CLAIM_PATTERNS: Array<{ pattern: RegExp; label: string }> = [
@@ -94,6 +96,7 @@ export function validateGeneratedMediaPlan(value: unknown): GeneratedMediaPlanVa
   validateCampaign(issues, value.campaign);
   validateAdGroups(issues, value.adGroups);
   validatePlanningNotes(issues, value.planningNotes);
+  validateAssets(issues, value.assets);
 
   return {
     valid: issues.length === 0,
@@ -243,6 +246,60 @@ function validatePlanningNotes(issues: MediaPlanValidationIssue[], value: unknow
   validateString(issues, value, "planningNotes.strategy", "Planning strategy is required.");
   validateStringArray(issues, value.assumptions, "planningNotes.assumptions", "Planning assumptions must be a list.");
   validateStringArray(issues, value.warnings, "planningNotes.warnings", "Planning warnings must be a list.");
+}
+
+function validateAssets(issues: MediaPlanValidationIssue[], value: unknown) {
+  if (value === undefined || value === null) {
+    return;
+  }
+  if (!isRecord(value)) {
+    issues.push({ path: "assets", message: "Assets must be a JSON object." });
+    return;
+  }
+
+  validateAssetList(issues, value.logo, "assets.logo", 1);
+  validateAssetList(
+    issues,
+    value.productServiceImages,
+    "assets.productServiceImages",
+    MEDIA_PLAN_LIMITS.productServiceImages
+  );
+}
+
+function validateAssetList(
+  issues: MediaPlanValidationIssue[],
+  value: unknown,
+  path: string,
+  maxItems: number
+) {
+  if (value === undefined || value === null) {
+    return;
+  }
+  if (!Array.isArray(value)) {
+    issues.push({ path, message: "Asset files must be a list." });
+    return;
+  }
+  if (value.length > maxItems) {
+    issues.push({ path, message: `This section can contain up to ${maxItems} file${maxItems === 1 ? "" : "s"}.` });
+  }
+
+  value.forEach((asset, index) => {
+    const assetPath = `${path}.${index}`;
+    if (!isRecord(asset)) {
+      issues.push({ path: assetPath, message: "Asset file metadata must be a JSON object." });
+      return;
+    }
+    validateString(issues, asset, `${assetPath}.id`, "Asset file ID is required.");
+    validateString(issues, asset, `${assetPath}.name`, "Asset filename is required.");
+    if (typeof asset.size !== "number" || !Number.isFinite(asset.size) || asset.size <= 0) {
+      issues.push({ path: `${assetPath}.size`, message: "Asset file size is required." });
+    } else if (asset.size > MEDIA_PLAN_LIMITS.assetFileBytes) {
+      issues.push({ path: `${assetPath}.size`, message: "Asset files must be 5120 KB or smaller." });
+    }
+    if (typeof asset.type !== "string" || !ASSET_MIME_TYPES.has(asset.type)) {
+      issues.push({ path: `${assetPath}.type`, message: "Asset files must be PNG or JPG images." });
+    }
+  });
 }
 
 function validateKeywords(

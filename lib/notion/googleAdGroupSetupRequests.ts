@@ -6,12 +6,14 @@ import {
   GOOGLE_AD_GROUP_SETUP_PROPERTIES,
   GoogleAdGroupSetupPropertyName,
   MappedGoogleAdGroupSetupRow,
+  NotionFileUploadValue,
   NotionMapperValue,
   formatMediaPlanBatchId,
   mapMediaPlanToNotionRows,
   normalizeNotionDataSourceId,
 } from "@/lib/media-plan/notionMapper";
 import { MediaPlan, MediaPlanApproveSuccessResponse } from "@/lib/media-plan/schema";
+import { getMediaPlanAssets, mediaPlanHasAssets } from "@/lib/media-plan/assets";
 import { MediaPlanValidationIssue, validateGeneratedMediaPlan } from "@/lib/media-plan/validation";
 
 export class GoogleAdGroupSetupConfigError extends Error {
@@ -50,6 +52,8 @@ export interface ApproveMediaPlanToNotionInput {
   clientRequestId?: string;
   batchId?: string;
   adAccountPageId?: string;
+  assetFiles?: Map<string, File>;
+  onProgress?: (stepId: string, message?: string) => void | Promise<void>;
 }
 
 interface NotionDataSourceConfig {
@@ -70,6 +74,7 @@ interface NotionPropertySchema {
   status?: {
     options?: Array<{ name?: string }>;
   };
+  files?: unknown;
 }
 
 interface ExistingBatchResult {
@@ -87,8 +92,12 @@ const BATCH_PATTERN = /MediaPlanBatch:\s*(MP-\d{8}-\d{6})/;
 const NOTION_AD_ACCOUNT_PROPERTY_CANDIDATES = ["ID", "Google Ads Account ID", "Google CID"] as const;
 const OPTIONAL_GOOGLE_AD_GROUP_SETUP_PROPERTIES = new Set<GoogleAdGroupSetupPropertyName>([
   "15 Network Notes",
+  "50 Logo",
+  "51 Product / Service Image",
   "69 Setup Notes",
 ]);
+const NOTION_API_VERSION = "2026-03-11";
+const NOTION_API_BASE = "https://api.notion.com/v1";
 
 export async function approveMediaPlanToNotion(
   input: ApproveMediaPlanToNotionInput
@@ -100,8 +109,10 @@ export async function approveMediaPlanToNotion(
       validationIssues
     );
   }
+  await input.onProgress?.("validating_media_plan", "Media plan validation passed.");
 
   const config = await resolveGoogleAdGroupSetupConfig();
+  const notionToken = readNotionToken();
   const adAccountPageId =
     input.adAccountPageId?.trim() || (await resolveGoogleAdAccountPageId(config.notion, input.googleCid));
   if (!adAccountPageId) {
@@ -161,9 +172,20 @@ export async function approveMediaPlanToNotion(
 
   const batchId = requestedBatchId || formatMediaPlanBatchId();
   console.info("[media-plan:approve] batch_created", { batchId });
+  let mediaPlan = input.mediaPlan;
+  if (mediaPlanHasAssets(input.mediaPlan)) {
+    await input.onProgress?.("uploading_assets", "Uploading selected assets to Notion.");
+    mediaPlan = await uploadMediaPlanAssetsForApproval({
+      mediaPlan: input.mediaPlan,
+      assetFiles: input.assetFiles ?? new Map(),
+      properties: config.properties,
+      notionToken,
+    });
+  }
   const createdAt = new Date().toISOString();
+  await input.onProgress?.("creating_notion_rows", "Creating Notion setup rows.");
   const rows = mapMediaPlanToNotionRows({
-    mediaPlan: input.mediaPlan,
+    mediaPlan,
     googleCid: input.googleCid.trim(),
     batchId,
     source: input.source,
@@ -214,10 +236,7 @@ export async function approveMediaPlanToNotion(
 }
 
 async function resolveGoogleAdGroupSetupConfig(): Promise<NotionDataSourceConfig> {
-  const notionToken = process.env.NOTION_TOKEN?.trim();
-  if (!notionToken) {
-    throw new GoogleAdGroupSetupConfigError("Missing required env var NOTION_TOKEN.");
-  }
+  const notionToken = readNotionToken();
 
   const notion = new Client({ auth: notionToken });
   const dataSourceId = normalizeNotionDataSourceId(
@@ -263,6 +282,14 @@ async function resolveGoogleAdGroupSetupConfig(): Promise<NotionDataSourceConfig
       `Unable to read Google Ads Ad Group Setup Requests data source: ${message}`
     );
   }
+}
+
+function readNotionToken(): string {
+  const notionToken = process.env.NOTION_TOKEN?.trim();
+  if (!notionToken) {
+    throw new GoogleAdGroupSetupConfigError("Missing required env var NOTION_TOKEN.");
+  }
+  return notionToken;
 }
 
 function validateApprovalInput(input: ApproveMediaPlanToNotionInput): MediaPlanValidationIssue[] {
@@ -412,9 +439,152 @@ function buildNotionPropertyValue(
     case "relation": {
       return isRelationValue(value) && value.pageId ? { relation: [{ id: value.pageId }] } : { relation: [] };
     }
+    case "files": {
+      return isFileUploadValue(value)
+        ? {
+            files: value.files.map((file) => ({
+              name: file.name,
+              type: "file_upload",
+              file_upload: { id: file.id },
+            })),
+          }
+        : { files: [] };
+    }
     default:
       return null;
   }
+}
+
+async function uploadMediaPlanAssetsForApproval({
+  mediaPlan,
+  assetFiles,
+  properties,
+  notionToken,
+}: {
+  mediaPlan: MediaPlan;
+  assetFiles: Map<string, File>;
+  properties: Record<string, NotionPropertySchema>;
+  notionToken: string;
+}): Promise<MediaPlan> {
+  const propertyIssues = validateAssetFileProperties(mediaPlan, properties);
+  if (propertyIssues.length > 0) {
+    throw new GoogleAdGroupSetupValidationError("Please fix the media plan assets before saving to Notion.", propertyIssues);
+  }
+
+  const assets = getMediaPlanAssets(mediaPlan);
+  const uploadedByAssetId = new Map<string, string>();
+  for (const asset of assets) {
+    const file = assetFiles.get(asset.id);
+    if (!file) {
+      throw new GoogleAdGroupSetupValidationError("Please upload all selected assets again before approval.", [
+        {
+          path: `assets.${asset.kind}`,
+          message: `Selected asset ${asset.name} is no longer available in the browser session.`,
+        },
+      ]);
+    }
+    const uploadId = await uploadNotionFile(notionToken, file, asset.name);
+    uploadedByAssetId.set(asset.id, uploadId);
+  }
+
+  return {
+    ...mediaPlan,
+    assets: {
+      logo: (mediaPlan.assets?.logo ?? []).map((asset) => ({
+        ...asset,
+        fileUploadId: uploadedByAssetId.get(asset.id) ?? asset.fileUploadId,
+      })),
+      productServiceImages: (mediaPlan.assets?.productServiceImages ?? []).map((asset) => ({
+        ...asset,
+        fileUploadId: uploadedByAssetId.get(asset.id) ?? asset.fileUploadId,
+      })),
+    },
+  };
+}
+
+function validateAssetFileProperties(
+  mediaPlan: MediaPlan,
+  properties: Record<string, NotionPropertySchema>
+): MediaPlanValidationIssue[] {
+  const issues: MediaPlanValidationIssue[] = [];
+  const assets = mediaPlan.assets;
+  if ((assets?.logo ?? []).length > 0 && properties["50 Logo"]?.type !== "files") {
+    issues.push({
+      path: "assets.logo",
+      message: "Notion property 50 Logo must exist and use the Files type before logo assets can be attached.",
+    });
+  }
+  if ((assets?.productServiceImages ?? []).length > 0 && properties["51 Product / Service Image"]?.type !== "files") {
+    issues.push({
+      path: "assets.productServiceImages",
+      message:
+        "Notion property 51 Product / Service Image must exist and use the Files type before product/service assets can be attached.",
+    });
+  }
+  return issues;
+}
+
+async function uploadNotionFile(notionToken: string, file: File, filename: string): Promise<string> {
+  const createResponse = await fetch(`${NOTION_API_BASE}/file_uploads`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${notionToken}`,
+      "Content-Type": "application/json",
+      "Notion-Version": NOTION_API_VERSION,
+    },
+    body: JSON.stringify({
+      mode: "single_part",
+      filename,
+      content_type: file.type,
+    }),
+  });
+  const created = await readNotionJson(createResponse);
+  const uploadId = readFileUploadId(created);
+  if (!uploadId) {
+    throw new GoogleAdGroupSetupWriteError(`Notion did not return a file upload ID for ${filename}.`);
+  }
+
+  const formData = new FormData();
+  formData.append("file", file, filename);
+  const sendResponse = await fetch(`${NOTION_API_BASE}/file_uploads/${encodeURIComponent(uploadId)}/send`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${notionToken}`,
+      "Notion-Version": NOTION_API_VERSION,
+    },
+    body: formData,
+  });
+  const uploaded = await readNotionJson(sendResponse);
+  const status = isRecord(uploaded) && typeof uploaded.status === "string" ? uploaded.status : "";
+  if (status !== "uploaded") {
+    throw new GoogleAdGroupSetupWriteError(`Notion upload for ${filename} did not complete.`);
+  }
+  return uploadId;
+}
+
+async function readNotionJson(response: Response): Promise<unknown> {
+  const body = await response.text();
+  const parsed = body ? safeJsonParse(body) : null;
+  if (!response.ok) {
+    const message =
+      isRecord(parsed) && typeof parsed.message === "string"
+        ? parsed.message
+        : body || `Notion API request failed with status ${response.status}.`;
+    throw new GoogleAdGroupSetupWriteError(message);
+  }
+  return parsed;
+}
+
+function safeJsonParse(value: string): unknown {
+  try {
+    return JSON.parse(value);
+  } catch {
+    return null;
+  }
+}
+
+function readFileUploadId(value: unknown): string {
+  return isRecord(value) && typeof value.id === "string" ? value.id : "";
 }
 
 async function resolveGoogleAdAccountPageId(notion: Client, googleCid: string): Promise<string | null> {
@@ -609,7 +779,7 @@ function getPropertyOptions(property: NotionPropertySchema | undefined): Set<str
 }
 
 function textValue(value: NotionMapperValue): string {
-  if (isRelationValue(value)) {
+  if (isRelationValue(value) || isFileUploadValue(value)) {
     return "";
   }
   if (Array.isArray(value)) {
@@ -625,7 +795,7 @@ function textValue(value: NotionMapperValue): string {
 }
 
 function firstOptionValue(value: NotionMapperValue): string {
-  if (isRelationValue(value)) {
+  if (isRelationValue(value) || isFileUploadValue(value)) {
     return "";
   }
   const first = Array.isArray(value) ? value[0] : value;
@@ -639,7 +809,7 @@ function firstOptionValue(value: NotionMapperValue): string {
 }
 
 function arrayValue(value: NotionMapperValue): string[] {
-  if (isRelationValue(value)) {
+  if (isRelationValue(value) || isFileUploadValue(value)) {
     return [];
   }
   if (Array.isArray(value)) {
@@ -651,6 +821,14 @@ function arrayValue(value: NotionMapperValue): string[] {
 
 function isRelationValue(value: NotionMapperValue): value is { type: "relation"; pageId: string } {
   return value !== null && typeof value === "object" && !Array.isArray(value) && value.type === "relation";
+}
+
+function isFileUploadValue(value: NotionMapperValue): value is NotionFileUploadValue {
+  return value !== null && typeof value === "object" && !Array.isArray(value) && value.type === "file_uploads";
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
 function readNotionOptionOrText(properties: Record<string, unknown>, name: string): string {

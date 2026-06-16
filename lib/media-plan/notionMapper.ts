@@ -5,9 +5,11 @@ import {
   MEDIA_PLAN_PROMPT_VARIABLE_DEFAULTS,
   MediaPlan,
   MediaPlanAdGroup,
+  MediaPlanAsset,
   MediaPlanKeyword,
   MediaPlanSitelink,
 } from "@/lib/media-plan/schema";
+import { normalizeMediaPlanAssets } from "@/lib/media-plan/assets";
 
 export const GOOGLE_AD_GROUP_SETUP_DATA_SOURCE_ID =
   "collection://6bd2bd23-2361-4b0d-bac7-6eaea2ce85b9";
@@ -61,6 +63,8 @@ export const GOOGLE_AD_GROUP_SETUP_PROPERTIES = [
   "47 Description 3",
   "48 Description 4",
   "49 Business Name",
+  "50 Logo",
+  "51 Product / Service Image",
   "53 Sitelink 1 Title",
   "54 Sitelink 1 URL",
   "55 Sitelink 2 Title",
@@ -87,7 +91,22 @@ export interface NotionRelationValue {
   pageId: string;
 }
 
-export type NotionMapperValue = string | string[] | number | boolean | NotionRelationValue | null;
+export interface NotionFileUploadValue {
+  type: "file_uploads";
+  files: Array<{
+    id: string;
+    name: string;
+  }>;
+}
+
+export type NotionMapperValue =
+  | string
+  | string[]
+  | number
+  | boolean
+  | NotionRelationValue
+  | NotionFileUploadValue
+  | null;
 
 export interface MappedGoogleAdGroupSetupRow {
   adGroupName: string;
@@ -205,6 +224,7 @@ function buildCampaignProperties(
   const biddingStrategy = campaign.biddingStrategy || "Conversions";
   const targetLocation =
     campaign.targetLocation.length > 0 ? campaign.targetLocation : [DEFAULT_TARGET_LOCATION];
+  const assets = normalizeMediaPlanAssets(input.mediaPlan);
   const setupNotes = buildSetupNotes(input);
   const reviewNotes = buildReviewNotes(input);
 
@@ -227,11 +247,28 @@ function buildCampaignProperties(
     "16 Target Location": targetLocation,
     "17 Language": campaign.language,
     "49 Business Name": campaign.businessName,
+    "50 Logo": buildFileUploadValue(assets.logo),
+    "51 Product / Service Image": buildFileUploadValue(assets.productServiceImages),
     "65 Status": "Ready for Setup",
     "67 Missing Info": false,
     "69 Setup Notes": setupNotes,
     "70 Review Notes": reviewNotes,
   };
+}
+
+function buildFileUploadValue(assets: MediaPlanAsset[]): NotionFileUploadValue | null {
+  const files = assets
+    .map((asset) =>
+      asset.fileUploadId
+        ? {
+            id: asset.fileUploadId,
+            name: asset.name,
+          }
+        : null
+    )
+    .filter((asset): asset is { id: string; name: string } => Boolean(asset));
+
+  return files.length > 0 ? { type: "file_uploads", files } : null;
 }
 
 function buildAdGroupProperties(

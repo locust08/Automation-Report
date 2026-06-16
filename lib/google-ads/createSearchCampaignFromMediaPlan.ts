@@ -14,6 +14,7 @@ export interface CreateSearchCampaignFromMediaPlanInput {
   source?: "media-plan";
   dryRun?: boolean;
   validateOnly?: boolean;
+  onProgress?: (stepId: string, message?: string) => void | Promise<void>;
 }
 
 export interface MediaPlanCampaignDryRunResult {
@@ -225,6 +226,7 @@ export async function createSearchCampaignFromMediaPlan(
       loginCustomerId: linkedAccount.loginCustomerId,
       rowCount: group.rows.length,
     });
+    await input.onProgress?.("connecting_google_ads", "Connecting to Google Ads.");
     const googleAdsConfig = await resolveGoogleAdsConfig(linkedAccount);
     await assertNoExistingCampaign(googleAdsConfig, group.campaignName);
     const targeting = await resolveTargeting(googleAdsConfig, group);
@@ -254,6 +256,7 @@ export async function createSearchCampaignFromMediaPlan(
       status: "In Setup",
       rowCount: notionRows.length,
     });
+    await input.onProgress?.("creating_paused_campaign", "Creating paused campaign in Google Ads.");
     const mutateResponse = await googleAdsMutate(googleAdsConfig, mutateOperations);
     const campaignResourceName = extractCampaignResourceName(mutateResponse) || "";
     const campaignId = campaignResourceName.split("/").pop() || "";
@@ -262,6 +265,7 @@ export async function createSearchCampaignFromMediaPlan(
     }
     const googleAdsReviewLink = buildGoogleAdsReviewLink(googleAdsConfig.customerId, campaignId);
 
+    await input.onProgress?.("returning_review_link", "Returning Google Ads review link.");
     await updateRowsForSuccess(notionConfig, notionDataSource.properties, notionRows, {
       batchId: normalized.batchId,
       campaignId,
@@ -386,7 +390,15 @@ export function parseMediaPlanCliArgs(argv: string[]): CreateSearchCampaignFromM
   };
 }
 
-function normalizeInput(input: CreateSearchCampaignFromMediaPlanInput): Required<CreateSearchCampaignFromMediaPlanInput> {
+type NormalizedCreateSearchCampaignInput = Omit<CreateSearchCampaignFromMediaPlanInput, "source"> & {
+  batchId: string;
+  googleCid: string;
+  source: "media-plan";
+  dryRun: boolean;
+  validateOnly: boolean;
+};
+
+function normalizeInput(input: CreateSearchCampaignFromMediaPlanInput): NormalizedCreateSearchCampaignInput {
   const batchId = input.batchId?.trim();
   const googleCid = normalizeGoogleAccountId(input.googleCid || "");
   if (!batchId) {
@@ -503,7 +515,7 @@ function pageToMediaPlanRow(page: NotionPage): MediaPlanNotionRow {
 
 function validateAndGroupRows(
   rows: MediaPlanNotionRow[],
-  input: Required<CreateSearchCampaignFromMediaPlanInput>
+  input: NormalizedCreateSearchCampaignInput
 ): MediaPlanRowGroup {
   if (rows.length === 0) {
     throw stepError("validation", `No Notion rows matched batch ID ${input.batchId}.`);

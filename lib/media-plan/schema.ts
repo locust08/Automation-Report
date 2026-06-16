@@ -32,7 +32,11 @@ export const MEDIA_PLAN_LIMITS = {
   displayPath: 15,
   sitelinks: 6,
   keywords: 10,
+  assetFileBytes: 5 * 1024 * 1024,
+  productServiceImages: 10,
 } as const;
+
+export const MEDIA_PLAN_ASSET_ACCEPTED_MIME_TYPES = ["image/png", "image/jpeg"] as const;
 
 export type MediaPlanStatus =
   | "Draft"
@@ -107,11 +111,29 @@ export interface MediaPlanPlanningNotes {
   warnings: string[];
 }
 
+export type MediaPlanAssetKind = "logo" | "productServiceImage";
+
+export interface MediaPlanAsset {
+  id: string;
+  kind: MediaPlanAssetKind;
+  name: string;
+  size: number;
+  type: string;
+  previewUrl?: string;
+  fileUploadId?: string;
+}
+
+export interface MediaPlanAssets {
+  logo: MediaPlanAsset[];
+  productServiceImages: MediaPlanAsset[];
+}
+
 export interface MediaPlan {
   batchPreviewId: string;
   campaign: MediaPlanCampaign;
   adGroups: MediaPlanAdGroup[];
   planningNotes: MediaPlanPlanningNotes;
+  assets?: MediaPlanAssets;
 }
 
 export interface MediaPlanGenerateRequest {
@@ -125,10 +147,45 @@ export interface MediaPlanGenerateRequest {
 }
 
 export type MediaPlanGenerationStatus = "queued" | "in_progress" | "completed";
+export type MediaPlanOperation = "generate" | "approve_create";
+export type MediaPlanOperationStatus = "idle" | "running" | "completed" | "failed";
+export type MediaPlanProgressStepStatus = "pending" | "in_progress" | "completed" | "failed";
+
+export interface MediaPlanProgressStep {
+  id: string;
+  label: string;
+  status: MediaPlanProgressStepStatus;
+}
+
+export interface MediaPlanOperationProgress {
+  operation: MediaPlanOperation;
+  title: string;
+  status: MediaPlanOperationStatus;
+  statusLabel: string;
+  steps: MediaPlanProgressStep[];
+  percent: number;
+  startedAt: string;
+  elapsedMs: number;
+  estimatedRemainingMs: number | null;
+  message?: string;
+}
+
+export type MediaPlanProgressStreamEvent =
+  | { type: "progress"; progress: MediaPlanOperationProgress }
+  | { type: "result"; result: MediaPlanApproveAndCreateResponse }
+  | {
+      type: "error";
+      error: string;
+      issues?: Array<{ path: string; message: string }>;
+      failedStep?: string;
+      progress?: MediaPlanOperationProgress;
+    };
 
 export interface MediaPlanGenerateOpenAIMeta {
   responseId: string | null;
   model: string | null;
+  startedAt?: string | null;
+  status?: MediaPlanGenerationStatus | string | null;
 }
 
 export interface MediaPlanGenerateCompletedResponse {
@@ -136,6 +193,7 @@ export interface MediaPlanGenerateCompletedResponse {
   status: "completed";
   plan: MediaPlan;
   openAi: MediaPlanGenerateOpenAIMeta;
+  progress?: MediaPlanOperationProgress;
 }
 
 export interface MediaPlanGeneratePendingResponse {
@@ -144,12 +202,14 @@ export interface MediaPlanGeneratePendingResponse {
   openAi: MediaPlanGenerateOpenAIMeta & {
     responseId: string;
   };
+  progress?: MediaPlanOperationProgress;
 }
 
 export interface MediaPlanGenerateErrorResponse {
   success: false;
   error: string;
   issues?: Array<{ path: string; message: string }>;
+  progress?: MediaPlanOperationProgress;
 }
 
 export type MediaPlanGenerateResponse =

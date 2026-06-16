@@ -7,6 +7,7 @@ import {
   retrieveMediaPlanGeneration,
 } from "@/lib/openai/generateMediaPlan";
 import type { MediaPlanGenerateResponse } from "@/lib/media-plan/schema";
+import { createGenerationProgress } from "@/lib/media-plan/progress";
 import { normalizeMediaPlanFormInput } from "@/lib/media-plan/validation";
 
 export const dynamic = "force-dynamic";
@@ -24,6 +25,7 @@ export async function GET(
         ? normalizeMediaPlanFormInput(Object.fromEntries(searchParams.entries()))
         : null;
     const result = await retrieveMediaPlanGeneration(decodeURIComponent(responseId || ""), formDefaults);
+    const startedAt = result.openAi.startedAt || new Date().toISOString();
 
     if (result.status === "completed") {
       return NextResponse.json({
@@ -31,6 +33,11 @@ export async function GET(
         status: result.status,
         plan: result.plan,
         openAi: result.openAi,
+        progress: createGenerationProgress({
+          status: "completed",
+          startedAt,
+          message: "Media plan generated successfully.",
+        }),
       });
     }
 
@@ -38,6 +45,10 @@ export async function GET(
       success: true,
       status: result.status,
       openAi: result.openAi,
+      progress: createGenerationProgress({
+        status: result.status,
+        startedAt,
+      }),
     });
   } catch (error) {
     if (error instanceof MediaPlanInputError || error instanceof MediaPlanOutputError) {

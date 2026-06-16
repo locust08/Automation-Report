@@ -9,6 +9,7 @@ import {
   CrosshairIcon,
   FileTextIcon,
   GlobeIcon,
+  ImageIcon,
   InfoIcon,
   LanguagesIcon,
   LinkIcon,
@@ -24,8 +25,10 @@ import {
   TriangleAlertIcon,
   Trash2Icon,
   Undo2Icon,
+  UploadIcon,
+  XIcon,
 } from "lucide-react";
-import { useMemo, useState, type ReactNode } from "react";
+import { useMemo, useRef, useState, type DragEvent, type ReactNode } from "react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -33,11 +36,16 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
 import { Textarea } from "@/components/ui/textarea";
+import { normalizeMediaPlanAssets } from "@/lib/media-plan/assets";
 import {
   DEFAULT_NETWORK,
+  MEDIA_PLAN_ASSET_ACCEPTED_MIME_TYPES,
   MEDIA_PLAN_LIMITS,
   MediaPlan,
   MediaPlanAdGroup,
+  MediaPlanAsset,
+  MediaPlanAssetKind,
+  MediaPlanAssets,
   MediaPlanApproveSuccessResponse,
   MediaPlanCampaign,
   MediaPlanCreateCampaignSuccessResponse,
@@ -63,6 +71,7 @@ interface MediaPlanEditorProps {
   canUndo: boolean;
   canRedo: boolean;
   onChange: (nextPlan: MediaPlan) => void;
+  onStageAssetFiles: (kind: MediaPlanAssetKind, files: File[]) => MediaPlanAsset[];
   onUndo: () => void;
   onRedo: () => void;
   onApprove: () => void;
@@ -81,6 +90,7 @@ export function MediaPlanEditor({
   canUndo,
   canRedo,
   onChange,
+  onStageAssetFiles,
   onUndo,
   onRedo,
   onApprove,
@@ -302,6 +312,13 @@ export function MediaPlanEditor({
         onAddAdGroup={addAdGroup}
         onRemoveAdGroup={removeAdGroup}
         onChangeAdGroup={updateAdGroup}
+      />
+
+      <AssetsSection
+        assets={normalizeMediaPlanAssets(currentPlan)}
+        issues={issues}
+        onStageAssetFiles={onStageAssetFiles}
+        onChange={(assets) => updatePlan({ ...currentPlan, assets })}
       />
 
       <SetupNotesSection
@@ -661,6 +678,242 @@ function DisplayPathCompactField({
           </p>
         ) : null}
       </div>
+    </div>
+  );
+}
+
+function AssetsSection({
+  assets,
+  issues,
+  onStageAssetFiles,
+  onChange,
+}: {
+  assets: MediaPlanAssets;
+  issues: MediaPlanValidationIssue[];
+  onStageAssetFiles: (kind: MediaPlanAssetKind, files: File[]) => MediaPlanAsset[];
+  onChange: (assets: MediaPlanAssets) => void;
+}) {
+  return (
+    <section className="rounded-2xl border border-[#dedede] bg-white p-4 shadow-sm sm:p-5">
+      <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div className="flex gap-3">
+          <div className="flex size-11 shrink-0 items-center justify-center rounded-xl bg-[#fff1f2] text-[#d4001a]">
+            <ImageIcon className="size-5" />
+          </div>
+          <div>
+            <div className="flex flex-wrap items-center gap-2">
+              <h2 className="text-lg font-bold leading-tight text-[#1f2937]">Assets (Optional)</h2>
+              <Badge className="border border-[#d7d7d7] bg-[#f7f7f7] text-[#667085] hover:bg-[#f7f7f7]">
+                Not required for launch
+              </Badge>
+            </div>
+            <p className="mt-1 text-sm font-medium text-[#667085]">
+              Logo and product or service images are optional and can be added later.
+            </p>
+          </div>
+        </div>
+      </div>
+
+      <div className="grid gap-4 lg:grid-cols-2">
+        <AssetUploadCard
+          title="Logo"
+          description="Upload a real approved brand logo."
+          recommendation="Recommended: square 1:1 PNG/JPG, 1200x1200, under 5120 KB."
+          buttonLabel="Upload Logo"
+          emptyLabel="Drag & drop logo here"
+          kind="logo"
+          assets={assets.logo}
+          maxFiles={1}
+          issuePath="assets.logo"
+          issues={issues}
+          onStageAssetFiles={onStageAssetFiles}
+          onChange={(logo) => onChange({ ...assets, logo })}
+        />
+        <AssetUploadCard
+          title="Product / Service Image"
+          description="Upload product or service visuals."
+          recommendation="Recommended: square 1:1 or landscape 1.91:1 PNG/JPG, under 5120 KB."
+          buttonLabel="Upload Images"
+          emptyLabel="Drag & drop images here"
+          kind="productServiceImage"
+          assets={assets.productServiceImages}
+          maxFiles={MEDIA_PLAN_LIMITS.productServiceImages}
+          issuePath="assets.productServiceImages"
+          issues={issues}
+          onStageAssetFiles={onStageAssetFiles}
+          onChange={(productServiceImages) => onChange({ ...assets, productServiceImages })}
+        />
+      </div>
+    </section>
+  );
+}
+
+function AssetUploadCard({
+  title,
+  description,
+  recommendation,
+  buttonLabel,
+  emptyLabel,
+  kind,
+  assets,
+  maxFiles,
+  issuePath,
+  issues,
+  onStageAssetFiles,
+  onChange,
+}: {
+  title: string;
+  description: string;
+  recommendation: string;
+  buttonLabel: string;
+  emptyLabel: string;
+  kind: MediaPlanAssetKind;
+  assets: MediaPlanAsset[];
+  maxFiles: number;
+  issuePath: string;
+  issues: MediaPlanValidationIssue[];
+  onStageAssetFiles: (kind: MediaPlanAssetKind, files: File[]) => MediaPlanAsset[];
+  onChange: (assets: MediaPlanAsset[]) => void;
+}) {
+  const inputRef = useRef<HTMLInputElement>(null);
+  const [localError, setLocalError] = useState<string | null>(null);
+  const issue = getIssueMessage(issues, issuePath);
+
+  function handleFiles(fileList: FileList | File[]) {
+    const incomingFiles = Array.from(fileList);
+    const availableSlots = Math.max(maxFiles - assets.length, 0);
+    if (availableSlots === 0 && kind !== "logo") {
+      setLocalError(`You can add up to ${maxFiles} product or service images.`);
+      return;
+    }
+
+    const acceptedFiles: File[] = [];
+    for (const file of incomingFiles) {
+      if (!MEDIA_PLAN_ASSET_ACCEPTED_MIME_TYPES.includes(file.type as (typeof MEDIA_PLAN_ASSET_ACCEPTED_MIME_TYPES)[number])) {
+        setLocalError("Only PNG or JPG images are accepted.");
+        return;
+      }
+      if (file.size > MEDIA_PLAN_LIMITS.assetFileBytes) {
+        setLocalError("Asset files must be 5120 KB or smaller.");
+        return;
+      }
+      acceptedFiles.push(file);
+    }
+
+    const selectedFiles =
+      kind === "logo" ? acceptedFiles.slice(0, 1) : acceptedFiles.slice(0, availableSlots);
+    if (selectedFiles.length === 0) {
+      return;
+    }
+
+    const stagedAssets = onStageAssetFiles(kind, selectedFiles);
+    setLocalError(
+      kind !== "logo" && acceptedFiles.length > selectedFiles.length
+        ? `Only ${availableSlots} more image${availableSlots === 1 ? "" : "s"} can be added.`
+        : null
+    );
+    onChange(kind === "logo" ? stagedAssets : [...assets, ...stagedAssets]);
+  }
+
+  function handleDrop(event: DragEvent<HTMLDivElement>) {
+    event.preventDefault();
+    handleFiles(event.dataTransfer.files);
+  }
+
+  function removeAsset(id: string) {
+    setLocalError(null);
+    onChange(assets.filter((asset) => asset.id !== id));
+  }
+
+  return (
+    <div className="rounded-xl border border-[#dedede] bg-[#fbfbfb] p-4">
+      <div className="mb-3">
+        <h3 className="text-base font-bold text-[#111827]">{title}</h3>
+        <p className="mt-1 text-sm text-[#667085]">{description}</p>
+        <p className="mt-1 text-sm text-[#667085]">{recommendation}</p>
+      </div>
+
+      <div
+        className="rounded-xl border border-dashed border-[#c7cbd1] bg-white p-4 text-center transition-colors hover:border-[#d4001a] hover:bg-[#fff8f8]"
+        onDragOver={(event) => event.preventDefault()}
+        onDrop={handleDrop}
+      >
+        <input
+          ref={inputRef}
+          type="file"
+          accept={MEDIA_PLAN_ASSET_ACCEPTED_MIME_TYPES.join(",")}
+          multiple={kind !== "logo"}
+          className="hidden"
+          onChange={(event) => {
+            if (event.target.files) {
+              handleFiles(event.target.files);
+            }
+            event.target.value = "";
+          }}
+        />
+        <UploadIcon className="mx-auto mb-2 size-7 text-[#d4001a]" />
+        <p className="text-sm font-semibold text-[#1f2937]">{emptyLabel}</p>
+        <div className="my-3 flex items-center justify-center gap-3 text-xs text-[#98a2b3]">
+          <span className="h-px w-16 bg-[#e5e7eb]" />
+          or
+          <span className="h-px w-16 bg-[#e5e7eb]" />
+        </div>
+        <Button
+          type="button"
+          variant="outline"
+          className="h-9 border-[#d4001a] px-4 text-[#d4001a] hover:bg-[#fff1f2] hover:text-[#9f0019]"
+          onClick={() => inputRef.current?.click()}
+        >
+          <UploadIcon className="size-4" />
+          {buttonLabel}
+        </Button>
+      </div>
+
+      <Badge className="mt-3 border border-[#d7d7d7] bg-[#f7f7f7] text-[#667085] hover:bg-[#f7f7f7]">
+        Can add later
+      </Badge>
+
+      {assets.length > 0 ? (
+        <div className="mt-3 grid gap-2">
+          {assets.map((asset) => (
+            <div
+              key={asset.id}
+              className="grid grid-cols-[48px_minmax(0,1fr)_auto] items-center gap-3 rounded-lg border border-[#e5e7eb] bg-white p-2"
+            >
+              {asset.previewUrl ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img
+                  src={asset.previewUrl}
+                  alt=""
+                  className="size-12 rounded-md border border-[#e5e7eb] object-cover"
+                />
+              ) : (
+                <div className="flex size-12 items-center justify-center rounded-md border border-[#e5e7eb] bg-[#f7f7f7] text-[#98a2b3]">
+                  <ImageIcon className="size-5" />
+                </div>
+              )}
+              <div className="min-w-0">
+                <p className="truncate text-sm font-semibold text-[#1f2937]">{asset.name}</p>
+                <p className="text-xs text-[#667085]">{formatAssetSize(asset.size)}</p>
+              </div>
+              <Button
+                type="button"
+                variant="outline"
+                size="icon-sm"
+                aria-label={`Remove ${asset.name}`}
+                className="border-[#e5e7eb] text-[#b00012] hover:bg-[#fff1f2] hover:text-[#8f0010]"
+                onClick={() => removeAsset(asset.id)}
+              >
+                <XIcon className="size-4" />
+              </Button>
+            </div>
+          ))}
+        </div>
+      ) : null}
+
+      {issue || localError ? (
+        <p className="mt-2 text-xs font-medium text-[#be123c]">{issue || localError}</p>
+      ) : null}
     </div>
   );
 }
@@ -1352,6 +1605,13 @@ function SectionIssue({ message }: { message: string | null }) {
       {message}
     </Badge>
   );
+}
+
+function formatAssetSize(size: number): string {
+  if (!Number.isFinite(size) || size <= 0) {
+    return "0 KB";
+  }
+  return `${Math.ceil(size / 1024)} KB`;
 }
 
 function splitList(value: string): string[] {
