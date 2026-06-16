@@ -1,20 +1,22 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { MediaPlanEditor } from "@/components/media-plan/MediaPlanEditor";
 import { MediaPlanForm } from "@/components/media-plan/MediaPlanForm";
 import { MediaPlanStatusBar } from "@/components/media-plan/MediaPlanStatus";
 import { ReportShell } from "@/components/reporting/report-shell";
 import {
+  DEFAULT_MEDIA_PLAN_LANGUAGE,
   DEFAULT_MEDIA_PLAN_FORM,
+  DEFAULT_NETWORK,
   MediaPlan,
-  MediaPlanApproveResponse,
+  MediaPlanApproveAndCreateResponse,
   MediaPlanApproveSuccessResponse,
-  MediaPlanCreateCampaignResponse,
   MediaPlanCreateCampaignSuccessResponse,
   MediaPlanFormData,
   MediaPlanGenerateResponse,
+  MediaPlanLanguage,
   MediaPlanStatus,
   SUPPORTED_CAMPAIGN_TYPE,
 } from "@/lib/media-plan/schema";
@@ -24,9 +26,23 @@ import {
   validateMediaPlanForm,
 } from "@/lib/media-plan/validation";
 
+const MEDIA_PLAN_GENERATION_POLL_INTERVAL_MS = 2_000;
+const MEDIA_PLAN_HISTORY_LIMIT = 50;
+type MediaPlanSource = "generated" | "mockup" | null;
+type MediaPlanHistory = {
+  past: MediaPlan[];
+  future: MediaPlan[];
+};
+
+const EMPTY_MEDIA_PLAN_HISTORY: MediaPlanHistory = {
+  past: [],
+  future: [],
+};
+
 export function MediaPlanPageClient() {
   const [formData, setFormData] = useState<MediaPlanFormData>(DEFAULT_MEDIA_PLAN_FORM);
   const [plan, setPlan] = useState<MediaPlan | null>(null);
+  const [planSource, setPlanSource] = useState<MediaPlanSource>(null);
   const [generateAttempted, setGenerateAttempted] = useState(false);
   const [edited, setEdited] = useState(false);
   const [generating, setGenerating] = useState(false);
@@ -39,6 +55,8 @@ export function MediaPlanPageClient() {
   const [clientRequestId, setClientRequestId] = useState<string | null>(null);
   const [approvalResult, setApprovalResult] = useState<MediaPlanApproveSuccessResponse | null>(null);
   const [campaignResult, setCampaignResult] = useState<MediaPlanCreateCampaignSuccessResponse | null>(null);
+  const [planHistory, setPlanHistory] = useState<MediaPlanHistory>(EMPTY_MEDIA_PLAN_HISTORY);
+  const planRef = useRef<MediaPlan | null>(null);
 
   const formValidation = useMemo(() => validateMediaPlanForm(formData), [formData]);
   const planValidation = useMemo(() => validateMediaPlan(plan), [plan]);
@@ -75,6 +93,18 @@ export function MediaPlanPageClient() {
     hasValidationError: visibleIssues.length > 0,
     ready,
   });
+  const canUseHistory = Boolean(plan) && !generating && !savingToNotion && !creatingCampaign;
+  const canUndo = canUseHistory && planHistory.past.length > 0;
+  const canRedo = canUseHistory && planHistory.future.length > 0;
+
+  function resetPlanHistory() {
+    setPlanHistory(EMPTY_MEDIA_PLAN_HISTORY);
+  }
+
+  const setCurrentPlan = useCallback((nextPlan: MediaPlan | null) => {
+    planRef.current = nextPlan;
+    setPlan(nextPlan);
+  }, []);
 
   async function handleGenerate() {
     setGenerateAttempted(true);
@@ -104,24 +134,47 @@ export function MediaPlanPageClient() {
         throw new Error("Media plan generation returned an unreadable response.");
       }
 
-      if (!payload.success) {
-        setServerIssues(payload.issues ?? []);
-        throw new Error(payload.error);
-      }
+      const completedPayload = await resolveGeneratedMediaPlan(payload, formData);
 
-      setPlan(payload.plan);
-      setOpenAiMeta(payload.openAi);
+      setCurrentPlan(completedPayload.plan);
+      setPlanSource("generated");
+      setOpenAiMeta(completedPayload.openAi);
       setClientRequestId(createClientRequestId());
       setEdited(false);
+      resetPlanHistory();
     } catch (generateError) {
+      setServerIssues(readMediaPlanIssues(generateError));
       setError(generateError instanceof Error ? generateError.message : "Unable to generate media plan.");
     } finally {
       setGenerating(false);
     }
   }
 
+  function handleMockup() {
+    setGenerateAttempted(false);
+    setError(null);
+    setServerIssues([]);
+    setOpenAiMeta(null);
+    setApprovalResult(null);
+    setCampaignResult(null);
+    setCampaignErrorLinks([]);
+
+    setCurrentPlan(buildMockupMediaPlan(formData));
+    setPlanSource("mockup");
+    setClientRequestId(createClientRequestId());
+    setEdited(false);
+    resetPlanHistory();
+  }
+
   function handlePlanChange(nextPlan: MediaPlan) {
-    setPlan(nextPlan);
+    const previousPlan = planRef.current;
+    if (previousPlan) {
+      setPlanHistory((currentHistory) => ({
+        past: [...currentHistory.past, previousPlan].slice(-MEDIA_PLAN_HISTORY_LIMIT),
+        future: [],
+      }));
+    }
+    setCurrentPlan(nextPlan);
     setEdited(true);
     if (approvalResult) {
       setApprovalResult(null);
@@ -132,6 +185,91 @@ export function MediaPlanPageClient() {
     setCampaignErrorLinks([]);
     setServerIssues([]);
   }
+
+  const handleUndo = useCallback(() => {
+    const currentPlan = planRef.current;
+    if (!currentPlan || generating || savingToNotion || creatingCampaign) {
+      return;
+    }
+
+    const previousPlan = planHistory.past.at(-1);
+    if (!previousPlan) {
+      return;
+    }
+
+    const remainingPast = planHistory.past.slice(0, -1);
+    setCurrentPlan(previousPlan);
+    setPlanHistory({
+      past: remainingPast,
+      future: [currentPlan, ...planHistory.future].slice(0, MEDIA_PLAN_HISTORY_LIMIT),
+    });
+    setEdited(remainingPast.length > 0);
+    setError(null);
+    setCampaignErrorLinks([]);
+    setServerIssues([]);
+  }, [creatingCampaign, generating, planHistory.future, planHistory.past, savingToNotion, setCurrentPlan]);
+
+  const handleRedo = useCallback(() => {
+    const currentPlan = planRef.current;
+    if (!currentPlan || generating || savingToNotion || creatingCampaign) {
+      return;
+    }
+
+    const nextPlan = planHistory.future[0];
+    if (!nextPlan) {
+      return;
+    }
+
+    setCurrentPlan(nextPlan);
+    setPlanHistory({
+      past: [...planHistory.past, currentPlan].slice(-MEDIA_PLAN_HISTORY_LIMIT),
+      future: planHistory.future.slice(1),
+    });
+    setEdited(true);
+    setError(null);
+    setCampaignErrorLinks([]);
+    setServerIssues([]);
+  }, [creatingCampaign, generating, planHistory.future, planHistory.past, savingToNotion, setCurrentPlan]);
+
+  useEffect(() => {
+    function handleKeyDown(event: KeyboardEvent) {
+      if (
+        !(event.ctrlKey || event.metaKey) ||
+        event.altKey ||
+        !plan ||
+        generating ||
+        savingToNotion ||
+        creatingCampaign
+      ) {
+        return;
+      }
+
+      const key = event.key.toLowerCase();
+      const requestsUndo = key === "z" && !event.shiftKey;
+      const requestsRedo = key === "y" || (key === "z" && event.shiftKey);
+
+      if (requestsUndo && planHistory.past.length > 0) {
+        event.preventDefault();
+        handleUndo();
+      }
+      if (requestsRedo && planHistory.future.length > 0) {
+        event.preventDefault();
+        handleRedo();
+      }
+    }
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [
+    creatingCampaign,
+    handleRedo,
+    handleUndo,
+    plan,
+    planHistory.future.length,
+    planHistory.past.length,
+    generating,
+    savingToNotion,
+  ]);
 
   async function handleApprove() {
     setGenerateAttempted(true);
@@ -145,8 +283,9 @@ export function MediaPlanPageClient() {
     const requestId = clientRequestId || createClientRequestId();
     setClientRequestId(requestId);
     setSavingToNotion(true);
+    setCreatingCampaign(true);
     try {
-      const response = await fetch("/api/media-plan/approve", {
+      const response = await fetch("/api/media-plan/approve-and-create", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -158,61 +297,47 @@ export function MediaPlanPageClient() {
           clientRequestId: requestId,
         }),
       });
-      const payload = (await response.json().catch(() => null)) as MediaPlanApproveResponse | null;
+      const payload = (await response.json().catch(() => null)) as MediaPlanApproveAndCreateResponse | null;
 
       if (!payload) {
-        throw new Error("Notion approval returned an unreadable response.");
+        throw new Error("Media plan approval returned an unreadable response.");
       }
       if (!payload.success) {
         setServerIssues(payload.issues ?? []);
-        throw new Error(payload.error);
-      }
-
-      setApprovalResult(payload);
-      setCampaignResult(null);
-      setEdited(false);
-    } catch (approveError) {
-      setError(approveError instanceof Error ? approveError.message : "Unable to save media plan to Notion.");
-    } finally {
-      setSavingToNotion(false);
-    }
-  }
-
-  async function handleCreateCampaign() {
-    if (!approvalResult) {
-      return;
-    }
-
-    setError(null);
-    setCampaignErrorLinks([]);
-    setCreatingCampaign(true);
-    try {
-      const response = await fetch("/api/media-plan/create-campaign", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          batchId: approvalResult.batchId,
-          googleCid: formData.googleCid,
-        }),
-      });
-      const payload = (await response.json().catch(() => null)) as MediaPlanCreateCampaignResponse | null;
-
-      if (!payload) {
-        throw new Error("Google Ads creation returned an unreadable response.");
-      }
-      if (!payload.success) {
         setCampaignErrorLinks(payload.notionPageUrls ?? []);
         throw new Error(payload.error);
       }
 
-      setCampaignResult(payload);
-    } catch (createError) {
+      setApprovalResult({
+        success: true,
+        batchId: payload.batchId,
+        notionPageUrls: payload.notionPageUrls,
+        createdRowCount: payload.createdRowCount,
+        status: payload.approvalStatus,
+        duplicate: payload.duplicateApproval,
+      });
+      setCampaignResult({
+        success: true,
+        source: payload.source,
+        batchId: payload.batchId,
+        customerId: payload.customerId,
+        campaignId: payload.campaignId,
+        campaignResourceName: payload.campaignResourceName,
+        campaignStatus: payload.campaignStatus,
+        createdAdGroups: payload.createdAdGroups,
+        createdAds: payload.createdAds,
+        googleAdsReviewLink: payload.googleAdsReviewLink,
+      });
+      setEdited(false);
+      resetPlanHistory();
+    } catch (approveError) {
       setError(
-        createError instanceof Error ? createError.message : "Unable to create paused Google Ads campaign."
+        approveError instanceof Error
+          ? approveError.message
+          : "Unable to save media plan to Notion and create paused campaign."
       );
     } finally {
+      setSavingToNotion(false);
       setCreatingCampaign(false);
     }
   }
@@ -220,7 +345,13 @@ export function MediaPlanPageClient() {
   return (
     <ReportShell
       title="Media Plan"
-      dateLabel={openAiMeta?.model ? `Google Search - ${openAiMeta.model}` : "Google Search"}
+      dateLabel={
+        planSource === "mockup"
+          ? "Google Search - Manual Mockup"
+          : openAiMeta?.model
+            ? `Google Search - ${openAiMeta.model}`
+            : "Google Search"
+      }
       reportReady={!generating && !savingToNotion && !creatingCampaign}
       headerBottomControl={
         <MediaPlanStatusBar
@@ -236,9 +367,10 @@ export function MediaPlanPageClient() {
           issues={visibleFormIssues}
           generateDisabled={savingToNotion}
           generating={generating}
-          buttonLabel={plan ? "Regenerate Media Plan" : "Generate Media Plan"}
+          buttonLabel={resolveGenerateButtonLabel(planSource, Boolean(plan))}
           onChange={setFormData}
           onGenerate={handleGenerate}
+          onMockup={handleMockup}
         />
 
         {error ? (
@@ -282,13 +414,162 @@ export function MediaPlanPageClient() {
           approvalResult={approvalResult}
           creatingCampaign={creatingCampaign}
           campaignResult={campaignResult}
+          canUndo={canUndo}
+          canRedo={canRedo}
           onChange={handlePlanChange}
+          onUndo={handleUndo}
+          onRedo={handleRedo}
           onApprove={handleApprove}
-          onCreateCampaign={handleCreateCampaign}
         />
       </div>
     </ReportShell>
   );
+}
+
+function buildMockupMediaPlan(formData: MediaPlanFormData): MediaPlan {
+  const websiteUrl = formData.websiteUrl.trim();
+  const language = normalizeMockupLanguage(formData.language);
+
+  return {
+    batchPreviewId: `MP-MOCKUP-${Date.now()}`,
+    campaign: {
+      campaignName: "",
+      brandOrClientName: "",
+      businessName: "",
+      campaignObjective: "Leads",
+      campaignType: "Search",
+      biddingStrategy: "Conversions",
+      websiteUrl,
+      finalUrl: websiteUrl,
+      startDate: getTodayDate(),
+      averageDailyBudget: calculateAverageDailyBudget(formData.adBudget),
+      targetCPA: null,
+      network: [DEFAULT_NETWORK],
+      networkNotes: "Google Search only.",
+      targetLocation: [formData.targetLocation.trim()],
+      language: [language],
+    },
+    adGroups: [
+      {
+        adGroupName: "",
+        intentType: "",
+        keywords: [{ text: "", matchType: "BROAD" }],
+        displayPath1: "",
+        displayPath2: "",
+        headlines: ["", "", ""],
+        descriptions: ["", ""],
+        sitelinks: [],
+      },
+    ],
+    planningNotes: {
+      strategy: formData.specialRemarks.trim(),
+      assumptions: [],
+      warnings: [],
+    },
+  };
+}
+
+function calculateAverageDailyBudget(adBudget: string): number {
+  const amount = Number(adBudget.replace(/,/g, "").trim());
+  if (!Number.isFinite(amount) || amount <= 0) {
+    return 0;
+  }
+  return Math.round((amount / 30) * 100) / 100;
+}
+
+function getTodayDate(): string {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function normalizeMockupLanguage(value: string): MediaPlanLanguage {
+  if (value === "English" || value === "Malay" || value === "Chinese") {
+    return value;
+  }
+  return DEFAULT_MEDIA_PLAN_LANGUAGE;
+}
+
+function resolveGenerateButtonLabel(planSource: MediaPlanSource, hasPlan: boolean): string {
+  if (!hasPlan || planSource === "mockup") {
+    return "Generate Media Plan";
+  }
+  return "Regenerate Media Plan";
+}
+
+async function resolveGeneratedMediaPlan(
+  payload: MediaPlanGenerateResponse,
+  formData: MediaPlanFormData
+): Promise<Extract<MediaPlanGenerateResponse, { success: true; status: "completed" }>> {
+  if (!payload.success) {
+    throwMediaPlanResponseError(payload);
+  }
+
+  if (payload.status === "completed") {
+    return payload;
+  }
+
+  let current = payload;
+  while (true) {
+    await sleep(MEDIA_PLAN_GENERATION_POLL_INTERVAL_MS);
+    const params = new URLSearchParams({
+      websiteUrl: formData.websiteUrl,
+      adBudget: formData.adBudget,
+      googleCid: formData.googleCid,
+      campaignType: formData.campaignType,
+      targetLocation: formData.targetLocation,
+      language: formData.language,
+    });
+    const response = await fetch(`/api/media-plan/generate/${encodeURIComponent(current.openAi.responseId)}?${params}`, {
+      cache: "no-store",
+    });
+    const nextPayload = (await response.json().catch(() => null)) as MediaPlanGenerateResponse | null;
+
+    if (!nextPayload) {
+      throw new Error("Media plan generation returned an unreadable polling response.");
+    }
+    if (!nextPayload.success) {
+      if (isRetryableMediaPlanPollingError(nextPayload.error)) {
+        continue;
+      }
+      throwMediaPlanResponseError(nextPayload);
+    }
+    if (nextPayload.status === "completed") {
+      return nextPayload;
+    }
+
+    current = nextPayload;
+  }
+}
+
+function throwMediaPlanResponseError(payload: Extract<MediaPlanGenerateResponse, { success: false }>): never {
+  const error = new Error(payload.error) as Error & {
+    issues?: MediaPlanValidationIssue[];
+  };
+  error.issues = payload.issues;
+  throw error;
+}
+
+function isRetryableMediaPlanPollingError(message: string): boolean {
+  return message.toLowerCase().includes("timed out; still no valid response");
+}
+
+function readMediaPlanIssues(error: unknown): MediaPlanValidationIssue[] {
+  if (!error || typeof error !== "object" || !("issues" in error) || !Array.isArray(error.issues)) {
+    return [];
+  }
+
+  return error.issues.filter(
+    (issue): issue is MediaPlanValidationIssue =>
+      Boolean(issue) &&
+      typeof issue === "object" &&
+      "path" in issue &&
+      typeof issue.path === "string" &&
+      "message" in issue &&
+      typeof issue.message === "string"
+  );
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function resolveActiveStatuses(input: {
@@ -308,6 +589,9 @@ function resolveActiveStatuses(input: {
   }
   if (input.createdCampaign) {
     return ["Generated", "Saved to Notion", "Created Paused"];
+  }
+  if (input.creatingCampaign && input.savingToNotion) {
+    return ["Generated", "Saving to Notion", "Creating Google Ads Campaign"];
   }
   if (input.creatingCampaign) {
     return ["Generated", "Saved to Notion", "Creating Google Ads Campaign"];

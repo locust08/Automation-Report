@@ -1,7 +1,31 @@
 "use client";
 
-import { Loader2Icon, PlusIcon, Trash2Icon } from "lucide-react";
-import type { ReactNode } from "react";
+import {
+  BarChart3Icon,
+  BriefcaseIcon,
+  Building2Icon,
+  CalendarDaysIcon,
+  CircleDollarSignIcon,
+  CrosshairIcon,
+  FileTextIcon,
+  GlobeIcon,
+  InfoIcon,
+  LanguagesIcon,
+  LinkIcon,
+  ListIcon,
+  Loader2Icon,
+  MapPinIcon,
+  PlusIcon,
+  Redo2Icon,
+  SearchIcon,
+  SettingsIcon,
+  TagIcon,
+  TargetIcon,
+  TriangleAlertIcon,
+  Trash2Icon,
+  Undo2Icon,
+} from "lucide-react";
+import { useMemo, useState, type ReactNode } from "react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -36,9 +60,12 @@ interface MediaPlanEditorProps {
   approvalResult: MediaPlanApproveSuccessResponse | null;
   creatingCampaign: boolean;
   campaignResult: MediaPlanCreateCampaignSuccessResponse | null;
+  canUndo: boolean;
+  canRedo: boolean;
   onChange: (nextPlan: MediaPlan) => void;
+  onUndo: () => void;
+  onRedo: () => void;
   onApprove: () => void;
-  onCreateCampaign: () => void;
 }
 
 const MATCH_TYPES: MediaPlanKeywordMatchType[] = ["BROAD", "PHRASE", "EXACT"];
@@ -51,9 +78,12 @@ export function MediaPlanEditor({
   approvalResult,
   creatingCampaign,
   campaignResult,
+  canUndo,
+  canRedo,
   onChange,
+  onUndo,
+  onRedo,
   onApprove,
-  onCreateCampaign,
 }: MediaPlanEditorProps) {
   if (!plan) {
     return (
@@ -88,13 +118,13 @@ export function MediaPlanEditor({
       adGroups: [
         ...currentPlan.adGroups,
         {
-          adGroupName: `New Ad Group ${currentPlan.adGroups.length + 1}`,
-          intentType: "New intent",
-          keywords: [{ text: "new keyword", matchType: "BROAD" }],
-          displayPath1: "services",
-          displayPath2: "search",
-          headlines: ["Headline One", "Headline Two", "Headline Three"],
-          descriptions: ["Description one for this ad group.", "Description two for this ad group."],
+          adGroupName: "",
+          intentType: "",
+          keywords: [{ text: "", matchType: "BROAD" }],
+          displayPath1: "",
+          displayPath2: "",
+          headlines: ["", "", ""],
+          descriptions: ["", ""],
           sitelinks: [],
         },
       ],
@@ -110,280 +140,175 @@ export function MediaPlanEditor({
 
   return (
     <section className="space-y-4">
-      <div className="grid gap-4 xl:grid-cols-[minmax(0,0.95fr)_minmax(0,1.05fr)]">
-        <Panel title="Campaign Summary">
-          <div className="grid gap-3">
-            <EditableField
-              label="Batch Preview ID"
-              value={currentPlan.batchPreviewId}
-              error={getIssueMessage(issues, "batchPreviewId")}
-              onChange={(value) => updatePlan({ ...currentPlan, batchPreviewId: value })}
-            />
-            <EditableField
-              label="Campaign Name"
-              value={currentPlan.campaign.campaignName}
-              error={getIssueMessage(issues, "campaign.campaignName")}
-              onChange={(value) => updateCampaign((campaign) => ({ ...campaign, campaignName: value }))}
-            />
-            <div className="grid gap-3 sm:grid-cols-2">
-              <EditableField
-                label="Brand / Client Name"
-                value={currentPlan.campaign.brandOrClientName}
-                error={getIssueMessage(issues, "campaign.brandOrClientName")}
-                onChange={(value) => updateCampaign((campaign) => ({ ...campaign, brandOrClientName: value }))}
-              />
-              <EditableField
-                label="Business Name"
-                value={currentPlan.campaign.businessName}
-                error={getIssueMessage(issues, "campaign.businessName")}
-                onChange={(value) => updateCampaign((campaign) => ({ ...campaign, businessName: value }))}
-              />
-            </div>
-            <div className="grid gap-3 sm:grid-cols-2">
-              <EditableField
-                label="Website URL"
-                value={currentPlan.campaign.websiteUrl}
-                error={getIssueMessage(issues, "campaign.websiteUrl")}
-                onChange={(value) => updateCampaign((campaign) => ({ ...campaign, websiteUrl: value }))}
-              />
-              <EditableField
-                label="Final URL"
-                value={currentPlan.campaign.finalUrl}
-                error={getIssueMessage(issues, "campaign.finalUrl")}
-                onChange={(value) => updateCampaign((campaign) => ({ ...campaign, finalUrl: value }))}
-              />
-            </div>
-          </div>
-        </Panel>
+      <div className="grid items-stretch gap-4 xl:grid-cols-2">
+        <CampaignSummaryCard>
+          <SummaryEditableRow
+            icon={<FileTextIcon className="size-4" />}
+            label="Batch Preview ID"
+            value={currentPlan.batchPreviewId}
+            error={getIssueMessage(issues, "batchPreviewId")}
+            onChange={(value) => updatePlan({ ...currentPlan, batchPreviewId: value })}
+          />
+          <SummaryEditableRow
+            icon={<TagIcon className="size-4" />}
+            label="Campaign Name"
+            value={currentPlan.campaign.campaignName}
+            error={getIssueMessage(issues, "campaign.campaignName")}
+            onChange={(value) => updateCampaign((campaign) => ({ ...campaign, campaignName: value }))}
+          />
+          <SummaryEditableRow
+            icon={<Building2Icon className="size-4" />}
+            label="Brand / Client"
+            value={currentPlan.campaign.brandOrClientName}
+            error={getIssueMessage(issues, "campaign.brandOrClientName")}
+            onChange={(value) => updateCampaign((campaign) => ({ ...campaign, brandOrClientName: value }))}
+          />
+          <SummaryEditableRow
+            icon={<BriefcaseIcon className="size-4" />}
+            label="Business Name"
+            value={currentPlan.campaign.businessName}
+            error={getIssueMessage(issues, "campaign.businessName")}
+            onChange={(value) => updateCampaign((campaign) => ({ ...campaign, businessName: value }))}
+          />
+          <SummaryEditableRow
+            icon={<GlobeIcon className="size-4" />}
+            label="Website URL"
+            value={currentPlan.campaign.websiteUrl}
+            error={getIssueMessage(issues, "campaign.websiteUrl")}
+            onChange={(value) => updateCampaign((campaign) => ({ ...campaign, websiteUrl: value }))}
+          />
+          <SummaryEditableRow
+            icon={<LinkIcon className="size-4" />}
+            label="Final URL"
+            value={currentPlan.campaign.finalUrl}
+            error={getIssueMessage(issues, "campaign.finalUrl")}
+            onChange={(value) => updateCampaign((campaign) => ({ ...campaign, finalUrl: value }))}
+          />
+        </CampaignSummaryCard>
 
-        <Panel title="Campaign Settings">
-          <div className="grid gap-3 sm:grid-cols-2">
-            <EditableField
-              label="Campaign Type"
-              value={currentPlan.campaign.campaignType}
-              error={getIssueMessage(issues, "campaign.campaignType")}
-              onChange={(value) =>
-                updateCampaign((campaign) => ({ ...campaign, campaignType: value as "Search" }))
-              }
-            />
-            <EditableField
-              label="Campaign Objective"
-              value={currentPlan.campaign.campaignObjective}
-              error={getIssueMessage(issues, "campaign.campaignObjective")}
-              onChange={(value) =>
-                updateCampaign((campaign) => ({
-                  ...campaign,
-                  campaignObjective: value as MediaPlanCampaign["campaignObjective"],
-                }))
-              }
-            />
-            <EditableField
-              label="Bidding Strategy"
-              value={currentPlan.campaign.biddingStrategy}
-              error={getIssueMessage(issues, "campaign.biddingStrategy")}
-              onChange={(value) =>
-                updateCampaign((campaign) => ({
-                  ...campaign,
-                  biddingStrategy: value as MediaPlanCampaign["biddingStrategy"],
-                }))
-              }
-            />
-            <EditableField
-              label="Start Date"
-              value={currentPlan.campaign.startDate}
-              error={getIssueMessage(issues, "campaign.startDate")}
-              onChange={(value) => updateCampaign((campaign) => ({ ...campaign, startDate: value }))}
-            />
-            <EditableField
-              label="Average Daily Budget"
-              value={String(currentPlan.campaign.averageDailyBudget)}
-              error={getIssueMessage(issues, "campaign.averageDailyBudget")}
-              onChange={(value) =>
-                updateCampaign((campaign) => ({ ...campaign, averageDailyBudget: Number(value) }))
-              }
-            />
-            <EditableField
-              label="Target CPA"
-              value={currentPlan.campaign.targetCPA === null ? "" : String(currentPlan.campaign.targetCPA)}
-              error={getIssueMessage(issues, "campaign.targetCPA")}
-              onChange={(value) =>
-                updateCampaign((campaign) => ({
-                  ...campaign,
-                  targetCPA: value.trim() ? Number(value) : null,
-                }))
-              }
-            />
-            <EditableField
-              label="Network"
-              value={currentPlan.campaign.network.join(", ")}
-              error={getIssueMessage(issues, "campaign.network")}
-              onChange={(value) =>
-                updateCampaign((campaign) => ({
-                  ...campaign,
-                  network: [value.trim() || DEFAULT_NETWORK] as ["Google Search Only"],
-                }))
-              }
-            />
-            <EditableField
-              label="Target Location"
-              value={currentPlan.campaign.targetLocation.join(", ")}
-              error={getIssueMessage(issues, "campaign.targetLocation")}
-              onChange={(value) =>
-                updateCampaign((campaign) => ({
-                  ...campaign,
-                  targetLocation: splitList(value),
-                }))
-              }
-            />
-            <EditableField
-              label="Language"
-              value={currentPlan.campaign.language.join(", ")}
-              error={getIssueMessage(issues, "campaign.language")}
-              onChange={(value) =>
-                updateCampaign((campaign) => ({
-                  ...campaign,
-                  language: splitList(value) as MediaPlanLanguage[],
-                }))
-              }
-            />
-            <EditableField
-              label="Network Notes"
-              value={currentPlan.campaign.networkNotes}
-              error={getIssueMessage(issues, "campaign.networkNotes")}
-              multiline
-              onChange={(value) => updateCampaign((campaign) => ({ ...campaign, networkNotes: value }))}
-            />
-          </div>
-        </Panel>
+        <CampaignSettingsCard>
+          <SettingsEditableField
+            icon={<CrosshairIcon className="size-4" />}
+            label="Campaign Type"
+            value={currentPlan.campaign.campaignType}
+            error={getIssueMessage(issues, "campaign.campaignType")}
+            onChange={(value) =>
+              updateCampaign((campaign) => ({ ...campaign, campaignType: value as "Search" }))
+            }
+          />
+          <SettingsEditableField
+            icon={<TargetIcon className="size-4" />}
+            label="Campaign Objective"
+            value={currentPlan.campaign.campaignObjective}
+            error={getIssueMessage(issues, "campaign.campaignObjective")}
+            onChange={(value) =>
+              updateCampaign((campaign) => ({
+                ...campaign,
+                campaignObjective: value as MediaPlanCampaign["campaignObjective"],
+              }))
+            }
+          />
+          <SettingsEditableField
+            icon={<BarChart3Icon className="size-4" />}
+            label="Bidding Strategy"
+            value={currentPlan.campaign.biddingStrategy}
+            error={getIssueMessage(issues, "campaign.biddingStrategy")}
+            onChange={(value) =>
+              updateCampaign((campaign) => ({
+                ...campaign,
+                biddingStrategy: value as MediaPlanCampaign["biddingStrategy"],
+              }))
+            }
+          />
+          <SettingsEditableField
+            icon={<CalendarDaysIcon className="size-4" />}
+            label="Start Date"
+            value={currentPlan.campaign.startDate}
+            error={getIssueMessage(issues, "campaign.startDate")}
+            onChange={(value) => updateCampaign((campaign) => ({ ...campaign, startDate: value }))}
+          />
+          <SettingsEditableField
+            icon={<BriefcaseIcon className="size-4" />}
+            label="Average Daily Budget"
+            value={String(currentPlan.campaign.averageDailyBudget)}
+            error={getIssueMessage(issues, "campaign.averageDailyBudget")}
+            onChange={(value) =>
+              updateCampaign((campaign) => ({ ...campaign, averageDailyBudget: Number(value) }))
+            }
+          />
+          <SettingsEditableField
+            icon={<CircleDollarSignIcon className="size-4" />}
+            label="Target CPA"
+            value={currentPlan.campaign.targetCPA === null ? "" : String(currentPlan.campaign.targetCPA)}
+            error={getIssueMessage(issues, "campaign.targetCPA")}
+            placeholder="-"
+            onChange={(value) =>
+              updateCampaign((campaign) => ({
+                ...campaign,
+                targetCPA: value.trim() ? Number(value) : null,
+              }))
+            }
+          />
+          <SettingsEditableField
+            icon={<SearchIcon className="size-4" />}
+            label="Network"
+            value={currentPlan.campaign.network.join(", ")}
+            error={getIssueMessage(issues, "campaign.network")}
+            onChange={(value) =>
+              updateCampaign((campaign) => ({
+                ...campaign,
+                network: [value.trim() || DEFAULT_NETWORK] as ["Google Search Only"],
+              }))
+            }
+          />
+          <SettingsEditableField
+            icon={<MapPinIcon className="size-4" />}
+            label="Target Location"
+            value={currentPlan.campaign.targetLocation.join(", ")}
+            error={getIssueMessage(issues, "campaign.targetLocation")}
+            onChange={(value) =>
+              updateCampaign((campaign) => ({
+                ...campaign,
+                targetLocation: splitList(value),
+              }))
+            }
+          />
+          <SettingsEditableField
+            icon={<LanguagesIcon className="size-4" />}
+            label="Language"
+            value={currentPlan.campaign.language.join(", ")}
+            error={getIssueMessage(issues, "campaign.language")}
+            onChange={(value) =>
+              updateCampaign((campaign) => ({
+                ...campaign,
+                language: splitList(value) as MediaPlanLanguage[],
+              }))
+            }
+          />
+          <SettingsEditableField
+            icon={<FileTextIcon className="size-4" />}
+            label="Network Notes"
+            value={currentPlan.campaign.networkNotes}
+            error={getIssueMessage(issues, "campaign.networkNotes")}
+            multiline
+            onChange={(value) => updateCampaign((campaign) => ({ ...campaign, networkNotes: value }))}
+          />
+        </CampaignSettingsCard>
       </div>
 
-      <Panel
-        title="Ad Groups"
-        action={
-          <Button type="button" variant="outline" size="sm" onClick={addAdGroup}>
-            <PlusIcon className="size-4" />
-            Add Ad Group
-          </Button>
-        }
-      >
-        <div className="space-y-4">
-          {currentPlan.adGroups.map((adGroup, adGroupIndex) => (
-            <div
-              key={`${adGroup.adGroupName}:${adGroupIndex}`}
-              className="rounded-xl border border-[#e5e7eb] bg-[#fbfbfb] p-4"
-            >
-              <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                <div className="grid flex-1 gap-3 sm:grid-cols-2">
-                  <EditableField
-                    label={`Ad Group ${adGroupIndex + 1} Name`}
-                    value={adGroup.adGroupName}
-                    error={getIssueMessage(issues, `adGroups.${adGroupIndex}.adGroupName`)}
-                    onChange={(value) =>
-                      updateAdGroup(adGroupIndex, (current) => ({ ...current, adGroupName: value }))
-                    }
-                  />
-                  <EditableField
-                    label="Intent Type"
-                    value={adGroup.intentType}
-                    error={getIssueMessage(issues, `adGroups.${adGroupIndex}.intentType`)}
-                    onChange={(value) =>
-                      updateAdGroup(adGroupIndex, (current) => ({ ...current, intentType: value }))
-                    }
-                  />
-                </div>
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="icon"
-                  title="Remove ad group"
-                  aria-label="Remove ad group"
-                  onClick={() => removeAdGroup(adGroupIndex)}
-                  disabled={currentPlan.adGroups.length === 1}
-                >
-                  <Trash2Icon className="size-4" />
-                </Button>
-              </div>
+      <AdGroupsTabbedSection
+        adGroups={currentPlan.adGroups}
+        issues={issues}
+        onAddAdGroup={addAdGroup}
+        onRemoveAdGroup={removeAdGroup}
+        onChangeAdGroup={updateAdGroup}
+      />
 
-              <Separator className="my-4" />
-
-              <div className="grid gap-4 xl:grid-cols-2">
-                <KeywordsEditor
-                  adGroup={adGroup}
-                  adGroupIndex={adGroupIndex}
-                  issues={issues}
-                  onChange={(keywords) =>
-                    updateAdGroup(adGroupIndex, (current) => ({ ...current, keywords }))
-                  }
-                />
-
-                <DisplayPathsEditor
-                  adGroup={adGroup}
-                  adGroupIndex={adGroupIndex}
-                  issues={issues}
-                  onChange={(nextAdGroup) => updateAdGroup(adGroupIndex, () => nextAdGroup)}
-                />
-
-                <ResponsiveSearchAdsEditor
-                  adGroup={adGroup}
-                  adGroupIndex={adGroupIndex}
-                  issues={issues}
-                  onChange={(nextAdGroup) => updateAdGroup(adGroupIndex, () => nextAdGroup)}
-                />
-
-                <SitelinksEditor
-                  sitelinks={adGroup.sitelinks}
-                  adGroupIndex={adGroupIndex}
-                  issues={issues}
-                  onChange={(sitelinks) =>
-                    updateAdGroup(adGroupIndex, (current) => ({ ...current, sitelinks }))
-                  }
-                />
-              </div>
-            </div>
-          ))}
-        </div>
-      </Panel>
-
-      <Panel title="Setup Notes">
-        <div className="grid gap-4 lg:grid-cols-[1fr_0.8fr_0.8fr]">
-          <EditableField
-            label="Strategy"
-            value={currentPlan.planningNotes.strategy}
-            error={getIssueMessage(issues, "planningNotes.strategy")}
-            multiline
-            onChange={(value) =>
-              updatePlan({
-                ...currentPlan,
-                planningNotes: { ...currentPlan.planningNotes, strategy: value },
-              })
-            }
-          />
-          <EditableArray
-            title="Assumptions"
-            values={currentPlan.planningNotes.assumptions}
-            issuePath="planningNotes.assumptions"
-            issues={issues}
-            onChange={(assumptions) =>
-              updatePlan({
-                ...currentPlan,
-                planningNotes: { ...currentPlan.planningNotes, assumptions },
-              })
-            }
-          />
-          <EditableArray
-            title="Warnings"
-            values={currentPlan.planningNotes.warnings}
-            issuePath="planningNotes.warnings"
-            issues={issues}
-            onChange={(warnings) =>
-              updatePlan({
-                ...currentPlan,
-                planningNotes: { ...currentPlan.planningNotes, warnings },
-              })
-            }
-          />
-        </div>
-      </Panel>
+      <SetupNotesSection
+        planningNotes={currentPlan.planningNotes}
+        issues={issues}
+        onChange={(planningNotes) => updatePlan({ ...currentPlan, planningNotes })}
+      />
 
       <div className="sticky bottom-0 z-10 rounded-2xl border border-[#dedede] bg-white/95 p-4 shadow-lg backdrop-blur">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -392,7 +317,7 @@ export function MediaPlanEditor({
               {campaignResult
                 ? "Created Paused in Google Ads."
                 : approvalResult
-                  ? "Saved to Notion and ready for setup."
+                  ? "Saved to Notion and created in Google Ads."
                   : "Approve the final edited Search plan."}
             </p>
             <p className="text-sm text-[#667085]">
@@ -400,33 +325,48 @@ export function MediaPlanEditor({
                 ? `Campaign ${campaignResult.campaignId} is paused and ready for review.`
                 : approvalResult
                 ? `Batch ${approvalResult.batchId} created ${approvalResult.createdRowCount} Notion rows.`
-                : "This saves one row per ad group before Google Ads campaign creation."}
+                : "This saves one row per ad group, then creates a paused Google Search campaign."}
             </p>
           </div>
           <div className="flex flex-col gap-2 sm:flex-row">
-            <Button
-              type="button"
-              className="h-11 bg-[#9f0019] text-white hover:bg-[#820015]"
-              disabled={!canApprove || savingToNotion || Boolean(approvalResult)}
-              title={canApprove ? "Save approved media plan to Notion." : "Fix validation issues before approval."}
-              onClick={onApprove}
-            >
-              {savingToNotion ? <Loader2Icon className="size-4 animate-spin" /> : null}
-              {savingToNotion ? "Saving to Notion" : "Approve & Save to Notion"}
-            </Button>
-            {approvalResult ? (
+            <div className="grid grid-cols-2 gap-2 sm:flex">
               <Button
                 type="button"
                 variant="outline"
-                className="h-11"
-                disabled={creatingCampaign || Boolean(campaignResult)}
-                title={campaignResult ? "Campaign already created." : "Create a paused Google Search campaign."}
-                onClick={onCreateCampaign}
+                className="h-11 border-[#d7d7d7] px-3 text-[#344054] hover:bg-[#fff1f2] hover:text-[#9f0019]"
+                disabled={!canUndo || savingToNotion || creatingCampaign || Boolean(campaignResult)}
+                title="Undo last media plan edit (Ctrl+Z)"
+                onClick={onUndo}
               >
-                {creatingCampaign ? <Loader2Icon className="size-4 animate-spin" /> : null}
-                {creatingCampaign ? "Creating Google Ads Campaign" : "Create Paused Campaign in Google Ads"}
+                <Undo2Icon className="size-4" />
+                Undo
               </Button>
-            ) : null}
+              <Button
+                type="button"
+                variant="outline"
+                className="h-11 border-[#d7d7d7] px-3 text-[#344054] hover:bg-[#fff1f2] hover:text-[#9f0019]"
+                disabled={!canRedo || savingToNotion || creatingCampaign || Boolean(campaignResult)}
+                title="Redo media plan edit (Ctrl+Y or Ctrl+Shift+Z)"
+                onClick={onRedo}
+              >
+                <Redo2Icon className="size-4" />
+                Redo
+              </Button>
+            </div>
+            <Button
+              type="button"
+              className="h-11 bg-[#9f0019] text-white hover:bg-[#820015]"
+              disabled={!canApprove || savingToNotion || creatingCampaign || Boolean(campaignResult)}
+              title={
+                canApprove
+                  ? "Save approved media plan to Notion and create a paused Google Search campaign."
+                  : "Fix validation issues before approval."
+              }
+              onClick={onApprove}
+            >
+              {savingToNotion || creatingCampaign ? <Loader2Icon className="size-4 animate-spin" /> : null}
+              {savingToNotion || creatingCampaign ? "Approving & Creating Campaign" : "Approve & Create Paused Campaign"}
+            </Button>
             {campaignResult ? (
               <Button type="button" variant="outline" className="h-11" asChild>
                 <a href={campaignResult.googleAdsReviewLink} target="_blank" rel="noreferrer">
@@ -441,68 +381,625 @@ export function MediaPlanEditor({
   );
 }
 
-function Panel({
-  title,
-  action,
-  children,
+function AdGroupsTabbedSection({
+  adGroups,
+  issues,
+  onAddAdGroup,
+  onRemoveAdGroup,
+  onChangeAdGroup,
 }: {
-  title: string;
-  action?: ReactNode;
-  children: ReactNode;
+  adGroups: MediaPlanAdGroup[];
+  issues: MediaPlanValidationIssue[];
+  onAddAdGroup: () => void;
+  onRemoveAdGroup: (index: number) => void;
+  onChangeAdGroup: (
+    index: number,
+    updater: (adGroup: MediaPlanAdGroup) => MediaPlanAdGroup
+  ) => void;
 }) {
+  const [activeIndex, setActiveIndex] = useState(0);
+  const safeActiveIndex = Math.min(Math.max(activeIndex, 0), Math.max(adGroups.length - 1, 0));
+  const activeAdGroup = adGroups[safeActiveIndex];
+  const tabLabels = useMemo(
+    () => adGroups.map((_, index) => `Ad Group ${index + 1}`),
+    [adGroups]
+  );
+
+  function handleAddAdGroup() {
+    onAddAdGroup();
+    setActiveIndex(adGroups.length);
+  }
+
+  function handleRemoveActiveAdGroup() {
+    if (adGroups.length <= 1) {
+      return;
+    }
+
+    onRemoveAdGroup(safeActiveIndex);
+    setActiveIndex(Math.max(0, safeActiveIndex - 1));
+  }
+
+  if (!activeAdGroup) {
+    return (
+      <section className="rounded-2xl border border-[#dedede] bg-white p-4 shadow-sm sm:p-5">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <h2 className="text-lg font-bold text-[#9f0019]">Ad Groups</h2>
+          <Button
+            type="button"
+            className="h-9 bg-[#b00012] px-3 text-white hover:bg-[#8f0010]"
+            onClick={handleAddAdGroup}
+          >
+            <PlusIcon className="size-4" />
+            Add Ad Group
+          </Button>
+        </div>
+      </section>
+    );
+  }
+
   return (
     <section className="rounded-2xl border border-[#dedede] bg-white p-4 shadow-sm sm:p-5">
-      <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <h2 className="text-base font-semibold text-[#1f2937]">{title}</h2>
-        {action}
+      <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+        <div>
+          <h2 className="text-lg font-bold text-[#9f0019]">Ad Groups</h2>
+          <p className="mt-1 flex items-start gap-1.5 text-xs font-medium text-[#667085]">
+            <InfoIcon className="mt-0.5 size-3.5 shrink-0" />
+            Click on a tab to view and manage a specific ad group. Add a new ad group to create a new tab.
+          </p>
+        </div>
+        <Button
+          type="button"
+          className="h-9 bg-[#b00012] px-3 text-white shadow-sm hover:bg-[#8f0010]"
+          onClick={handleAddAdGroup}
+        >
+          <PlusIcon className="size-4" />
+          Add Ad Group
+        </Button>
       </div>
-      {children}
+
+      <div className="mt-4 flex flex-wrap items-end gap-2 border-b border-[#e5e7eb]">
+        {tabLabels.map((label, index) => {
+          const isActive = index === safeActiveIndex;
+          return (
+            <button
+              key={label}
+              type="button"
+              aria-pressed={isActive}
+              className={[
+                "min-h-10 border-b-2 px-5 text-sm font-bold transition-colors",
+                isActive
+                  ? "border-[#d4001a] text-[#b00012]"
+                  : "border-transparent text-[#667085] hover:border-[#f2b5bd] hover:text-[#9f0019]",
+              ].join(" ")}
+              onClick={() => setActiveIndex(index)}
+            >
+              {label}
+            </button>
+          );
+        })}
+        <button
+          type="button"
+          className="mb-0 flex size-10 items-center justify-center rounded-t-lg border border-b-0 border-[#d7d7d7] bg-white text-[#344054] transition-colors hover:bg-[#fff1f2] hover:text-[#b00012]"
+          aria-label="Add ad group tab"
+          onClick={handleAddAdGroup}
+        >
+          <PlusIcon className="size-4" />
+        </button>
+      </div>
+
+      <div className="mt-3 rounded-xl border border-[#e5e7eb] bg-[#fbfbfb] p-3">
+        <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(0,0.92fr)_auto] lg:items-end">
+          <AdGroupCompactField
+            label="Ad Group Name"
+            value={activeAdGroup.adGroupName}
+            error={getIssueMessage(issues, `adGroups.${safeActiveIndex}.adGroupName`)}
+            onChange={(value) =>
+              onChangeAdGroup(safeActiveIndex, (current) => ({
+                ...current,
+                adGroupName: value,
+              }))
+            }
+          />
+          <AdGroupCompactField
+            label="Intent Type"
+            value={activeAdGroup.intentType}
+            error={getIssueMessage(issues, `adGroups.${safeActiveIndex}.intentType`)}
+            multiline
+            onChange={(value) =>
+              onChangeAdGroup(safeActiveIndex, (current) => ({
+                ...current,
+                intentType: value,
+              }))
+            }
+          />
+          <Button
+            type="button"
+            variant="outline"
+            size="icon-sm"
+            title="Remove ad group"
+            aria-label="Remove ad group"
+            className="border-[#e5e7eb] text-[#b00012] hover:bg-[#fff1f2] hover:text-[#8f0010]"
+            onClick={handleRemoveActiveAdGroup}
+            disabled={adGroups.length === 1}
+          >
+            <Trash2Icon className="size-4" />
+          </Button>
+        </div>
+      </div>
+
+      <div className="mt-3 rounded-xl border border-[#e5e7eb] bg-[#fbfbfb] p-3">
+        <h3 className="mb-2 text-sm font-bold text-[#344054]">Display Path</h3>
+        <div className="grid gap-3 lg:grid-cols-2">
+          <DisplayPathCompactField
+            label="Display Path 1"
+            value={activeAdGroup.displayPath1}
+            error={getIssueMessage(issues, `adGroups.${safeActiveIndex}.displayPath1`)}
+            onChange={(value) =>
+              onChangeAdGroup(safeActiveIndex, (current) => ({
+                ...current,
+                displayPath1: value,
+              }))
+            }
+          />
+          <DisplayPathCompactField
+            label="Display Path 2"
+            value={activeAdGroup.displayPath2}
+            error={getIssueMessage(issues, `adGroups.${safeActiveIndex}.displayPath2`)}
+            onChange={(value) =>
+              onChangeAdGroup(safeActiveIndex, (current) => ({
+                ...current,
+                displayPath2: value,
+              }))
+            }
+          />
+        </div>
+      </div>
+
+      <div className="mt-3 grid gap-3 xl:grid-cols-2">
+        <div className="grid content-start gap-3">
+          <KeywordsEditor
+            adGroup={activeAdGroup}
+            adGroupIndex={safeActiveIndex}
+            issues={issues}
+            onChange={(keywords) =>
+              onChangeAdGroup(safeActiveIndex, (current) => ({ ...current, keywords }))
+            }
+          />
+          <SitelinksEditor
+            sitelinks={activeAdGroup.sitelinks}
+            adGroupIndex={safeActiveIndex}
+            issues={issues}
+            onChange={(sitelinks) =>
+              onChangeAdGroup(safeActiveIndex, (current) => ({ ...current, sitelinks }))
+            }
+          />
+        </div>
+        <ResponsiveSearchAdsEditor
+          adGroup={activeAdGroup}
+          adGroupIndex={safeActiveIndex}
+          issues={issues}
+          onChange={(nextAdGroup) => onChangeAdGroup(safeActiveIndex, () => nextAdGroup)}
+        />
+      </div>
     </section>
   );
 }
 
-function EditableField({
+function AdGroupCompactField({
   label,
   value,
   error,
-  maxLength,
   multiline = false,
   onChange,
 }: {
   label: string;
   value: string;
   error?: string | null;
-  maxLength?: number;
   multiline?: boolean;
   onChange: (value: string) => void;
 }) {
-  const invalid = Boolean(error) || (maxLength ? value.length > maxLength : false);
   return (
-    <div className="grid gap-1.5">
-      <div className="flex items-center justify-between gap-3">
-        <Label className="text-sm font-semibold text-[#344054]">{label}</Label>
-        {maxLength ? <CharacterCounter value={value} maxLength={maxLength} /> : null}
-      </div>
+    <div className="grid gap-1">
+      <Label className="text-xs font-bold text-[#1f2937]">{label}</Label>
       {multiline ? (
         <Textarea
           value={value}
+          aria-invalid={Boolean(error)}
           onChange={(event) => onChange(event.target.value)}
-          aria-invalid={invalid}
-          className="min-h-24 resize-y"
+          className="min-h-9 resize-y rounded-lg border-[#d7d7d7] bg-white px-3 py-2 text-sm leading-5 shadow-none focus-visible:border-[#9f0019] focus-visible:ring-[#9f0019]/15 md:text-sm"
         />
       ) : (
         <Input
           value={value}
+          aria-invalid={Boolean(error)}
           onChange={(event) => onChange(event.target.value)}
-          aria-invalid={invalid}
+          className="h-9 rounded-lg border-[#d7d7d7] bg-white px-3 text-sm shadow-none focus-visible:border-[#9f0019] focus-visible:ring-[#9f0019]/15 md:text-sm"
         />
       )}
       {error ? <p className="text-xs font-medium text-[#be123c]">{error}</p> : null}
-      {!error && maxLength && value.length > maxLength ? (
-        <p className="text-xs font-medium text-[#be123c]">
-          {label} must be {maxLength} characters or fewer.
-        </p>
+    </div>
+  );
+}
+
+function DisplayPathCompactField({
+  label,
+  value,
+  error,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  error?: string | null;
+  onChange: (value: string) => void;
+}) {
+  const maxLength = MEDIA_PLAN_LIMITS.displayPath;
+  const overLimit = value.length > maxLength;
+  return (
+    <div className="grid gap-1 sm:grid-cols-[110px_minmax(0,1fr)] sm:items-start">
+      <Label className="pt-2 text-xs font-bold text-[#667085]">{label}</Label>
+      <div className="grid gap-1">
+        <div className="relative">
+          <Input
+            value={value}
+            aria-invalid={Boolean(error) || overLimit}
+            onChange={(event) => onChange(event.target.value)}
+            className="h-9 rounded-lg border-[#d7d7d7] bg-white px-3 pr-12 text-sm shadow-none focus-visible:border-[#9f0019] focus-visible:ring-[#9f0019]/15 md:text-sm"
+          />
+          <span
+            className={[
+              "pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-xs font-medium",
+              overLimit ? "text-[#be123c]" : "text-[#667085]",
+            ].join(" ")}
+          >
+            {value.length}/{maxLength}
+          </span>
+        </div>
+        {error ? <p className="text-xs font-medium text-[#be123c]">{error}</p> : null}
+        {!error && overLimit ? (
+          <p className="text-xs font-medium text-[#be123c]">
+            {label} must be {maxLength} characters or fewer.
+          </p>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+function SetupNotesSection({
+  planningNotes,
+  issues,
+  onChange,
+}: {
+  planningNotes: MediaPlan["planningNotes"];
+  issues: MediaPlanValidationIssue[];
+  onChange: (planningNotes: MediaPlan["planningNotes"]) => void;
+}) {
+  function updateAssumption(index: number, value: string) {
+    onChange({
+      ...planningNotes,
+      assumptions: planningNotes.assumptions.map((item, itemIndex) =>
+        itemIndex === index ? value : item
+      ),
+    });
+  }
+
+  function updateWarning(index: number, value: string) {
+    onChange({
+      ...planningNotes,
+      warnings: planningNotes.warnings.map((item, itemIndex) =>
+        itemIndex === index ? value : item
+      ),
+    });
+  }
+
+  return (
+    <section className="rounded-2xl border border-[#dedede] bg-white p-4 shadow-sm sm:p-5">
+      <h2 className="text-xl font-bold leading-tight text-[#7f0013]">Setup Notes</h2>
+      <div className="mt-4 grid gap-3 xl:grid-cols-3">
+        <SetupNoteCard
+          title="Strategy"
+          icon={<TargetIcon className="size-5" />}
+          onAdd={() =>
+            onChange({
+              ...planningNotes,
+              strategy: planningNotes.strategy.trim()
+                ? `${planningNotes.strategy}\n`
+                : planningNotes.strategy,
+            })
+          }
+        >
+          {getIssueMessage(issues, "planningNotes.strategy") ? (
+            <SectionIssue message={getIssueMessage(issues, "planningNotes.strategy")} />
+          ) : null}
+          <Textarea
+            value={planningNotes.strategy}
+            aria-invalid={Boolean(getIssueMessage(issues, "planningNotes.strategy"))}
+            onChange={(event) =>
+              onChange({
+                ...planningNotes,
+                strategy: event.target.value,
+              })
+            }
+            className="min-h-48 resize-y rounded-xl border-[#d7d7d7] bg-white px-3 py-3 text-sm leading-6 shadow-none focus-visible:border-[#9f0019] focus-visible:ring-[#9f0019]/15 md:text-sm"
+          />
+        </SetupNoteCard>
+
+        <SetupNoteListCard
+          title="Assumptions"
+          icon={<BarChart3Icon className="size-5" />}
+          values={planningNotes.assumptions}
+          issuePath="planningNotes.assumptions"
+          issues={issues}
+          onAdd={() =>
+            onChange({
+              ...planningNotes,
+              assumptions: [...planningNotes.assumptions, ""],
+            })
+          }
+          onChangeItem={updateAssumption}
+          onRemoveItem={(index) =>
+            onChange({
+              ...planningNotes,
+              assumptions: planningNotes.assumptions.filter((_, itemIndex) => itemIndex !== index),
+            })
+          }
+        />
+
+        <SetupNoteListCard
+          title="Warnings"
+          icon={<TriangleAlertIcon className="size-5" />}
+          values={planningNotes.warnings}
+          issuePath="planningNotes.warnings"
+          issues={issues}
+          onAdd={() =>
+            onChange({
+              ...planningNotes,
+              warnings: [...planningNotes.warnings, ""],
+            })
+          }
+          onChangeItem={updateWarning}
+          onRemoveItem={(index) =>
+            onChange({
+              ...planningNotes,
+              warnings: planningNotes.warnings.filter((_, itemIndex) => itemIndex !== index),
+            })
+          }
+        />
+      </div>
+    </section>
+  );
+}
+
+function SetupNoteCard({
+  title,
+  icon,
+  onAdd,
+  children,
+}: {
+  title: string;
+  icon: ReactNode;
+  onAdd: () => void;
+  children: ReactNode;
+}) {
+  return (
+    <section className="rounded-xl border border-[#e5e7eb] bg-[#fbfbfb] p-3">
+      <div className="mb-3 flex items-center justify-between gap-3">
+        <div className="flex min-w-0 items-center gap-3">
+          <div className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-[#b00012] text-white shadow-sm">
+            {icon}
+          </div>
+          <h3 className="truncate text-lg font-bold text-[#7f0013]">{title}</h3>
+        </div>
+        <SetupNoteAddButton onClick={onAdd} />
+      </div>
+      {children}
+    </section>
+  );
+}
+
+function SetupNoteListCard({
+  title,
+  icon,
+  values,
+  issuePath,
+  issues,
+  onAdd,
+  onChangeItem,
+  onRemoveItem,
+}: {
+  title: string;
+  icon: ReactNode;
+  values: string[];
+  issuePath: string;
+  issues: MediaPlanValidationIssue[];
+  onAdd: () => void;
+  onChangeItem: (index: number, value: string) => void;
+  onRemoveItem: (index: number) => void;
+}) {
+  return (
+    <SetupNoteCard title={title} icon={icon} onAdd={onAdd}>
+      {hasIssueForPath(issues, issuePath) ? (
+        <SectionIssue message={getIssueMessage(issues, issuePath)} />
       ) : null}
+      <div className="grid content-start gap-2">
+        {values.map((value, index) => (
+          <SetupNoteListRow
+            key={index}
+            label={`${title.slice(0, -1).toLowerCase()} ${index + 1}`}
+            value={value}
+            error={getIssueMessage(issues, `${issuePath}.${index}`)}
+            onChange={(nextValue) => onChangeItem(index, nextValue)}
+            onRemove={() => onRemoveItem(index)}
+          />
+        ))}
+      </div>
+    </SetupNoteCard>
+  );
+}
+
+function SetupNoteListRow({
+  label,
+  value,
+  error,
+  onChange,
+  onRemove,
+}: {
+  label: string;
+  value: string;
+  error?: string | null;
+  onChange: (value: string) => void;
+  onRemove: () => void;
+}) {
+  return (
+    <div className="rounded-xl border border-[#e5e7eb] bg-white px-3 py-2 shadow-sm">
+      <div className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-start gap-3">
+        <span className="mt-3 size-1.5 rounded-full bg-[#b00012]" aria-hidden="true" />
+        <Textarea
+          value={value}
+          aria-label={label}
+          aria-invalid={Boolean(error)}
+          onChange={(event) => onChange(event.target.value)}
+          className="min-h-10 resize-y rounded-lg border-transparent bg-transparent px-0 py-1 text-sm leading-6 shadow-none focus-visible:border-[#d7d7d7] focus-visible:bg-white focus-visible:px-2 focus-visible:ring-[#9f0019]/15 md:text-sm"
+        />
+        <Button
+          type="button"
+          variant="outline"
+          size="icon-sm"
+          aria-label={`Remove ${label}`}
+          className="mt-1 border-[#e5e7eb] bg-white text-[#111827] shadow-sm hover:bg-[#fff1f2] hover:text-[#b00012]"
+          onClick={onRemove}
+        >
+          <Trash2Icon className="size-4" />
+        </Button>
+      </div>
+      {error ? <p className="ml-5 mt-1 text-xs font-medium text-[#be123c]">{error}</p> : null}
+    </div>
+  );
+}
+
+function SetupNoteAddButton({ onClick }: { onClick: () => void }) {
+  return (
+    <Button
+      type="button"
+      variant="outline"
+      className="h-9 border-[#b00012] px-3 text-[#7f0013] hover:bg-[#fff1f2] hover:text-[#b00012]"
+      onClick={onClick}
+    >
+      <PlusIcon className="size-4" />
+      Add
+    </Button>
+  );
+}
+
+function CampaignSummaryCard({ children }: { children: ReactNode }) {
+  return (
+    <section className="flex h-full flex-col rounded-2xl border border-[#dedede] border-l-4 border-l-[#d4001a] bg-white p-4 shadow-sm">
+      <div className="mb-3 flex items-center gap-2.5 border-b border-[#e5e7eb] pb-2.5">
+        <div className="flex size-9 items-center justify-center rounded-xl bg-[#fff1f2] text-[#b00012]">
+          <ListIcon className="size-4" />
+        </div>
+        <h2 className="text-lg font-bold leading-tight text-[#9f0019]">Campaign Summary</h2>
+      </div>
+      <div className="grid flex-1 content-start gap-3">{children}</div>
+    </section>
+  );
+}
+
+function SummaryEditableRow({
+  icon,
+  label,
+  value,
+  error,
+  onChange,
+}: {
+  icon: ReactNode;
+  label: string;
+  value: string;
+  error?: string | null;
+  onChange: (value: string) => void;
+}) {
+  return (
+    <div className="grid gap-1">
+      <div className="flex items-center gap-2">
+        <span className="flex size-4 items-center justify-center text-[#b00012]">{icon}</span>
+        <Label className="text-[13px] font-bold text-[#344054]">{label}</Label>
+      </div>
+      {label === "Batch Preview ID" ? (
+        <Input
+          value={value}
+          onChange={(event) => onChange(event.target.value)}
+          aria-invalid={Boolean(error)}
+          className="h-9 rounded-lg border-[#d7d7d7] bg-[#fafafa] px-3 text-sm font-semibold shadow-none focus-visible:border-[#9f0019] focus-visible:bg-white focus-visible:ring-[#9f0019]/15 md:text-sm"
+        />
+      ) : (
+        <Textarea
+          value={value}
+          onChange={(event) => onChange(event.target.value)}
+          aria-invalid={Boolean(error)}
+          className="min-h-10 resize-y rounded-lg border-[#d7d7d7] bg-white px-3 py-2 text-sm leading-5 shadow-none focus-visible:border-[#9f0019] focus-visible:ring-[#9f0019]/15 md:text-sm"
+        />
+      )}
+      {error ? <p className="text-xs font-medium text-[#be123c]">{error}</p> : null}
+    </div>
+  );
+}
+
+function CampaignSettingsCard({ children }: { children: ReactNode }) {
+  return (
+    <section className="flex h-full flex-col rounded-2xl border border-[#dedede] border-l-4 border-l-[#d4001a] bg-white p-4 shadow-sm">
+      <div className="mb-3 flex items-center gap-2.5 border-b border-[#e5e7eb] pb-2.5">
+        <div className="flex size-9 items-center justify-center rounded-xl bg-[#fff1f2] text-[#b00012]">
+          <SettingsIcon className="size-4" />
+        </div>
+        <h2 className="text-lg font-bold leading-tight text-[#9f0019]">Campaign Settings</h2>
+      </div>
+      <div className="grid flex-1 content-start gap-x-5 gap-y-3 sm:grid-cols-2">{children}</div>
+    </section>
+  );
+}
+
+function SettingsEditableField({
+  icon,
+  label,
+  value,
+  error,
+  placeholder,
+  multiline = false,
+  onChange,
+}: {
+  icon: ReactNode;
+  label: string;
+  value: string;
+  error?: string | null;
+  placeholder?: string;
+  multiline?: boolean;
+  onChange: (value: string) => void;
+}) {
+  const invalid = Boolean(error);
+  return (
+    <div className="grid gap-1">
+      <div className="flex items-center gap-2">
+        <span className="flex size-4 items-center justify-center text-[#b00012]">{icon}</span>
+        <Label className="text-[13px] font-bold text-[#344054]">{label}</Label>
+      </div>
+      {multiline ? (
+        <Textarea
+          value={value}
+          placeholder={placeholder}
+          onChange={(event) => onChange(event.target.value)}
+          aria-invalid={invalid}
+          className="min-h-16 resize-y rounded-lg border-[#d7d7d7] bg-white px-3 py-2 text-sm shadow-none focus-visible:border-[#9f0019] focus-visible:ring-[#9f0019]/15 md:text-sm"
+        />
+      ) : (
+        <Input
+          value={value}
+          placeholder={placeholder}
+          onChange={(event) => onChange(event.target.value)}
+          aria-invalid={invalid}
+          className="h-9 rounded-lg border-[#d7d7d7] bg-white px-3 text-sm shadow-none focus-visible:border-[#9f0019] focus-visible:ring-[#9f0019]/15 md:text-sm"
+        />
+      )}
+      {error ? <p className="text-xs font-medium text-[#be123c]">{error}</p> : null}
     </div>
   );
 }
@@ -522,11 +1019,12 @@ function KeywordsEditor({
   return (
     <div className="rounded-xl border border-[#e5e7eb] bg-white p-3">
       <div className="mb-3 flex items-center justify-between gap-3">
-        <h3 className="text-sm font-semibold text-[#344054]">Keywords</h3>
+        <h3 className="text-sm font-bold text-[#9f0019]">Keywords</h3>
         <Button
           type="button"
           variant="outline"
           size="xs"
+          className="border-[#efd4d8] text-[#b00012] hover:bg-[#fff1f2] hover:text-[#8f0010]"
           onClick={() => onChange([...adGroup.keywords, { text: "", matchType: "BROAD" }])}
         >
           <PlusIcon className="size-3" />
@@ -543,6 +1041,7 @@ function KeywordsEditor({
               value={keyword.text}
               placeholder="keyword text"
               aria-invalid={Boolean(getIssueMessage(issues, `${keywordPath}.${keywordIndex}.text`))}
+              className="h-8 rounded-md border-[#d7d7d7] text-sm shadow-none focus-visible:border-[#9f0019] focus-visible:ring-[#9f0019]/15 md:text-sm"
               onChange={(event) =>
                 onChange(
                   adGroup.keywords.map((item, itemIndex) =>
@@ -555,6 +1054,7 @@ function KeywordsEditor({
               value={keyword.matchType}
               list={`match-types-${adGroupIndex}-${keywordIndex}`}
               aria-invalid={Boolean(getIssueMessage(issues, `${keywordPath}.${keywordIndex}.matchType`))}
+              className="h-8 rounded-md border-[#d7d7d7] text-sm font-bold text-[#b00012] shadow-none focus-visible:border-[#9f0019] focus-visible:ring-[#9f0019]/15 md:text-sm"
               onChange={(event) =>
                 onChange(
                   adGroup.keywords.map((item, itemIndex) =>
@@ -573,8 +1073,9 @@ function KeywordsEditor({
             <Button
               type="button"
               variant="outline"
-              size="icon"
+              size="icon-sm"
               aria-label={`Remove keyword ${keywordIndex + 1}`}
+              className="border-[#e5e7eb] text-[#b00012] hover:bg-[#fff1f2] hover:text-[#8f0010]"
               onClick={() => onChange(adGroup.keywords.filter((_, itemIndex) => itemIndex !== keywordIndex))}
             >
               <Trash2Icon className="size-4" />
@@ -602,12 +1103,13 @@ function ResponsiveSearchAdsEditor({
   return (
     <div className="rounded-xl border border-[#e5e7eb] bg-white p-3">
       <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-        <h3 className="text-sm font-semibold text-[#344054]">Responsive Search Ads</h3>
+        <h3 className="text-sm font-bold text-[#9f0019]">Responsive Search Ads</h3>
         <div className="flex gap-2">
           <Button
             type="button"
             variant="outline"
             size="xs"
+            className="border-[#efd4d8] text-[#b00012] hover:bg-[#fff1f2] hover:text-[#8f0010]"
             onClick={() => onChange({ ...adGroup, headlines: [...adGroup.headlines, ""] })}
           >
             <PlusIcon className="size-3" />
@@ -617,6 +1119,7 @@ function ResponsiveSearchAdsEditor({
             type="button"
             variant="outline"
             size="xs"
+            className="border-[#efd4d8] text-[#b00012] hover:bg-[#fff1f2] hover:text-[#8f0010]"
             onClick={() => onChange({ ...adGroup, descriptions: [...adGroup.descriptions, ""] })}
           >
             <PlusIcon className="size-3" />
@@ -669,6 +1172,7 @@ function ResponsiveSearchAdsEditor({
             value={description}
             maxLength={MEDIA_PLAN_LIMITS.description}
             error={getIssueMessage(issues, `${descriptionPath}.${descriptionIndex}`)}
+            multiline
             onChange={(value) =>
               onChange({
                 ...adGroup,
@@ -690,40 +1194,6 @@ function ResponsiveSearchAdsEditor({
   );
 }
 
-function DisplayPathsEditor({
-  adGroup,
-  adGroupIndex,
-  issues,
-  onChange,
-}: {
-  adGroup: MediaPlanAdGroup;
-  adGroupIndex: number;
-  issues: MediaPlanValidationIssue[];
-  onChange: (adGroup: MediaPlanAdGroup) => void;
-}) {
-  return (
-    <div className="rounded-xl border border-[#e5e7eb] bg-white p-3">
-      <h3 className="mb-3 text-sm font-semibold text-[#344054]">Display Paths</h3>
-      <div className="grid gap-3 sm:grid-cols-2">
-        <EditableField
-          label="Display Path 1"
-          value={adGroup.displayPath1}
-          maxLength={MEDIA_PLAN_LIMITS.displayPath}
-          error={getIssueMessage(issues, `adGroups.${adGroupIndex}.displayPath1`)}
-          onChange={(value) => onChange({ ...adGroup, displayPath1: value })}
-        />
-        <EditableField
-          label="Display Path 2"
-          value={adGroup.displayPath2}
-          maxLength={MEDIA_PLAN_LIMITS.displayPath}
-          error={getIssueMessage(issues, `adGroups.${adGroupIndex}.displayPath2`)}
-          onChange={(value) => onChange({ ...adGroup, displayPath2: value })}
-        />
-      </div>
-    </div>
-  );
-}
-
 function SitelinksEditor({
   sitelinks,
   adGroupIndex,
@@ -739,11 +1209,12 @@ function SitelinksEditor({
   return (
     <div className="rounded-xl border border-[#e5e7eb] bg-white p-3">
       <div className="mb-3 flex items-center justify-between gap-3">
-        <h3 className="text-sm font-semibold text-[#344054]">Sitelinks</h3>
+        <h3 className="text-sm font-bold text-[#9f0019]">Sitelinks</h3>
         <Button
           type="button"
           variant="outline"
           size="xs"
+          className="border-[#efd4d8] text-[#b00012] hover:bg-[#fff1f2] hover:text-[#8f0010]"
           onClick={() => onChange([...sitelinks, { title: "", url: "" }])}
         >
           <PlusIcon className="size-3" />
@@ -760,6 +1231,7 @@ function SitelinksEditor({
               value={sitelink.title}
               placeholder="Sitelink title"
               aria-invalid={Boolean(getIssueMessage(issues, `${sitelinksPath}.${index}.title`))}
+              className="h-8 rounded-md border-[#d7d7d7] text-sm shadow-none focus-visible:border-[#9f0019] focus-visible:ring-[#9f0019]/15 md:text-sm"
               onChange={(event) =>
                 onChange(
                   sitelinks.map((item, itemIndex) =>
@@ -768,10 +1240,11 @@ function SitelinksEditor({
                 )
               }
             />
-            <Input
+            <Textarea
               value={sitelink.url}
               placeholder="https://example.com/page"
               aria-invalid={Boolean(getIssueMessage(issues, `${sitelinksPath}.${index}.url`))}
+              className="min-h-8 resize-y rounded-md border-[#d7d7d7] px-3 py-1.5 text-sm leading-5 shadow-none focus-visible:border-[#9f0019] focus-visible:ring-[#9f0019]/15 md:text-sm"
               onChange={(event) =>
                 onChange(
                   sitelinks.map((item, itemIndex) =>
@@ -783,59 +1256,10 @@ function SitelinksEditor({
             <Button
               type="button"
               variant="outline"
-              size="icon"
+              size="icon-sm"
               aria-label={`Remove sitelink ${index + 1}`}
+              className="border-[#e5e7eb] text-[#b00012] hover:bg-[#fff1f2] hover:text-[#8f0010]"
               onClick={() => onChange(sitelinks.filter((_, itemIndex) => itemIndex !== index))}
-            >
-              <Trash2Icon className="size-4" />
-            </Button>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-function EditableArray({
-  title,
-  values,
-  issuePath,
-  issues,
-  onChange,
-}: {
-  title: string;
-  values: string[];
-  issuePath: string;
-  issues: MediaPlanValidationIssue[];
-  onChange: (values: string[]) => void;
-}) {
-  return (
-    <div className="rounded-xl border border-[#e5e7eb] bg-white p-3">
-      <div className="mb-3 flex items-center justify-between gap-3">
-        <h3 className="text-sm font-semibold text-[#344054]">{title}</h3>
-        <Button type="button" variant="outline" size="xs" onClick={() => onChange([...values, ""])}>
-          <PlusIcon className="size-3" />
-          Add
-        </Button>
-      </div>
-      {hasIssueForPath(issues, issuePath) ? (
-        <SectionIssue message={getIssueMessage(issues, issuePath)} />
-      ) : null}
-      <div className="grid gap-2">
-        {values.map((value, index) => (
-          <div key={index} className="grid grid-cols-[minmax(0,1fr)_auto] gap-2">
-            <Input
-              value={value}
-              onChange={(event) =>
-                onChange(values.map((item, itemIndex) => (itemIndex === index ? event.target.value : item)))
-              }
-            />
-            <Button
-              type="button"
-              variant="outline"
-              size="icon"
-              aria-label={`Remove ${title.toLowerCase()} ${index + 1}`}
-              onClick={() => onChange(values.filter((_, itemIndex) => itemIndex !== index))}
             >
               <Trash2Icon className="size-4" />
             </Button>
@@ -851,6 +1275,7 @@ function LimitedRow({
   value,
   maxLength,
   error,
+  multiline = false,
   onChange,
   onRemove,
 }: {
@@ -858,6 +1283,7 @@ function LimitedRow({
   value: string;
   maxLength: number;
   error: string | null;
+  multiline?: boolean;
   onChange: (value: string) => void;
   onRemove: () => void;
 }) {
@@ -870,19 +1296,29 @@ function LimitedRow({
             <Label className="text-xs font-semibold uppercase text-[#667085]">{label}</Label>
             <CharacterCounter value={value} maxLength={maxLength} />
           </div>
-          <Input
-            value={value}
-            aria-invalid={Boolean(error) || overLimit}
-            onChange={(event) => onChange(event.target.value)}
-          />
+          {multiline ? (
+            <Textarea
+              value={value}
+              aria-invalid={Boolean(error) || overLimit}
+              className="min-h-16 resize-y rounded-md border-[#d7d7d7] px-3 py-2 text-sm leading-5 shadow-none focus-visible:border-[#9f0019] focus-visible:ring-[#9f0019]/15 md:text-sm"
+              onChange={(event) => onChange(event.target.value)}
+            />
+          ) : (
+            <Input
+              value={value}
+              aria-invalid={Boolean(error) || overLimit}
+              className="h-8 rounded-md border-[#d7d7d7] pr-12 text-sm shadow-none focus-visible:border-[#9f0019] focus-visible:ring-[#9f0019]/15 md:text-sm"
+              onChange={(event) => onChange(event.target.value)}
+            />
+          )}
         </div>
         <Button
           type="button"
           variant="outline"
-          size="icon"
+          size="icon-sm"
           aria-label={`Remove ${label.toLowerCase()}`}
           onClick={onRemove}
-          className="self-end"
+          className="self-end border-[#e5e7eb] text-[#b00012] hover:bg-[#fff1f2] hover:text-[#8f0010]"
         >
           <Trash2Icon className="size-4" />
         </Button>

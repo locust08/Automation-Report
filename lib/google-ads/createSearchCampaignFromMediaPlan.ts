@@ -13,6 +13,7 @@ export interface CreateSearchCampaignFromMediaPlanInput {
   googleCid: string;
   source?: "media-plan";
   dryRun?: boolean;
+  validateOnly?: boolean;
 }
 
 export interface MediaPlanCampaignDryRunResult {
@@ -24,10 +25,20 @@ export interface MediaPlanCampaignDryRunResult {
   plannedPayload: PlannedMediaPlanCampaign;
 }
 
+export interface MediaPlanCampaignValidateOnlyResult {
+  success: true;
+  source: "media-plan";
+  batchId: string;
+  customerId: string;
+  validateOnly: true;
+  plannedPayload: PlannedMediaPlanCampaign;
+}
+
 export type CreateSearchCampaignFromMediaPlanResult =
   | MediaPlanCreateCampaignSuccessResponse
   | MediaPlanCreateCampaignFailureResponse
-  | MediaPlanCampaignDryRunResult;
+  | MediaPlanCampaignDryRunResult
+  | MediaPlanCampaignValidateOnlyResult;
 
 interface NotionPropertySchema {
   type?: string;
@@ -42,6 +53,7 @@ interface NotionPage {
 interface MediaPlanNotionRow {
   pageId: string;
   pageUrl: string;
+  adAccountPageId: string;
   adGroupName: string;
   campaignName: string;
   campaignType: string;
@@ -57,6 +69,7 @@ interface MediaPlanNotionRow {
   language: string[];
   status: string;
   missingInfo: boolean;
+  missingInfoNotes: string;
   setupNotes: string;
   reviewNotes: string;
   displayPath1: string;
@@ -72,6 +85,7 @@ interface GoogleKeyword {
 }
 
 interface MediaPlanRowGroup {
+  adAccountPageId: string;
   campaignName: string;
   campaignType: "Search";
   websiteUrl: string;
@@ -121,6 +135,15 @@ interface GoogleAdsConfig {
   developerToken: string;
   accessToken: string;
   apiVersion: string;
+  canRefreshAccessToken: boolean;
+}
+
+interface LinkedGoogleAdAccount {
+  pageId: string;
+  accountName: string;
+  customerId: string;
+  loginCustomerId: string | null;
+  accessPath: string;
 }
 
 interface ResolvedTargeting {
@@ -128,9 +151,33 @@ interface ResolvedTargeting {
   languages: Array<{ resourceName: string; name?: string; fallback?: boolean }>;
 }
 
+interface PolicyViolationExemption {
+  operationIndex: number;
+  key: {
+    policyName: string;
+    violatingText: string;
+  };
+}
+
+class GoogleAdsApiRequestError extends Error {
+  readonly failedStep: string;
+  readonly status: number;
+  readonly payload: unknown;
+
+  constructor(failedStep: string, status: number, text: string, payload: unknown) {
+    super(`Google Ads API failed (${status}): ${text}`);
+    this.name = "GoogleAdsApiRequestError";
+    this.failedStep = failedStep;
+    this.status = status;
+    this.payload = payload;
+  }
+}
+
 const NOTION_API_VERSION = "2026-03-11";
 const NOTION_API_BASE = "https://api.notion.com/v1";
 const GOOGLE_ADS_API_DEFAULT_VERSION = "v24";
+const GOOGLE_ADS_REQUEST_TIMEOUT_MS = 180_000;
+const NOTION_REQUEST_TIMEOUT_MS = 60_000;
 const MEDIA_PLAN_SOURCE = "media-plan";
 const CAMPAIGN_RESULT_NOTE_PREFIX = "GoogleAdsCampaignID:";
 const CAMPAIGN_RESOURCE_NOTE_PREFIX = "GoogleAdsCampaignResourceName:";
@@ -152,19 +199,21 @@ export async function createSearchCampaignFromMediaPlan(
     const pages = await queryMediaPlanBatchPages(notionConfig, notionDataSource.properties, normalized.batchId);
     notionRows = pages.map(pageToMediaPlanRow);
     const group = validateAndGroupRows(notionRows, normalized);
+    const linkedAccount = await resolveLinkedGoogleAdAccount(notionConfig, group.adAccountPageId, normalized.googleCid);
     const plannedPayload = buildPlannedPayload(group);
 
     if (normalized.dryRun) {
       console.info("[media-plan:create-campaign] google_ads_dry_run_started", {
         batchId: normalized.batchId,
-        customerId: normalized.googleCid,
+        customerId: linkedAccount.customerId,
+        loginCustomerId: linkedAccount.loginCustomerId,
         rowCount: group.rows.length,
       });
       return {
         success: true,
         source: MEDIA_PLAN_SOURCE,
         batchId: normalized.batchId,
-        customerId: normalized.googleCid,
+        customerId: linkedAccount.customerId,
         dryRun: true,
         plannedPayload,
       };
@@ -172,20 +221,39 @@ export async function createSearchCampaignFromMediaPlan(
 
     console.info("[media-plan:create-campaign] google_ads_creation_started", {
       batchId: normalized.batchId,
-      customerId: normalized.googleCid,
+      customerId: linkedAccount.customerId,
+      loginCustomerId: linkedAccount.loginCustomerId,
       rowCount: group.rows.length,
     });
+    const googleAdsConfig = await resolveGoogleAdsConfig(linkedAccount);
+    await assertNoExistingCampaign(googleAdsConfig, group.campaignName);
+    const targeting = await resolveTargeting(googleAdsConfig, group);
+    let mutateOperations = buildGoogleAdsMutateOperations(googleAdsConfig.customerId, group, targeting);
+    console.log("TODO: Sitelink creation not implemented for media-plan source.");
+    mutateOperations = await googleAdsValidateMutateWithPolicyExemptions(googleAdsConfig, mutateOperations);
+    console.info("[media-plan:create-campaign] google_ads_validate_only_passed", {
+      batchId: normalized.batchId,
+      customerId: googleAdsConfig.customerId,
+      operationCount: mutateOperations.length,
+    });
+
+    if (normalized.validateOnly) {
+      return {
+        success: true,
+        source: MEDIA_PLAN_SOURCE,
+        batchId: normalized.batchId,
+        customerId: googleAdsConfig.customerId,
+        validateOnly: true,
+        plannedPayload,
+      };
+    }
+
     await updateRowsForSetup(notionConfig, notionDataSource.properties, notionRows);
     console.info("[media-plan:create-campaign] notion_status_updated", {
       batchId: normalized.batchId,
       status: "In Setup",
       rowCount: notionRows.length,
     });
-    const googleAdsConfig = await resolveGoogleAdsConfig(normalized.googleCid);
-    await assertNoExistingCampaign(googleAdsConfig, group.campaignName);
-    const targeting = await resolveTargeting(googleAdsConfig, group);
-    const mutateOperations = buildGoogleAdsMutateOperations(googleAdsConfig.customerId, group, targeting);
-    console.log("TODO: Sitelink creation not implemented for media-plan source.");
     const mutateResponse = await googleAdsMutate(googleAdsConfig, mutateOperations);
     const campaignResourceName = extractCampaignResourceName(mutateResponse) || "";
     const campaignId = campaignResourceName.split("/").pop() || "";
@@ -234,14 +302,17 @@ export async function createSearchCampaignFromMediaPlan(
     if (failure.duplicate) {
       return failure;
     }
-    if (!normalized.dryRun && notionRows.length > 0) {
+    if (!normalized.dryRun && !normalized.validateOnly && notionRows.length > 0) {
       try {
         const notionConfig = resolveNotionConfig();
         const notionDataSource = await retrieveNotionDataSource(notionConfig);
-        await updateRowsForFailure(notionConfig, notionDataSource.properties, notionRows, failure.error);
+        const retryableOperationalFailure = isRetryableOperationalFailure(failure.failedStep);
+        await updateRowsForFailure(notionConfig, notionDataSource.properties, notionRows, failure.error, {
+          retryable: retryableOperationalFailure,
+        });
         console.info("[media-plan:create-campaign] notion_status_updated", {
           batchId: normalized.batchId,
-          status: "Missing Info",
+          status: retryableOperationalFailure ? "Ready for Setup" : "Missing Info",
           rowCount: notionRows.length,
         });
       } catch (updateError) {
@@ -256,13 +327,14 @@ export async function createSearchCampaignFromMediaPlan(
 export function buildMediaPlanCliUsage(): string {
   return `
 Usage:
-  node scripts/create_campaign_from_notion.mjs --batchId <MP-YYYYMMDD-HHMMSS> --googleCid <cid> --source=media-plan [--dryRun]
+  node scripts/create_campaign_from_notion.mjs --batchId <MP-YYYYMMDD-HHMMSS> --googleCid <cid> --source=media-plan [--dryRun] [--validateOnly]
 
 Media plan options:
   --batchId <id>          Approved media-plan batch ID.
   --googleCid <cid>       Google Ads customer ID.
   --source=media-plan     Required for the Phase 4 media-plan flow.
   --dryRun                Query Notion and print the planned payload without Google Ads or Notion updates.
+  --validateOnly          Validate the planned Google Ads mutate request without creating anything.
 `.trim();
 }
 
@@ -284,6 +356,8 @@ export function parseMediaPlanCliArgs(argv: string[]): CreateSearchCampaignFromM
       args.googleCid = arg.slice("--googleCid=".length);
     } else if (arg === "--dryRun") {
       args.dryRun = true;
+    } else if (arg === "--validateOnly" || arg === "--validate-only") {
+      args.validateOnly = true;
     } else if (arg === "--help" || arg === "-h") {
       args.help = true;
     }
@@ -295,6 +369,7 @@ export function parseMediaPlanCliArgs(argv: string[]): CreateSearchCampaignFromM
       googleCid: "",
       source: "media-plan",
       dryRun: Boolean(args.dryRun),
+      validateOnly: Boolean(args.validateOnly),
     };
   }
 
@@ -307,6 +382,7 @@ export function parseMediaPlanCliArgs(argv: string[]): CreateSearchCampaignFromM
     googleCid: String(args.googleCid || ""),
     source: args.source === MEDIA_PLAN_SOURCE ? MEDIA_PLAN_SOURCE : undefined,
     dryRun: Boolean(args.dryRun),
+    validateOnly: Boolean(args.validateOnly),
   };
 }
 
@@ -333,6 +409,7 @@ function normalizeInput(input: CreateSearchCampaignFromMediaPlanInput): Required
     googleCid,
     source: MEDIA_PLAN_SOURCE,
     dryRun: Boolean(input.dryRun),
+    validateOnly: Boolean(input.validateOnly),
   };
 }
 
@@ -397,6 +474,7 @@ function pageToMediaPlanRow(page: NotionPage): MediaPlanNotionRow {
   return {
     pageId: page.id,
     pageUrl: page.url || "",
+    adAccountPageId: readFirstRelationId(props, "02 Client / Ad Account") || readFirstRelationId(props, "09 Client / Ad Account"),
     adGroupName: readTitle(props, "01 Ad Group Name"),
     campaignName: readText(props, "05 Campaign Name"),
     campaignType: readOption(props, "07 Campaign Type"),
@@ -412,6 +490,7 @@ function pageToMediaPlanRow(page: NotionPage): MediaPlanNotionRow {
     language: readOptions(props, "17 Language"),
     status: readOption(props, "65 Status"),
     missingInfo: readCheckbox(props, "67 Missing Info"),
+    missingInfoNotes: readText(props, "68 Missing Info Notes"),
     setupNotes: readText(props, "69 Setup Notes"),
     reviewNotes: readText(props, "70 Review Notes"),
     displayPath1: readText(props, "28 Display Path 1"),
@@ -431,6 +510,12 @@ function validateAndGroupRows(
   }
   const issues: string[] = [];
   const first = rows[0];
+  const adAccountPageIds = Array.from(new Set(rows.map((row) => row.adAccountPageId).filter(Boolean)));
+  if (adAccountPageIds.length === 0) {
+    issues.push("All rows must include the 02 Client / Ad Account relation.");
+  } else if (adAccountPageIds.length > 1) {
+    issues.push("All rows in one media-plan batch must use the same 02 Client / Ad Account relation.");
+  }
 
   const sharedFields: Array<[keyof MediaPlanNotionRow, string]> = [
     ["campaignName", "05 Campaign Name"],
@@ -455,14 +540,14 @@ function validateAndGroupRows(
     if (row.campaignType !== "Search") {
       issues.push(`Row ${row.pageId} campaign type must be Search.`);
     }
-    if (!["Ready for Setup", "In Setup"].includes(row.status)) {
-      issues.push(`Row ${row.pageId} status must be Ready for Setup or In Setup.`);
+    if (!["Ready for Setup", "In Setup"].includes(row.status) && !isRetryableMissingInfoRow(row)) {
+      issues.push(`Row ${row.pageId} status must be Ready for Setup, In Setup, or retryable Missing Info from a previous Google Ads setup failure.`);
     }
     if (hasCampaignResultForBatch(row.reviewNotes, input.batchId)) {
       throw duplicateError(input.batchId, rows);
     }
-    if (!row.setupNotes.includes(input.batchId) || !row.reviewNotes.includes(input.batchId)) {
-      issues.push(`Row ${row.pageId} must include batch ID ${input.batchId} in both 69 Setup Notes and 70 Review Notes.`);
+    if (!row.setupNotes.includes(input.batchId) && !row.reviewNotes.includes(input.batchId)) {
+      issues.push(`Row ${row.pageId} must include batch ID ${input.batchId} in 69 Setup Notes or 70 Review Notes.`);
     }
     if (!row.adGroupName.trim()) issues.push(`Row ${row.pageId} needs a valid ad group name.`);
     if (row.keywords.length < 1) issues.push(`Row ${row.pageId} needs at least one valid keyword.`);
@@ -503,6 +588,7 @@ function validateAndGroupRows(
   }
 
   return {
+    adAccountPageId: adAccountPageIds[0] || "",
     campaignName: first.campaignName,
     campaignType: "Search",
     websiteUrl: first.websiteUrl,
@@ -550,19 +636,87 @@ function buildPlannedPayload(group: MediaPlanRowGroup): PlannedMediaPlanCampaign
   };
 }
 
-async function resolveGoogleAdsConfig(customerId: string): Promise<GoogleAdsConfig> {
+async function resolveLinkedGoogleAdAccount(
+  config: ReturnType<typeof resolveNotionConfig>,
+  adAccountPageId: string,
+  requestedGoogleCid: string
+): Promise<LinkedGoogleAdAccount> {
+  if (!adAccountPageId) {
+    throw stepError("validation", "Notion rows are missing the 02 Client / Ad Account relation.");
+  }
+  const page = (await notionRequest(config, `/pages/${adAccountPageId.replace(/-/g, "")}`, {
+    method: "GET",
+  })) as NotionPage;
+  const account = pageToLinkedGoogleAdAccount(page);
+  if (requestedGoogleCid && account.customerId !== requestedGoogleCid) {
+    throw stepError(
+      "validation",
+      `Dashboard Google CID ${requestedGoogleCid} does not match linked Notion Ad Account ID ${account.customerId}.`
+    );
+  }
+  return account;
+}
+
+function pageToLinkedGoogleAdAccount(page: NotionPage): LinkedGoogleAdAccount {
+  const props = page.properties || {};
+  const accountName = readTitle(props, "Account Name") || readText(props, "Account Name");
+  const platform = readOption(props, "Platform") || readText(props, "Platform");
+  const rawCustomerId =
+    readText(props, "ID") || readTitle(props, "ID") || readText(props, "Google Ads Account ID");
+  const accessPath = readText(props, "Access Path") || readOption(props, "Access Path");
+  const customerId = normalizeGoogleAccountId(rawCustomerId);
+  if (!customerId) {
+    throw stepError("notion_query", `Linked Ad Account page ${page.id} is missing a valid Google Ads ID.`);
+  }
+  if (platform && platform.toLowerCase() !== "google") {
+    throw stepError(
+      "notion_query",
+      `Linked Ad Account ${accountName || page.id} is not Google platform: ${platform}.`
+    );
+  }
+  return {
+    pageId: page.id,
+    accountName,
+    customerId,
+    loginCustomerId: normalizeLoginCustomerId(accessPath),
+    accessPath,
+  };
+}
+
+function normalizeLoginCustomerId(accessPath: string): string | null {
+  const trimmed = accessPath.trim();
+  if (!trimmed || trimmed.toLowerCase() === "personal") {
+    return null;
+  }
+  const normalized = normalizeGoogleAccountId(trimmed);
+  return normalized || null;
+}
+
+async function resolveGoogleAdsConfig(account: LinkedGoogleAdAccount): Promise<GoogleAdsConfig> {
   const credentials = getCredentials();
   const developerToken = credentials.googleDeveloperToken;
   if (!developerToken) {
     throw stepError("configuration", "Missing required env var GOOGLE_ADS_DEVELOPER_TOKEN.");
   }
-  const accessToken = credentials.googleAccessToken || (await refreshGoogleAccessToken());
+  const canRefreshAccessToken = Boolean(
+    credentials.googleRefreshToken && credentials.googleClientId && credentials.googleClientSecret
+  );
+  const accessToken = canRefreshAccessToken
+    ? await refreshGoogleAccessToken()
+    : credentials.googleAccessToken;
+  if (!accessToken) {
+    throw stepError(
+      "configuration",
+      "Missing Google OAuth credentials. Provide GOOGLE_ADS_REFRESH_TOKEN with client credentials, or GOOGLE_ADS_ACCESS_TOKEN."
+    );
+  }
   return {
-    customerId,
-    loginCustomerId: credentials.googleLoginCustomerId,
+    customerId: account.customerId,
+    loginCustomerId: account.loginCustomerId,
     developerToken,
     accessToken,
     apiVersion: credentials.googleAdsApiVersion || GOOGLE_ADS_API_DEFAULT_VERSION,
+    canRefreshAccessToken,
   };
 }
 
@@ -574,16 +728,24 @@ async function refreshGoogleAccessToken(): Promise<string> {
       "Missing Google OAuth credentials. Provide GOOGLE_ADS_ACCESS_TOKEN or refresh token/client credentials."
     );
   }
-  const response = await fetchWithTimeout("https://oauth2.googleapis.com/token", {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: new URLSearchParams({
-      client_id: credentials.googleClientId,
-      client_secret: credentials.googleClientSecret,
-      refresh_token: credentials.googleRefreshToken,
-      grant_type: "refresh_token",
-    }),
-  });
+  let response: Response;
+  try {
+    response = await fetchWithTimeout("https://oauth2.googleapis.com/token", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        client_id: credentials.googleClientId,
+        client_secret: credentials.googleClientSecret,
+        refresh_token: credentials.googleRefreshToken,
+        grant_type: "refresh_token",
+      }),
+    });
+  } catch (error) {
+    throw stepError(
+      "google_oauth",
+      `OAuth token request failed or timed out: ${error instanceof Error ? error.message : String(error)}`
+    );
+  }
   const text = await response.text();
   if (!response.ok) {
     throw stepError("google_oauth", `OAuth token request failed (${response.status}): ${text}`);
@@ -713,7 +875,7 @@ function buildGoogleAdsMutateOperations(
             positiveGeoTargetType: "PRESENCE",
             negativeGeoTargetType: "PRESENCE",
           },
-          startDateTime: `${group.startDate} 00:00:00`,
+          startDate: group.startDate,
           ...buildBidding(group),
         },
       },
@@ -801,10 +963,50 @@ function buildBidding(group: MediaPlanRowGroup): Record<string, unknown> {
   return { biddingStrategyType: "MAXIMIZE_CONVERSIONS", maximizeConversions: {} };
 }
 
-async function googleAdsMutate(config: GoogleAdsConfig, mutateOperations: unknown[]) {
+async function googleAdsValidateMutate(config: GoogleAdsConfig, mutateOperations: unknown[]) {
+  try {
+    return await googleAdsMutate(config, mutateOperations, true);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    const wrapped = stepError("google_ads_validate", message) as Error & {
+      payload?: unknown;
+      status?: number;
+    };
+    if (error instanceof GoogleAdsApiRequestError) {
+      wrapped.payload = error.payload;
+      wrapped.status = error.status;
+    }
+    throw wrapped;
+  }
+}
+
+async function googleAdsValidateMutateWithPolicyExemptions(
+  config: GoogleAdsConfig,
+  mutateOperations: unknown[]
+): Promise<unknown[]> {
+  try {
+    await googleAdsValidateMutate(config, mutateOperations);
+    return mutateOperations;
+  } catch (error) {
+    const exemptions = collectExemptiblePolicyViolations(error);
+    if (exemptions.length === 0) {
+      throw error;
+    }
+    const retryOperations = applyPolicyExemptions(mutateOperations, exemptions);
+    console.warn("[media-plan:create-campaign] google_ads_policy_exemptions_retry", {
+      customerId: config.customerId,
+      exemptionCount: exemptions.length,
+      violatingTexts: exemptions.map((item) => item.key.violatingText),
+    });
+    await googleAdsValidateMutate(config, retryOperations);
+    return retryOperations;
+  }
+}
+
+async function googleAdsMutate(config: GoogleAdsConfig, mutateOperations: unknown[], validateOnly = false) {
   return googleAdsRequest(config, "/googleAds:mutate", {
     partialFailure: false,
-    validateOnly: false,
+    validateOnly,
     mutateOperations,
   });
 }
@@ -815,6 +1017,31 @@ async function googleAdsSearch(config: GoogleAdsConfig, query: string): Promise<
 }
 
 async function googleAdsRequest(config: GoogleAdsConfig, pathSuffix: string, body: unknown): Promise<unknown> {
+  const firstAttempt = await sendGoogleAdsRequest(config, pathSuffix, body);
+  if (!firstAttempt.ok && firstAttempt.status === 401 && config.canRefreshAccessToken) {
+    console.warn("[media-plan:create-campaign] google_ads_access_token_rejected_refreshing", {
+      customerId: config.customerId,
+      pathSuffix,
+    });
+    config.accessToken = await refreshGoogleAccessToken();
+    const retryAttempt = await sendGoogleAdsRequest(config, pathSuffix, body);
+    if (retryAttempt.ok) {
+      return retryAttempt.text ? JSON.parse(retryAttempt.text) : {};
+    }
+    throw googleAdsHttpError(retryAttempt.status, retryAttempt.text);
+  }
+
+  if (!firstAttempt.ok) {
+    throw googleAdsHttpError(firstAttempt.status, firstAttempt.text);
+  }
+  return firstAttempt.text ? JSON.parse(firstAttempt.text) : {};
+}
+
+async function sendGoogleAdsRequest(
+  config: GoogleAdsConfig,
+  pathSuffix: string,
+  body: unknown
+): Promise<{ ok: boolean; status: number; text: string }> {
   let response: Response;
   try {
     response = await fetchWithTimeout(
@@ -829,7 +1056,7 @@ async function googleAdsRequest(config: GoogleAdsConfig, pathSuffix: string, bod
         },
         body: JSON.stringify(body),
       },
-      60_000
+      GOOGLE_ADS_REQUEST_TIMEOUT_MS
     );
   } catch (error) {
     throw stepError(
@@ -838,10 +1065,112 @@ async function googleAdsRequest(config: GoogleAdsConfig, pathSuffix: string, bod
     );
   }
   const text = await response.text();
-  if (!response.ok) {
-    throw stepError("google_ads_api", `Google Ads API failed (${response.status}): ${text}`);
+  return {
+    ok: response.ok,
+    status: response.status,
+    text,
+  };
+}
+
+function googleAdsHttpError(status: number, text: string) {
+  const failedStep = status === 401 || /UNAUTHENTICATED|invalid authentication credentials/i.test(text)
+    ? "google_ads_auth"
+    : "google_ads_api";
+  return new GoogleAdsApiRequestError(failedStep, status, text, parseJsonOrNull(text));
+}
+
+function collectExemptiblePolicyViolations(error: unknown): PolicyViolationExemption[] {
+  const payload = (error as { payload?: unknown }).payload;
+  const googleAdsErrors = extractGoogleAdsErrors(payload);
+  if (googleAdsErrors.length === 0) {
+    return [];
   }
-  return text ? JSON.parse(text) : {};
+  const exemptions: PolicyViolationExemption[] = [];
+  for (const item of googleAdsErrors) {
+    const details = item.details?.policyViolationDetails;
+    const operationIndex = item.location?.fieldPathElements?.find(
+      (element) => element.fieldName === "mutate_operations"
+    )?.index;
+    const policyName = details?.key?.policyName;
+    const violatingText = details?.key?.violatingText;
+    if (!details?.isExemptible || typeof operationIndex !== "number" || !policyName || !violatingText) {
+      return [];
+    }
+    exemptions.push({
+      operationIndex,
+      key: {
+        policyName,
+        violatingText,
+      },
+    });
+  }
+  return exemptions;
+}
+
+function applyPolicyExemptions(
+  mutateOperations: unknown[],
+  exemptions: PolicyViolationExemption[]
+): unknown[] {
+  const cloned = JSON.parse(JSON.stringify(mutateOperations)) as Array<Record<string, unknown>>;
+  const byOperation = new Map<number, PolicyViolationExemption["key"][]>();
+  for (const exemption of exemptions) {
+    byOperation.set(exemption.operationIndex, [
+      ...(byOperation.get(exemption.operationIndex) || []),
+      exemption.key,
+    ]);
+  }
+
+  for (const [operationIndex, keys] of byOperation) {
+    const operation = cloned[operationIndex];
+    const adGroupCriterionOperation = operation?.adGroupCriterionOperation;
+    if (!adGroupCriterionOperation || typeof adGroupCriterionOperation !== "object") {
+      continue;
+    }
+    (adGroupCriterionOperation as Record<string, unknown>).exemptPolicyViolationKeys = keys;
+  }
+
+  return cloned;
+}
+
+function extractGoogleAdsErrors(payload: unknown): Array<{
+  details?: {
+    policyViolationDetails?: {
+      isExemptible?: boolean;
+      key?: {
+        policyName?: string;
+        violatingText?: string;
+      };
+    };
+  };
+  location?: {
+    fieldPathElements?: Array<{
+      fieldName?: string;
+      index?: number;
+    }>;
+  };
+}> {
+  if (!payload || typeof payload !== "object") {
+    return [];
+  }
+  const details = (payload as { error?: { details?: unknown[] } }).error?.details;
+  if (!Array.isArray(details)) {
+    return [];
+  }
+  return details.flatMap((detail) => {
+    if (!detail || typeof detail !== "object") {
+      return [];
+    }
+    const errors = (detail as { errors?: unknown[] }).errors;
+    return Array.isArray(errors) ? errors : [];
+  }) as ReturnType<typeof extractGoogleAdsErrors>;
+}
+
+function parseJsonOrNull(value: string): unknown {
+  try {
+    return JSON.parse(value) as unknown;
+  } catch {
+    return null;
+  }
 }
 
 async function updateRowsForSetup(
@@ -891,8 +1220,27 @@ async function updateRowsForFailure(
   config: ReturnType<typeof resolveNotionConfig>,
   schemas: Record<string, NotionPropertySchema>,
   rows: MediaPlanNotionRow[],
-  errorMessage: string
+  errorMessage: string,
+  options: { retryable?: boolean } = {}
 ) {
+  if (options.retryable) {
+    const appended = [
+      "",
+      `SetupRetryRequired: ${new Date().toISOString()}`,
+      `SetupError: ${errorMessage.slice(0, 1500)}`,
+    ].join("\n");
+    await Promise.all(
+      rows.map((row) =>
+        updateNotionPage(config, schemas, row.pageId, {
+          "65 Status": "Ready for Setup",
+          "67 Missing Info": false,
+          "70 Review Notes": `${row.reviewNotes}${appended}`,
+        })
+      )
+    );
+    return;
+  }
+
   await Promise.all(
     rows.map((row) =>
       updateNotionPage(config, schemas, row.pageId, {
@@ -950,15 +1298,23 @@ async function notionRequest(
   pathname: string,
   options: { method: "GET" | "POST" | "PATCH"; body?: unknown }
 ): Promise<unknown> {
-  const response = await fetchWithTimeout(`${NOTION_API_BASE}${pathname}`, {
-    method: options.method,
-    headers: {
-      Authorization: `Bearer ${config.token}`,
-      "Notion-Version": NOTION_API_VERSION,
-      "Content-Type": "application/json",
-    },
-    body: options.body ? JSON.stringify(options.body) : undefined,
-  });
+  let response: Response;
+  try {
+    response = await fetchWithTimeout(`${NOTION_API_BASE}${pathname}`, {
+      method: options.method,
+      headers: {
+        Authorization: `Bearer ${config.token}`,
+        "Notion-Version": NOTION_API_VERSION,
+        "Content-Type": "application/json",
+      },
+      body: options.body ? JSON.stringify(options.body) : undefined,
+    }, NOTION_REQUEST_TIMEOUT_MS);
+  } catch (error) {
+    throw stepError(
+      "notion_api",
+      `Notion API request failed or timed out: ${error instanceof Error ? error.message : String(error)}`
+    );
+  }
   const text = await response.text();
   if (!response.ok) {
     throw stepError("notion_api", `Notion API failed (${response.status}): ${text}`);
@@ -1013,6 +1369,11 @@ function readOptions(props: Record<string, unknown>, name: string): string[] {
   }
   const single = prop?.select?.name || prop?.status?.name || richTextPlain(prop?.rich_text);
   return single ? [single] : [];
+}
+
+function readFirstRelationId(props: Record<string, unknown>, name: string): string {
+  const prop = props[name] as { relation?: Array<{ id?: string }> } | undefined;
+  return Array.isArray(prop?.relation) ? prop.relation.find((item) => item.id)?.id || "" : "";
 }
 
 function readNumber(props: Record<string, unknown>, name: string): number | null {
@@ -1096,6 +1457,14 @@ function hasCampaignResultForBatch(reviewNotes: string, batchId: string): boolea
   );
 }
 
+function isRetryableMissingInfoRow(row: MediaPlanNotionRow): boolean {
+  if (row.status !== "Missing Info") {
+    return false;
+  }
+  const notes = `${row.missingInfoNotes}\n${row.reviewNotes}\n${row.setupNotes}`;
+  return /Google Ads API failed|UNAUTHENTICATED|invalid authentication credentials|SetupError|google_ads_auth|aborted|timed out|timeout/i.test(notes);
+}
+
 function duplicateError(batchId: string, rows: MediaPlanNotionRow[]) {
   const error = stepError(
     "duplicate_prevention",
@@ -1112,15 +1481,25 @@ function normalizeFailure(
   rows: MediaPlanNotionRow[]
 ): MediaPlanCreateCampaignFailureResponse {
   const record = error as { failedStep?: string; duplicate?: boolean; notionPageUrls?: string[] };
+  const inferredFailedStep = record.failedStep || (isAbortLike(error) ? "timeout" : "unknown");
   return {
     success: false,
     source: MEDIA_PLAN_SOURCE,
     batchId,
     error: error instanceof Error ? error.message : String(error),
-    failedStep: record.failedStep || "unknown",
+    failedStep: inferredFailedStep,
     notionPageUrls: record.notionPageUrls || rows.map((row) => row.pageUrl).filter(Boolean),
     duplicate: Boolean(record.duplicate),
   };
+}
+
+function isRetryableOperationalFailure(failedStep: string | undefined): boolean {
+  return ["google_ads_auth", "google_oauth", "configuration", "google_ads_api", "google_ads_validate", "notion_api", "timeout"].includes(failedStep || "");
+}
+
+function isAbortLike(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return (error instanceof Error && error.name === "AbortError") || /aborted|abort|timed out|timeout/i.test(message);
 }
 
 function stepError(failedStep: string, message: string) {

@@ -2,13 +2,25 @@
 
 import { FormEvent } from "react";
 import type { ReactNode } from "react";
-import { Loader2Icon, WandSparklesIcon } from "lucide-react";
+import { ChevronUpIcon, ClipboardListIcon, Loader2Icon, WandSparklesIcon } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
-import type { MediaPlanFormData } from "@/lib/media-plan/schema";
+import {
+  MEDIA_PLAN_LANGUAGE_OPTIONS,
+  MEDIA_PLAN_TARGET_LOCATION_OPTIONS,
+  SUPPORTED_CAMPAIGN_TYPE,
+  type MediaPlanFormData,
+} from "@/lib/media-plan/schema";
 import {
   getIssueMessage,
   MediaPlanValidationIssue,
@@ -22,7 +34,13 @@ interface MediaPlanFormProps {
   buttonLabel?: string;
   onChange: (nextValue: MediaPlanFormData) => void;
   onGenerate: () => void;
+  onMockup: () => void;
 }
+
+const CONTROL_CLASS =
+  "h-10 rounded-lg border-[#d7d7d7] bg-white px-3 text-sm shadow-none focus-visible:border-[#9f0019] focus-visible:ring-[#9f0019]/15 md:text-sm";
+const SELECT_TRIGGER_CLASS =
+  "h-10 w-full rounded-lg border-[#d7d7d7] bg-white px-3 text-sm shadow-none focus-visible:border-[#9f0019] focus-visible:ring-[#9f0019]/15 md:text-sm";
 
 export function MediaPlanForm({
   value,
@@ -32,6 +50,7 @@ export function MediaPlanForm({
   buttonLabel = "Generate Media Plan",
   onChange,
   onGenerate,
+  onMockup,
 }: MediaPlanFormProps) {
   function updateField<K extends keyof MediaPlanFormData>(key: K, fieldValue: MediaPlanFormData[K]) {
     onChange({ ...value, [key]: fieldValue });
@@ -45,10 +64,15 @@ export function MediaPlanForm({
   return (
     <form
       onSubmit={handleSubmit}
-      className="rounded-2xl border border-[#dedede] bg-white p-4 shadow-sm sm:p-5"
+      className="overflow-hidden rounded-2xl border border-[#dedede] bg-white shadow-md"
     >
-      <div className="grid gap-4 lg:grid-cols-[minmax(0,1.1fr)_minmax(280px,0.9fr)]">
-        <div className="grid gap-4 sm:grid-cols-2">
+      <div className="flex items-center justify-between border-b border-[#dedede] px-5 py-3 sm:px-6">
+        <h2 className="text-xl font-bold leading-tight text-[#1f2937]">Input & Brief</h2>
+        <ChevronUpIcon className="size-5 text-[#1f2937]" aria-hidden="true" />
+      </div>
+
+      <div className="p-4 sm:p-5">
+        <div className="grid gap-x-6 gap-y-4 sm:grid-cols-2">
           <FormField
             htmlFor="media-plan-website-url"
             label="Website URL"
@@ -60,13 +84,14 @@ export function MediaPlanForm({
               value={value.websiteUrl}
               onChange={(event) => updateField("websiteUrl", event.target.value)}
               placeholder="https://example.com"
+              className={CONTROL_CLASS}
               aria-invalid={Boolean(getIssueMessage(issues, "websiteUrl"))}
             />
           </FormField>
 
           <FormField
             htmlFor="media-plan-ad-budget"
-            label="Ad Budget"
+            label="Ad Budget (MYR)"
             required
             error={getIssueMessage(issues, "adBudget")}
           >
@@ -76,6 +101,7 @@ export function MediaPlanForm({
               onChange={(event) => updateField("adBudget", event.target.value)}
               inputMode="decimal"
               placeholder="150"
+              className={CONTROL_CLASS}
               aria-invalid={Boolean(getIssueMessage(issues, "adBudget"))}
             />
           </FormField>
@@ -91,6 +117,7 @@ export function MediaPlanForm({
               value={value.googleCid}
               onChange={(event) => updateField("googleCid", event.target.value)}
               placeholder="697-252-8848"
+              className={CONTROL_CLASS}
               aria-invalid={Boolean(getIssueMessage(issues, "googleCid"))}
             />
           </FormField>
@@ -98,63 +125,106 @@ export function MediaPlanForm({
           <FormField
             htmlFor="media-plan-campaign-type"
             label="Campaign Type"
+            required
             error={getIssueMessage(issues, "campaignType")}
           >
-            <Input
-              id="media-plan-campaign-type"
+            <Select
               value={value.campaignType}
-              onChange={(event) => updateField("campaignType", event.target.value)}
-              list="media-plan-campaign-types"
-              aria-invalid={Boolean(getIssueMessage(issues, "campaignType"))}
-            />
-            <datalist id="media-plan-campaign-types">
-              <option value="Search" />
-              <option value="Performance Max" />
-              <option value="Shopping" />
-              <option value="Video" />
-              <option value="Display" />
-              <option value="Demand Gen" />
-              <option value="AI Max" />
-            </datalist>
+              onValueChange={(nextValue) => updateField("campaignType", nextValue)}
+            >
+              <SelectTrigger
+                id="media-plan-campaign-type"
+                className={SELECT_TRIGGER_CLASS}
+                aria-invalid={Boolean(getIssueMessage(issues, "campaignType"))}
+              >
+                <SelectValue placeholder="Search" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value={SUPPORTED_CAMPAIGN_TYPE}>{SUPPORTED_CAMPAIGN_TYPE}</SelectItem>
+              </SelectContent>
+            </Select>
           </FormField>
 
-          <FormField htmlFor="media-plan-target-location" label="Target Location">
-            <Input
-              id="media-plan-target-location"
+          <FormField
+            htmlFor="media-plan-target-location"
+            label="Target Location"
+            required
+            error={getIssueMessage(issues, "targetLocation")}
+          >
+            <Select
               value={value.targetLocation}
-              onChange={(event) => updateField("targetLocation", event.target.value)}
-              placeholder="Malaysia Nationwide"
-            />
+              onValueChange={(nextValue) => updateField("targetLocation", nextValue)}
+            >
+              <SelectTrigger
+                id="media-plan-target-location"
+                className={SELECT_TRIGGER_CLASS}
+                aria-invalid={Boolean(getIssueMessage(issues, "targetLocation"))}
+              >
+                <SelectValue placeholder="Malaysia Nationwide" />
+              </SelectTrigger>
+              <SelectContent>
+                {MEDIA_PLAN_TARGET_LOCATION_OPTIONS.map((location) => (
+                  <SelectItem key={location} value={location}>
+                    {location}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </FormField>
 
-          <FormField htmlFor="media-plan-language" label="Language">
-            <Input
-              id="media-plan-language"
+          <FormField
+            htmlFor="media-plan-language"
+            label="Language"
+            required
+            error={getIssueMessage(issues, "language")}
+          >
+            <Select
               value={value.language}
-              onChange={(event) => updateField("language", event.target.value)}
-              placeholder="Infer from website later"
-            />
+              onValueChange={(nextValue) => updateField("language", nextValue)}
+            >
+              <SelectTrigger
+                id="media-plan-language"
+                className={SELECT_TRIGGER_CLASS}
+                aria-invalid={Boolean(getIssueMessage(issues, "language"))}
+              >
+                <SelectValue placeholder="English" />
+              </SelectTrigger>
+              <SelectContent>
+                {MEDIA_PLAN_LANGUAGE_OPTIONS.map((language) => (
+                  <SelectItem key={language} value={language}>
+                    {language}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </FormField>
-        </div>
 
-        <div className="flex flex-col gap-4">
-          <FormField htmlFor="media-plan-special-remarks" label="Special Remarks">
-            <Textarea
-              id="media-plan-special-remarks"
-              value={value.specialRemarks}
-              onChange={(event) => updateField("specialRemarks", event.target.value)}
-              placeholder="Optional notes for campaign angle, exclusions, or landing page context."
-              className="min-h-32 resize-y"
-            />
-          </FormField>
+          <div className="sm:col-span-2">
+            <FormField htmlFor="media-plan-special-remarks" label="Special Remarks">
+              <Textarea
+                id="media-plan-special-remarks"
+                value={value.specialRemarks}
+                onChange={(event) => updateField("specialRemarks", event.target.value)}
+                placeholder="Optional notes for campaign angle, exclusions, or landing page context."
+                className="min-h-20 resize-y rounded-lg border-[#d7d7d7] bg-white px-3 py-2.5 text-sm shadow-none focus-visible:border-[#9f0019] focus-visible:ring-[#9f0019]/15 md:text-sm"
+              />
+            </FormField>
+          </div>
 
-          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-            <p className="text-sm text-[#667085]">
-              Generates a strict Google Search plan through the server. Approval stays disabled until Phase 3.
-            </p>
+          <div className="grid gap-3 sm:col-span-2 sm:grid-cols-[160px_minmax(0,1fr)]">
+            <Button
+              type="button"
+              variant="outline"
+              className="h-10 rounded-lg border-[#d7d7d7] bg-white text-sm font-bold text-[#344054] hover:bg-[#f7f7f7]"
+              disabled={generateDisabled || generating}
+              onClick={onMockup}
+            >
+              <ClipboardListIcon className="size-4" />
+              Mockup
+            </Button>
             <Button
               type="submit"
-              className="h-10 bg-[#9f0019] text-white hover:bg-[#820015]"
+              className="h-10 rounded-lg bg-[#b00012] text-sm font-bold text-white shadow-sm hover:bg-[#92000f]"
               disabled={generateDisabled || generating}
             >
               {generating ? <Loader2Icon className="size-4 animate-spin" /> : <WandSparklesIcon className="size-4" />}
@@ -182,7 +252,7 @@ function FormField({
 }) {
   return (
     <div className="grid gap-1.5">
-      <Label htmlFor={htmlFor} className="text-sm font-semibold text-[#344054]">
+      <Label htmlFor={htmlFor} className="text-[13px] font-bold leading-tight text-[#344054]">
         {label}
         {required ? <span className="text-[#be123c]"> *</span> : null}
       </Label>

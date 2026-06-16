@@ -1,7 +1,30 @@
 export const SUPPORTED_CAMPAIGN_TYPE = "Search";
 export const DEFAULT_TARGET_LOCATION = "Malaysia Nationwide";
+export const DEFAULT_MEDIA_PLAN_LANGUAGE = "English";
 export const DEFAULT_NETWORK = "Google Search Only";
 export const DEFAULT_CAMPAIGN_STATUS = "PAUSED";
+
+export const MEDIA_PLAN_TARGET_LOCATION_OPTIONS = [
+  "Malaysia Nationwide",
+  "Selangor",
+  "Kuala Lumpur",
+  "Johor",
+  "Penang",
+  "Perak",
+  "Pahang",
+  "Negeri Sembilan",
+  "Melaka",
+  "Kedah",
+  "Kelantan",
+  "Terengganu",
+  "Perlis",
+  "Sabah",
+  "Sarawak",
+  "Putrajaya",
+  "Labuan",
+] as const;
+
+export const MEDIA_PLAN_LANGUAGE_OPTIONS = ["English", "Malay", "Chinese"] as const;
 
 export const MEDIA_PLAN_LIMITS = {
   headline: 30,
@@ -26,7 +49,7 @@ export type MediaPlanStatus =
 
 export type MediaPlanCampaignObjective = "Leads" | "Sales" | "Website Traffic";
 export type MediaPlanBiddingStrategy = "Conversions" | "Clicks";
-export type MediaPlanLanguage = "English" | "Malay" | "Chinese";
+export type MediaPlanLanguage = (typeof MEDIA_PLAN_LANGUAGE_OPTIONS)[number];
 export type MediaPlanKeywordMatchType = "BROAD" | "PHRASE" | "EXACT";
 
 export interface MediaPlanFormData {
@@ -101,12 +124,25 @@ export interface MediaPlanGenerateRequest {
   language?: string;
 }
 
-export interface MediaPlanGenerateSuccessResponse {
+export type MediaPlanGenerationStatus = "queued" | "in_progress" | "completed";
+
+export interface MediaPlanGenerateOpenAIMeta {
+  responseId: string | null;
+  model: string | null;
+}
+
+export interface MediaPlanGenerateCompletedResponse {
   success: true;
+  status: "completed";
   plan: MediaPlan;
-  openAi: {
-    responseId: string | null;
-    model: string | null;
+  openAi: MediaPlanGenerateOpenAIMeta;
+}
+
+export interface MediaPlanGeneratePendingResponse {
+  success: true;
+  status: Exclude<MediaPlanGenerationStatus, "completed">;
+  openAi: MediaPlanGenerateOpenAIMeta & {
+    responseId: string;
   };
 }
 
@@ -117,7 +153,8 @@ export interface MediaPlanGenerateErrorResponse {
 }
 
 export type MediaPlanGenerateResponse =
-  | MediaPlanGenerateSuccessResponse
+  | MediaPlanGenerateCompletedResponse
+  | MediaPlanGeneratePendingResponse
   | MediaPlanGenerateErrorResponse;
 
 export interface MediaPlanApproveRequest {
@@ -180,6 +217,38 @@ export type MediaPlanCreateCampaignResponse =
   | MediaPlanCreateCampaignSuccessResponse
   | MediaPlanCreateCampaignFailureResponse;
 
+export interface MediaPlanApproveAndCreateSuccessResponse {
+  success: true;
+  source: "media-plan";
+  batchId: string;
+  notionPageUrls: string[];
+  createdRowCount: number;
+  approvalStatus: "ready_for_setup";
+  duplicateApproval: boolean;
+  customerId: string;
+  campaignId: string;
+  campaignResourceName: string;
+  campaignStatus: "PAUSED";
+  createdAdGroups: number;
+  createdAds: number;
+  googleAdsReviewLink: string;
+}
+
+export interface MediaPlanApproveAndCreateFailureResponse {
+  success: false;
+  source?: "media-plan";
+  batchId?: string;
+  error: string;
+  issues?: Array<{ path: string; message: string }>;
+  failedStep?: string;
+  notionPageUrls?: string[];
+  duplicate?: boolean;
+}
+
+export type MediaPlanApproveAndCreateResponse =
+  | MediaPlanApproveAndCreateSuccessResponse
+  | MediaPlanApproveAndCreateFailureResponse;
+
 export const DEFAULT_MEDIA_PLAN_FORM: MediaPlanFormData = {
   websiteUrl: "",
   adBudget: "",
@@ -187,7 +256,7 @@ export const DEFAULT_MEDIA_PLAN_FORM: MediaPlanFormData = {
   campaignType: SUPPORTED_CAMPAIGN_TYPE,
   specialRemarks: "",
   targetLocation: DEFAULT_TARGET_LOCATION,
-  language: "",
+  language: DEFAULT_MEDIA_PLAN_LANGUAGE,
 };
 
 export const MEDIA_PLAN_PROMPT_VARIABLE_DEFAULTS = {

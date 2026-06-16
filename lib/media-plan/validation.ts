@@ -1,6 +1,10 @@
 import {
+  DEFAULT_MEDIA_PLAN_LANGUAGE,
   DEFAULT_NETWORK,
+  DEFAULT_TARGET_LOCATION,
+  MEDIA_PLAN_LANGUAGE_OPTIONS,
   MEDIA_PLAN_LIMITS,
+  MEDIA_PLAN_TARGET_LOCATION_OPTIONS,
   MediaPlan,
   MediaPlanBiddingStrategy,
   MediaPlanCampaignObjective,
@@ -30,34 +34,15 @@ const CAMPAIGN_OBJECTIVES = new Set<MediaPlanCampaignObjective>([
   "Website Traffic",
 ]);
 const BIDDING_STRATEGIES = new Set<MediaPlanBiddingStrategy>(["Conversions", "Clicks"]);
-const LANGUAGES = new Set<MediaPlanLanguage>(["English", "Malay", "Chinese"]);
+const LANGUAGES = new Set<MediaPlanLanguage>(MEDIA_PLAN_LANGUAGE_OPTIONS);
 const MATCH_TYPES = new Set<MediaPlanKeywordMatchType>(["BROAD", "PHRASE", "EXACT"]);
 const MAX_SPECIAL_REMARKS_LENGTH = 4000;
-const MALAYSIA_LOCATION_OPTIONS = new Set([
-  "Malaysia Nationwide",
-  "Kuala Lumpur",
-  "Selangor",
-  "Johor",
-  "Penang",
-  "Sabah",
-  "Sarawak",
-  "Perak",
-  "Kedah",
-  "Kelantan",
-  "Melaka",
-  "Negeri Sembilan",
-  "Pahang",
-  "Perlis",
-  "Terengganu",
-  "Putrajaya",
-  "Labuan",
-]);
+const MALAYSIA_LOCATION_OPTIONS = new Set<string>(MEDIA_PLAN_TARGET_LOCATION_OPTIONS);
 const UNSUPPORTED_CLAIM_PATTERNS: Array<{ pattern: RegExp; label: string }> = [
   { pattern: /\baward[-\s]?winning\b/i, label: "award claim" },
   { pattern: /(?:^|\s)#\s?1\b|\bnumber\s+one\b/i, label: "ranking claim" },
   { pattern: /\b(?:cheapest|best\s+in|best\s+price)\b/i, label: "superlative pricing claim" },
   { pattern: /\bguaranteed\b/i, label: "guarantee claim" },
-  { pattern: /\b(?:certified|licensed|accredited)\b/i, label: "certification claim" },
   { pattern: /\b(?:5[-\s]?star|five[-\s]?star|top[-\s]?rated)\b/i, label: "review claim" },
   { pattern: /\b(?:free|discount|promo|promotion|limited\s+time)\b/i, label: "promotion claim" },
   { pattern: /\bRM\s?\d/i, label: "specific price claim" },
@@ -83,6 +68,8 @@ export function validateMediaPlanForm(form: MediaPlanFormData): MediaPlanValidat
   }
 
   validateCampaignType(issues, "campaignType", form.campaignType);
+  validateLocationValue(issues, "targetLocation", form.targetLocation);
+  validateLanguageValue(issues, "language", form.language);
 
   return { valid: issues.length === 0, issues };
 }
@@ -137,8 +124,8 @@ export function normalizeMediaPlanFormInput(value: unknown): MediaPlanFormData {
     googleCid: readString(body.googleCid),
     campaignType: readString(body.campaignType) || SUPPORTED_CAMPAIGN_TYPE,
     specialRemarks: readString(body.specialRemarks),
-    targetLocation: readString(body.targetLocation) || "Malaysia Nationwide",
-    language: readString(body.language),
+    targetLocation: readString(body.targetLocation) || DEFAULT_TARGET_LOCATION,
+    language: readString(body.language) || DEFAULT_MEDIA_PLAN_LANGUAGE,
   };
 }
 
@@ -504,6 +491,21 @@ function validateLocationArray(issues: MediaPlanValidationIssue[], value: unknow
       });
     }
   });
+}
+
+function validateLocationValue(issues: MediaPlanValidationIssue[], path: string, value: string) {
+  if (!MALAYSIA_LOCATION_OPTIONS.has(value.trim())) {
+    issues.push({
+      path,
+      message: "Target location must be Malaysia Nationwide or a supported Malaysia location.",
+    });
+  }
+}
+
+function validateLanguageValue(issues: MediaPlanValidationIssue[], path: string, value: string) {
+  if (!LANGUAGES.has(value.trim() as MediaPlanLanguage)) {
+    issues.push({ path, message: "Language must be English, Malay, or Chinese." });
+  }
 }
 
 function validateUnsafeClaims(

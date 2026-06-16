@@ -23,13 +23,14 @@ const argv = process.argv.slice(2);
 if (argv.includes("--help") || argv.includes("-h")) {
   console.log(`
 Usage:
-  node scripts/create_campaign_from_notion.mjs --batchId <MP-YYYYMMDD-HHMMSS> --googleCid <cid> --source=media-plan [--dryRun]
+  node scripts/create_campaign_from_notion.mjs --batchId <MP-YYYYMMDD-HHMMSS> --googleCid <cid> --source=media-plan [--dryRun] [--validateOnly]
 
 Media plan options:
   --batchId <id>          Approved media-plan batch ID.
   --googleCid <cid>       Google Ads customer ID.
   --source=media-plan     Required for the Phase 4 media-plan flow.
   --dryRun                Query Notion and print the planned payload without Google Ads or Notion updates.
+  --validateOnly          Validate the Google Ads mutate request without creating anything.
 `.trim());
   if (existsSync(legacyScript)) {
     console.log("\nLegacy Notion setup-row flow is still available through:");

@@ -14,6 +14,7 @@ export const GOOGLE_AD_GROUP_SETUP_DATA_SOURCE_ID =
 
 export const GOOGLE_AD_GROUP_SETUP_PROPERTIES = [
   "01 Ad Group Name",
+  "02 Client / Ad Account",
   "04 Brand / Client Name",
   "05 Campaign Name",
   "06 Campaign Objective",
@@ -81,7 +82,12 @@ export const GOOGLE_AD_GROUP_SETUP_PROPERTIES = [
 export type GoogleAdGroupSetupPropertyName =
   (typeof GOOGLE_AD_GROUP_SETUP_PROPERTIES)[number];
 
-export type NotionMapperValue = string | string[] | number | boolean | null;
+export interface NotionRelationValue {
+  type: "relation";
+  pageId: string;
+}
+
+export type NotionMapperValue = string | string[] | number | boolean | NotionRelationValue | null;
 
 export interface MappedGoogleAdGroupSetupRow {
   adGroupName: string;
@@ -95,6 +101,7 @@ export interface MapMediaPlanToNotionRowsInput {
   source: "media-plan";
   createdAt: string;
   clientRequestId?: string;
+  adAccountPageId?: string;
 }
 
 const KEYWORD_PROPERTIES = [
@@ -202,6 +209,9 @@ function buildCampaignProperties(
   const reviewNotes = buildReviewNotes(input);
 
   return {
+    "02 Client / Ad Account": input.adAccountPageId
+      ? { type: "relation", pageId: input.adAccountPageId }
+      : null,
     "04 Brand / Client Name": campaign.brandOrClientName,
     "05 Campaign Name": campaign.campaignName,
     "06 Campaign Objective": campaignObjective,

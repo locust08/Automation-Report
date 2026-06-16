@@ -8,6 +8,7 @@ import type { MediaPlanCreateCampaignResponse } from "@/lib/media-plan/schema";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
+export const maxDuration = 300;
 
 export async function POST(request: Request): Promise<NextResponse<MediaPlanCreateCampaignResponse>> {
   try {
@@ -98,7 +99,7 @@ export async function POST(request: Request): Promise<NextResponse<MediaPlanCrea
 function isDashboardResponse(
   result: CreateSearchCampaignFromMediaPlanResult
 ): result is MediaPlanCreateCampaignResponse {
-  return !("dryRun" in result && result.dryRun === true);
+  return !("dryRun" in result && result.dryRun === true) && !("validateOnly" in result && result.validateOnly === true);
 }
 
 function readString(value: unknown): string {

@@ -1,5 +1,6 @@
 import { Client } from "@notionhq/client";
 
+import { normalizeGoogleAccountId } from "@/lib/reporting/env";
 import {
   GOOGLE_AD_GROUP_SETUP_DATA_SOURCE_ID,
   GOOGLE_AD_GROUP_SETUP_PROPERTIES,
@@ -48,6 +49,7 @@ export interface ApproveMediaPlanToNotionInput {
   source: "media-plan";
   clientRequestId?: string;
   batchId?: string;
+  adAccountPageId?: string;
 }
 
 interface NotionDataSourceConfig {
@@ -58,6 +60,7 @@ interface NotionDataSourceConfig {
 
 interface NotionPropertySchema {
   type?: string;
+  relation?: unknown;
   select?: {
     options?: Array<{ name?: string }>;
   };
@@ -81,6 +84,11 @@ interface CreatedNotionPage {
 }
 
 const BATCH_PATTERN = /MediaPlanBatch:\s*(MP-\d{8}-\d{6})/;
+const NOTION_AD_ACCOUNT_PROPERTY_CANDIDATES = ["ID", "Google Ads Account ID", "Google CID"] as const;
+const OPTIONAL_GOOGLE_AD_GROUP_SETUP_PROPERTIES = new Set<GoogleAdGroupSetupPropertyName>([
+  "15 Network Notes",
+  "69 Setup Notes",
+]);
 
 export async function approveMediaPlanToNotion(
   input: ApproveMediaPlanToNotionInput
@@ -94,6 +102,20 @@ export async function approveMediaPlanToNotion(
   }
 
   const config = await resolveGoogleAdGroupSetupConfig();
+  const adAccountPageId =
+    input.adAccountPageId?.trim() || (await resolveGoogleAdAccountPageId(config.notion, input.googleCid));
+  if (!adAccountPageId) {
+    throw new GoogleAdGroupSetupValidationError(
+      "Google CID must match a Google Ad Account page in Notion before setup rows can be created.",
+      [
+        {
+          path: "googleCid",
+          message:
+            "No matching Notion Ad Account page was found. Add this Google CID to DB | Ad Accounts, then approve again.",
+        },
+      ]
+    );
+  }
   const notionOptionIssues = validateNotionOptionValues(input.mediaPlan, config.properties);
   if (notionOptionIssues.length > 0) {
     throw new GoogleAdGroupSetupValidationError(
@@ -147,6 +169,7 @@ export async function approveMediaPlanToNotion(
     source: input.source,
     createdAt,
     clientRequestId: input.clientRequestId?.trim() || undefined,
+    adAccountPageId,
   });
 
   const createdPages: CreatedNotionPage[] = [];
@@ -209,11 +232,21 @@ async function resolveGoogleAdGroupSetupConfig(): Promise<NotionDataSourceConfig
         ? (dataSource.properties as Record<string, NotionPropertySchema>)
         : {};
 
-    const missingProperties = GOOGLE_AD_GROUP_SETUP_PROPERTIES.filter((property) => !properties[property]);
+    const missingProperties = GOOGLE_AD_GROUP_SETUP_PROPERTIES.filter(
+      (property) => !properties[property] && !OPTIONAL_GOOGLE_AD_GROUP_SETUP_PROPERTIES.has(property)
+    );
     if (missingProperties.length > 0) {
       throw new GoogleAdGroupSetupConfigError(
         `Google Ads Ad Group Setup Requests is missing required properties: ${missingProperties.join(", ")}.`
       );
+    }
+    const skippedProperties = GOOGLE_AD_GROUP_SETUP_PROPERTIES.filter(
+      (property) => !properties[property] && OPTIONAL_GOOGLE_AD_GROUP_SETUP_PROPERTIES.has(property)
+    );
+    if (skippedProperties.length > 0) {
+      console.warn("[media-plan:approve] optional_notion_properties_missing", {
+        skippedProperties,
+      });
     }
 
     return {
@@ -376,8 +409,75 @@ function buildNotionPropertyValue(
       const names = arrayValue(value);
       return names.length > 0 ? { multi_select: names.map((name) => ({ name })) } : { multi_select: [] };
     }
+    case "relation": {
+      return isRelationValue(value) && value.pageId ? { relation: [{ id: value.pageId }] } : { relation: [] };
+    }
     default:
       return null;
+  }
+}
+
+async function resolveGoogleAdAccountPageId(notion: Client, googleCid: string): Promise<string | null> {
+  const normalizedGoogleCid = normalizeGoogleAccountId(googleCid);
+  if (!normalizedGoogleCid) {
+    return null;
+  }
+
+  const dataSourceId = await resolveAdAccountsDataSourceId(notion);
+  let startCursor: string | undefined;
+  do {
+    const response = await notion.dataSources.query({
+      data_source_id: dataSourceId,
+      page_size: 100,
+      start_cursor: startCursor,
+    });
+    for (const result of response.results) {
+      if (!("id" in result) || !("properties" in result)) {
+        continue;
+      }
+      const properties = result.properties as Record<string, unknown>;
+      const platform = readNotionOptionOrText(properties, "Platform");
+      if (platform && platform.toLowerCase() !== "google") {
+        continue;
+      }
+      const candidateId = NOTION_AD_ACCOUNT_PROPERTY_CANDIDATES.map((property) =>
+        readNotionPlainText(properties, property)
+      ).find(Boolean);
+      if (normalizeGoogleAccountId(candidateId || "") === normalizedGoogleCid) {
+        return result.id;
+      }
+    }
+    startCursor = response.has_more ? response.next_cursor || undefined : undefined;
+  } while (startCursor);
+
+  return null;
+}
+
+async function resolveAdAccountsDataSourceId(notion: Client): Promise<string> {
+  const configuredId =
+    process.env.NOTION_AD_ACCOUNTS_DATABASE_ID?.trim() || process.env.NOTION_DATABASE_ID?.trim();
+  if (!configuredId) {
+    throw new GoogleAdGroupSetupConfigError(
+      "Missing required env var NOTION_AD_ACCOUNTS_DATABASE_ID or NOTION_DATABASE_ID."
+    );
+  }
+
+  const normalizedId = normalizeNotionDataSourceId(configuredId);
+  try {
+    await notion.dataSources.retrieve({ data_source_id: normalizedId });
+    return normalizedId;
+  } catch {
+    const database = await notion.databases.retrieve({ database_id: configuredId });
+    const dataSourceId =
+      "data_sources" in database && Array.isArray(database.data_sources)
+        ? database.data_sources[0]?.id
+        : undefined;
+    if (!dataSourceId) {
+      throw new GoogleAdGroupSetupConfigError(
+        "Unable to find a Notion data source for the Ad Accounts database."
+      );
+    }
+    return normalizeNotionDataSourceId(dataSourceId);
   }
 }
 
@@ -434,14 +534,25 @@ function buildNotesContainsFilter(
   properties: Record<string, NotionPropertySchema>,
   value: string
 ): Record<string, unknown> | null {
-  const setupNotesType = properties["69 Setup Notes"]?.type;
-  if (setupNotesType === "title" || setupNotesType === "rich_text") {
-    return {
-      property: "69 Setup Notes",
-      [setupNotesType]: {
+  const filters: Record<string, unknown>[] = [];
+  for (const property of ["69 Setup Notes", "70 Review Notes"]) {
+    const type = properties[property]?.type;
+    if (type !== "title" && type !== "rich_text") {
+      continue;
+    }
+    filters.push({
+      property,
+      [type]: {
         contains: value,
       },
-    };
+    });
+  }
+
+  if (filters.length === 1) {
+    return filters[0];
+  }
+  if (filters.length > 1) {
+    return { or: filters };
   }
   return null;
 }
@@ -451,7 +562,9 @@ function extractBatchIdFromProperties(properties: unknown): string | null {
     return null;
   }
 
-  const notes = (properties as Record<string, unknown>)["69 Setup Notes"];
+  const notes =
+    (properties as Record<string, unknown>)["69 Setup Notes"] ||
+    (properties as Record<string, unknown>)["70 Review Notes"];
   if (!notes || typeof notes !== "object") {
     return null;
   }
@@ -496,6 +609,9 @@ function getPropertyOptions(property: NotionPropertySchema | undefined): Set<str
 }
 
 function textValue(value: NotionMapperValue): string {
+  if (isRelationValue(value)) {
+    return "";
+  }
   if (Array.isArray(value)) {
     return value.join(", ");
   }
@@ -509,6 +625,9 @@ function textValue(value: NotionMapperValue): string {
 }
 
 function firstOptionValue(value: NotionMapperValue): string {
+  if (isRelationValue(value)) {
+    return "";
+  }
   const first = Array.isArray(value) ? value[0] : value;
   if (typeof first === "boolean") {
     return first ? "YES" : "NO";
@@ -520,9 +639,49 @@ function firstOptionValue(value: NotionMapperValue): string {
 }
 
 function arrayValue(value: NotionMapperValue): string[] {
+  if (isRelationValue(value)) {
+    return [];
+  }
   if (Array.isArray(value)) {
     return value.map((item) => item.trim()).filter(Boolean);
   }
   const text = textValue(value);
   return text ? [text] : [];
+}
+
+function isRelationValue(value: NotionMapperValue): value is { type: "relation"; pageId: string } {
+  return value !== null && typeof value === "object" && !Array.isArray(value) && value.type === "relation";
+}
+
+function readNotionOptionOrText(properties: Record<string, unknown>, name: string): string {
+  const prop = properties[name] as
+    | {
+        select?: { name?: string };
+        status?: { name?: string };
+        rich_text?: unknown[];
+        title?: unknown[];
+      }
+    | undefined;
+  return prop?.select?.name || prop?.status?.name || richTextPlain(prop?.rich_text || prop?.title);
+}
+
+function readNotionPlainText(properties: Record<string, unknown>, name: string): string {
+  const prop = properties[name] as { rich_text?: unknown[]; title?: unknown[]; url?: string | null } | undefined;
+  return richTextPlain(prop?.rich_text || prop?.title) || prop?.url || "";
+}
+
+function richTextPlain(items: unknown): string {
+  if (!Array.isArray(items)) {
+    return "";
+  }
+  return items
+    .map((item) => {
+      if (!item || typeof item !== "object") {
+        return "";
+      }
+      const record = item as { plain_text?: string; text?: { content?: string } };
+      return record.plain_text || record.text?.content || "";
+    })
+    .join("")
+    .trim();
 }

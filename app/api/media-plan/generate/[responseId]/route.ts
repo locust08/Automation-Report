@@ -4,7 +4,7 @@ import {
   MediaPlanConfigError,
   MediaPlanInputError,
   MediaPlanOutputError,
-  startMediaPlanGeneration,
+  retrieveMediaPlanGeneration,
 } from "@/lib/openai/generateMediaPlan";
 import type { MediaPlanGenerateResponse } from "@/lib/media-plan/schema";
 import { normalizeMediaPlanFormInput } from "@/lib/media-plan/validation";
@@ -12,16 +12,18 @@ import { normalizeMediaPlanFormInput } from "@/lib/media-plan/validation";
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
-export async function POST(request: Request): Promise<NextResponse<MediaPlanGenerateResponse>> {
+export async function GET(
+  request: Request,
+  { params }: { params: Promise<{ responseId: string }> }
+): Promise<NextResponse<MediaPlanGenerateResponse>> {
   try {
-    const body = await request.json().catch(() => ({} as Record<string, unknown>));
-    const input = normalizeMediaPlanFormInput(body);
-    console.info("[media-plan:generate-route] request_started", {
-      hasWebsiteUrl: Boolean(input.websiteUrl),
-      hasGoogleCid: Boolean(input.googleCid),
-      campaignType: input.campaignType,
-    });
-    const result = await startMediaPlanGeneration(input);
+    const { responseId } = await params;
+    const searchParams = new URL(request.url).searchParams;
+    const formDefaults =
+      searchParams.size > 0
+        ? normalizeMediaPlanFormInput(Object.fromEntries(searchParams.entries()))
+        : null;
+    const result = await retrieveMediaPlanGeneration(decodeURIComponent(responseId || ""), formDefaults);
 
     if (result.status === "completed") {
       return NextResponse.json({
@@ -39,7 +41,7 @@ export async function POST(request: Request): Promise<NextResponse<MediaPlanGene
     });
   } catch (error) {
     if (error instanceof MediaPlanInputError || error instanceof MediaPlanOutputError) {
-      console.warn("[media-plan:generate-route] request_failed", {
+      console.warn("[media-plan:generate-route] poll_failed", {
         error: error.message,
         paths: error.issues.map((issue) => issue.path),
       });
@@ -54,7 +56,7 @@ export async function POST(request: Request): Promise<NextResponse<MediaPlanGene
     }
 
     if (error instanceof MediaPlanConfigError) {
-      console.error("[media-plan:generate-route] configuration_failed", {
+      console.error("[media-plan:generate-route] poll_configuration_failed", {
         error: error.message,
       });
       return NextResponse.json(
@@ -66,7 +68,7 @@ export async function POST(request: Request): Promise<NextResponse<MediaPlanGene
       );
     }
 
-    const message = error instanceof Error ? error.message : "Unable to generate media plan.";
+    const message = error instanceof Error ? error.message : "Unable to check media plan generation.";
     return NextResponse.json(
       {
         success: false,

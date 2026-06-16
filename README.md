@@ -24,6 +24,12 @@ Multi-page reporting website for Meta Ads Manager + Google Ads Manager with a sh
 - `/auction` Auction page (Google Ads Manager extraction):
   - Auction insights domain metrics
   - Average benchmark row
+- `/dashboard/media-plan` Media Plan setup page:
+  - User enters Website URL, Ad Budget, and Google CID
+  - OpenAI generates a structured Google Search media plan with `OPENAI_MEDIA_PLAN_MODEL` and `OPENAI_MEDIA_PLAN_PROMPT_ID`
+  - Generated JSON renders as editable campaign, ad group, keyword, RSA, sitelink, and planning-note sections
+  - Final approval stores one detailed Notion row per ad group, then creates the Google Ads campaign as `PAUSED`
+  - Success state shows the Notion batch details, campaign ID, and Google Ads review link
 
 ## URL Parameters
 
@@ -68,6 +74,7 @@ Credentials are expected from environment variables (Doppler injects these at ru
   - Example for this account: `{"283341217383189":"<Registered Company Name>"}`
 - `ADVANCED_REPORT_ENABLED` (optional; set `false` to disable only scheduled Advanced Report automation)
 - `OPENAI_API_KEY`, `ADVANCED_REPORT_OPENAI_MODEL`, `ADVANCED_REPORT_CREATIVE_OPENAI_MODEL` (Advanced Report AI discovery/creative analysis)
+- `OPENAI_MEDIA_PLAN_MODEL`, `OPENAI_MEDIA_PLAN_PROMPT_ID`, `OPENAI_MEDIA_PLAN_TIMEOUT_MS` (Media Plan generation; timeout is optional and defaults to `120000`)
 - `OPENROUTER_API_KEY`, `ADVANCED_REPORT_VIDEO_OPENROUTER_MODEL` (optional Advanced Report video creative analysis)
 - `DATAFORSEO_LOGIN`, `DATAFORSEO_PASSWORD` (Advanced Report keyword volume and People Also Ask data)
 
