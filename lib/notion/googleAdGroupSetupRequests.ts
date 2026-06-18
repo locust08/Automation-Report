@@ -12,7 +12,11 @@ import {
   mapMediaPlanToNotionRows,
   normalizeNotionDataSourceId,
 } from "@/lib/media-plan/notionMapper";
-import { MediaPlan, MediaPlanApproveSuccessResponse } from "@/lib/media-plan/schema";
+import {
+  MediaPlan,
+  MediaPlanApproveSuccessResponse,
+  normalizeMediaPlanCampaignObjective,
+} from "@/lib/media-plan/schema";
 import { getMediaPlanAssets, mediaPlanHasAssets } from "@/lib/media-plan/assets";
 import { MediaPlanValidationIssue, validateGeneratedMediaPlan } from "@/lib/media-plan/validation";
 
@@ -348,6 +352,13 @@ function validateNotionOptionValues(
   properties: Record<string, NotionPropertySchema>
 ): MediaPlanValidationIssue[] {
   const issues: MediaPlanValidationIssue[] = [];
+  validateOptionValue(
+    issues,
+    properties["06 Campaign Objective"],
+    normalizeMediaPlanCampaignObjective(mediaPlan.campaign.campaignObjective) || mediaPlan.campaign.campaignObjective,
+    "campaign.campaignObjective",
+    "Campaign objective must match an existing Notion option."
+  );
   validateOptionList(
     issues,
     properties["16 Target Location"],
@@ -363,6 +374,20 @@ function validateNotionOptionValues(
     "Language must match an existing Notion option."
   );
   return issues;
+}
+
+function validateOptionValue(
+  issues: MediaPlanValidationIssue[],
+  property: NotionPropertySchema | undefined,
+  value: string,
+  path: string,
+  message: string
+) {
+  const options = getPropertyOptions(property);
+  if (!options || options.has(value)) {
+    return;
+  }
+  issues.push({ path, message: `${message} Invalid value: ${value}.` });
 }
 
 function validateOptionList(

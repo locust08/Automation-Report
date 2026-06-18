@@ -12,9 +12,9 @@ import {
   getMediaPlanAssets,
 } from "@/lib/media-plan/assets";
 import {
-  DEFAULT_MEDIA_PLAN_LANGUAGE,
   DEFAULT_MEDIA_PLAN_FORM,
   DEFAULT_NETWORK,
+  DEFAULT_TARGET_LOCATION,
   MediaPlan,
   MediaPlanAsset,
   MediaPlanAssetKind,
@@ -23,7 +23,6 @@ import {
   MediaPlanCreateCampaignSuccessResponse,
   MediaPlanFormData,
   MediaPlanGenerateResponse,
-  MediaPlanLanguage,
   MediaPlanOperationProgress,
   MediaPlanProgressStreamEvent,
   MediaPlanStatus,
@@ -61,7 +60,7 @@ export function MediaPlanPageClient() {
   const [error, setError] = useState<string | null>(null);
   const [campaignErrorLinks, setCampaignErrorLinks] = useState<string[]>([]);
   const [serverIssues, setServerIssues] = useState<MediaPlanValidationIssue[]>([]);
-  const [openAiMeta, setOpenAiMeta] = useState<{ responseId: string | null; model: string | null } | null>(null);
+  const [, setOpenAiMeta] = useState<{ responseId: string | null; model: string | null } | null>(null);
   const [clientRequestId, setClientRequestId] = useState<string | null>(null);
   const [approvalResult, setApprovalResult] = useState<MediaPlanApproveSuccessResponse | null>(null);
   const [campaignResult, setCampaignResult] = useState<MediaPlanCreateCampaignSuccessResponse | null>(null);
@@ -118,6 +117,16 @@ export function MediaPlanPageClient() {
   const visibleApprovalProgress = useMemo(
     () => refreshProgressTiming(approvalProgress, progressClock),
     [approvalProgress, progressClock]
+  );
+  const activeProgressCards = (
+    <>
+      {visibleGenerationProgress?.status === "running" ? (
+        <MediaPlanProgressCard progress={visibleGenerationProgress} />
+      ) : null}
+      {visibleApprovalProgress?.status === "running" ? (
+        <MediaPlanProgressCard progress={visibleApprovalProgress} />
+      ) : null}
+    </>
   );
 
   function resetPlanHistory() {
@@ -512,13 +521,8 @@ export function MediaPlanPageClient() {
   return (
     <ReportShell
       title="Media Plan"
-      dateLabel={
-        planSource === "mockup"
-          ? "Google Search - Manual Mockup"
-          : openAiMeta?.model
-            ? `Google Search - ${openAiMeta.model}`
-            : "Google Search"
-      }
+      dateLabel=""
+      headerDateControl={<span className="sr-only">Media Plan</span>}
       reportReady={!generating && !savingToNotion && !creatingCampaign}
       headerBottomControl={
         <MediaPlanStatusBar
@@ -540,45 +544,7 @@ export function MediaPlanPageClient() {
           onMockup={handleMockup}
         />
 
-        {visibleGenerationProgress?.status === "running" ? (
-          <MediaPlanProgressCard progress={visibleGenerationProgress} />
-        ) : null}
-        {visibleApprovalProgress?.status === "running" ? (
-          <MediaPlanProgressCard progress={visibleApprovalProgress} />
-        ) : null}
-
-        {error ? (
-          <section className="rounded-2xl border border-[#fecdd3] bg-[#fff1f2] p-4 text-[#9f1239] shadow-sm">
-            <p className="text-sm font-semibold">{error}</p>
-            {serverIssues.length > 0 ? (
-              <ul className="mt-2 list-disc space-y-1 pl-5 text-sm">
-                {serverIssues.map((issue) => (
-                  <li key={`${issue.path}:${issue.message}`}>
-                    <span className="font-medium">{issue.path}:</span> {issue.message}
-                  </li>
-                ))}
-              </ul>
-            ) : null}
-            {campaignErrorLinks.length > 0 ? (
-              <div className="mt-2 grid gap-1 text-sm">
-                {campaignErrorLinks.map((url, index) => (
-                  <a
-                    key={url}
-                    href={url}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="font-medium underline underline-offset-4"
-                  >
-                    Notion row {index + 1}
-                  </a>
-                ))}
-              </div>
-            ) : null}
-          </section>
-        ) : null}
-
-        {approvalResult ? <ApprovalSummary result={approvalResult} /> : null}
-        {campaignResult ? <CampaignSummary result={campaignResult} /> : null}
+        {!plan ? activeProgressCards : null}
 
         <MediaPlanEditor
           plan={plan}
@@ -595,6 +561,18 @@ export function MediaPlanPageClient() {
           onUndo={handleUndo}
           onRedo={handleRedo}
           onApprove={handleApprove}
+          progressContent={plan ? activeProgressCards : null}
+        />
+
+        <ValidationVerificationSection
+          status={currentStatus}
+          issueCount={visibleIssues.length}
+          issues={visibleIssues}
+          error={error}
+          campaignErrorLinks={campaignErrorLinks}
+          approvalResult={approvalResult}
+          campaignResult={campaignResult}
+          hasPlan={Boolean(plan)}
         />
       </div>
     </ReportShell>
@@ -603,7 +581,6 @@ export function MediaPlanPageClient() {
 
 function buildMockupMediaPlan(formData: MediaPlanFormData): MediaPlan {
   const websiteUrl = formData.websiteUrl.trim();
-  const language = normalizeMockupLanguage(formData.language);
 
   return {
     batchPreviewId: `MP-MOCKUP-${Date.now()}`,
@@ -621,8 +598,8 @@ function buildMockupMediaPlan(formData: MediaPlanFormData): MediaPlan {
       targetCPA: null,
       network: [DEFAULT_NETWORK],
       networkNotes: "Google Search only.",
-      targetLocation: [formData.targetLocation.trim()],
-      language: [language],
+      targetLocation: normalizeMockupList(formData.targetLocation, [DEFAULT_TARGET_LOCATION]),
+      language: normalizeMockupList(formData.language, ["English"]) as MediaPlan["campaign"]["language"],
     },
     adGroups: [
       {
@@ -702,11 +679,9 @@ function getTodayDate(): string {
   return new Date().toISOString().slice(0, 10);
 }
 
-function normalizeMockupLanguage(value: string): MediaPlanLanguage {
-  if (value === "English" || value === "Malay" || value === "Chinese") {
-    return value;
-  }
-  return DEFAULT_MEDIA_PLAN_LANGUAGE;
+function normalizeMockupList(value: readonly string[], fallback: string[]): string[] {
+  const items = value.map((item) => item.trim()).filter(Boolean);
+  return items.length > 0 ? items : fallback;
 }
 
 function resolveGenerateButtonLabel(planSource: MediaPlanSource, hasPlan: boolean): string {
@@ -740,8 +715,8 @@ async function resolveGeneratedMediaPlan(
       adBudget: formData.adBudget,
       googleCid: formData.googleCid,
       campaignType: formData.campaignType,
-      targetLocation: formData.targetLocation,
-      language: formData.language,
+      targetLocation: formData.targetLocation.join(", "),
+      language: formData.language.join(", "),
     });
     const response = await fetch(`/api/media-plan/generate/${encodeURIComponent(current.openAi.responseId)}?${params}`, {
       cache: "no-store",
@@ -1023,30 +998,6 @@ function resolveStatus(input: {
   return "Generated";
 }
 
-function CampaignSummary({ result }: { result: MediaPlanCreateCampaignSuccessResponse }) {
-  return (
-    <section className="rounded-2xl border border-[#bfdbfe] bg-[#eff6ff] p-4 text-[#1d4ed8] shadow-sm">
-      <div className="flex flex-col gap-1">
-        <p className="text-sm font-semibold">Created Paused</p>
-        <p className="text-sm">
-          Campaign ID: <span className="font-semibold">{result.campaignId}</span>
-        </p>
-        <p className="text-sm">
-          Notion batch ID: <span className="font-semibold">{result.batchId}</span>
-        </p>
-      </div>
-      <a
-        href={result.googleAdsReviewLink}
-        target="_blank"
-        rel="noreferrer"
-        className="mt-3 inline-flex text-sm font-semibold underline underline-offset-4"
-      >
-        Open Google Ads review
-      </a>
-    </section>
-  );
-}
-
 function createClientRequestId(): string {
   if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
     return crypto.randomUUID();
@@ -1054,33 +1005,144 @@ function createClientRequestId(): string {
   return `media-plan-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
 
-function ApprovalSummary({ result }: { result: MediaPlanApproveSuccessResponse }) {
+function ValidationVerificationSection({
+  status,
+  issueCount,
+  issues,
+  error,
+  campaignErrorLinks,
+  approvalResult,
+  campaignResult,
+  hasPlan,
+}: {
+  status: MediaPlanStatus;
+  issueCount: number;
+  issues: MediaPlanValidationIssue[];
+  error: string | null;
+  campaignErrorLinks: string[];
+  approvalResult: MediaPlanApproveSuccessResponse | null;
+  campaignResult: MediaPlanCreateCampaignSuccessResponse | null;
+  hasPlan: boolean;
+}) {
+  const success = Boolean(campaignResult);
+  const saved = Boolean(approvalResult);
+  const blocked = Boolean(error) || issueCount > 0;
+  const tone = success
+    ? "border-[#bfdbfe] bg-[#eff6ff]"
+    : blocked
+      ? "border-[#fecdd3] bg-[#fff1f2]"
+      : saved
+        ? "border-[#bbf7d0] bg-[#f0fdf4]"
+        : "border-[#dedede] bg-white";
+  const heading = success
+    ? "Validation & Verification Complete"
+    : blocked
+      ? "Validation & Verification Needs Review"
+      : saved
+        ? "Validation Passed, Ready for Review"
+        : "Validation & Verification";
+
   return (
-    <section className="rounded-2xl border border-[#bbf7d0] bg-[#f0fdf4] p-4 text-[#166534] shadow-sm">
-      <div className="flex flex-col gap-1">
-        <p className="text-sm font-semibold">
-          Status: Ready for Setup{result.duplicate ? " (existing batch reused)" : ""}
-        </p>
-        <p className="text-sm">
-          Batch ID: <span className="font-semibold">{result.batchId}</span>
-        </p>
-        <p className="text-sm">Created row count: {result.createdRowCount}</p>
+    <section className={`rounded-2xl border p-4 shadow-sm sm:p-5 ${tone}`}>
+      <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+        <div className="min-w-0">
+          <p className="text-xs font-bold uppercase tracking-[0.08em] text-[#667085]">Final Check</p>
+          <h2 className="mt-1 text-xl font-bold leading-tight text-[#111827]">{heading}</h2>
+          <p className="mt-1 text-sm font-medium text-[#475467]">
+            {hasPlan
+              ? `Current status: ${status}. ${issueCount === 0 ? "No validation issues detected." : `${issueCount} validation issue${issueCount === 1 ? "" : "s"} found.`}`
+              : "Generate a media plan to start validation and campaign verification."}
+          </p>
+        </div>
+        <div className="inline-flex w-fit rounded-full border border-white/70 bg-white px-3 py-1 text-sm font-bold text-[#344054] shadow-sm">
+          {success ? "Created Paused" : saved ? "Ready for Setup" : blocked ? "Review Required" : status}
+        </div>
       </div>
-      {result.notionPageUrls.length > 0 ? (
-        <div className="mt-3 grid gap-1 text-sm">
-          {result.notionPageUrls.map((url, index) => (
-            <a
-              key={url}
-              href={url}
-              target="_blank"
-              rel="noreferrer"
-              className="font-medium underline underline-offset-4"
-            >
-              Notion row {index + 1}
-            </a>
-          ))}
+
+      <div className="mt-4 grid gap-3 md:grid-cols-3">
+        <VerificationMetric label="Validation Issues" value={String(issueCount)} />
+        <VerificationMetric label="Notion Rows" value={approvalResult ? String(approvalResult.createdRowCount) : "-"} />
+        <VerificationMetric label="Campaign ID" value={campaignResult?.campaignId ?? "-"} />
+      </div>
+
+      {approvalResult ? (
+        <div className="mt-4 rounded-xl border border-white/70 bg-white/85 p-3">
+          <div className="grid gap-2 text-sm text-[#344054] sm:grid-cols-2">
+            <p>
+              <span className="font-bold">Batch ID:</span> {approvalResult.batchId}
+              {approvalResult.duplicate ? " (existing batch reused)" : ""}
+            </p>
+            {campaignResult ? (
+              <p>
+                <span className="font-bold">Google CID:</span> {campaignResult.customerId}
+              </p>
+            ) : null}
+          </div>
+
+          <div className="mt-3 flex flex-wrap gap-2">
+            {approvalResult.notionPageUrls.map((url, index) => (
+              <a
+                key={url}
+                href={url}
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex h-9 items-center rounded-lg border border-[#d7d7d7] bg-white px-3 text-sm font-bold text-[#344054] shadow-sm hover:bg-[#f9fafb]"
+              >
+                Notion row {index + 1}
+              </a>
+            ))}
+            {campaignResult ? (
+              <a
+                href={campaignResult.googleAdsReviewLink}
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex h-9 items-center rounded-lg bg-[#1d4ed8] px-3 text-sm font-bold text-white shadow-sm hover:bg-[#1e40af]"
+              >
+                Open Google Ads review
+              </a>
+            ) : null}
+          </div>
+        </div>
+      ) : null}
+
+      {error ? (
+        <div className="mt-4 rounded-xl border border-[#fecdd3] bg-white p-3 text-sm text-[#9f1239]">
+          <p className="font-bold">{error}</p>
+          {issues.length > 0 ? (
+            <ul className="mt-2 list-disc space-y-1 pl-5">
+              {issues.map((issue) => (
+                <li key={`${issue.path}:${issue.message}`}>
+                  <span className="font-semibold">{issue.path}:</span> {issue.message}
+                </li>
+              ))}
+            </ul>
+          ) : null}
+          {campaignErrorLinks.length > 0 ? (
+            <div className="mt-3 flex flex-wrap gap-2">
+              {campaignErrorLinks.map((url, index) => (
+                <a
+                  key={url}
+                  href={url}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex h-8 items-center rounded-md border border-[#fecdd3] bg-[#fff1f2] px-2.5 text-xs font-bold text-[#9f1239]"
+                >
+                  Notion row {index + 1}
+                </a>
+              ))}
+            </div>
+          ) : null}
         </div>
       ) : null}
     </section>
+  );
+}
+
+function VerificationMetric({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-xl border border-white/70 bg-white/85 p-3 shadow-sm">
+      <p className="text-xs font-bold uppercase tracking-[0.08em] text-[#667085]">{label}</p>
+      <p className="mt-1 break-words text-lg font-bold text-[#111827]">{value}</p>
+    </div>
   );
 }

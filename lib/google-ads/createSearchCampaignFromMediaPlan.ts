@@ -3,9 +3,11 @@ import {
   GOOGLE_AD_GROUP_SETUP_DATA_SOURCE_ID,
   normalizeNotionDataSourceId,
 } from "@/lib/media-plan/notionMapper";
-import type {
-  MediaPlanCreateCampaignFailureResponse,
-  MediaPlanCreateCampaignSuccessResponse,
+import {
+  type MediaPlanCampaignObjective,
+  type MediaPlanCreateCampaignFailureResponse,
+  type MediaPlanCreateCampaignSuccessResponse,
+  normalizeMediaPlanCampaignObjective,
 } from "@/lib/media-plan/schema";
 
 export interface CreateSearchCampaignFromMediaPlanInput {
@@ -94,7 +96,7 @@ interface MediaPlanRowGroup {
   startDate: string;
   averageDailyBudget: number;
   targetCPA: number | null;
-  campaignObjective: "Leads" | "Sales" | "Website Traffic";
+  campaignObjective: MediaPlanCampaignObjective;
   biddingStrategy: "Conversions" | "Clicks";
   network: ["Google Search Only"];
   targetLocation: string[];
@@ -165,8 +167,8 @@ class GoogleAdsApiRequestError extends Error {
   readonly status: number;
   readonly payload: unknown;
 
-  constructor(failedStep: string, status: number, text: string, payload: unknown) {
-    super(`Google Ads API failed (${status}): ${text}`);
+  constructor(failedStep: string, status: number, message: string, payload: unknown) {
+    super(message);
     this.name = "GoogleAdsApiRequestError";
     this.failedStep = failedStep;
     this.status = status;
@@ -579,8 +581,9 @@ function validateAndGroupRows(
   if (!first.network.includes("Google Search Only")) {
     issues.push("Network must be Google Search Only.");
   }
-  if (!["Leads", "Sales", "Website Traffic"].includes(first.campaignObjective)) {
-    issues.push("Campaign objective must be Leads, Sales, or Website Traffic.");
+  const normalizedObjective = normalizeCampaignObjective(first.campaignObjective);
+  if (!normalizedObjective) {
+    issues.push("Campaign objective must match a supported Google Ads objective.");
   }
   if (!["Conversions", "Clicks"].includes(first.biddingStrategy)) {
     issues.push("Bidding strategy must be Conversions or Clicks.");
@@ -608,7 +611,7 @@ function validateAndGroupRows(
     startDate: first.startDate,
     averageDailyBudget: first.averageDailyBudget || 0,
     targetCPA: first.targetCPA,
-    campaignObjective: first.campaignObjective as MediaPlanRowGroup["campaignObjective"],
+    campaignObjective: normalizedObjective || "Leads",
     biddingStrategy: first.biddingStrategy as MediaPlanRowGroup["biddingStrategy"],
     network: ["Google Search Only"],
     targetLocation: first.targetLocation,
@@ -629,7 +632,7 @@ function buildPlannedPayload(group: MediaPlanRowGroup): PlannedMediaPlanCampaign
       network: ["Google Search Only"],
       targetLocation: group.targetLocation,
       language: group.language,
-      biddingStrategy: group.biddingStrategy === "Clicks" || group.campaignObjective === "Website Traffic"
+      biddingStrategy: group.biddingStrategy === "Clicks" || group.campaignObjective === "Website traffic"
         ? "TARGET_SPEND"
         : "MAXIMIZE_CONVERSIONS",
       targetCPA: group.targetCPA,
@@ -963,7 +966,7 @@ function buildGoogleAdsMutateOperations(
 }
 
 function buildBidding(group: MediaPlanRowGroup): Record<string, unknown> {
-  if (group.biddingStrategy === "Clicks" || group.campaignObjective === "Website Traffic") {
+  if (group.biddingStrategy === "Clicks" || group.campaignObjective === "Website traffic") {
     return { biddingStrategyType: "TARGET_SPEND", targetSpend: {} };
   }
   if (group.targetCPA && group.targetCPA > 0) {
@@ -980,7 +983,12 @@ async function googleAdsValidateMutate(config: GoogleAdsConfig, mutateOperations
     return await googleAdsMutate(config, mutateOperations, true);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    const wrapped = stepError("google_ads_validate", message) as Error & {
+    const failedStep =
+      error instanceof GoogleAdsApiRequestError && error.failedStep === "google_ads_quota"
+        ? error.failedStep
+        : "google_ads_validate";
+    const wrapped = stepError(failedStep, message) as Error & {
+      failedStep?: string;
       payload?: unknown;
       status?: number;
     };
@@ -1085,10 +1093,123 @@ async function sendGoogleAdsRequest(
 }
 
 function googleAdsHttpError(status: number, text: string) {
-  const failedStep = status === 401 || /UNAUTHENTICATED|invalid authentication credentials/i.test(text)
-    ? "google_ads_auth"
-    : "google_ads_api";
-  return new GoogleAdsApiRequestError(failedStep, status, text, parseJsonOrNull(text));
+  const payload = parseJsonOrNull(text);
+  const quotaDetails = extractQuotaErrorDetails(payload);
+  const failedStep =
+    quotaDetails || status === 429 || /RESOURCE_EXHAUSTED|quota/i.test(text)
+      ? "google_ads_quota"
+      : status === 401 || /UNAUTHENTICATED|invalid authentication credentials/i.test(text)
+        ? "google_ads_auth"
+        : "google_ads_api";
+  return new GoogleAdsApiRequestError(
+    failedStep,
+    status,
+    quotaDetails ? formatGoogleAdsQuotaMessage(quotaDetails) : `Google Ads API failed (${status}): ${text}`,
+    payload
+  );
+}
+
+interface GoogleAdsQuotaErrorDetails {
+  retryDelaySeconds: number | null;
+  requestId: string;
+  rateName: string;
+  rateScope: string;
+  message: string;
+}
+
+function extractQuotaErrorDetails(payload: unknown): GoogleAdsQuotaErrorDetails | null {
+  if (!payload || typeof payload !== "object") {
+    return null;
+  }
+
+  const error = (payload as { error?: unknown }).error;
+  if (!error || typeof error !== "object") {
+    return null;
+  }
+  const status = typeof (error as { status?: unknown }).status === "string" ? (error as { status: string }).status : "";
+  const details = (error as { details?: unknown }).details;
+  const topLevelMessage =
+    typeof (error as { message?: unknown }).message === "string" ? (error as { message: string }).message : "";
+
+  if (!Array.isArray(details) && status !== "RESOURCE_EXHAUSTED") {
+    return null;
+  }
+
+  for (const detail of Array.isArray(details) ? details : []) {
+    if (!detail || typeof detail !== "object") {
+      continue;
+    }
+    const requestId =
+      typeof (detail as { requestId?: unknown }).requestId === "string" ? (detail as { requestId: string }).requestId : "";
+    const errors = (detail as { errors?: unknown }).errors;
+    for (const item of Array.isArray(errors) ? errors : []) {
+      if (!item || typeof item !== "object") {
+        continue;
+      }
+      const errorCode = (item as { errorCode?: { quotaError?: string } }).errorCode;
+      const quotaError = errorCode?.quotaError;
+      const quotaErrorDetails = (item as {
+        details?: { quotaErrorDetails?: { retryDelay?: string; rateName?: string; rateScope?: string } };
+      }).details?.quotaErrorDetails;
+      if (!quotaError && !quotaErrorDetails) {
+        continue;
+      }
+      const itemMessage =
+        typeof (item as { message?: unknown }).message === "string" ? (item as { message: string }).message : "";
+      return {
+        retryDelaySeconds: parseGoogleRetryDelaySeconds(quotaErrorDetails?.retryDelay),
+        requestId,
+        rateName: quotaErrorDetails?.rateName || "",
+        rateScope: quotaErrorDetails?.rateScope || "",
+        message: itemMessage || topLevelMessage,
+      };
+    }
+  }
+
+  return status === "RESOURCE_EXHAUSTED"
+    ? {
+        retryDelaySeconds: null,
+        requestId: "",
+        rateName: "",
+        rateScope: "",
+        message: topLevelMessage || "Google Ads quota is temporarily exhausted.",
+      }
+    : null;
+}
+
+function formatGoogleAdsQuotaMessage(details: GoogleAdsQuotaErrorDetails): string {
+  const retryText =
+    details.retryDelaySeconds && details.retryDelaySeconds > 0
+      ? ` Retry after ${formatRetryDelay(details.retryDelaySeconds)}.`
+      : " Retry later.";
+  const rateText = details.rateName
+    ? ` Limit: ${details.rateName}${details.rateScope ? ` (${details.rateScope.toLowerCase()} scope)` : ""}.`
+    : "";
+  const requestText = details.requestId ? ` Google Ads request ID: ${details.requestId}.` : "";
+  const apiMessage = details.message ? ` ${details.message}` : "";
+  return `Google Ads quota is temporarily exhausted.${retryText}${rateText}${requestText}${apiMessage} The Notion rows were kept Ready for Setup so you can retry campaign creation later.`;
+}
+
+function parseGoogleRetryDelaySeconds(value: string | undefined): number | null {
+  if (!value) {
+    return null;
+  }
+  const match = /^(\d+)s$/.exec(value.trim());
+  if (!match) {
+    return null;
+  }
+  const seconds = Number(match[1]);
+  return Number.isFinite(seconds) ? seconds : null;
+}
+
+function formatRetryDelay(seconds: number): string {
+  const roundedSeconds = Math.max(0, Math.round(seconds));
+  const minutes = Math.floor(roundedSeconds / 60);
+  const remainingSeconds = roundedSeconds % 60;
+  if (minutes <= 0) {
+    return `${remainingSeconds} seconds`;
+  }
+  return `${minutes} min ${String(remainingSeconds).padStart(2, "0")} sec`;
 }
 
 function collectExemptiblePolicyViolations(error: unknown): PolicyViolationExemption[] {
@@ -1474,7 +1595,7 @@ function isRetryableMissingInfoRow(row: MediaPlanNotionRow): boolean {
     return false;
   }
   const notes = `${row.missingInfoNotes}\n${row.reviewNotes}\n${row.setupNotes}`;
-  return /Google Ads API failed|UNAUTHENTICATED|invalid authentication credentials|SetupError|google_ads_auth|aborted|timed out|timeout/i.test(notes);
+  return /Google Ads API failed|Google Ads quota is temporarily exhausted|RESOURCE_EXHAUSTED|UNAUTHENTICATED|invalid authentication credentials|SetupError|google_ads_auth|google_ads_quota|aborted|timed out|timeout/i.test(notes);
 }
 
 function duplicateError(batchId: string, rows: MediaPlanNotionRow[]) {
@@ -1506,7 +1627,7 @@ function normalizeFailure(
 }
 
 function isRetryableOperationalFailure(failedStep: string | undefined): boolean {
-  return ["google_ads_auth", "google_oauth", "configuration", "google_ads_api", "google_ads_validate", "notion_api", "timeout"].includes(failedStep || "");
+  return ["google_ads_auth", "google_ads_quota", "google_oauth", "configuration", "google_ads_api", "google_ads_validate", "notion_api", "timeout"].includes(failedStep || "");
 }
 
 function isAbortLike(error: unknown): boolean {
@@ -1566,6 +1687,10 @@ function isValidUrl(value: string): boolean {
   } catch {
     return false;
   }
+}
+
+function normalizeCampaignObjective(value: string): MediaPlanCampaignObjective | null {
+  return normalizeMediaPlanCampaignObjective(value);
 }
 
 async function fetchWithTimeout(url: string, options: RequestInit, timeoutMs = 45_000): Promise<Response> {

@@ -35,10 +35,18 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { normalizeMediaPlanAssets } from "@/lib/media-plan/assets";
 import {
   DEFAULT_NETWORK,
+  MEDIA_PLAN_CAMPAIGN_OBJECTIVE_OPTIONS,
   MEDIA_PLAN_ASSET_ACCEPTED_MIME_TYPES,
   MEDIA_PLAN_LIMITS,
   MediaPlan,
@@ -53,6 +61,7 @@ import {
   MediaPlanKeywordMatchType,
   MediaPlanLanguage,
   MediaPlanSitelink,
+  normalizeMediaPlanCampaignObjective,
 } from "@/lib/media-plan/schema";
 import {
   getIssueMessage,
@@ -75,6 +84,7 @@ interface MediaPlanEditorProps {
   onUndo: () => void;
   onRedo: () => void;
   onApprove: () => void;
+  progressContent?: ReactNode;
 }
 
 const MATCH_TYPES: MediaPlanKeywordMatchType[] = ["BROAD", "PHRASE", "EXACT"];
@@ -94,6 +104,7 @@ export function MediaPlanEditor({
   onUndo,
   onRedo,
   onApprove,
+  progressContent,
 }: MediaPlanEditorProps) {
   if (!plan) {
     return (
@@ -209,8 +220,9 @@ export function MediaPlanEditor({
           <SettingsEditableField
             icon={<TargetIcon className="size-4" />}
             label="Campaign Objective"
-            value={currentPlan.campaign.campaignObjective}
+            value={normalizeMediaPlanCampaignObjective(currentPlan.campaign.campaignObjective) ?? currentPlan.campaign.campaignObjective}
             error={getIssueMessage(issues, "campaign.campaignObjective")}
+            options={MEDIA_PLAN_CAMPAIGN_OBJECTIVE_OPTIONS}
             onChange={(value) =>
               updateCampaign((campaign) => ({
                 ...campaign,
@@ -326,6 +338,8 @@ export function MediaPlanEditor({
         issues={issues}
         onChange={(planningNotes) => updatePlan({ ...currentPlan, planningNotes })}
       />
+
+      {progressContent}
 
       <div className="sticky bottom-0 z-10 rounded-2xl border border-[#dedede] bg-white/95 p-4 shadow-lg backdrop-blur">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -1218,6 +1232,7 @@ function SettingsEditableField({
   error,
   placeholder,
   multiline = false,
+  options,
   onChange,
 }: {
   icon: ReactNode;
@@ -1226,6 +1241,7 @@ function SettingsEditableField({
   error?: string | null;
   placeholder?: string;
   multiline?: boolean;
+  options?: readonly string[];
   onChange: (value: string) => void;
 }) {
   const invalid = Boolean(error);
@@ -1235,7 +1251,23 @@ function SettingsEditableField({
         <span className="flex size-4 items-center justify-center text-[#b00012]">{icon}</span>
         <Label className="text-[13px] font-bold text-[#344054]">{label}</Label>
       </div>
-      {multiline ? (
+      {options ? (
+        <Select value={value} onValueChange={onChange}>
+          <SelectTrigger
+            className="h-9 w-full rounded-lg border-[#d7d7d7] bg-white px-3 text-sm shadow-none focus-visible:border-[#9f0019] focus-visible:ring-[#9f0019]/15 md:text-sm"
+            aria-invalid={invalid}
+          >
+            <SelectValue placeholder={placeholder} />
+          </SelectTrigger>
+          <SelectContent>
+            {options.map((option) => (
+              <SelectItem key={option} value={option}>
+                {option}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      ) : multiline ? (
         <Textarea
           value={value}
           placeholder={placeholder}
@@ -1303,26 +1335,32 @@ function KeywordsEditor({
                 )
               }
             />
-            <Input
+            <Select
               value={keyword.matchType}
-              list={`match-types-${adGroupIndex}-${keywordIndex}`}
-              aria-invalid={Boolean(getIssueMessage(issues, `${keywordPath}.${keywordIndex}.matchType`))}
-              className="h-8 rounded-md border-[#d7d7d7] text-sm font-bold text-[#b00012] shadow-none focus-visible:border-[#9f0019] focus-visible:ring-[#9f0019]/15 md:text-sm"
-              onChange={(event) =>
+              onValueChange={(value) =>
                 onChange(
                   adGroup.keywords.map((item, itemIndex) =>
                     itemIndex === keywordIndex
-                      ? { ...item, matchType: event.target.value as MediaPlanKeywordMatchType }
+                      ? { ...item, matchType: value as MediaPlanKeywordMatchType }
                       : item
                   )
                 )
               }
-            />
-            <datalist id={`match-types-${adGroupIndex}-${keywordIndex}`}>
-              {MATCH_TYPES.map((matchType) => (
-                <option key={matchType} value={matchType} />
-              ))}
-            </datalist>
+            >
+              <SelectTrigger
+                aria-invalid={Boolean(getIssueMessage(issues, `${keywordPath}.${keywordIndex}.matchType`))}
+                className="h-8 rounded-md border-[#d7d7d7] text-sm font-bold text-[#b00012] shadow-none focus-visible:border-[#9f0019] focus-visible:ring-[#9f0019]/15 md:text-sm"
+              >
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {MATCH_TYPES.map((matchType) => (
+                  <SelectItem key={matchType} value={matchType}>
+                    {matchType}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
             <Button
               type="button"
               variant="outline"

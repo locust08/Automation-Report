@@ -4,11 +4,13 @@ import {
   DEFAULT_TARGET_LOCATION,
   MEDIA_PLAN_PROMPT_VARIABLE_DEFAULTS,
   MEDIA_PLAN_RESPONSE_JSON_SCHEMA,
+  MEDIA_PLAN_CAMPAIGN_OBJECTIVE_OPTIONS,
   MediaPlan,
   MediaPlanFormData,
   MediaPlanGenerateOpenAIMeta,
   MediaPlanGenerationStatus,
   SUPPORTED_CAMPAIGN_TYPE,
+  normalizeMediaPlanCampaignObjective,
 } from "@/lib/media-plan/schema";
 import {
   MediaPlanValidationIssue,
@@ -28,8 +30,10 @@ Each adGroups item must include: adGroupName, intentType, keywords, displayPath1
 
 Google Search constraints:
 - campaignType must be "Search".
+- campaignObjective must be one of: ${MEDIA_PLAN_CAMPAIGN_OBJECTIVE_OPTIONS.join(", ")}.
 - network must be ["Google Search Only"].
 - keywords must be objects with text and matchType ("BROAD", "PHRASE", or "EXACT").
+- The first 3 keywords in every ad group must use matchType "BROAD". Later keywords may use BROAD, PHRASE, or EXACT when useful.
 - displayPath1 and displayPath2 must be 15 characters or fewer.
 - headlines must contain at least 3 strings, each 30 characters or fewer.
 - descriptions must contain at least 2 strings, each 90 characters or fewer.
@@ -411,8 +415,8 @@ function buildPromptVariables(form: MediaPlanFormData): Record<string, string> {
     googleCid: form.googleCid.trim(),
     campaignType: SUPPORTED_CAMPAIGN_TYPE,
     specialRemarks: form.specialRemarks.trim(),
-    targetLocation: form.targetLocation.trim() || DEFAULT_TARGET_LOCATION,
-    language: form.language.trim(),
+    targetLocation: joinInputList(form.targetLocation, DEFAULT_TARGET_LOCATION),
+    language: joinInputList(form.language, "English"),
     defaultNetwork: DEFAULT_NETWORK,
     defaultCampaignStatus: DEFAULT_CAMPAIGN_STATUS,
     googleSearchOnlyRule: MEDIA_PLAN_PROMPT_VARIABLE_DEFAULTS.googleSearchOnlyRule,
@@ -428,8 +432,8 @@ function buildResponseMetadata(form: MediaPlanFormData): Record<string, string> 
     media_plan_website_url: form.websiteUrl.trim(),
     media_plan_ad_budget: form.adBudget.trim(),
     media_plan_google_cid: form.googleCid.trim(),
-    media_plan_target_location: form.targetLocation.trim(),
-    media_plan_language: form.language.trim(),
+    media_plan_target_location: joinInputList(form.targetLocation, DEFAULT_TARGET_LOCATION),
+    media_plan_language: joinInputList(form.language, "English"),
   };
 }
 
@@ -446,8 +450,8 @@ function buildRuntimeInstruction(form: MediaPlanFormData): string {
     `Website URL: ${form.websiteUrl.trim()}`,
     `Ad Budget: ${form.adBudget.trim()}`,
     `Google CID: ${form.googleCid.trim()}`,
-    `Target Location: ${form.targetLocation.trim() || DEFAULT_TARGET_LOCATION}`,
-    `Language: ${form.language.trim() || "English"}`,
+    `Target Location: ${joinInputList(form.targetLocation, DEFAULT_TARGET_LOCATION)}`,
+    `Language: ${joinInputList(form.language, "English")}`,
     form.specialRemarks.trim() ? `Special Remarks: ${form.specialRemarks.trim()}` : null,
     "",
     MEDIA_PLAN_OUTPUT_CONTRACT,
@@ -470,8 +474,8 @@ function mediaPlanFormFromMetadata(metadata: Record<string, string> | undefined)
     googleCid: metadata.media_plan_google_cid || "",
     campaignType: SUPPORTED_CAMPAIGN_TYPE,
     specialRemarks: "",
-    targetLocation: metadata.media_plan_target_location || "",
-    language: metadata.media_plan_language || "",
+    targetLocation: splitInputList(metadata.media_plan_target_location || DEFAULT_TARGET_LOCATION),
+    language: splitInputList(metadata.media_plan_language || "English") as MediaPlanFormData["language"],
   };
 }
 
@@ -526,8 +530,8 @@ function normalizeCampaignCandidate(
   formDefaults: Partial<MediaPlanFormData> | null
 ): Record<string, unknown> {
   const websiteUrl = readCandidateString(campaign.websiteUrl ?? campaign.website_url) || formDefaults?.websiteUrl || "";
-  const targetLocation = splitInputList(formDefaults?.targetLocation || DEFAULT_TARGET_LOCATION);
-  const language = splitInputList(formDefaults?.language || "English");
+  const targetLocation = normalizeInputList(formDefaults?.targetLocation, DEFAULT_TARGET_LOCATION);
+  const language = normalizeInputList(formDefaults?.language, "English");
   const campaignObjective = firstPresent(
     campaign.campaignObjective,
     campaign.campaign_objective,
@@ -687,7 +691,14 @@ function normalizeKeywords(value: unknown): unknown {
       );
       return parsed.text ? { text: parsed.text, matchType } : null;
     })
-    .filter(Boolean);
+    .filter(Boolean)
+    .map((keyword, index) =>
+      index < 3 && isKeywordCandidate(keyword) ? { ...keyword, matchType: "BROAD" } : keyword
+    );
+}
+
+function isKeywordCandidate(value: unknown): value is { text: string; matchType: "BROAD" | "PHRASE" | "EXACT" } {
+  return isRecord(value) && typeof value.text === "string";
 }
 
 function parseKeywordText(value: string): { text: string; matchType: "BROAD" | "PHRASE" | "EXACT" } {
@@ -714,11 +725,27 @@ function normalizeKeywordMatchType(value: unknown): "BROAD" | "PHRASE" | "EXACT"
 
 function normalizeCampaignObjective(value: unknown): string {
   const normalized = readCandidateString(value).toLowerCase();
+  const exact = normalizeMediaPlanCampaignObjective(readCandidateString(value));
+  if (exact) {
+    return exact;
+  }
+  if (normalized.includes("app")) {
+    return "App promotion";
+  }
+  if (normalized.includes("youtube") || normalized.includes("awareness") || normalized.includes("reach") || normalized.includes("view")) {
+    return "YouTube reach, views, and engagements";
+  }
+  if (normalized.includes("local") || normalized.includes("store") || normalized.includes("restaurant") || normalized.includes("dealer")) {
+    return "Local store visits and promotions";
+  }
+  if (normalized.includes("without") || normalized.includes("guidance") || normalized.includes("objective")) {
+    return "Create a campaign without guidance";
+  }
   if (normalized.includes("sale") || normalized.includes("revenue")) {
     return "Sales";
   }
   if (normalized.includes("traffic") || normalized.includes("visit")) {
-    return "Website Traffic";
+    return "Website traffic";
   }
   if (normalized.includes("lead") || normalized.includes("conversion") || normalized.includes("enquiry")) {
     return "Leads";
@@ -902,6 +929,20 @@ function splitInputList(value: string): string[] {
     .split(/[,\n]/)
     .map((item) => item.trim())
     .filter(Boolean);
+}
+
+function normalizeInputList(value: string | string[] | undefined, fallback: string): string[] {
+  if (Array.isArray(value)) {
+    const items = value.map((item) => item.trim()).filter(Boolean);
+    return items.length > 0 ? items : [fallback];
+  }
+  const items = splitInputList(value || "");
+  return items.length > 0 ? items : [fallback];
+}
+
+function joinInputList(value: string[], fallback: string): string {
+  const items = value.map((item) => item.trim()).filter(Boolean);
+  return (items.length > 0 ? items : [fallback]).join(", ");
 }
 
 function parseBudget(value: string): number | undefined {

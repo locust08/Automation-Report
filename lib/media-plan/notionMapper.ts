@@ -8,6 +8,7 @@ import {
   MediaPlanAsset,
   MediaPlanKeyword,
   MediaPlanSitelink,
+  normalizeMediaPlanCampaignObjective,
 } from "@/lib/media-plan/schema";
 import { normalizeMediaPlanAssets } from "@/lib/media-plan/assets";
 
@@ -220,7 +221,7 @@ function buildCampaignProperties(
   input: MapMediaPlanToNotionRowsInput
 ): Partial<Record<GoogleAdGroupSetupPropertyName, NotionMapperValue>> {
   const campaign = input.mediaPlan.campaign;
-  const campaignObjective = campaign.campaignObjective || "Leads";
+  const campaignObjective = normalizeMediaPlanCampaignObjective(campaign.campaignObjective) || "Leads";
   const biddingStrategy = campaign.biddingStrategy || "Conversions";
   const targetLocation =
     campaign.targetLocation.length > 0 ? campaign.targetLocation : [DEFAULT_TARGET_LOCATION];

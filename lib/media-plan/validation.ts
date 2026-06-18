@@ -8,11 +8,11 @@ import {
   MEDIA_PLAN_TARGET_LOCATION_OPTIONS,
   MediaPlan,
   MediaPlanBiddingStrategy,
-  MediaPlanCampaignObjective,
   MediaPlanFormData,
   MediaPlanKeywordMatchType,
   MediaPlanLanguage,
   SUPPORTED_CAMPAIGN_TYPE,
+  normalizeMediaPlanCampaignObjective,
 } from "@/lib/media-plan/schema";
 
 export interface MediaPlanValidationIssue {
@@ -29,11 +29,6 @@ export interface GeneratedMediaPlanValidationResult extends MediaPlanValidationR
   plan: MediaPlan | null;
 }
 
-const CAMPAIGN_OBJECTIVES = new Set<MediaPlanCampaignObjective>([
-  "Leads",
-  "Sales",
-  "Website Traffic",
-]);
 const BIDDING_STRATEGIES = new Set<MediaPlanBiddingStrategy>(["Conversions", "Clicks"]);
 const LANGUAGES = new Set<MediaPlanLanguage>(MEDIA_PLAN_LANGUAGE_OPTIONS);
 const MATCH_TYPES = new Set<MediaPlanKeywordMatchType>(["BROAD", "PHRASE", "EXACT"]);
@@ -70,8 +65,8 @@ export function validateMediaPlanForm(form: MediaPlanFormData): MediaPlanValidat
   }
 
   validateCampaignType(issues, "campaignType", form.campaignType);
-  validateLocationValue(issues, "targetLocation", form.targetLocation);
-  validateLanguageValue(issues, "language", form.language);
+  validateLocationValues(issues, "targetLocation", form.targetLocation);
+  validateLanguageValues(issues, "language", form.language);
 
   return { valid: issues.length === 0, issues };
 }
@@ -127,8 +122,8 @@ export function normalizeMediaPlanFormInput(value: unknown): MediaPlanFormData {
     googleCid: readString(body.googleCid),
     campaignType: readString(body.campaignType) || SUPPORTED_CAMPAIGN_TYPE,
     specialRemarks: readString(body.specialRemarks),
-    targetLocation: readString(body.targetLocation) || DEFAULT_TARGET_LOCATION,
-    language: readString(body.language) || DEFAULT_MEDIA_PLAN_LANGUAGE,
+    targetLocation: readStringList(body.targetLocation, [DEFAULT_TARGET_LOCATION]),
+    language: readLanguageList(body.language, [DEFAULT_MEDIA_PLAN_LANGUAGE]),
   };
 }
 
@@ -141,13 +136,7 @@ function validateCampaign(issues: MediaPlanValidationIssue[], value: unknown) {
   validateString(issues, value, "campaign.campaignName", "Campaign name is required.");
   validateString(issues, value, "campaign.brandOrClientName", "Brand or client name is required.");
   validateString(issues, value, "campaign.businessName", "Business name is required.");
-  validateEnum(
-    issues,
-    value.campaignObjective,
-    "campaign.campaignObjective",
-    CAMPAIGN_OBJECTIVES,
-    "Campaign objective must be Leads, Sales, or Website Traffic."
-  );
+  validateCampaignObjective(issues, value.campaignObjective);
   validateCampaignType(issues, "campaign.campaignType", readString(value.campaignType));
   validateEnum(
     issues,
@@ -550,18 +539,44 @@ function validateLocationArray(issues: MediaPlanValidationIssue[], value: unknow
   });
 }
 
-function validateLocationValue(issues: MediaPlanValidationIssue[], path: string, value: string) {
-  if (!MALAYSIA_LOCATION_OPTIONS.has(value.trim())) {
+function validateLocationValues(issues: MediaPlanValidationIssue[], path: string, value: string[]) {
+  if (!Array.isArray(value) || value.length === 0) {
     issues.push({
       path,
-      message: "Target location must be Malaysia Nationwide or a supported Malaysia location.",
+      message: "Select at least one target location.",
     });
+    return;
   }
+
+  value.forEach((item, index) => {
+    if (!MALAYSIA_LOCATION_OPTIONS.has(item.trim())) {
+      issues.push({
+        path: `${path}.${index}`,
+        message: "Target location must be Malaysia Nationwide or a supported Malaysia location.",
+      });
+    }
+  });
 }
 
-function validateLanguageValue(issues: MediaPlanValidationIssue[], path: string, value: string) {
-  if (!LANGUAGES.has(value.trim() as MediaPlanLanguage)) {
-    issues.push({ path, message: "Language must be English, Malay, or Chinese." });
+function validateLanguageValues(issues: MediaPlanValidationIssue[], path: string, value: MediaPlanLanguage[]) {
+  if (!Array.isArray(value) || value.length === 0) {
+    issues.push({ path, message: "Select at least one language." });
+    return;
+  }
+
+  value.forEach((item, index) => {
+    if (!LANGUAGES.has(item)) {
+      issues.push({ path: `${path}.${index}`, message: "Language must be English, Malay, or Chinese." });
+    }
+  });
+}
+
+function validateCampaignObjective(issues: MediaPlanValidationIssue[], value: unknown) {
+  if (typeof value !== "string" || !normalizeMediaPlanCampaignObjective(value)) {
+    issues.push({
+      path: "campaign.campaignObjective",
+      message: "Campaign objective must match a supported Google Ads objective.",
+    });
   }
 }
 
@@ -653,4 +668,17 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function readString(value: unknown): string {
   return typeof value === "string" ? value : "";
+}
+
+function readStringList(value: unknown, fallback: string[]): string[] {
+  const items = Array.isArray(value)
+    ? value.map((item) => readString(item))
+    : readString(value).split(/[,;\n]+/);
+  const normalized = items.map((item) => item.trim()).filter(Boolean);
+  return normalized.length > 0 ? normalized : fallback;
+}
+
+function readLanguageList(value: unknown, fallback: MediaPlanLanguage[]): MediaPlanLanguage[] {
+  const items = readStringList(value, fallback);
+  return (items.length > 0 ? items : fallback) as MediaPlanLanguage[];
 }

@@ -2,24 +2,23 @@
 
 import { FormEvent } from "react";
 import type { ReactNode } from "react";
-import { ChevronUpIcon, ClipboardListIcon, Loader2Icon, WandSparklesIcon } from "lucide-react";
+import { ChevronDownIcon, ChevronUpIcon, ClipboardListIcon, Loader2Icon, WandSparklesIcon } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuCheckboxItem,
+  DropdownMenuContent,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import {
   MEDIA_PLAN_LANGUAGE_OPTIONS,
   MEDIA_PLAN_TARGET_LOCATION_OPTIONS,
-  SUPPORTED_CAMPAIGN_TYPE,
   type MediaPlanFormData,
+  type MediaPlanLanguage,
 } from "@/lib/media-plan/schema";
 import {
   getIssueMessage,
@@ -39,8 +38,8 @@ interface MediaPlanFormProps {
 
 const CONTROL_CLASS =
   "h-10 rounded-lg border-[#d7d7d7] bg-white px-3 text-sm shadow-none focus-visible:border-[#9f0019] focus-visible:ring-[#9f0019]/15 md:text-sm";
-const SELECT_TRIGGER_CLASS =
-  "h-10 w-full rounded-lg border-[#d7d7d7] bg-white px-3 text-sm shadow-none focus-visible:border-[#9f0019] focus-visible:ring-[#9f0019]/15 md:text-sm";
+const MULTI_SELECT_TRIGGER_CLASS =
+  "h-10 w-full justify-between rounded-lg border-[#d7d7d7] bg-white px-3 text-left text-sm font-medium text-[#344054] shadow-none hover:bg-white focus-visible:border-[#9f0019] focus-visible:ring-[#9f0019]/15";
 
 export function MediaPlanForm({
   value,
@@ -72,7 +71,7 @@ export function MediaPlanForm({
       </div>
 
       <div className="p-4 sm:p-5">
-        <div className="grid gap-x-6 gap-y-4 sm:grid-cols-2">
+        <div className="grid gap-x-6 gap-y-4 lg:grid-cols-3">
           <FormField
             htmlFor="media-plan-website-url"
             label="Website URL"
@@ -121,82 +120,41 @@ export function MediaPlanForm({
               aria-invalid={Boolean(getIssueMessage(issues, "googleCid"))}
             />
           </FormField>
+        </div>
 
-          <FormField
-            htmlFor="media-plan-campaign-type"
-            label="Campaign Type"
-            required
-            error={getIssueMessage(issues, "campaignType")}
-          >
-            <Select
-              value={value.campaignType}
-              onValueChange={(nextValue) => updateField("campaignType", nextValue)}
-            >
-              <SelectTrigger
-                id="media-plan-campaign-type"
-                className={SELECT_TRIGGER_CLASS}
-                aria-invalid={Boolean(getIssueMessage(issues, "campaignType"))}
-              >
-                <SelectValue placeholder="Search" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value={SUPPORTED_CAMPAIGN_TYPE}>{SUPPORTED_CAMPAIGN_TYPE}</SelectItem>
-              </SelectContent>
-            </Select>
-          </FormField>
-
+        <div className="mt-4 grid gap-x-6 gap-y-4 sm:grid-cols-2">
           <FormField
             htmlFor="media-plan-target-location"
             label="Target Location"
             required
-            error={getIssueMessage(issues, "targetLocation")}
+            error={getFieldIssueMessage(issues, "targetLocation")}
           >
-            <Select
+            <MultiSelectField
+              id="media-plan-target-location"
+              label="Target Location"
+              options={MEDIA_PLAN_TARGET_LOCATION_OPTIONS}
               value={value.targetLocation}
-              onValueChange={(nextValue) => updateField("targetLocation", nextValue)}
-            >
-              <SelectTrigger
-                id="media-plan-target-location"
-                className={SELECT_TRIGGER_CLASS}
-                aria-invalid={Boolean(getIssueMessage(issues, "targetLocation"))}
-              >
-                <SelectValue placeholder="Malaysia Nationwide" />
-              </SelectTrigger>
-              <SelectContent>
-                {MEDIA_PLAN_TARGET_LOCATION_OPTIONS.map((location) => (
-                  <SelectItem key={location} value={location}>
-                    {location}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+              placeholder="Select locations"
+              error={getFieldIssueMessage(issues, "targetLocation")}
+              onChange={(nextValue) => updateField("targetLocation", nextValue)}
+            />
           </FormField>
 
           <FormField
             htmlFor="media-plan-language"
             label="Language"
             required
-            error={getIssueMessage(issues, "language")}
+            error={getFieldIssueMessage(issues, "language")}
           >
-            <Select
+            <MultiSelectField
+              id="media-plan-language"
+              label="Language"
+              options={MEDIA_PLAN_LANGUAGE_OPTIONS}
               value={value.language}
-              onValueChange={(nextValue) => updateField("language", nextValue)}
-            >
-              <SelectTrigger
-                id="media-plan-language"
-                className={SELECT_TRIGGER_CLASS}
-                aria-invalid={Boolean(getIssueMessage(issues, "language"))}
-              >
-                <SelectValue placeholder="English" />
-              </SelectTrigger>
-              <SelectContent>
-                {MEDIA_PLAN_LANGUAGE_OPTIONS.map((language) => (
-                  <SelectItem key={language} value={language}>
-                    {language}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+              placeholder="Select languages"
+              error={getFieldIssueMessage(issues, "language")}
+              onChange={(nextValue) => updateField("language", nextValue as MediaPlanLanguage[])}
+            />
           </FormField>
 
           <div className="sm:col-span-2">
@@ -260,4 +218,67 @@ function FormField({
       {error ? <p className="text-xs font-medium text-[#be123c]">{error}</p> : null}
     </div>
   );
+}
+
+function MultiSelectField({
+  id,
+  label,
+  options,
+  value,
+  placeholder,
+  error,
+  onChange,
+}: {
+  id: string;
+  label: string;
+  options: readonly string[];
+  value: readonly string[];
+  placeholder: string;
+  error?: string | null;
+  onChange: (value: string[]) => void;
+}) {
+  const selected = new Set(value);
+  const displayValue = value.length > 0 ? value.join(", ") : placeholder;
+
+  function toggle(option: string, checked: boolean) {
+    if (checked) {
+      onChange(Array.from(new Set([...value, option])));
+      return;
+    }
+    onChange(value.filter((item) => item !== option));
+  }
+
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button
+          id={id}
+          type="button"
+          variant="outline"
+          className={MULTI_SELECT_TRIGGER_CLASS}
+          aria-label={label}
+          aria-invalid={Boolean(error)}
+        >
+          <span className="min-w-0 truncate">{displayValue}</span>
+          <ChevronDownIcon className="size-4 shrink-0 text-[#667085]" />
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="start" className="max-h-72 w-[var(--radix-dropdown-menu-trigger-width)]">
+        {options.map((option) => (
+          <DropdownMenuCheckboxItem
+            key={option}
+            checked={selected.has(option)}
+            onCheckedChange={(checked) => toggle(option, checked === true)}
+            onSelect={(event) => event.preventDefault()}
+          >
+            {option}
+          </DropdownMenuCheckboxItem>
+        ))}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
+function getFieldIssueMessage(issues: MediaPlanValidationIssue[], path: string): string | null {
+  return getIssueMessage(issues, path) ?? issues.find((issue) => issue.path.startsWith(`${path}.`))?.message ?? null;
 }

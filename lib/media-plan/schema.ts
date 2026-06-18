@@ -26,6 +26,27 @@ export const MEDIA_PLAN_TARGET_LOCATION_OPTIONS = [
 
 export const MEDIA_PLAN_LANGUAGE_OPTIONS = ["English", "Malay", "Chinese"] as const;
 
+export const MEDIA_PLAN_CAMPAIGN_OBJECTIVE_OPTIONS = [
+  "Sales",
+  "Leads",
+  "Website traffic",
+  "App promotion",
+  "YouTube reach, views, and engagements",
+  "Local store visits and promotions",
+  "Create a campaign without guidance",
+] as const;
+
+export function normalizeMediaPlanCampaignObjective(value: string): MediaPlanCampaignObjective | null {
+  const normalized = value.trim().toLowerCase();
+  if (!normalized) {
+    return null;
+  }
+  return (
+    MEDIA_PLAN_CAMPAIGN_OBJECTIVE_OPTIONS.find((option) => option.toLowerCase() === normalized) ||
+    (normalized === "website traffic" ? "Website traffic" : null)
+  );
+}
+
 export const MEDIA_PLAN_LIMITS = {
   headline: 30,
   description: 90,
@@ -51,7 +72,7 @@ export type MediaPlanStatus =
   | "Created Paused"
   | "Failed";
 
-export type MediaPlanCampaignObjective = "Leads" | "Sales" | "Website Traffic";
+export type MediaPlanCampaignObjective = (typeof MEDIA_PLAN_CAMPAIGN_OBJECTIVE_OPTIONS)[number];
 export type MediaPlanBiddingStrategy = "Conversions" | "Clicks";
 export type MediaPlanLanguage = (typeof MEDIA_PLAN_LANGUAGE_OPTIONS)[number];
 export type MediaPlanKeywordMatchType = "BROAD" | "PHRASE" | "EXACT";
@@ -62,8 +83,8 @@ export interface MediaPlanFormData {
   googleCid: string;
   campaignType: string;
   specialRemarks: string;
-  targetLocation: string;
-  language: string;
+  targetLocation: string[];
+  language: MediaPlanLanguage[];
 }
 
 export interface MediaPlanCampaign {
@@ -142,8 +163,8 @@ export interface MediaPlanGenerateRequest {
   googleCid: string;
   campaignType?: string;
   specialRemarks?: string;
-  targetLocation?: string;
-  language?: string;
+  targetLocation?: string | string[];
+  language?: string | string[];
 }
 
 export type MediaPlanGenerationStatus = "queued" | "in_progress" | "completed";
@@ -315,8 +336,8 @@ export const DEFAULT_MEDIA_PLAN_FORM: MediaPlanFormData = {
   googleCid: "",
   campaignType: SUPPORTED_CAMPAIGN_TYPE,
   specialRemarks: "",
-  targetLocation: DEFAULT_TARGET_LOCATION,
-  language: DEFAULT_MEDIA_PLAN_LANGUAGE,
+  targetLocation: [DEFAULT_TARGET_LOCATION],
+  language: [DEFAULT_MEDIA_PLAN_LANGUAGE],
 };
 
 export const MEDIA_PLAN_PROMPT_VARIABLE_DEFAULTS = {
@@ -342,7 +363,7 @@ export const MEDIA_PLAN_RESPONSE_JSON_SCHEMA = {
         campaignName: { type: "string" },
         brandOrClientName: { type: "string" },
         businessName: { type: "string" },
-        campaignObjective: { type: "string", enum: ["Leads", "Sales", "Website Traffic"] },
+        campaignObjective: { type: "string", enum: MEDIA_PLAN_CAMPAIGN_OBJECTIVE_OPTIONS },
         campaignType: { type: "string", enum: ["Search"] },
         biddingStrategy: { type: "string", enum: ["Conversions", "Clicks"] },
         websiteUrl: { type: "string" },
