@@ -5,6 +5,7 @@ import {
   BriefcaseIcon,
   Building2Icon,
   CalendarDaysIcon,
+  ChevronDownIcon,
   CircleDollarSignIcon,
   CrosshairIcon,
   FileTextIcon,
@@ -32,6 +33,12 @@ import { useMemo, useRef, useState, type DragEvent, type ReactNode } from "react
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuCheckboxItem,
+  DropdownMenuContent,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
@@ -48,7 +55,9 @@ import {
   DEFAULT_NETWORK,
   MEDIA_PLAN_CAMPAIGN_OBJECTIVE_OPTIONS,
   MEDIA_PLAN_ASSET_ACCEPTED_MIME_TYPES,
+  MEDIA_PLAN_LANGUAGE_OPTIONS,
   MEDIA_PLAN_LIMITS,
+  MEDIA_PLAN_TARGET_LOCATION_OPTIONS,
   MediaPlan,
   MediaPlanAdGroup,
   MediaPlanAsset,
@@ -88,6 +97,10 @@ interface MediaPlanEditorProps {
 }
 
 const MATCH_TYPES: MediaPlanKeywordMatchType[] = ["BROAD", "PHRASE", "EXACT"];
+const SETTINGS_CONTROL_CLASS =
+  "h-9 rounded-lg border-[#d7d7d7] bg-white px-3 text-sm shadow-none focus-visible:border-[#9f0019] focus-visible:ring-[#9f0019]/15 md:text-sm";
+const SETTINGS_MULTI_SELECT_TRIGGER_CLASS =
+  "h-9 w-full justify-between rounded-lg border-[#d7d7d7] bg-white px-3 text-left text-sm font-medium text-[#344054] shadow-none hover:bg-white focus-visible:border-[#9f0019] focus-visible:ring-[#9f0019]/15";
 
 export function MediaPlanEditor({
   plan,
@@ -208,14 +221,11 @@ export function MediaPlanEditor({
         </CampaignSummaryCard>
 
         <CampaignSettingsCard>
-          <SettingsEditableField
+          <ReadonlySettingsField
             icon={<CrosshairIcon className="size-4" />}
             label="Campaign Type"
-            value={currentPlan.campaign.campaignType}
+            value="Search"
             error={getIssueMessage(issues, "campaign.campaignType")}
-            onChange={(value) =>
-              updateCampaign((campaign) => ({ ...campaign, campaignType: value as "Search" }))
-            }
           />
           <SettingsEditableField
             icon={<TargetIcon className="size-4" />}
@@ -242,20 +252,20 @@ export function MediaPlanEditor({
               }))
             }
           />
-          <SettingsEditableField
+          <DateSettingsField
             icon={<CalendarDaysIcon className="size-4" />}
             label="Start Date"
             value={currentPlan.campaign.startDate}
             error={getIssueMessage(issues, "campaign.startDate")}
             onChange={(value) => updateCampaign((campaign) => ({ ...campaign, startDate: value }))}
           />
-          <SettingsEditableField
+          <CurrencySettingsField
             icon={<BriefcaseIcon className="size-4" />}
             label="Average Daily Budget"
-            value={String(currentPlan.campaign.averageDailyBudget)}
+            value={currentPlan.campaign.averageDailyBudget}
             error={getIssueMessage(issues, "campaign.averageDailyBudget")}
             onChange={(value) =>
-              updateCampaign((campaign) => ({ ...campaign, averageDailyBudget: Number(value) }))
+              updateCampaign((campaign) => ({ ...campaign, averageDailyBudget: value }))
             }
           />
           <SettingsEditableField
@@ -283,27 +293,31 @@ export function MediaPlanEditor({
               }))
             }
           />
-          <SettingsEditableField
+          <MultiSelectSettingsField
             icon={<MapPinIcon className="size-4" />}
             label="Target Location"
-            value={currentPlan.campaign.targetLocation.join(", ")}
+            options={MEDIA_PLAN_TARGET_LOCATION_OPTIONS}
+            value={currentPlan.campaign.targetLocation}
+            placeholder="Select locations"
             error={getIssueMessage(issues, "campaign.targetLocation")}
             onChange={(value) =>
               updateCampaign((campaign) => ({
                 ...campaign,
-                targetLocation: splitList(value),
+                targetLocation: value,
               }))
             }
           />
-          <SettingsEditableField
+          <MultiSelectSettingsField
             icon={<LanguagesIcon className="size-4" />}
             label="Language"
-            value={currentPlan.campaign.language.join(", ")}
+            options={MEDIA_PLAN_LANGUAGE_OPTIONS}
+            value={currentPlan.campaign.language}
+            placeholder="Select languages"
             error={getIssueMessage(issues, "campaign.language")}
             onChange={(value) =>
               updateCampaign((campaign) => ({
                 ...campaign,
-                language: splitList(value) as MediaPlanLanguage[],
+                language: value as MediaPlanLanguage[],
               }))
             }
           />
@@ -1289,6 +1303,168 @@ function SettingsEditableField({
   );
 }
 
+function ReadonlySettingsField({
+  icon,
+  label,
+  value,
+  error,
+}: {
+  icon: ReactNode;
+  label: string;
+  value: string;
+  error?: string | null;
+}) {
+  return (
+    <div className="grid gap-1">
+      <div className="flex items-center gap-2">
+        <span className="flex size-4 items-center justify-center text-[#b00012]">{icon}</span>
+        <Label className="text-[13px] font-bold text-[#344054]">{label}</Label>
+      </div>
+      <div
+        role="textbox"
+        aria-readonly="true"
+        aria-invalid={Boolean(error)}
+        className="flex h-9 items-center rounded-lg border border-[#d7d7d7] bg-[#f8fafc] px-3 text-sm font-semibold text-[#344054] shadow-none"
+      >
+        {value}
+      </div>
+      {error ? <p className="text-xs font-medium text-[#be123c]">{error}</p> : null}
+    </div>
+  );
+}
+
+function DateSettingsField({
+  icon,
+  label,
+  value,
+  error,
+  onChange,
+}: {
+  icon: ReactNode;
+  label: string;
+  value: string;
+  error?: string | null;
+  onChange: (value: string) => void;
+}) {
+  return (
+    <div className="grid gap-1">
+      <div className="flex items-center gap-2">
+        <span className="flex size-4 items-center justify-center text-[#b00012]">{icon}</span>
+        <Label className="text-[13px] font-bold text-[#344054]">{label}</Label>
+      </div>
+      <Input
+        type="date"
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        aria-invalid={Boolean(error)}
+        className={SETTINGS_CONTROL_CLASS}
+      />
+      {error ? <p className="text-xs font-medium text-[#be123c]">{error}</p> : null}
+    </div>
+  );
+}
+
+function CurrencySettingsField({
+  icon,
+  label,
+  value,
+  error,
+  onChange,
+}: {
+  icon: ReactNode;
+  label: string;
+  value: number;
+  error?: string | null;
+  onChange: (value: number) => void;
+}) {
+  return (
+    <div className="grid gap-1">
+      <div className="flex items-center gap-2">
+        <span className="flex size-4 items-center justify-center text-[#b00012]">{icon}</span>
+        <Label className="text-[13px] font-bold text-[#344054]">{label}</Label>
+      </div>
+      <div className="flex h-9 overflow-hidden rounded-lg border border-[#d7d7d7] bg-white shadow-none focus-within:border-[#9f0019] focus-within:ring-3 focus-within:ring-[#9f0019]/15">
+        <span className="flex items-center border-r border-[#e5e7eb] bg-[#f8fafc] px-3 text-sm font-bold text-[#667085]">
+          RM
+        </span>
+        <Input
+          value={Number.isFinite(value) ? String(value) : ""}
+          onChange={(event) => onChange(parseCurrencyInput(event.target.value))}
+          inputMode="decimal"
+          aria-invalid={Boolean(error)}
+          className="h-full rounded-none border-0 bg-white px-3 text-sm shadow-none focus-visible:ring-0 md:text-sm"
+        />
+      </div>
+      {error ? <p className="text-xs font-medium text-[#be123c]">{error}</p> : null}
+    </div>
+  );
+}
+
+function MultiSelectSettingsField({
+  icon,
+  label,
+  options,
+  value,
+  placeholder,
+  error,
+  onChange,
+}: {
+  icon: ReactNode;
+  label: string;
+  options: readonly string[];
+  value: readonly string[];
+  placeholder: string;
+  error?: string | null;
+  onChange: (value: string[]) => void;
+}) {
+  const selected = new Set(value);
+  const displayValue = value.length > 0 ? value.join(", ") : placeholder;
+
+  function toggle(option: string, checked: boolean) {
+    if (checked) {
+      onChange(Array.from(new Set([...value, option])));
+      return;
+    }
+    onChange(value.filter((item) => item !== option));
+  }
+
+  return (
+    <div className="grid gap-1">
+      <div className="flex items-center gap-2">
+        <span className="flex size-4 items-center justify-center text-[#b00012]">{icon}</span>
+        <Label className="text-[13px] font-bold text-[#344054]">{label}</Label>
+      </div>
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Button
+            type="button"
+            variant="outline"
+            className={SETTINGS_MULTI_SELECT_TRIGGER_CLASS}
+            aria-label={label}
+            aria-invalid={Boolean(error)}
+          >
+            <span className="min-w-0 truncate">{displayValue}</span>
+            <ChevronDownIcon className="size-4 shrink-0 text-[#667085]" />
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="start" className="max-h-72 w-[var(--radix-dropdown-menu-trigger-width)]">
+          {options.map((option) => (
+            <DropdownMenuCheckboxItem
+              key={option}
+              checked={selected.has(option)}
+              onCheckedChange={(checked) => toggle(option, checked === true)}
+              onSelect={(event) => event.preventDefault()}
+            >
+              {option}
+            </DropdownMenuCheckboxItem>
+          ))}
+        </DropdownMenuContent>
+      </DropdownMenu>
+      {error ? <p className="text-xs font-medium text-[#be123c]">{error}</p> : null}
+    </div>
+  );
+}
+
 function KeywordsEditor({
   adGroup,
   adGroupIndex,
@@ -1652,9 +1828,11 @@ function formatAssetSize(size: number): string {
   return `${Math.ceil(size / 1024)} KB`;
 }
 
-function splitList(value: string): string[] {
-  return value
-    .split(/[,;\n]+/)
-    .map((item) => item.trim())
-    .filter(Boolean);
+function parseCurrencyInput(value: string): number {
+  const cleaned = value.replace(/^rm\s*/i, "").replace(/[,\s]/g, "");
+  if (!cleaned) {
+    return Number.NaN;
+  }
+  const parsed = Number(cleaned);
+  return Number.isFinite(parsed) ? parsed : Number.NaN;
 }

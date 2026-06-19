@@ -118,16 +118,12 @@ export function MediaPlanPageClient() {
     () => refreshProgressTiming(approvalProgress, progressClock),
     [approvalProgress, progressClock]
   );
-  const activeProgressCards = (
-    <>
-      {visibleGenerationProgress?.status === "running" ? (
-        <MediaPlanProgressCard progress={visibleGenerationProgress} />
-      ) : null}
-      {visibleApprovalProgress?.status === "running" ? (
-        <MediaPlanProgressCard progress={visibleApprovalProgress} />
-      ) : null}
-    </>
-  );
+  const activeProgressCard =
+    visibleApprovalProgress?.status === "running" ? (
+      <MediaPlanProgressCard progress={visibleApprovalProgress} />
+    ) : visibleGenerationProgress?.status === "running" ? (
+      <MediaPlanProgressCard progress={visibleGenerationProgress} />
+    ) : null;
 
   function resetPlanHistory() {
     setPlanHistory(EMPTY_MEDIA_PLAN_HISTORY);
@@ -522,15 +518,15 @@ export function MediaPlanPageClient() {
     <ReportShell
       title="Media Plan"
       dateLabel=""
-      headerDateControl={<span className="sr-only">Media Plan</span>}
-      reportReady={!generating && !savingToNotion && !creatingCampaign}
-      headerBottomControl={
+      headerControlLayout="wide"
+      headerDateControl={
         <MediaPlanStatusBar
           currentStatus={currentStatus}
           issueCount={visibleIssues.length}
           activeStatuses={activeStatuses}
         />
       }
+      reportReady={!generating && !savingToNotion && !creatingCampaign}
     >
       <div className="space-y-5">
         <MediaPlanForm
@@ -544,7 +540,7 @@ export function MediaPlanPageClient() {
           onMockup={handleMockup}
         />
 
-        {!plan ? activeProgressCards : null}
+        {!plan ? activeProgressCard : null}
 
         <MediaPlanEditor
           plan={plan}
@@ -561,7 +557,7 @@ export function MediaPlanPageClient() {
           onUndo={handleUndo}
           onRedo={handleRedo}
           onApprove={handleApprove}
-          progressContent={plan ? activeProgressCards : null}
+          progressContent={plan ? activeProgressCard : null}
         />
 
         <ValidationVerificationSection

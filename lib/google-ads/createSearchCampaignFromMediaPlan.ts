@@ -1,4 +1,5 @@
 import { getCredentials, normalizeGoogleAccountId } from "@/lib/reporting/env";
+import sharp from "sharp";
 import {
   GOOGLE_AD_GROUP_SETUP_DATA_SOURCE_ID,
   normalizeNotionDataSourceId,
@@ -80,11 +81,39 @@ interface MediaPlanNotionRow {
   keywords: GoogleKeyword[];
   headlines: string[];
   descriptions: string[];
+  businessName: string;
+  logoFiles: NotionAssetFile[];
+  productServiceImageFiles: NotionAssetFile[];
+  sitelinks: MediaPlanSitelink[];
 }
 
 interface GoogleKeyword {
   text: string;
   matchType: "BROAD" | "PHRASE" | "EXACT";
+}
+
+interface MediaPlanSitelink {
+  title: string;
+  url: string;
+}
+
+interface NotionAssetFile {
+  name: string;
+  url: string;
+  type: string;
+}
+
+interface DownloadedNotionAssetFile extends NotionAssetFile {
+  bytes: Buffer;
+  base64: string;
+  dimensions: ImageDimensions;
+  normalizedFrom?: ImageDimensions;
+}
+
+interface ImageDimensions {
+  width: number;
+  height: number;
+  format: "png" | "jpeg";
 }
 
 interface MediaPlanRowGroup {
@@ -104,6 +133,11 @@ interface MediaPlanRowGroup {
   rows: MediaPlanNotionRow[];
 }
 
+interface DownloadedMediaPlanAssets {
+  logo: DownloadedNotionAssetFile[];
+  productServiceImages: DownloadedNotionAssetFile[];
+}
+
 interface PlannedMediaPlanCampaign {
   campaign: {
     name: string;
@@ -121,6 +155,7 @@ interface PlannedMediaPlanCampaign {
   adGroups: Array<{
     name: string;
     keywords: GoogleKeyword[];
+    sitelinks: MediaPlanSitelink[];
     responsiveSearchAd: {
       finalUrl: string;
       displayPath1: string;
@@ -129,6 +164,11 @@ interface PlannedMediaPlanCampaign {
       descriptions: string[];
     };
   }>;
+  assets: {
+    businessName: string | null;
+    logo: Array<{ name: string }>;
+    productServiceImages: Array<{ name: string }>;
+  };
   operations?: unknown[];
 }
 
@@ -184,6 +224,10 @@ const NOTION_REQUEST_TIMEOUT_MS = 60_000;
 const MEDIA_PLAN_SOURCE = "media-plan";
 const CAMPAIGN_RESULT_NOTE_PREFIX = "GoogleAdsCampaignID:";
 const CAMPAIGN_RESOURCE_NOTE_PREFIX = "GoogleAdsCampaignResourceName:";
+const SEARCH_IMAGE_ASPECT_RATIO_TOLERANCE = 0.01;
+const SEARCH_LANDSCAPE_RATIO = 1.91;
+const BUSINESS_LOGO_NORMALIZED_SIZE = 1200;
+const SEARCH_IMAGE_NORMALIZED_SIZE = 1200;
 const LANGUAGE_FALLBACKS = new Map([
   ["English", "languageConstants/1000"],
   ["Malay", "languageConstants/1019"],
@@ -232,8 +276,13 @@ export async function createSearchCampaignFromMediaPlan(
     const googleAdsConfig = await resolveGoogleAdsConfig(linkedAccount);
     await assertNoExistingCampaign(googleAdsConfig, group.campaignName);
     const targeting = await resolveTargeting(googleAdsConfig, group);
-    let mutateOperations = buildGoogleAdsMutateOperations(googleAdsConfig.customerId, group, targeting);
-    console.log("TODO: Sitelink creation not implemented for media-plan source.");
+    const downloadedAssets = await downloadMediaPlanAssetFiles(group);
+    let mutateOperations = buildGoogleAdsMutateOperations(
+      googleAdsConfig.customerId,
+      group,
+      targeting,
+      downloadedAssets
+    );
     mutateOperations = await googleAdsValidateMutateWithPolicyExemptions(googleAdsConfig, mutateOperations);
     console.info("[media-plan:create-campaign] google_ads_validate_only_passed", {
       batchId: normalized.batchId,
@@ -512,6 +561,10 @@ function pageToMediaPlanRow(page: NotionPage): MediaPlanNotionRow {
     keywords: readNumberedTexts(props, 18, 27, "Keyword").map(parseKeyword).filter(isKeyword),
     headlines: readNumberedTexts(props, 30, 44, "Headline"),
     descriptions: readNumberedTexts(props, 45, 48, "Description"),
+    businessName: readText(props, "49 Business Name"),
+    logoFiles: readFiles(props, "50 Logo"),
+    productServiceImageFiles: readFiles(props, "51 Product / Service Image"),
+    sitelinks: readSitelinks(props),
   };
 }
 
@@ -537,6 +590,7 @@ function validateAndGroupRows(
     ["websiteUrl", "09 Website URL"],
     ["finalUrl", "10 Final URL"],
     ["averageDailyBudget", "12 Average Daily Budget"],
+    ["businessName", "49 Business Name"],
   ];
 
   for (const row of rows) {
@@ -570,9 +624,16 @@ function validateAndGroupRows(
     pushLengthIssues(issues, row.headlines, 30, `Headline on ${row.adGroupName || row.pageId}`);
     pushLengthIssues(issues, row.descriptions, 90, `Description on ${row.adGroupName || row.pageId}`);
     pushLengthIssues(issues, [row.displayPath1, row.displayPath2].filter(Boolean), 15, `Display path on ${row.adGroupName || row.pageId}`);
+    pushLengthIssues(issues, row.sitelinks.map((sitelink) => sitelink.title), 25, `Sitelink title on ${row.adGroupName || row.pageId}`);
     if (!isValidUrl(row.finalUrl)) issues.push(`Row ${row.pageId} final URL must be valid.`);
+    for (const sitelink of row.sitelinks) {
+      if (!isValidUrl(sitelink.url)) {
+        issues.push(`Sitelink ${sitelink.title || "untitled"} on ${row.adGroupName || row.pageId} URL must be valid.`);
+      }
+    }
   }
 
+  if (!first.businessName.trim()) issues.push("Business name is required.");
   if (!isValidUrl(first.websiteUrl)) issues.push("Website URL must be valid.");
   if (!isValidUrl(first.finalUrl)) issues.push("Final URL must be valid.");
   if (!first.averageDailyBudget || first.averageDailyBudget <= 0) {
@@ -640,6 +701,7 @@ function buildPlannedPayload(group: MediaPlanRowGroup): PlannedMediaPlanCampaign
     adGroups: group.rows.map((row) => ({
       name: row.adGroupName,
       keywords: row.keywords.slice(0, 10),
+      sitelinks: row.sitelinks.slice(0, 6),
       responsiveSearchAd: {
         finalUrl: row.finalUrl,
         displayPath1: row.displayPath1,
@@ -648,6 +710,13 @@ function buildPlannedPayload(group: MediaPlanRowGroup): PlannedMediaPlanCampaign
         descriptions: row.descriptions.slice(0, 4),
       },
     })),
+    assets: {
+      businessName: group.rows.find((row) => row.businessName.trim())?.businessName.trim() || null,
+      logo: uniqueFiles(group.rows.flatMap((row) => row.logoFiles)).map((file) => ({ name: file.name })),
+      productServiceImages: uniqueFiles(group.rows.flatMap((row) => row.productServiceImageFiles)).map((file) => ({
+        name: file.name,
+      })),
+    },
   };
 }
 
@@ -801,6 +870,151 @@ async function resolveTargeting(config: GoogleAdsConfig, group: MediaPlanRowGrou
   return { geoTargets, languages };
 }
 
+async function downloadMediaPlanAssetFiles(group: MediaPlanRowGroup): Promise<DownloadedMediaPlanAssets> {
+  return {
+    logo: await downloadUniqueNotionFiles(
+      uniqueFiles(group.rows.flatMap((row) => row.logoFiles)).slice(0, 1),
+      normalizeBusinessLogoAssetFile
+    ),
+    productServiceImages: await downloadUniqueNotionFiles(
+      uniqueFiles(group.rows.flatMap((row) => row.productServiceImageFiles)),
+      normalizeSearchAdImageAssetFile
+    ),
+  };
+}
+
+async function downloadUniqueNotionFiles(
+  files: NotionAssetFile[],
+  normalize: (file: DownloadedNotionAssetFile) => Promise<DownloadedNotionAssetFile>
+): Promise<DownloadedNotionAssetFile[]> {
+  const downloaded: DownloadedNotionAssetFile[] = [];
+  for (const file of files) {
+    downloaded.push(await normalize(await downloadNotionAssetFile(file)));
+  }
+  return downloaded;
+}
+
+async function downloadNotionAssetFile(file: NotionAssetFile): Promise<DownloadedNotionAssetFile> {
+  if (!file.url) {
+    throw stepError(
+      "asset_download",
+      `Notion asset ${file.name} is attached but does not include a downloadable URL. Re-upload the asset from the dashboard and try again.`
+    );
+  }
+
+  let response: Response;
+  try {
+    response = await fetchWithTimeout(file.url, {}, 30_000);
+  } catch (error) {
+    throw stepError(
+      "asset_download",
+      `Could not download Notion asset ${file.name}: ${error instanceof Error ? error.message : String(error)}`
+    );
+  }
+  if (!response.ok) {
+    throw stepError("asset_download", `Could not download Notion asset ${file.name}: HTTP ${response.status}.`);
+  }
+
+  const bytes = Buffer.from(await response.arrayBuffer());
+  if (bytes.length === 0) {
+    throw stepError("asset_download", `Could not download Notion asset ${file.name}: file was empty.`);
+  }
+
+  return {
+    ...file,
+    bytes,
+    base64: bytes.toString("base64"),
+    dimensions: readImageDimensions(bytes, file.name),
+  };
+}
+
+async function normalizeBusinessLogoAssetFile(file: DownloadedNotionAssetFile): Promise<DownloadedNotionAssetFile> {
+  if (!getBusinessLogoEligibilityIssue(file.dimensions)) {
+    return file;
+  }
+
+  const normalizedBytes = await sharp(file.bytes)
+    .resize(BUSINESS_LOGO_NORMALIZED_SIZE, BUSINESS_LOGO_NORMALIZED_SIZE, {
+      fit: "contain",
+      background: "#ffffff",
+    })
+    .jpeg({ quality: 90 })
+    .toBuffer();
+  return normalizedDownloadedFile(file, normalizedBytes, "normalized-logo.jpg");
+}
+
+async function normalizeSearchAdImageAssetFile(file: DownloadedNotionAssetFile): Promise<DownloadedNotionAssetFile> {
+  if (!getSearchAdImageEligibilityIssue(file.dimensions)) {
+    return file;
+  }
+
+  const normalizedBytes = await sharp(file.bytes)
+    .resize(SEARCH_IMAGE_NORMALIZED_SIZE, SEARCH_IMAGE_NORMALIZED_SIZE, {
+      fit: "contain",
+      background: "#ffffff",
+    })
+    .jpeg({ quality: 90 })
+    .toBuffer();
+  return normalizedDownloadedFile(file, normalizedBytes, "normalized-search-image.jpg");
+}
+
+function normalizedDownloadedFile(
+  file: DownloadedNotionAssetFile,
+  bytes: Buffer,
+  fallbackName: string
+): DownloadedNotionAssetFile {
+  const dimensions = readImageDimensions(bytes, file.name);
+  const normalizedName = file.name.replace(/\.[^.]+$/, "") || fallbackName.replace(/\.[^.]+$/, "");
+  console.info("[media-plan:create-campaign] google_ads_image_asset_normalized", {
+    name: file.name,
+    originalDimensions: formatDimensions(file.dimensions),
+    normalizedDimensions: formatDimensions(dimensions),
+  });
+  return {
+    ...file,
+    name: `${normalizedName}-google-ads.jpg`,
+    bytes,
+    base64: bytes.toString("base64"),
+    dimensions,
+    normalizedFrom: file.dimensions,
+  };
+}
+
+function readImageDimensions(bytes: Uint8Array, name: string): ImageDimensions {
+  if (
+    bytes.length >= 24 &&
+    bytes[0] === 0x89 &&
+    bytes[1] === 0x50 &&
+    bytes[2] === 0x4e &&
+    bytes[3] === 0x47
+  ) {
+    const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    return { width: view.getUint32(16), height: view.getUint32(20), format: "png" };
+  }
+
+  if (bytes.length > 4 && bytes[0] === 0xff && bytes[1] === 0xd8) {
+    let offset = 2;
+    while (offset < bytes.length - 9) {
+      if (bytes[offset] !== 0xff) {
+        offset += 1;
+        continue;
+      }
+      const marker = bytes[offset + 1];
+      const length = (bytes[offset + 2] << 8) + bytes[offset + 3];
+      if ([0xc0, 0xc1, 0xc2, 0xc3, 0xc5, 0xc6, 0xc7, 0xc9, 0xca, 0xcb, 0xcd, 0xce, 0xcf].includes(marker)) {
+        return {
+          width: (bytes[offset + 7] << 8) + bytes[offset + 8],
+          height: (bytes[offset + 5] << 8) + bytes[offset + 6],
+          format: "jpeg",
+        };
+      }
+      offset += 2 + length;
+    }
+  }
+
+  throw stepError("asset_download", `Unsupported or unreadable image dimensions for ${name}. Use PNG or JPEG.`);
+}
+
 async function resolveGeoTarget(config: GoogleAdsConfig, name: string) {
   const queryName = name === "Malaysia Nationwide" ? "Malaysia" : name;
   const rows = await googleAdsSearch(config, `
@@ -855,10 +1069,12 @@ LIMIT 5
 function buildGoogleAdsMutateOperations(
   customerId: string,
   group: MediaPlanRowGroup,
-  targeting: ResolvedTargeting
+  targeting: ResolvedTargeting,
+  downloadedAssets: DownloadedMediaPlanAssets = { logo: [], productServiceImages: [] }
 ): unknown[] {
   const budgetResourceName = `customers/${customerId}/campaignBudgets/-1`;
   const campaignResourceName = `customers/${customerId}/campaigns/-2`;
+  let nextAssetId = -100;
   const operations: unknown[] = [
     {
       campaignBudgetOperation: {
@@ -918,6 +1134,100 @@ function buildGoogleAdsMutateOperations(
     });
   }
 
+  for (const sitelink of uniqueSitelinks(group.rows.flatMap((row) => row.sitelinks)).slice(0, 6)) {
+    const assetResourceName = `customers/${customerId}/assets/${nextAssetId--}`;
+    operations.push({
+      assetOperation: {
+        create: {
+          resourceName: assetResourceName,
+          name: `Sitelink | ${sanitizeAssetName(sitelink.title)}`,
+          finalUrls: [sitelink.url],
+          sitelinkAsset: {
+            linkText: sitelink.title,
+          },
+        },
+      },
+    });
+    operations.push({
+      campaignAssetOperation: {
+        create: {
+          campaign: campaignResourceName,
+          asset: assetResourceName,
+          fieldType: "SITELINK",
+        },
+      },
+    });
+  }
+
+  const businessName = group.rows.find((row) => row.businessName.trim())?.businessName.trim();
+  if (businessName) {
+    const assetResourceName = `customers/${customerId}/assets/${nextAssetId--}`;
+    operations.push({
+      assetOperation: {
+        create: {
+          resourceName: assetResourceName,
+          name: `Business Name | ${sanitizeAssetName(businessName)}`,
+          textAsset: { text: businessName },
+        },
+      },
+    });
+    operations.push({
+      campaignAssetOperation: {
+        create: {
+          campaign: campaignResourceName,
+          asset: assetResourceName,
+          fieldType: "BUSINESS_NAME",
+        },
+      },
+    });
+  }
+
+  const eligibleLogos = filterEligibleBusinessLogos(downloadedAssets.logo.slice(0, 1));
+  for (const logo of eligibleLogos) {
+    const assetResourceName = `customers/${customerId}/assets/${nextAssetId--}`;
+    operations.push({
+      assetOperation: {
+        create: {
+          resourceName: assetResourceName,
+          name: `Logo | ${sanitizeAssetName(logo.name)}`,
+          imageAsset: { data: logo.base64 },
+        },
+      },
+    });
+    operations.push({
+      campaignAssetOperation: {
+        create: {
+          campaign: campaignResourceName,
+          asset: assetResourceName,
+          fieldType: "BUSINESS_LOGO",
+        },
+      },
+    });
+  }
+
+  const eligibleProductImages = filterEligibleSearchAdImages(downloadedAssets.productServiceImages);
+  for (const image of eligibleProductImages) {
+    const assetResourceName = `customers/${customerId}/assets/${nextAssetId--}`;
+    operations.push({
+      assetOperation: {
+        create: {
+          resourceName: assetResourceName,
+          name: `Image | ${sanitizeAssetName(image.name)}`,
+          imageAsset: { data: image.base64 },
+        },
+      },
+    });
+    operations.push({
+      campaignAssetOperation: {
+        create: {
+          campaign: campaignResourceName,
+          asset: assetResourceName,
+          fieldType: "AD_IMAGE",
+        },
+      },
+    });
+  }
+
   let nextAdGroupId = -10;
   for (const row of group.rows) {
     const adGroupResourceName = `customers/${customerId}/adGroups/${nextAdGroupId--}`;
@@ -932,6 +1242,30 @@ function buildGoogleAdsMutateOperations(
         },
       },
     });
+    for (const sitelink of uniqueSitelinks(row.sitelinks).slice(0, 6)) {
+      const assetResourceName = `customers/${customerId}/assets/${nextAssetId--}`;
+      operations.push({
+        assetOperation: {
+          create: {
+            resourceName: assetResourceName,
+            name: `Sitelink | ${sanitizeAssetName(sitelink.title)}`,
+            finalUrls: [sitelink.url],
+            sitelinkAsset: {
+              linkText: sitelink.title,
+            },
+          },
+        },
+      });
+      operations.push({
+        adGroupAssetOperation: {
+          create: {
+            adGroup: adGroupResourceName,
+            asset: assetResourceName,
+            fieldType: "SITELINK",
+          },
+        },
+      });
+    }
     operations.push({
       adGroupAdOperation: {
         create: {
@@ -1526,6 +1860,27 @@ function readCheckbox(props: Record<string, unknown>, name: string): boolean {
   return Boolean(prop?.checkbox);
 }
 
+function readFiles(props: Record<string, unknown>, name: string): NotionAssetFile[] {
+  const prop = props[name] as
+    | {
+        files?: Array<{
+          name?: string;
+          type?: string;
+          file?: { url?: string };
+          external?: { url?: string };
+        }>;
+      }
+    | undefined;
+  return Array.isArray(prop?.files)
+    ? prop.files
+        .map((file, index) => ({
+          name: file.name?.trim() || `asset-${index + 1}`,
+          url: file.file?.url || file.external?.url || "",
+          type: file.type || "file",
+        }))
+    : [];
+}
+
 function readNumberedTexts(
   props: Record<string, unknown>,
   from: number,
@@ -1539,6 +1894,20 @@ function readNumberedTexts(
     if (value) values.push(value);
   }
   return values;
+}
+
+function readSitelinks(props: Record<string, unknown>): MediaPlanSitelink[] {
+  const sitelinks: MediaPlanSitelink[] = [];
+  for (let index = 1; index <= 6; index += 1) {
+    const titleProperty = 51 + index * 2;
+    const urlProperty = titleProperty + 1;
+    const title = readText(props, `${titleProperty} Sitelink ${index} Title`);
+    const url = readUrlOrText(props, `${urlProperty} Sitelink ${index} URL`);
+    if (title || url) {
+      sitelinks.push({ title, url });
+    }
+  }
+  return sitelinks.filter((sitelink) => sitelink.title.trim() && sitelink.url.trim());
 }
 
 function richTextPlain(items: unknown): string {
@@ -1577,6 +1946,119 @@ function pushLengthIssues(issues: string[], values: string[], max: number, label
       issues.push(`${label} exceeds ${max} characters: ${value}`);
     }
   }
+}
+
+function uniqueFiles(files: NotionAssetFile[]): NotionAssetFile[] {
+  const seen = new Set<string>();
+  const unique: NotionAssetFile[] = [];
+  for (const file of files) {
+    const key = fileKey(file);
+    if (!key || seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    unique.push(file);
+  }
+  return unique;
+}
+
+function fileKey(file: NotionAssetFile): string {
+  return file.name.trim().toLowerCase() || file.url.trim().toLowerCase();
+}
+
+function uniqueSitelinks(sitelinks: MediaPlanSitelink[]): MediaPlanSitelink[] {
+  const seen = new Set<string>();
+  const unique: MediaPlanSitelink[] = [];
+  for (const sitelink of sitelinks) {
+    const key = `${sitelink.title.trim().toLowerCase()}|${sitelink.url.trim().toLowerCase()}`;
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    unique.push({
+      title: sitelink.title.trim(),
+      url: sitelink.url.trim(),
+    });
+  }
+  return unique;
+}
+
+function sanitizeAssetName(value: string): string {
+  return value
+    .replace(/[^\w .|:-]/g, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 80) || "Asset";
+}
+
+function filterEligibleBusinessLogos(files: DownloadedNotionAssetFile[]): DownloadedNotionAssetFile[] {
+  return files.filter((file) => {
+    const issue = getBusinessLogoEligibilityIssue(file.dimensions);
+    if (!issue) {
+      return true;
+    }
+    console.warn("[media-plan:create-campaign] google_ads_logo_asset_skipped", {
+      name: file.name,
+      dimensions: formatDimensions(file.dimensions),
+      issue,
+    });
+    return false;
+  });
+}
+
+function filterEligibleSearchAdImages(files: DownloadedNotionAssetFile[]): DownloadedNotionAssetFile[] {
+  return files.filter((file) => {
+    const issue = getSearchAdImageEligibilityIssue(file.dimensions);
+    if (!issue) {
+      return true;
+    }
+    console.warn("[media-plan:create-campaign] google_ads_ad_image_asset_skipped", {
+      name: file.name,
+      dimensions: formatDimensions(file.dimensions),
+      issue,
+    });
+    return false;
+  });
+}
+
+function getBusinessLogoEligibilityIssue(dimensions: ImageDimensions): string | null {
+  if (!hasSquareAspectRatio(dimensions)) {
+    return "Business logo must use a square 1:1 aspect ratio.";
+  }
+  if (dimensions.width < 128 || dimensions.height < 128) {
+    return "Business logo must be at least 128x128 pixels.";
+  }
+  return null;
+}
+
+function getSearchAdImageEligibilityIssue(dimensions: ImageDimensions): string | null {
+  if (hasSquareAspectRatio(dimensions)) {
+    return dimensions.width >= 300 && dimensions.height >= 300
+      ? null
+      : "Square Search image assets must be at least 300x300 pixels.";
+  }
+  if (hasLandscapeAspectRatio(dimensions)) {
+    return dimensions.width >= 600 && dimensions.height >= 314
+      ? null
+      : "Landscape Search image assets must be at least 600x314 pixels.";
+  }
+  return "Search image assets must use a square 1:1 or horizontal 1.91:1 aspect ratio.";
+}
+
+function hasSquareAspectRatio(dimensions: ImageDimensions): boolean {
+  return Math.abs(dimensions.width / dimensions.height - 1) <= SEARCH_IMAGE_ASPECT_RATIO_TOLERANCE;
+}
+
+function hasLandscapeAspectRatio(dimensions: ImageDimensions): boolean {
+  const ratio = dimensions.width / dimensions.height;
+  return (
+    Math.abs(ratio - SEARCH_LANDSCAPE_RATIO) / SEARCH_LANDSCAPE_RATIO <=
+    SEARCH_IMAGE_ASPECT_RATIO_TOLERANCE
+  );
+}
+
+function formatDimensions(dimensions: ImageDimensions): string {
+  return `${dimensions.width}x${dimensions.height}`;
 }
 
 function hasCampaignResultForBatch(reviewNotes: string, batchId: string): boolean {
@@ -1692,6 +2174,14 @@ function isValidUrl(value: string): boolean {
 function normalizeCampaignObjective(value: string): MediaPlanCampaignObjective | null {
   return normalizeMediaPlanCampaignObjective(value);
 }
+
+export const __mediaPlanAssetSyncTestUtils = {
+  pageToMediaPlanRow,
+  validateAndGroupRows,
+  buildPlannedPayload,
+  buildGoogleAdsMutateOperations,
+  downloadMediaPlanAssetFiles,
+};
 
 async function fetchWithTimeout(url: string, options: RequestInit, timeoutMs = 45_000): Promise<Response> {
   const controller = new AbortController();

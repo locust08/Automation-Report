@@ -51,6 +51,7 @@ export const MEDIA_PLAN_LIMITS = {
   headline: 30,
   description: 90,
   displayPath: 15,
+  sitelinkTitle: 25,
   sitelinks: 6,
   keywords: 10,
   assetFileBytes: 5 * 1024 * 1024,
@@ -448,7 +449,7 @@ export const MEDIA_PLAN_RESPONSE_JSON_SCHEMA = {
               type: "object",
               additionalProperties: false,
               properties: {
-                title: { type: "string" },
+                title: { type: "string", maxLength: MEDIA_PLAN_LIMITS.sitelinkTitle },
                 url: { type: "string" },
               },
               required: ["title", "url"],

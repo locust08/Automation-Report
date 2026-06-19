@@ -421,6 +421,13 @@ function validateSitelinks(
       readString(sitelink.title),
       `Sitelink ${sitelinkIndex + 1} in ad group ${adGroupIndex + 1}`
     );
+    validateMaxLength(
+      issues,
+      `${prefix}.sitelinks.${sitelinkIndex}.title`,
+      readString(sitelink.title),
+      MEDIA_PLAN_LIMITS.sitelinkTitle,
+      `Sitelink ${sitelinkIndex + 1} in ad group ${adGroupIndex + 1}`
+    );
   });
 }
 

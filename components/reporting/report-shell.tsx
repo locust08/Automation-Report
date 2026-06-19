@@ -17,6 +17,7 @@ interface ReportShellProps {
   title: string;
   dateLabel: string;
   headerDateControl?: React.ReactNode;
+  headerControlLayout?: "default" | "wide";
   headerBottomControl?: React.ReactNode;
   activeQuery?: string;
   reportReady?: boolean;
@@ -32,6 +33,7 @@ export function ReportShell({
   title,
   dateLabel,
   headerDateControl,
+  headerControlLayout = "default",
   headerBottomControl,
   activeQuery = "",
   reportReady = false,
@@ -67,7 +69,11 @@ export function ReportShell({
             data-report-export-header-inner="true"
           >
             <div
-              className="grid gap-4 text-white md:grid-cols-[minmax(0,1fr)_auto] md:items-start md:gap-x-8"
+              className={
+                headerControlLayout === "wide"
+                  ? "grid gap-5 text-white lg:grid-cols-[minmax(340px,0.46fr)_minmax(0,1fr)] lg:items-start lg:gap-x-8"
+                  : "grid gap-4 text-white md:grid-cols-[minmax(0,1fr)_auto] md:items-start md:gap-x-8"
+              }
               data-report-export-header-grid="true"
             >
               <div className="min-w-0 space-y-3">
@@ -122,7 +128,11 @@ export function ReportShell({
               </div>
               {headerDateControl ? (
                 <div
-                  className="flex w-full items-start md:w-auto md:max-w-[420px] md:justify-self-end"
+                  className={
+                    headerControlLayout === "wide"
+                      ? "flex w-full items-start lg:w-full lg:max-w-[920px] lg:justify-self-end"
+                      : "flex w-full items-start md:w-auto md:max-w-[420px] md:justify-self-end"
+                  }
                   data-report-export-date-control="true"
                 >
                   {headerDateControl}
