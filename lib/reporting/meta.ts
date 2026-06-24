@@ -332,6 +332,7 @@ const META_LEAD_RESULT_ACTION_PRIORITY = [
   "onsite_conversion.lead_grouped",
   "onsite_conversion.lead",
   "offsite_conversion.fb_pixel_lead",
+  ...META_MESSAGING_RESULT_ACTION_PRIORITY,
 ] as const;
 
 const META_SALES_RESULT_ACTION_PRIORITY = [
@@ -793,6 +794,7 @@ async function fetchMetaCampaignInsightRowsWithFields(
     fields: fields.join(","),
     time_range: JSON.stringify({ since: input.startDate, until: input.endDate }),
   });
+  applyMetaAdsManagerInsightParams(params);
 
   return fetchMetaCollection<MetaInsightRow>(
     `${META_GRAPH_API_BASE_URL}/act_${input.accountId}/insights?${params.toString()}`
@@ -1551,6 +1553,7 @@ async function fetchMetaInsightsCollection(input: {
     fields: input.fields.join(","),
     time_range: JSON.stringify({ since: input.startDate, until: input.endDate }),
   });
+  applyMetaAdsManagerInsightParams(params);
 
   if (input.breakdowns.length > 0) {
     params.set("breakdowns", input.breakdowns.join(","));
@@ -1559,6 +1562,10 @@ async function fetchMetaInsightsCollection(input: {
   return fetchMetaCollection<MetaInsightRow>(
     `${META_GRAPH_API_BASE_URL}/act_${input.accountId}/insights?${params.toString()}`
   );
+}
+
+function applyMetaAdsManagerInsightParams(params: URLSearchParams): void {
+  params.set("use_unified_attribution_setting", "true");
 }
 
 async function fetchMetaAudienceBreakdownDimension(input: {

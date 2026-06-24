@@ -188,7 +188,6 @@ const googleVideoCreativeRowsCache = new Map<string, MemoryCacheEntry<GoogleVide
 const googleAuctionInsightRowsCache = new Map<string, MemoryCacheEntry<AuctionInsightRow[]>>();
 const googleAccountNameCache = new Map<string, MemoryCacheEntry<string | null>>();
 const metaCreativeRowsCache = new Map<string, MemoryCacheEntry<MetaCreativePerformanceRow[]>>();
-const overallPerformanceStageCache = new Map<string, MemoryCacheEntry<OverallPerformanceData>>();
 
 function parsePositiveIntegerEnv(rawValue: string | undefined, fallback: number): number {
   const parsed = Number.parseInt(rawValue ?? "", 10);
@@ -700,23 +699,7 @@ export async function getOverallAudienceBreakdownStage(
 }
 
 async function getOverallPerformanceStageData(input: OverallInput): Promise<OverallPerformanceData> {
-  const cacheKey = createGoogleFetchCacheKey("overall-performance-stage", {
-    accountId: input.accountId,
-    metaAccountId: input.metaAccountId,
-    googleAccountId: input.googleAccountId,
-    startDate: input.startDate,
-    endDate: input.endDate,
-  });
-
-  return readThroughMemoryCache(
-    overallPerformanceStageCache,
-    cacheKey,
-    () => fetchOverallPerformanceStageData(input),
-    {
-      ttlMs: GOOGLE_FETCH_CACHE_TTL_MS,
-      maxEntries: GOOGLE_FETCH_CACHE_MAX_ENTRIES,
-    }
-  );
+  return fetchOverallPerformanceStageData(input);
 }
 
 async function fetchOverallPerformanceStageData(input: OverallInput): Promise<OverallPerformanceData> {
