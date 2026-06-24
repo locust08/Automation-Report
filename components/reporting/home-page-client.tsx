@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useMemo, useState } from "react";
+import { FormEvent, KeyboardEvent, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
   ArrowRightIcon,
@@ -23,6 +23,10 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import {
+  extractAdAccountIdFromAccountSearchInput,
+  formatAccountSuggestionLabel,
+} from "@/components/reporting/home-account-search";
 
 const COUNTRIES = [
   { value: "MY", label: "🇲🇾 MY" },
@@ -31,6 +35,17 @@ const COUNTRIES = [
   { value: "US", label: "🇺🇸 US" },
 ];
 
+const SUPPORTED_COUNTRIES = new Set(COUNTRIES.map((country) => country.value));
+const ACCOUNT_SEARCH_DEBOUNCE_MS = 300;
+
+type AccountSearchSuggestion = {
+  accountName: string;
+  adAccountId: string;
+  country: string | null;
+  notionPageId: string;
+};
+
+type AccountSearchState = "idle" | "loading" | "success" | "error";
 type ManualReportType = "monthly" | "advanced" | "biweekly";
 
 interface ManualSendDetail {
@@ -81,8 +96,17 @@ export function HomePageClient() {
 
   const searchParams = useSearchParams();
   const initialCountry = useMemo(() => searchParams.get("country") ?? "MY", [searchParams]);
+  const [accountName, setAccountName] = useState("");
   const [accountId, setAccountId] = useState("");
   const [country, setCountry] = useState(initialCountry);
+  const [accountSuggestions, setAccountSuggestions] = useState<AccountSearchSuggestion[]>([]);
+  const [accountSearchState, setAccountSearchState] = useState<AccountSearchState>("idle");
+  const [accountSearchError, setAccountSearchError] = useState<string | null>(null);
+  const [isAccountDropdownOpen, setIsAccountDropdownOpen] = useState(false);
+  const [highlightedAccountIndex, setHighlightedAccountIndex] = useState(-1);
+  const [selectedAccountSuggestion, setSelectedAccountSuggestion] =
+    useState<AccountSearchSuggestion | null>(null);
+  const accountSearchRequestId = useRef(0);
   const [isSendModalOpen, setIsSendModalOpen] = useState(false);
   const [selectedReportType, setSelectedReportType] = useState<ManualReportType>("monthly");
   const [isSending, setIsSending] = useState(false);
@@ -103,9 +127,129 @@ export function HomePageClient() {
   const advancedHref = `/advanced${reportQueryString ? `?${reportQueryString}` : ""}`;
   const mediaPlanHref = "/dashboard/media-plan";
 
+  useEffect(() => {
+    const query = accountName.trim();
+    accountSearchRequestId.current += 1;
+    const requestId = accountSearchRequestId.current;
+
+    if (query.length < 2) {
+      setAccountSuggestions([]);
+      setAccountSearchState("idle");
+      setAccountSearchError(null);
+      setIsAccountDropdownOpen(false);
+      setHighlightedAccountIndex(-1);
+      return;
+    }
+
+    if (selectedAccountSuggestion && query === formatAccountSuggestionLabel(selectedAccountSuggestion)) {
+      setAccountSuggestions([]);
+      setAccountSearchState("idle");
+      setAccountSearchError(null);
+      setIsAccountDropdownOpen(false);
+      setHighlightedAccountIndex(-1);
+      return;
+    }
+
+    setAccountSearchState("loading");
+    setAccountSearchError(null);
+    setIsAccountDropdownOpen(true);
+
+    const controller = new AbortController();
+    const timeoutId = window.setTimeout(async () => {
+      try {
+        const response = await fetch(
+          `/api/notion/accounts/search?q=${encodeURIComponent(query)}`,
+          {
+            cache: "no-store",
+            signal: controller.signal,
+          }
+        );
+        const payload = (await response.json().catch(() => null)) as
+          | { accounts?: AccountSearchSuggestion[]; error?: string; message?: string }
+          | null;
+
+        if (controller.signal.aborted || requestId !== accountSearchRequestId.current) {
+          return;
+        }
+
+        if (!response.ok || !payload) {
+          throw new Error(payload?.error ?? payload?.message ?? "Unable to search Notion accounts.");
+        }
+
+        const accounts = Array.isArray(payload.accounts) ? payload.accounts : [];
+        setAccountSuggestions(accounts);
+        setAccountSearchState("success");
+        setHighlightedAccountIndex(accounts.length > 0 ? 0 : -1);
+      } catch (error) {
+        if (controller.signal.aborted || requestId !== accountSearchRequestId.current) {
+          return;
+        }
+
+        setAccountSuggestions([]);
+        setAccountSearchState("error");
+        setHighlightedAccountIndex(-1);
+        setAccountSearchError(error instanceof Error ? error.message : "Unable to search Notion accounts.");
+      }
+    }, ACCOUNT_SEARCH_DEBOUNCE_MS);
+
+    return () => {
+      controller.abort();
+      window.clearTimeout(timeoutId);
+    };
+  }, [accountName, selectedAccountSuggestion]);
+
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     router.push(overallHref);
+  }
+
+  function handleAccountNameChange(value: string) {
+    setAccountName(value);
+    setAccountId(extractAdAccountIdFromAccountSearchInput(value));
+    setSelectedAccountSuggestion(null);
+  }
+
+  function selectAccountSuggestion(suggestion: AccountSearchSuggestion) {
+    setSelectedAccountSuggestion(suggestion);
+    setAccountName(formatAccountSuggestionLabel(suggestion));
+    setAccountId(suggestion.adAccountId);
+    if (suggestion.country && SUPPORTED_COUNTRIES.has(suggestion.country)) {
+      setCountry(suggestion.country);
+    }
+    setIsAccountDropdownOpen(false);
+    setHighlightedAccountIndex(-1);
+  }
+
+  function handleAccountNameKeyDown(event: KeyboardEvent<HTMLInputElement>) {
+    if (event.key === "Escape") {
+      setIsAccountDropdownOpen(false);
+      setHighlightedAccountIndex(-1);
+      return;
+    }
+
+    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+      if (accountSuggestions.length === 0) {
+        return;
+      }
+
+      event.preventDefault();
+      setIsAccountDropdownOpen(true);
+      setHighlightedAccountIndex((current) => {
+        if (event.key === "ArrowDown") {
+          return current < accountSuggestions.length - 1 ? current + 1 : 0;
+        }
+        return current > 0 ? current - 1 : accountSuggestions.length - 1;
+      });
+      return;
+    }
+
+    if (event.key === "Enter" && isAccountDropdownOpen && highlightedAccountIndex >= 0) {
+      const suggestion = accountSuggestions[highlightedAccountIndex];
+      if (suggestion) {
+        event.preventDefault();
+        selectAccountSuggestion(suggestion);
+      }
+    }
   }
 
   async function handleManualSend() {
@@ -155,14 +299,68 @@ export function HomePageClient() {
         </h1>
 
         <form onSubmit={handleSubmit} className="mt-8 space-y-4">
-          <label className="block space-y-2">
-            <span className="text-sm text-white/80">Ad Account ID (required to load report data)</span>
+          <label className="relative block space-y-2">
+            <span className="text-sm text-white/80">Account Name / Ad Account ID *</span>
             <Input
-              value={accountId}
-              onChange={(event) => setAccountId(event.target.value)}
-              placeholder="e.g. 697-252-8848 or 283341217383189"
+              value={accountName}
+              onChange={(event) => handleAccountNameChange(event.target.value)}
+              onFocus={() => {
+                if (accountName.trim().length >= 2) {
+                  setIsAccountDropdownOpen(true);
+                }
+              }}
+              onKeyDown={handleAccountNameKeyDown}
+              placeholder="Search account name or ID from Notion"
+              autoComplete="off"
+              aria-autocomplete="list"
+              aria-expanded={isAccountDropdownOpen}
               className="h-11 border-white/30 bg-white/10 text-white placeholder:text-white/60"
             />
+
+            {isAccountDropdownOpen && accountName.trim().length >= 2 ? (
+              <div className="absolute left-0 right-0 top-full z-30 mt-2 overflow-hidden rounded-xl border border-white/20 bg-black/85 shadow-2xl backdrop-blur-md">
+                {accountSearchState === "loading" ? (
+                  <div className="flex items-center gap-2 px-3 py-3 text-sm text-white/75">
+                    <Loader2Icon className="size-4 animate-spin" />
+                    Searching Notion accounts...
+                  </div>
+                ) : null}
+
+                {accountSearchState === "error" ? (
+                  <div className="px-3 py-3 text-sm text-red-100">
+                    {accountSearchError ?? "Unable to search Notion accounts."}
+                  </div>
+                ) : null}
+
+                {accountSearchState === "success" && accountSuggestions.length === 0 ? (
+                  <div className="px-3 py-3 text-sm text-white/70">No matching account found.</div>
+                ) : null}
+
+                {accountSuggestions.length > 0 ? (
+                  <ul className="max-h-72 overflow-auto py-1">
+                    {accountSuggestions.map((suggestion, index) => (
+                      <li key={suggestion.notionPageId}>
+                        <button
+                          type="button"
+                          onMouseDown={(event) => event.preventDefault()}
+                          onClick={() => selectAccountSuggestion(suggestion)}
+                          className={`grid w-full gap-1 px-3 py-2 text-left text-sm transition ${
+                            index === highlightedAccountIndex
+                              ? "bg-red-600 text-white"
+                              : "text-white hover:bg-white/10"
+                          }`}
+                        >
+                          <span className="font-semibold">{formatAccountSuggestionLabel(suggestion)}</span>
+                          <span className="text-xs text-white/70">
+                            {suggestion.country ? suggestion.country : "No country set"}
+                          </span>
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                ) : null}
+              </div>
+            ) : null}
           </label>
 
           <label className="block space-y-2">
