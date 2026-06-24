@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import type { OverallReportPayload } from "@/lib/reporting/types";
 import { clonePlainData, MemoryCacheEntry, readThroughMemoryCache } from "@/lib/reporting/memory-cache";
 
-const OVERALL_REPORT_CACHE_SCHEMA_VERSION = 3;
+const OVERALL_REPORT_CACHE_SCHEMA_VERSION = 4;
 const localOverallReportCache = new Map<string, MemoryCacheEntry<OverallReportPayload>>();
 const DEFAULT_OVERALL_REPORT_CACHE_TTL_MS = 1000 * 60 * 60 * 6;
 

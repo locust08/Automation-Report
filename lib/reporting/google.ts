@@ -658,23 +658,6 @@ export async function fetchGoogleCampaignRows({
     fallbackLoginCustomerId: fallbackLoginCustomerId ?? null,
   });
 
-  const baseSelect = `
-    SELECT
-      campaign.id,
-      campaign.name,
-      campaign.advertising_channel_type,
-      campaign.status,
-      metrics.impressions,
-      metrics.clicks,
-      metrics.ctr,
-      metrics.average_cpc,
-      metrics.conversions,
-      metrics.cost_micros
-    FROM campaign
-    WHERE campaign.status = 'ENABLED'
-      AND segments.date BETWEEN '${startDate}' AND '${endDate}'
-  `;
-
   const results = await fetchGoogleAdsResultsWithFallback({
     customerId: context.customerId,
     apiVersion,
@@ -684,27 +667,7 @@ export async function fetchGoogleCampaignRows({
     clientId,
     clientSecret,
     loginCustomerId: context.loginCustomerId,
-    queries: [
-      `
-        SELECT
-          campaign.id,
-          campaign.name,
-          campaign.advertising_channel_type,
-          campaign.status,
-          metrics.impressions,
-          metrics.clicks,
-          metrics.ctr,
-          metrics.average_cpc,
-          metrics.conversions,
-          metrics.cost_micros,
-          metrics.engagements,
-          metrics.interactions
-        FROM campaign
-        WHERE campaign.status = 'ENABLED'
-          AND segments.date BETWEEN '${startDate}' AND '${endDate}'
-      `,
-      baseSelect,
-    ],
+    queries: buildGoogleCampaignRowsQueries(startDate, endDate),
   });
 
   return results
@@ -741,6 +704,48 @@ export async function fetchGoogleCampaignRows({
       return row;
     })
     .filter(hasReportableCampaignSpend);
+}
+
+export function buildGoogleCampaignRowsQueries(startDate: string, endDate: string): string[] {
+  const statusPredicate = "campaign.status != 'REMOVED'";
+  const baseSelect = `
+    SELECT
+      campaign.id,
+      campaign.name,
+      campaign.advertising_channel_type,
+      campaign.status,
+      metrics.impressions,
+      metrics.clicks,
+      metrics.ctr,
+      metrics.average_cpc,
+      metrics.conversions,
+      metrics.cost_micros
+    FROM campaign
+    WHERE ${statusPredicate}
+      AND segments.date BETWEEN '${startDate}' AND '${endDate}'
+  `;
+
+  return [
+    `
+        SELECT
+          campaign.id,
+          campaign.name,
+          campaign.advertising_channel_type,
+          campaign.status,
+          metrics.impressions,
+          metrics.clicks,
+          metrics.ctr,
+          metrics.average_cpc,
+          metrics.conversions,
+          metrics.cost_micros,
+          metrics.engagements,
+          metrics.interactions
+        FROM campaign
+        WHERE ${statusPredicate}
+          AND segments.date BETWEEN '${startDate}' AND '${endDate}'
+      `,
+    baseSelect,
+  ];
 }
 
 export async function fetchGoogleAudienceClickBreakdown({
