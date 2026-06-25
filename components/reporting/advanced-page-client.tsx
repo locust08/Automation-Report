@@ -1,7 +1,7 @@
 "use client";
 
 import { Fragment, FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import {
   AlertTriangleIcon,
   BarChart3Icon,
@@ -17,6 +17,7 @@ import {
   UsersIcon,
 } from "lucide-react";
 
+import { CampaignNameFilterControl } from "@/components/reporting/campaign-name-filter-control";
 import { ReportDownloadButton } from "@/components/reporting/screenshot-mode-toggle";
 import { AccountReportContent } from "@/components/reporting/overall-page-client";
 import { ReportShell } from "@/components/reporting/report-shell";
@@ -37,6 +38,13 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import type { CampaignNameFilter } from "@/lib/reporting/campaign-name-filter";
+import {
+  filterRowsByCampaignName,
+  formatCampaignNameFilterLabel,
+  getCampaignNameOptions,
+  writeCampaignNameFilterParams,
+} from "@/lib/reporting/campaign-name-filter";
 import type {
   AdvancedAuctionVisibilitySection,
   AdvancedAuctionVisibilityRow,
@@ -74,6 +82,8 @@ interface AdvancedPageClientProps {
   initialCountry?: string;
   initialStartDate?: string;
   initialEndDate?: string;
+  initialCampaignNameFilterMode?: string;
+  initialCampaignNameFilterValues?: string[];
 }
 
 export function AdvancedPageClient({
@@ -81,9 +91,16 @@ export function AdvancedPageClient({
   initialCountry,
   initialStartDate,
   initialEndDate,
+  initialCampaignNameFilterMode,
+  initialCampaignNameFilterValues,
 }: AdvancedPageClientProps) {
   const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
   const { screenshotMode } = useScreenshotMode();
+  const [campaignNameFilter, setCampaignNameFilter] = useState<CampaignNameFilter | null>(() =>
+    normalizeInitialCampaignNameFilter(initialCampaignNameFilterMode, initialCampaignNameFilterValues)
+  );
   const queryString = useMemo(() => {
     const params = new URLSearchParams();
     params.set("reportMode", "advanced");
@@ -94,6 +111,11 @@ export function AdvancedPageClient({
     if (initialEndDate) params.set("endDate", initialEndDate);
     return params.toString();
   }, [initialAccountId, initialCountry, initialStartDate, initialEndDate]);
+  const activeQueryString = useMemo(() => {
+    const params = new URLSearchParams(queryString);
+    writeCampaignNameFilterParams(params, campaignNameFilter);
+    return params.toString();
+  }, [campaignNameFilter, queryString]);
 
   const [payload, setPayload] = useState<AdvancedReportPayload | null>(null);
   const [loading, setLoading] = useState(Boolean(initialAccountId));
@@ -103,6 +125,16 @@ export function AdvancedPageClient({
   const [debugModalOpen, setDebugModalOpen] = useState(false);
   const [switchAccountId, setSwitchAccountId] = useState(initialAccountId ?? "");
   const [switchCountry, setSwitchCountry] = useState(initialCountry ?? "MY");
+  const handleCampaignNameFilterChange = useCallback(
+    (nextFilter: CampaignNameFilter | null) => {
+      setCampaignNameFilter(nextFilter);
+      const params = new URLSearchParams(searchParams.toString());
+      writeCampaignNameFilterParams(params, nextFilter);
+      const query = params.toString();
+      router.replace(query ? `${pathname}?${query}` : pathname);
+    },
+    [pathname, router, searchParams]
+  );
   const advancedStageQueryString = useMemo(() => {
     const params = new URLSearchParams();
     if (initialStartDate) params.set("startDate", initialStartDate);
@@ -128,6 +160,10 @@ export function AdvancedPageClient({
     advancedStageQueryString,
     Boolean(initialAccountId),
     "Unable to load Auction Insight."
+  );
+  const headerCampaignOptions = useMemo(
+    () => buildAdvancedCampaignOptions(payload, finalUrlStage.data?.section),
+    [finalUrlStage.data?.section, payload]
   );
 
   const loadReport = useCallback(
@@ -210,6 +246,7 @@ export function AdvancedPageClient({
       params.set("accountId", switchAccountId.trim());
     }
     params.set("country", switchCountry);
+    writeCampaignNameFilterParams(params, campaignNameFilter);
     router.push(`/advanced?${params.toString()}`);
   }
 
@@ -217,7 +254,7 @@ export function AdvancedPageClient({
     <ReportShell
       title={title}
       dateLabel={dateLabel}
-      activeQuery={queryString}
+      activeQuery={activeQueryString}
       headerBottomControl={
         initialAccountId ? (
           <div className="space-y-3">
@@ -250,16 +287,21 @@ export function AdvancedPageClient({
                 {payload ? (payload.metadata.cached ? " · loaded from cache" : " · freshly generated") : ""}
               </div>
               <div className="flex flex-col gap-3 sm:flex-row">
-              <Button
-                type="button"
-                className="h-11 bg-white text-[#9f0019] hover:bg-white/90"
-                disabled={regenerating}
-                onClick={() => void loadReport({ regenerate: true })}
-              >
-                <RefreshCwIcon className={regenerating ? "animate-spin" : ""} />
-                {regenerating ? "Regenerating" : "Regenerate Report"}
-              </Button>
-              <ReportDownloadButton fileNamePrefix={title} />
+                <CampaignNameFilterControl
+                  filter={campaignNameFilter}
+                  campaignOptions={headerCampaignOptions}
+                  onChange={handleCampaignNameFilterChange}
+                />
+                <Button
+                  type="button"
+                  className="h-11 bg-white text-[#9f0019] hover:bg-white/90"
+                  disabled={regenerating}
+                  onClick={() => void loadReport({ regenerate: true })}
+                >
+                  <RefreshCwIcon className={regenerating ? "animate-spin" : ""} />
+                  {regenerating ? "Regenerating" : "Regenerate Report"}
+                </Button>
+                <ReportDownloadButton fileNamePrefix={title} />
               </div>
             </div>
           </div>
@@ -294,11 +336,17 @@ export function AdvancedPageClient({
           payload={payload}
           regenerating={regenerating}
           screenshotMode={screenshotMode}
+          campaignNameFilter={campaignNameFilter}
+          campaignOptions={headerCampaignOptions}
+          onCampaignNameFilterChange={handleCampaignNameFilterChange}
         />
       ) : initialAccountId ? (
         <AdvancedSourceStages
           finalUrlStage={finalUrlStage}
           auctionStage={auctionStage}
+          campaignNameFilter={campaignNameFilter}
+          campaignOptions={headerCampaignOptions}
+          onCampaignNameFilterChange={handleCampaignNameFilterChange}
         />
       ) : null}
       {payload ? (
@@ -362,6 +410,43 @@ function sleep(milliseconds: number): Promise<void> {
   return new Promise((resolve) => {
     window.setTimeout(resolve, milliseconds);
   });
+}
+
+function normalizeInitialCampaignNameFilter(
+  rawMode: string | undefined,
+  rawValues: string[] | undefined
+): CampaignNameFilter | null {
+  const values = (rawValues ?? []).map((value) => value.trim()).filter(Boolean);
+  if (values.length === 0) {
+    return null;
+  }
+  return {
+    mode: rawMode === "exclude" ? "exclude" : "include",
+    values,
+  };
+}
+
+function buildAdvancedCampaignOptions(
+  payload: AdvancedReportPayload | null,
+  finalUrlStageSection?: AdvancedFinalUrlPerformanceSection
+): string[] {
+  const names: string[] = [];
+
+  payload?.basicOverallReport?.campaignGroups.forEach((group) => {
+    group.rows.forEach((row) => names.push(row.campaignName));
+  });
+
+  [payload?.finalUrlPerformance, finalUrlStageSection].forEach((section) => {
+    section?.rows.forEach((row) => {
+      names.push(...getFinalUrlCampaignNames(row));
+    });
+  });
+
+  payload?.googleVisualCreativeAnalysis?.rows.forEach((row) => names.push(row.campaignName));
+  payload?.googleVideoCreativeAnalysis?.rows.forEach((row) => names.push(row.campaignName));
+  payload?.metaCreativeAnalysis?.rows.forEach((row) => names.push(row.campaignName));
+
+  return getCampaignNameOptions(names);
 }
 
 function buildTroubleshootingPayload(
@@ -428,6 +513,9 @@ type SectionQuery<T> = {
 function AdvancedSourceStages({
   finalUrlStage,
   auctionStage,
+  campaignNameFilter,
+  campaignOptions,
+  onCampaignNameFilterChange,
 }: {
   finalUrlStage: SectionQuery<{
     section: AdvancedFinalUrlPerformanceSection;
@@ -437,6 +525,9 @@ function AdvancedSourceStages({
     section: AdvancedAuctionVisibilitySection | null;
     warnings: string[];
   }>;
+  campaignNameFilter: CampaignNameFilter | null;
+  campaignOptions: string[];
+  onCampaignNameFilterChange: (filter: CampaignNameFilter | null) => void;
 }) {
   return (
     <div className="space-y-5" data-advanced-report-content="true" data-report-mode="advanced">
@@ -453,8 +544,14 @@ function AdvancedSourceStages({
       {finalUrlStage.data ? (
         <>
           <ReportWarnings warnings={finalUrlStage.data.warnings} />
-          {hasFinalUrlPerformanceRows(finalUrlStage.data.section) ? (
-            <FinalUrlPerformanceSection sectionNumber="01" section={finalUrlStage.data.section} />
+          {hasFinalUrlPerformanceRows(finalUrlStage.data.section, campaignNameFilter) ? (
+            <FinalUrlPerformanceSection
+              sectionNumber="01"
+              section={finalUrlStage.data.section}
+              campaignNameFilter={campaignNameFilter}
+              campaignOptions={campaignOptions}
+              onCampaignNameFilterChange={onCampaignNameFilterChange}
+            />
           ) : null}
         </>
       ) : null}
@@ -473,7 +570,13 @@ function AdvancedSourceStages({
         <>
           <ReportWarnings warnings={auctionStage.data.warnings} />
           {hasAuctionVisibilityRows(auctionStage.data.section ?? undefined) ? (
-            <AuctionVisibilitySection sectionNumber="02" section={auctionStage.data.section ?? undefined} />
+            <AuctionVisibilitySection
+              sectionNumber="02"
+              section={auctionStage.data.section ?? undefined}
+              campaignNameFilter={campaignNameFilter}
+              campaignOptions={campaignOptions}
+              onCampaignNameFilterChange={onCampaignNameFilterChange}
+            />
           ) : null}
         </>
       ) : null}
@@ -485,10 +588,16 @@ function AdvancedReportContent({
   payload,
   regenerating,
   screenshotMode,
+  campaignNameFilter,
+  campaignOptions,
+  onCampaignNameFilterChange,
 }: {
   payload: AdvancedReportPayload;
   regenerating: boolean;
   screenshotMode: boolean;
+  campaignNameFilter: CampaignNameFilter | null;
+  campaignOptions: string[];
+  onCampaignNameFilterChange: (filter: CampaignNameFilter | null) => void;
 }) {
   const cpcLabel = getCpcLabel(payload.metadata.country.code);
   const marketShareRows = (payload.competitors.marketPlayerShares ?? payload.competitors.demandShare)
@@ -507,11 +616,17 @@ function AdvancedReportContent({
     .sort((a, b) => b.value - a.value);
   const reportSections: Array<{ key: string; node: (sectionNumber: string) => React.ReactNode }> = [];
 
-  if (hasFinalUrlPerformanceRows(payload.finalUrlPerformance)) {
+  if (hasFinalUrlPerformanceRows(payload.finalUrlPerformance, campaignNameFilter)) {
     reportSections.push({
       key: "final-url-performance",
       node: (sectionNumber) => (
-        <FinalUrlPerformanceSection sectionNumber={sectionNumber} section={payload.finalUrlPerformance} />
+        <FinalUrlPerformanceSection
+          sectionNumber={sectionNumber}
+          section={payload.finalUrlPerformance}
+          campaignNameFilter={campaignNameFilter}
+          campaignOptions={campaignOptions}
+          onCampaignNameFilterChange={onCampaignNameFilterChange}
+        />
       ),
     });
   }
@@ -520,40 +635,52 @@ function AdvancedReportContent({
     reportSections.push({
       key: "auction-visibility",
       node: (sectionNumber) => (
-        <AuctionVisibilitySection sectionNumber={sectionNumber} section={payload.auctionVisibility} />
+        <AuctionVisibilitySection
+          sectionNumber={sectionNumber}
+          section={payload.auctionVisibility}
+          campaignNameFilter={campaignNameFilter}
+          campaignOptions={campaignOptions}
+          onCampaignNameFilterChange={onCampaignNameFilterChange}
+        />
       ),
     });
   }
 
-  if (hasGoogleVisualCreativeRows(payload.googleVisualCreativeAnalysis)) {
+  if (hasGoogleVisualCreativeRows(payload.googleVisualCreativeAnalysis, campaignNameFilter)) {
     reportSections.push({
       key: "google-image-creative",
       node: (sectionNumber) => (
         <GoogleVisualCreativeAnalysisSection
           sectionNumber={sectionNumber}
           section={payload.googleVisualCreativeAnalysis}
+          campaignNameFilter={campaignNameFilter}
         />
       ),
     });
   }
 
-  if (hasGoogleVideoCreativeRows(payload.googleVideoCreativeAnalysis)) {
+  if (hasGoogleVideoCreativeRows(payload.googleVideoCreativeAnalysis, campaignNameFilter)) {
     reportSections.push({
       key: "google-video-creative",
       node: (sectionNumber) => (
         <GoogleVideoCreativeAnalysisSection
           sectionNumber={sectionNumber}
           section={payload.googleVideoCreativeAnalysis}
+          campaignNameFilter={campaignNameFilter}
         />
       ),
     });
   }
 
-  if (hasMetaCreativeRows(payload.metaCreativeAnalysis)) {
+  if (hasMetaCreativeRows(payload.metaCreativeAnalysis, campaignNameFilter)) {
     reportSections.push({
       key: "meta-creative",
       node: (sectionNumber) => (
-        <MetaCreativeAnalysisSection sectionNumber={sectionNumber} section={payload.metaCreativeAnalysis} />
+        <MetaCreativeAnalysisSection
+          sectionNumber={sectionNumber}
+          section={payload.metaCreativeAnalysis}
+          campaignNameFilter={campaignNameFilter}
+        />
       ),
     });
   }
@@ -736,7 +863,12 @@ function AdvancedReportContent({
         </div>
       ) : null}
 
-      {screenshotMode ? <EmbeddedBasicOverallReport report={payload.basicOverallReport} /> : null}
+      {screenshotMode ? (
+        <EmbeddedBasicOverallReport
+          report={payload.basicOverallReport}
+          campaignNameFilter={campaignNameFilter}
+        />
+      ) : null}
 
       {reportSections.map((section, index) => (
         <Fragment key={section.key}>{section.node(formatSectionNumber(index + 1))}</Fragment>
@@ -757,27 +889,46 @@ function SectionNumberBadge({ children }: { children: React.ReactNode }) {
   );
 }
 
-function hasFinalUrlPerformanceRows(section?: AdvancedFinalUrlPerformanceSection): boolean {
-  return sanitizeFinalUrlRows(section?.rows).length > 0 || Boolean(section?.otherRow);
+function hasFinalUrlPerformanceRows(
+  section?: AdvancedFinalUrlPerformanceSection,
+  campaignNameFilter: CampaignNameFilter | null = null
+): boolean {
+  return getFilteredFinalUrlRows(section, campaignNameFilter).length > 0 ||
+    (!campaignNameFilter && Boolean(section?.otherRow));
 }
 
 function hasAuctionVisibilityRows(section?: AdvancedAuctionVisibilitySection): boolean {
   return normalizeDisplayNumber(section?.shareOfVoice) !== null;
 }
 
-function hasGoogleVisualCreativeRows(section?: AdvancedGoogleVisualCreativeSection): boolean {
-  return (section?.rows ?? []).length > 0;
+function hasGoogleVisualCreativeRows(
+  section?: AdvancedGoogleVisualCreativeSection,
+  campaignNameFilter: CampaignNameFilter | null = null
+): boolean {
+  return filterRowsByCampaignName(section?.rows ?? [], (row) => row.campaignName, campaignNameFilter).length > 0;
 }
 
-function hasGoogleVideoCreativeRows(section?: AdvancedGoogleVideoCreativeSection): boolean {
-  return (section?.rows ?? []).length > 0;
+function hasGoogleVideoCreativeRows(
+  section?: AdvancedGoogleVideoCreativeSection,
+  campaignNameFilter: CampaignNameFilter | null = null
+): boolean {
+  return filterRowsByCampaignName(section?.rows ?? [], (row) => row.campaignName, campaignNameFilter).length > 0;
 }
 
-function hasMetaCreativeRows(section?: AdvancedMetaCreativeAnalysisSection): boolean {
-  return (section?.rows ?? []).length > 0;
+function hasMetaCreativeRows(
+  section?: AdvancedMetaCreativeAnalysisSection,
+  campaignNameFilter: CampaignNameFilter | null = null
+): boolean {
+  return filterRowsByCampaignName(section?.rows ?? [], (row) => row.campaignName, campaignNameFilter).length > 0;
 }
 
-function EmbeddedBasicOverallReport({ report }: { report?: OverallReportPayload }) {
+function EmbeddedBasicOverallReport({
+  report,
+  campaignNameFilter,
+}: {
+  report?: OverallReportPayload;
+  campaignNameFilter: CampaignNameFilter | null;
+}) {
   if (!report) {
     return null;
   }
@@ -793,7 +944,11 @@ function EmbeddedBasicOverallReport({ report }: { report?: OverallReportPayload 
       data-basic-overall-report-section="true"
       data-report-mode="overall"
     >
-      <AccountReportContent data={report} queryString={forwardQuery} />
+      <AccountReportContent
+        data={report}
+        queryString={forwardQuery}
+        campaignNameFilter={campaignNameFilter}
+      />
     </section>
   );
 }
@@ -834,16 +989,22 @@ function buildBasicOverallQueryString(report: OverallReportPayload): string {
 function FinalUrlPerformanceSection({
   sectionNumber,
   section,
+  campaignNameFilter = null,
+  campaignOptions = [],
+  onCampaignNameFilterChange,
 }: {
   sectionNumber: string;
   section?: AdvancedFinalUrlPerformanceSection;
+  campaignNameFilter?: CampaignNameFilter | null;
+  campaignOptions?: string[];
+  onCampaignNameFilterChange?: (filter: CampaignNameFilter | null) => void;
 }) {
-  const topRows = sanitizeFinalUrlRows(section?.rows)
+  const topRows = getFilteredFinalUrlRows(section, campaignNameFilter)
     .sort(compareFinalUrlDisplayRows)
-    .slice(0, section?.otherRow ? 9 : 10);
+    .slice(0, !campaignNameFilter && section?.otherRow ? 9 : 10);
   const rows = [
     ...topRows,
-    ...(section?.otherRow ? [sanitizeFinalUrlRow(section.otherRow)] : []),
+    ...(!campaignNameFilter && section?.otherRow ? [sanitizeFinalUrlRow(section.otherRow)] : []),
   ].slice(0, 10);
   if (rows.length === 0) {
     return null;
@@ -856,7 +1017,8 @@ function FinalUrlPerformanceSection({
       data-report-export-section="true"
       data-report-mode="advanced"
     >
-      <div className="flex items-start gap-4">
+      <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+        <div className="flex min-w-0 items-start gap-4">
         <SectionNumberBadge>{sectionNumber}</SectionNumberBadge>
         <div className="min-w-0 flex-1">
           <h2 className="text-2xl font-semibold leading-tight text-[#111] sm:text-3xl">
@@ -866,6 +1028,14 @@ function FinalUrlPerformanceSection({
             Performance by final URL / landing page
           </p>
         </div>
+        </div>
+        {onCampaignNameFilterChange ? (
+          <CampaignNameFilterControl
+            filter={campaignNameFilter}
+            campaignOptions={campaignOptions}
+            onChange={onCampaignNameFilterChange}
+          />
+        ) : null}
       </div>
 
       <div className="overflow-hidden rounded-xl border border-[#d8d8d8] bg-white">
@@ -965,11 +1135,27 @@ function sanitizeFinalUrlRows(
   return (Array.isArray(rows) ? rows : []).map(sanitizeFinalUrlRow);
 }
 
+function getFilteredFinalUrlRows(
+  section: AdvancedFinalUrlPerformanceSection | undefined,
+  campaignNameFilter: CampaignNameFilter | null
+): AdvancedFinalUrlPerformanceSection["rows"] {
+  return filterRowsByCampaignName(
+    sanitizeFinalUrlRows(section?.rows),
+    getFinalUrlCampaignNames,
+    campaignNameFilter
+  );
+}
+
+function getFinalUrlCampaignNames(row: AdvancedFinalUrlPerformanceSection["rows"][number]): string[] {
+  return getCampaignNameOptions(row.campaignNames?.length ? row.campaignNames : [row.campaign]);
+}
+
 function sanitizeFinalUrlRow(row: AdvancedFinalUrlPerformanceSection["rows"][number]) {
   return {
     ...row,
     id: row.id?.trim() || `${row.finalUrl || row.campaign || "final-url"}-${row.spend}-${row.clicks}`,
     campaign: row.campaign?.trim() || "Not available",
+    campaignNames: getCampaignNameOptions(row.campaignNames?.length ? row.campaignNames : [row.campaign]),
     finalUrl: row.finalUrl?.trim() || "Not available",
     spend: Number.isFinite(row.spend) ? row.spend : 0,
     impressions: Number.isFinite(row.impressions) ? row.impressions : 0,
@@ -991,9 +1177,15 @@ function compareFinalUrlDisplayRows(
 function AuctionVisibilitySection({
   sectionNumber,
   section,
+  campaignNameFilter = null,
+  campaignOptions = [],
+  onCampaignNameFilterChange,
 }: {
   sectionNumber: string;
   section?: AdvancedAuctionVisibilitySection;
+  campaignNameFilter?: CampaignNameFilter | null;
+  campaignOptions?: string[];
+  onCampaignNameFilterChange?: (filter: CampaignNameFilter | null) => void;
 }) {
   const shareOfVoice = normalizeDisplayNumber(section?.shareOfVoice);
   const rows = (section?.rows ?? []).filter(isDisplayableAuctionRow).slice(0, 10);
@@ -1009,13 +1201,22 @@ function AuctionVisibilitySection({
       data-report-export-section="true"
       data-report-mode="advanced"
     >
-      <div className="flex items-start gap-4">
-        <SectionNumberBadge>{sectionNumber}</SectionNumberBadge>
-        <div className="min-w-0 flex-1">
-          <h2 className="text-2xl font-semibold leading-tight text-[#111] sm:text-3xl">
-            Auction Insight & Market Visibility
-          </h2>
+      <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+        <div className="flex min-w-0 items-start gap-4">
+          <SectionNumberBadge>{sectionNumber}</SectionNumberBadge>
+          <div className="min-w-0 flex-1">
+            <h2 className="text-2xl font-semibold leading-tight text-[#111] sm:text-3xl">
+              Auction Insight & Market Visibility
+            </h2>
+          </div>
         </div>
+        {onCampaignNameFilterChange ? (
+          <CampaignNameFilterControl
+            filter={campaignNameFilter}
+            campaignOptions={campaignOptions}
+            onChange={onCampaignNameFilterChange}
+          />
+        ) : null}
       </div>
 
       <div className="flex items-center gap-4">
@@ -1027,6 +1228,12 @@ function AuctionVisibilitySection({
           <span className="font-bold text-[#e10600]">{formatAuctionPercent(shareOfVoice)}</span>
         </p>
       </div>
+
+      {campaignNameFilter ? (
+        <p className="text-sm font-medium text-[#666]">
+          Campaign filter active: {formatCampaignNameFilterLabel(campaignNameFilter)}. Auction visibility is account-level in the current data source.
+        </p>
+      ) : null}
 
       {rows.length > 0 ? (
         <div className="overflow-hidden rounded-xl border border-[#d8d8d8] bg-white">
@@ -1078,11 +1285,17 @@ function AuctionVisibilitySection({
 function MetaCreativeAnalysisSection({
   sectionNumber,
   section,
+  campaignNameFilter = null,
 }: {
   sectionNumber: string;
   section?: AdvancedMetaCreativeAnalysisSection;
+  campaignNameFilter?: CampaignNameFilter | null;
 }) {
-  const rows = (section?.rows ?? []).slice(0, 3);
+  const rows = filterRowsByCampaignName(
+    section?.rows ?? [],
+    (row) => row.campaignName,
+    campaignNameFilter
+  ).slice(0, 3);
   if (rows.length === 0) {
     return null;
   }
@@ -1220,11 +1433,17 @@ function MetaCreativeAnalysisSection({
 function GoogleVisualCreativeAnalysisSection({
   sectionNumber,
   section,
+  campaignNameFilter = null,
 }: {
   sectionNumber: string;
   section?: AdvancedGoogleVisualCreativeSection;
+  campaignNameFilter?: CampaignNameFilter | null;
 }) {
-  const rows = (section?.rows ?? []).slice(0, 3);
+  const rows = filterRowsByCampaignName(
+    section?.rows ?? [],
+    (row) => row.campaignName,
+    campaignNameFilter
+  ).slice(0, 3);
   if (rows.length === 0) {
     return null;
   }
@@ -1342,11 +1561,17 @@ function GoogleVisualCreativeAnalysisSection({
 function GoogleVideoCreativeAnalysisSection({
   sectionNumber,
   section,
+  campaignNameFilter = null,
 }: {
   sectionNumber: string;
   section?: AdvancedGoogleVideoCreativeSection;
+  campaignNameFilter?: CampaignNameFilter | null;
 }) {
-  const rows = (section?.rows ?? []).slice(0, 3);
+  const rows = filterRowsByCampaignName(
+    section?.rows ?? [],
+    (row) => row.campaignName,
+    campaignNameFilter
+  ).slice(0, 3);
   if (rows.length === 0) {
     return null;
   }

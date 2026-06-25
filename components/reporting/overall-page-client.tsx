@@ -27,6 +27,8 @@ import {
 } from "@/components/reporting/use-report-data";
 import { useScreenshotMode } from "@/components/reporting/use-screenshot-mode";
 import { useReportReadyTransition } from "@/components/reporting/use-report-ready-transition";
+import type { CampaignNameFilter } from "@/lib/reporting/campaign-name-filter";
+import { getCampaignNameOptions } from "@/lib/reporting/campaign-name-filter";
 import { OverallReportPayload } from "@/lib/reporting/types";
 
 type AccountReportEntry = {
@@ -51,6 +53,24 @@ export function OverallPageClient({
   const { screenshotMode } = useScreenshotMode();
   const [resolvedLabels, setResolvedLabels] = useState<ResolvedAccountLabel[]>([]);
   const [readyAccountKeys, setReadyAccountKeys] = useState<Record<string, boolean>>({});
+  const campaignNameFilter = useMemo<CampaignNameFilter | null>(() => {
+    const values = getCampaignNameOptions(filters.campaignNameFilterValues);
+    return values.length > 0
+      ? {
+          mode: filters.campaignNameFilterMode,
+          values,
+        }
+      : null;
+  }, [filters.campaignNameFilterMode, filters.campaignNameFilterValues]);
+  const handleCampaignNameFilterChange = useCallback(
+    (nextFilter: CampaignNameFilter | null) => {
+      setFilters({
+        campaignNameFilterMode: nextFilter?.mode ?? "include",
+        campaignNameFilterValues: nextFilter?.values ?? [],
+      });
+    },
+    [setFilters]
+  );
 
   const queryString = useMemo(() => {
     const params = new URLSearchParams();
@@ -73,6 +93,15 @@ export function OverallPageClient({
     filters.metaAccountId,
     filters.startDate,
   ]);
+  const activeQueryString = useMemo(() => {
+    const params = new URLSearchParams(queryString);
+    if (campaignNameFilter) {
+      params.set("campaignNameFilterMode", campaignNameFilter.mode);
+      params.delete("campaignNameFilterValue");
+      campaignNameFilter.values.forEach((value) => params.append("campaignNameFilterValue", value));
+    }
+    return params.toString();
+  }, [campaignNameFilter, queryString]);
 
   const accountReportEntries = useMemo(
     () => buildAccountReportEntries(filters, queryString),
@@ -128,12 +157,12 @@ export function OverallPageClient({
   }, []);
 
   const forwardQuery = useMemo(() => {
-    const params = new URLSearchParams(queryString);
+    const params = new URLSearchParams(activeQueryString);
     if (screenshotMode) {
       params.set("screenshot", "1");
     }
     return params.toString() ? `&${params.toString()}` : "";
-  }, [queryString, screenshotMode]);
+  }, [activeQueryString, screenshotMode]);
 
   const activeAccountKeys = useMemo(
     () => new Set(accountReportEntries.map((entry) => entry.key)),
@@ -170,7 +199,7 @@ export function OverallPageClient({
     <ReportShell
       title={title}
       dateLabel={dateLabel}
-      activeQuery={queryString}
+      activeQuery={activeQueryString}
       reportReady={reportReady}
       headerDateControl={
         <ReportHeaderMonthPicker
@@ -217,6 +246,8 @@ export function OverallPageClient({
                 entry={entry}
                 index={index}
                 screenshotMode={screenshotMode}
+                campaignNameFilter={campaignNameFilter}
+                onCampaignNameFilterChange={handleCampaignNameFilterChange}
                 onResolved={handleAccountResolved}
                 onReadyChange={handleAccountReadyChange}
               />
@@ -267,6 +298,8 @@ export function OverallPageClient({
                 <OverallCampaignGroupsTable
                   groups={campaignQuery.data.campaignGroups}
                   queryString={forwardQuery}
+                  campaignNameFilter={campaignNameFilter}
+                  onCampaignNameFilterChange={handleCampaignNameFilterChange}
                 />
               </>
             ) : null}
@@ -289,12 +322,16 @@ function SplitAccountOverallReport({
   entry,
   index,
   screenshotMode,
+  campaignNameFilter,
+  onCampaignNameFilterChange,
   onResolved,
   onReadyChange,
 }: {
   entry: AccountReportEntry;
   index: number;
   screenshotMode: boolean;
+  campaignNameFilter: CampaignNameFilter | null;
+  onCampaignNameFilterChange: (filter: CampaignNameFilter | null) => void;
   onResolved: (label: ResolvedAccountLabel) => void;
   onReadyChange: (key: string, ready: boolean) => void;
 }) {
@@ -312,11 +349,16 @@ function SplitAccountOverallReport({
 
   const forwardQuery = useMemo(() => {
     const params = new URLSearchParams(entry.queryString);
+    if (campaignNameFilter) {
+      params.set("campaignNameFilterMode", campaignNameFilter.mode);
+      params.delete("campaignNameFilterValue");
+      campaignNameFilter.values.forEach((value) => params.append("campaignNameFilterValue", value));
+    }
     if (screenshotMode) {
       params.set("screenshot", "1");
     }
     return params.toString() ? `&${params.toString()}` : "";
-  }, [entry.queryString, screenshotMode]);
+  }, [campaignNameFilter, entry.queryString, screenshotMode]);
 
   const sectionTitle = data?.companyName ?? `${platformDisplayName(entry.platform)} Account ${entry.accountId}`;
 
@@ -346,7 +388,14 @@ function SplitAccountOverallReport({
 
       {error ? <ReportErrorState kind="overall" message={error} onRetry={retry} /> : null}
 
-      {data ? <AccountReportContent data={data} queryString={forwardQuery} /> : null}
+      {data ? (
+        <AccountReportContent
+          data={data}
+          queryString={forwardQuery}
+          campaignNameFilter={campaignNameFilter}
+          onCampaignNameFilterChange={onCampaignNameFilterChange}
+        />
+      ) : null}
     </section>
   );
 }
@@ -354,9 +403,13 @@ function SplitAccountOverallReport({
 export function AccountReportContent({
   data,
   queryString,
+  campaignNameFilter = null,
+  onCampaignNameFilterChange,
 }: {
   data: OverallReportPayload;
   queryString: string;
+  campaignNameFilter?: CampaignNameFilter | null;
+  onCampaignNameFilterChange?: (filter: CampaignNameFilter | null) => void;
 }) {
   return (
     <>
@@ -364,7 +417,12 @@ export function AccountReportContent({
       {data.summaries.map((section) => (
         <MetricSection key={section.platform} section={section} />
       ))}
-      <OverallCampaignGroupsTable groups={data.campaignGroups} queryString={queryString} />
+      <OverallCampaignGroupsTable
+        groups={data.campaignGroups}
+        queryString={queryString}
+        campaignNameFilter={campaignNameFilter}
+        onCampaignNameFilterChange={onCampaignNameFilterChange}
+      />
       <AudienceClickBreakdownSection
         breakdown={data.audienceClickBreakdown}
         pdfLocationTab={resolvePdfAudienceLocationTab(data)}

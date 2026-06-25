@@ -4,7 +4,10 @@ import { useMemo, useState } from "react";
 import Link from "next/link";
 import { ChevronDownIcon, ChevronLeftIcon, ChevronRightIcon, ExternalLinkIcon } from "lucide-react";
 
+import { CampaignNameFilterControl } from "@/components/reporting/campaign-name-filter-control";
 import { Button } from "@/components/ui/button";
+import type { CampaignNameFilter } from "@/lib/reporting/campaign-name-filter";
+import { filterRowsByCampaignName, getCampaignNameOptions } from "@/lib/reporting/campaign-name-filter";
 import { formatCompactNumber } from "@/lib/reporting/format";
 import { emptyCampaignRow, hasReportableCampaignSpend, mergeCampaignRows } from "@/lib/reporting/metrics";
 import { CampaignGroup, CampaignRow, Platform } from "@/lib/reporting/types";
@@ -14,14 +17,30 @@ const ROWS_PER_PAGE = 8;
 export function OverallCampaignGroupsTable({
   groups,
   queryString,
+  campaignNameFilter = null,
+  campaignOptions,
+  onCampaignNameFilterChange,
 }: {
   groups: CampaignGroup[];
   queryString: string;
+  campaignNameFilter?: CampaignNameFilter | null;
+  campaignOptions?: string[];
+  onCampaignNameFilterChange?: (filter: CampaignNameFilter | null) => void;
 }) {
+  const resolvedCampaignOptions = useMemo(
+    () =>
+      campaignOptions ??
+      getCampaignNameOptions(groups.flatMap((group) => group.rows.map((row) => row.campaignName))),
+    [campaignOptions, groups]
+  );
   const visibleGroups = useMemo(() => {
     return groups
       .map((group) => {
-        const rows = withPositiveSpend(group.rows);
+        const rows = filterRowsByCampaignName(
+          withPositiveSpend(group.rows),
+          (row) => row.campaignName,
+          campaignNameFilter
+        );
         if (rows.length === 0) {
           return null;
         }
@@ -32,15 +51,30 @@ export function OverallCampaignGroupsTable({
         };
       })
       .filter((group): group is CampaignGroup => Boolean(group));
-  }, [groups]);
+  }, [campaignNameFilter, groups]);
+  const hasCampaignNameFilter = Boolean(campaignNameFilter?.values.length);
 
-  if (visibleGroups.length === 0) {
+  if (visibleGroups.length === 0 && !hasCampaignNameFilter) {
     return null;
   }
 
   return (
     <section className="space-y-4 rounded-[2rem] bg-[#e7e7e7] p-4 shadow-sm sm:p-6">
-      <h2 className="text-2xl font-semibold text-[#555] sm:text-3xl md:text-4xl">Campaign Breakdown</h2>
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <h2 className="text-2xl font-semibold text-[#555] sm:text-3xl md:text-4xl">Campaign Breakdown</h2>
+        {onCampaignNameFilterChange ? (
+          <CampaignNameFilterControl
+            filter={campaignNameFilter}
+            campaignOptions={resolvedCampaignOptions}
+            onChange={onCampaignNameFilterChange}
+          />
+        ) : null}
+      </div>
+      {visibleGroups.length === 0 ? (
+        <div className="rounded-lg border border-red-100 bg-white p-5 text-sm font-medium text-[#7f1d1d]">
+          No campaigns match the current campaign name filter.
+        </div>
+      ) : null}
       <div className="space-y-4">
         {visibleGroups.map((group) => (
           <details key={group.id} open className="overflow-hidden rounded-xl border border-[#d7d7d7] bg-white shadow-sm">

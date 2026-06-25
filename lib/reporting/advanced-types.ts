@@ -66,6 +66,7 @@ export interface AdvancedFinalUrlPerformanceRow {
   id: string;
   finalUrl: string;
   campaign: string;
+  campaignNames: string[];
   spend: number;
   impressions: number;
   clicks: number;

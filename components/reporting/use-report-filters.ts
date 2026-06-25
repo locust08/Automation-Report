@@ -10,6 +10,8 @@ export interface ReportFilters {
   startDate: string;
   endDate: string;
   platform: "meta" | "google" | "googleYoutube";
+  campaignNameFilterMode: "include" | "exclude";
+  campaignNameFilterValues: string[];
 }
 
 const DEFAULT_PLATFORM: ReportFilters["platform"] = "meta";
@@ -43,6 +45,15 @@ export function useReportFilters(initialFilters?: Partial<ReportFilters>): {
         platform === "meta" || platform === "google" || platform === "googleYoutube"
           ? platform
           : DEFAULT_PLATFORM,
+      campaignNameFilterMode:
+        searchParams.get("campaignNameFilterMode") === "exclude" ||
+        initialFilters?.campaignNameFilterMode === "exclude"
+          ? "exclude"
+          : "include",
+      campaignNameFilterValues:
+        searchParams.getAll("campaignNameFilterValue").length > 0
+          ? searchParams.getAll("campaignNameFilterValue")
+          : initialFilters?.campaignNameFilterValues ?? [],
     };
   }, [initialFilters, searchParams]);
 
@@ -60,6 +71,8 @@ export function useReportFilters(initialFilters?: Partial<ReportFilters>): {
     setParam(params, "startDate", merged.startDate);
     setParam(params, "endDate", merged.endDate);
     setParam(params, "platform", merged.platform);
+    setParam(params, "campaignNameFilterMode", merged.campaignNameFilterValues.length ? merged.campaignNameFilterMode : "");
+    setParamValues(params, "campaignNameFilterValue", merged.campaignNameFilterValues);
 
     const query = params.toString();
     const target = query ? `${pathname}?${query}` : pathname;
@@ -83,6 +96,14 @@ function setParam(searchParams: URLSearchParams, key: string, value: string) {
     return;
   }
   searchParams.set(key, value);
+}
+
+function setParamValues(searchParams: URLSearchParams, key: string, values: string[]) {
+  searchParams.delete(key);
+  values
+    .map((value) => value.trim())
+    .filter(Boolean)
+    .forEach((value) => searchParams.append(key, value));
 }
 
 function defaultDateRange(): { startDate: string; endDate: string } {
