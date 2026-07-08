@@ -47,6 +47,7 @@ type AccountSearchSuggestion = {
 
 type AccountSearchState = "idle" | "loading" | "success" | "error";
 type ManualReportType = "monthly" | "advanced" | "biweekly";
+type ManualSendDeliveryMode = "test" | "live" | "dryRun";
 
 interface ManualSendDetail {
   accountName: string;
@@ -62,6 +63,16 @@ interface ManualSendSummary {
   sentCount: number;
   skippedCount: number;
   failedCount: number;
+  testMode: boolean;
+  dryRun: boolean;
+  deliveryMode: ManualSendDeliveryMode;
+  actualRecipientBehavior: string;
+  confirmationCheckboxProperty: string;
+  checkedCount: number;
+  resolvedAccountCount: number;
+  notionRowsFetched: number;
+  targetSource: string;
+  warning: string | null;
   details: ManualSendDetail[];
 }
 
@@ -282,6 +293,16 @@ export function HomePageClient() {
         sentCount: payload.sentCount,
         skippedCount: payload.skippedCount,
         failedCount: payload.failedCount,
+        testMode: Boolean(payload.testMode),
+        dryRun: Boolean(payload.dryRun),
+        deliveryMode: payload.deliveryMode,
+        actualRecipientBehavior: payload.actualRecipientBehavior,
+        confirmationCheckboxProperty: payload.confirmationCheckboxProperty,
+        checkedCount: payload.checkedCount,
+        resolvedAccountCount: payload.resolvedAccountCount,
+        notionRowsFetched: payload.notionRowsFetched,
+        targetSource: payload.targetSource,
+        warning: payload.warning ?? null,
         details: Array.isArray(payload.details) ? payload.details : [],
       });
     } catch (error) {
@@ -517,12 +538,23 @@ export function HomePageClient() {
               <div className="mt-5 space-y-4">
                 <div className="rounded-lg border border-white/15 bg-white/5 p-4">
                   <p className="text-sm font-semibold">{sendSummary.message}</p>
+                  <p className="mt-2 text-sm leading-relaxed text-white/70">
+                    {sendSummary.actualRecipientBehavior}
+                  </p>
+                  {sendSummary.failedCount > 0 && sendSummary.warning ? (
+                    <div className="mt-3 rounded-md border border-red-300/25 bg-red-950/35 p-3 text-sm text-red-100">
+                      {sendSummary.warning}
+                    </div>
+                  ) : null}
                   <div className="mt-3 grid grid-cols-2 gap-2 text-sm sm:grid-cols-4">
                     <SummaryStat label="Report" value={sendSummary.reportTypeLabel} />
+                    <SummaryStat label="Mode" value={formatDeliveryMode(sendSummary.deliveryMode)} />
                     <SummaryStat label="Checked" value={String(sendSummary.totalCheckedAccounts)} />
                     <SummaryStat label="Sent" value={String(sendSummary.sentCount)} />
                     <SummaryStat label="Skipped" value={String(sendSummary.skippedCount)} />
                     <SummaryStat label="Failed" value={String(sendSummary.failedCount)} />
+                    <SummaryStat label="Source" value={formatTargetSource(sendSummary.targetSource)} />
+                    <SummaryStat label="Notion Rows" value={String(sendSummary.notionRowsFetched)} />
                   </div>
                 </div>
 
@@ -589,6 +621,29 @@ export function HomePageClient() {
       ) : null}
     </main>
   );
+}
+
+function formatDeliveryMode(value: ManualSendDeliveryMode): string {
+  if (value === "dryRun") {
+    return "Dry run";
+  }
+  if (value === "test") {
+    return "Test delivery";
+  }
+  return "Live delivery";
+}
+
+function formatTargetSource(value: string): string {
+  if (value === "notion") {
+    return "Notion";
+  }
+  if (value === "configured") {
+    return "Configured";
+  }
+  if (value === "override") {
+    return "Override";
+  }
+  return "Unknown";
 }
 
 function SummaryStat({ label, value }: { label: string; value: string }) {

@@ -39,6 +39,9 @@ export interface MonthlyReportAccountSendResult {
 
 export interface MonthlyReportJobResult {
   totalAccounts: number;
+  resolvedAccountCount: number;
+  notionRowsFetched: number;
+  targetSource: "override" | "configured" | "notion" | "unknown";
   reportType: ScheduledMonthlyReportType;
   scheduleDay: number;
   confirmationCheckboxProperty: string;
@@ -113,6 +116,9 @@ export async function runMonthlyReportJob(input?: {
 
     return {
       totalAccounts: 0,
+      resolvedAccountCount: 0,
+      notionRowsFetched: 0,
+      targetSource: "unknown",
       reportType,
       scheduleDay,
       confirmationCheckboxProperty,
@@ -313,6 +319,9 @@ export async function runMonthlyReportJob(input?: {
 
     const result: MonthlyReportJobResult = {
       totalAccounts: targetResolution.accounts.length,
+      resolvedAccountCount: targetResolution.accounts.length,
+      notionRowsFetched: targetResolution.totalNotionRows,
+      targetSource: targetResolution.targetSource,
       reportType,
       scheduleDay,
       confirmationCheckboxProperty,
@@ -360,6 +369,9 @@ export async function runMonthlyReportJob(input?: {
 
     return {
       totalAccounts: 0,
+      resolvedAccountCount: 0,
+      notionRowsFetched: 0,
+      targetSource: "unknown",
       reportType,
       scheduleDay,
       confirmationCheckboxProperty,
@@ -394,10 +406,12 @@ async function resolveTargets(input: {
   accounts: MonthlyReportAccount[];
   totalNotionRows: number;
   skippedMonthlyEmailUnchecked: number;
+  targetSource: MonthlyReportJobResult["targetSource"];
 }> {
-  const rawConfiguredTargets =
-    input.overrideTargets && input.overrideTargets.length > 0
-      ? input.overrideTargets
+  const hasOverrideTargets = Boolean(input.overrideTargets && input.overrideTargets.length > 0);
+  const rawConfiguredTargets: MonthlyReportTargetConfig[] =
+    hasOverrideTargets
+      ? input.overrideTargets ?? []
       : parseTargetList(
           input.testMode
             ? process.env.MONTHLY_REPORT_TEST_TARGETS_JSON
@@ -416,6 +430,7 @@ async function resolveTargets(input: {
       accounts: configuredTargets,
       totalNotionRows: 0,
       skippedMonthlyEmailUnchecked: 0,
+      targetSource: hasOverrideTargets ? "override" : "configured",
     };
   }
 
@@ -430,6 +445,7 @@ async function resolveTargets(input: {
     accounts: notionAccounts.accounts.filter((account) => Boolean(account.googleAdsAccountId || account.metaAdsAccountId)),
     totalNotionRows: notionAccounts.total,
     skippedMonthlyEmailUnchecked: notionAccounts.monthlyEmailSkippedCount,
+    targetSource: "notion",
   };
 }
 
