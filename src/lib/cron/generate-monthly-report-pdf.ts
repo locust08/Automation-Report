@@ -2,7 +2,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
-import { chromium, type Browser, type Page } from "playwright";
+import type { Browser, Page } from "playwright";
 
 import {
   resolveMonthlyReportDateRange,
@@ -463,9 +463,33 @@ async function waitForAdvancedReportReadyMarker(page: Page) {
 
 async function launchPdfBrowser(): Promise<Browser> {
   try {
+    const configuredExecutablePath = process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH?.trim();
+
+    if (configuredExecutablePath) {
+      const { chromium } = await import("playwright");
+      return await chromium.launch({
+        headless: true,
+        executablePath: configuredExecutablePath,
+      });
+    }
+
+    if (process.env.VERCEL) {
+      const [{ chromium }, chromiumPackage] = await Promise.all([
+        import("playwright-core"),
+        import("@sparticuz/chromium"),
+      ]);
+      const executablePath = await chromiumPackage.default.executablePath();
+
+      return (await chromium.launch({
+        args: chromiumPackage.default.args,
+        executablePath,
+        headless: true,
+      })) as unknown as Browser;
+    }
+
+    const { chromium } = await import("playwright");
     return await chromium.launch({
       headless: true,
-      executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH?.trim() || undefined,
     });
   } catch (error) {
     throw new Error(`Browser launch failure: ${toErrorMessage(error)}`);
