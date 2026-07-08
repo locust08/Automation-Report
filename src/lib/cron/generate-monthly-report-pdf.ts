@@ -11,7 +11,7 @@ import {
 import { parseBooleanEnv } from "@/src/lib/cron/monthly-report-targets";
 import type { MonthlyReportAccount } from "@/src/lib/notion/get-monthly-report-accounts";
 
-const DEFAULT_CONCURRENCY = 3;
+const DEFAULT_CONCURRENCY = 1;
 const PDF_RENDER_TIMEOUT_MS = 180000;
 const TEN_MINUTES_MS = 10 * 60 * 1000;
 const EMAIL_SAFE_PDF_SIZE_BYTES = 35 * 1024 * 1024;
@@ -130,7 +130,9 @@ export async function generateMonthlyReportPdfBatch(input: {
 
     return summarizePdfResults(results, Date.now() - startedAt);
   } finally {
-    await browser.close();
+    await browser.close().catch((error: unknown) => {
+      console.warn(`[monthly-report] pdf browser close failed ${toErrorMessage(error)}`);
+    });
   }
 }
 
@@ -164,12 +166,14 @@ async function generateMonthlyReportPdfWithBrowser(
     return result;
   }
 
-  const page = await browser.newPage({
-    viewport: isAdvancedReportAccount(account) ? { width: 1440, height: 2200 } : { width: 794, height: 1123 },
-    deviceScaleFactor: 1,
-  });
+  let page: Page | null = null;
 
   try {
+    page = await browser.newPage({
+      viewport: isAdvancedReportAccount(account) ? { width: 1440, height: 2200 } : { width: 794, height: 1123 },
+      deviceScaleFactor: 1,
+    });
+
     const pageUrl = isAdvancedReportAccount(account)
       ? buildAdvancedReportUrl(account, input.dateRange)
       : buildPrintReportUrl(account, input.dateRange);
@@ -239,7 +243,7 @@ async function generateMonthlyReportPdfWithBrowser(
     logPdfResult(result);
     return result;
   } finally {
-    await page.close().catch((error: unknown) => {
+    await page?.close().catch((error: unknown) => {
       console.warn(`[monthly-report] pdf page close failed ${toErrorMessage(error)}`);
     });
   }

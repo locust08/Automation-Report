@@ -92,8 +92,9 @@ export async function getMonthlyReportAccounts(input?: {
     const filterProperties =
       Object.keys(dataSourceProperties).length > 0 ? dataSourceProperties : databaseProperties;
     const filter = buildMonthlyReportNotionFilter(filterProperties, confirmationCheckboxProperty);
+    const resolvedCheckboxProperty = filter?.confirmationCheckboxProperty ?? confirmationCheckboxProperty;
     const fullResults = await queryAllDataSourceRows(notion, dataSourceId);
-    const fullDataset = buildResultFromRows(fullResults, confirmationCheckboxProperty);
+    const fullDataset = buildResultFromRows(fullResults, resolvedCheckboxProperty);
 
     if (!filter?.confirmationCheckboxProperty) {
       const errorMessage = filter?.errorMessage ??
@@ -102,7 +103,7 @@ export async function getMonthlyReportAccounts(input?: {
       return {
         ...fullDataset,
         accounts: [],
-        confirmationCheckboxProperty,
+        confirmationCheckboxProperty: resolvedCheckboxProperty,
         errorMessage,
       };
     }
@@ -111,16 +112,16 @@ export async function getMonthlyReportAccounts(input?: {
     console.log("Filtered results:", filteredResults.length);
 
     return {
-      ...buildResultFromRows(filteredResults, confirmationCheckboxProperty),
+      ...buildResultFromRows(filteredResults, resolvedCheckboxProperty),
       total: fullDataset.total,
       monthlyEmailApprovedCount: filteredResults
-        .map((row) => mapMonthlyReportAccount(row, confirmationCheckboxProperty))
+        .map((row) => mapMonthlyReportAccount(row, resolvedCheckboxProperty))
         .filter((account): account is MonthlyReportAccount => Boolean(account))
         .filter((account) => account.isValid && account.monthlyReportEnabled).length,
       monthlyEmailSkippedCount: fullDataset.accounts.filter(
         (account) => isActiveStatus(account.status) && !account.monthlyReportEnabled
       ).length,
-      confirmationCheckboxProperty,
+      confirmationCheckboxProperty: resolvedCheckboxProperty,
     };
   } catch (error) {
     console.error("Monthly report raw Notion query failed", error);
@@ -533,7 +534,10 @@ export function buildMonthlyReportNotionFilter(
       };
     }
   | undefined {
-  const enabledProperty = findExactDatabasePropertyName(databaseProperties, confirmationCheckboxProperty);
+  const enabledProperty = findDatabasePropertyName(databaseProperties, [
+    confirmationCheckboxProperty,
+    ...getConfirmationCheckboxAliases(confirmationCheckboxProperty),
+  ]);
   const filters: NonNullable<ReturnType<typeof buildMonthlyReportNotionFilter>>["filter"]["and"] = [];
 
   if (!enabledProperty) {
@@ -593,6 +597,46 @@ function findExactDatabasePropertyName(
   propertyName: string
 ): string | null {
   return Object.keys(properties).find((key) => key === propertyName) ?? null;
+}
+
+function findDatabasePropertyName(
+  properties: Record<string, unknown>,
+  propertyNames: string[]
+): string | null {
+  for (const propertyName of propertyNames) {
+    const exactMatch = findExactDatabasePropertyName(properties, propertyName);
+    if (exactMatch) {
+      return exactMatch;
+    }
+  }
+
+  const normalizedNames = new Set(propertyNames.map(normalizePropertyKey));
+  return Object.keys(properties).find((key) => normalizedNames.has(normalizePropertyKey(key))) ?? null;
+}
+
+function getConfirmationCheckboxAliases(propertyName: string): string[] {
+  const normalized = normalizePropertyKey(propertyName);
+
+  if (normalized === "monthly email") {
+    return [
+      "Monthly email",
+      "Monthly Email",
+      "Monthly Report",
+      "Monthly Report Enabled",
+      "Monthly report",
+      "Monthly report enabled",
+    ];
+  }
+
+  if (normalized === "advanced report") {
+    return ["Advanced report", "Advanced Report Enabled", "Advanced report enabled"];
+  }
+
+  if (normalized === "bi weekly") {
+    return ["Bi-weekly", "Bi Weekly", "Biweekly", "Biweekly Email"];
+  }
+
+  return [];
 }
 
 function getDatabasePropertyType(

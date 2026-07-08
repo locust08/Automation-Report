@@ -203,9 +203,12 @@ const PRODUCTION_CRON = "0 4 7,10,15 * *";
 const TEST_RECIPIENT_FALLBACK = "eason@locus-t.com.my";
 const NOTION_API_VERSION = "2026-03-11";
 const BROWSER_LAUNCH_LIMITER_NAME = "global-browser-launch-limiter";
-const DEFAULT_BROWSER_LAUNCH_SPACING_MS = 7000;
+const DEFAULT_BROWSER_LAUNCH_SPACING_MS = 20000;
 const BROWSER_RATE_LIMIT_RETRY_MS = 60000;
 const BROWSER_RATE_LIMIT_RETRY_JITTER_MS = 15000;
+const BROWSER_SESSION_RETRY_ATTEMPTS = 3;
+const BROWSER_SESSION_RETRY_BASE_MS = 20000;
+const BROWSER_SESSION_RETRY_JITTER_MS = 10000;
 const REPORT_ITEM_FINAL_FAILURE_ATTEMPTS = 6;
 const ADVANCED_REPORT_READY_TIMEOUT_MS = 8 * 60 * 1000;
 const ADVANCED_REPORT_READY_POLL_MS = 5000;
@@ -387,7 +390,7 @@ async function createReportJob(
   }
   const resolved = await resolveTargets(env, input, testMode);
   const expandedTargets = expandAdvancedTargets(resolved.targets);
-  const monthlyEmailTargets = expandedTargets.filter((target) => target.monthlyEmailEnabled !== false);
+  const monthlyEmailTargets = expandedTargets.filter((target) => target.monthlyEmailEnabled === true);
   const skippedUnchecked = expandedTargets.length - monthlyEmailTargets.length;
   const recipientTargets = monthlyEmailTargets.filter((target) => {
     if (!sendEmail || testMode) {
@@ -946,8 +949,8 @@ async function enrichTargetsFromNotion(
             ? matchedRows.find((row) => row.ccEmail)?.ccEmail ?? null
             : target.ccEmail ?? matchedRows.find((row) => row.ccEmail)?.ccEmail ?? null,
           monthlyEmailEnabled:
-            target.monthlyEmailEnabled ??
-            resolveNotionMonthlyEmailEnabled(matchedRows, target.reportType ?? requestedReportType),
+            resolveNotionMonthlyEmailEnabled(matchedRows, target.reportType ?? requestedReportType) ??
+            target.monthlyEmailEnabled === true,
         };
       })
     );
@@ -1349,21 +1352,27 @@ function formatDateRange(start: Date, end: Date): {
   };
 }
 
-async function renderWithBrowserRateLimitRetry<T>(operation: () => Promise<T>): Promise<T> {
-  try {
-    return await operation();
-  } catch (error) {
-    if (!isBrowserRateLimitError(error)) {
-      throw error;
-    }
+async function renderWithBrowserRetry<T>(operation: () => Promise<T>): Promise<T> {
+  let lastError: unknown;
 
-    const delayMs = BROWSER_RATE_LIMIT_RETRY_MS + Math.floor(Math.random() * BROWSER_RATE_LIMIT_RETRY_JITTER_MS);
-    console.warn(
-      `[monthly-report-automation] browser launch rate limited; retrying after ${delayMs}ms`
-    );
-    await sleep(delayMs);
-    return operation();
+  for (let attempt = 1; attempt <= BROWSER_SESSION_RETRY_ATTEMPTS; attempt += 1) {
+    try {
+      return await operation();
+    } catch (error) {
+      lastError = error;
+      if (!isRetryableBrowserError(error) || attempt >= BROWSER_SESSION_RETRY_ATTEMPTS) {
+        throw error;
+      }
+
+      const delayMs = resolveBrowserRetryDelayMs(error, attempt);
+      console.warn(
+        `[monthly-report-automation] browser session failed attempt=${attempt} retrying_after_ms=${delayMs} error=${formatError(error)}`
+      );
+      await sleep(delayMs);
+    }
   }
+
+  throw lastError;
 }
 
 async function waitForBrowserLaunchSlot(env: Env): Promise<void> {
@@ -1390,6 +1399,32 @@ function isBrowserRateLimitError(error: unknown): boolean {
   return message.includes("429") || message.includes("rate limit");
 }
 
+function isRetryableBrowserError(error: unknown): boolean {
+  const message = formatError(error).toLowerCase();
+  return (
+    isBrowserRateLimitError(error) ||
+    message.includes("target page, context or browser has been closed") ||
+    message.includes("target closed") ||
+    message.includes("browser has been closed") ||
+    message.includes("chromium crashed") ||
+    message.includes("session evicted") ||
+    message.includes("connection error") ||
+    message.includes("websocket") ||
+    message.includes("unable to create new browser")
+  );
+}
+
+function resolveBrowserRetryDelayMs(error: unknown, attempt: number): number {
+  if (isBrowserRateLimitError(error)) {
+    return BROWSER_RATE_LIMIT_RETRY_MS + Math.floor(Math.random() * BROWSER_RATE_LIMIT_RETRY_JITTER_MS);
+  }
+
+  return (
+    BROWSER_SESSION_RETRY_BASE_MS * attempt +
+    Math.floor(Math.random() * BROWSER_SESSION_RETRY_JITTER_MS)
+  );
+}
+
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -1406,9 +1441,10 @@ function resolveBrowserLaunchSpacingMs(env: Env): number {
 async function renderPdfWithBrowserRun(env: Env, reportUrl: string): Promise<ArrayBuffer> {
   await waitForBrowserLaunchSlot(env);
   const browser = await puppeteer.launch(env.REPORT_BROWSER);
+  let page: Page | null = null;
 
   try {
-    const page = await browser.newPage();
+    page = await browser.newPage();
     await page.setViewport({
       width: 1440,
       height: 2200,
@@ -1469,7 +1505,12 @@ async function renderPdfWithBrowserRun(env: Env, reportUrl: string): Promise<Arr
 
     return toArrayBuffer(pdf);
   } finally {
-    await browser.close();
+    await page?.close().catch((error: unknown) => {
+      console.warn(`[monthly-report-automation] browser page close failed ${formatError(error)}`);
+    });
+    await browser.close().catch((error: unknown) => {
+      console.warn(`[monthly-report-automation] browser close failed ${formatError(error)}`);
+    });
   }
 }
 
@@ -1477,9 +1518,10 @@ async function renderAdvancedPdfWithBrowserRun(env: Env, reportUrl: string): Pro
   await ensureAdvancedReportReady(reportUrl);
   await waitForBrowserLaunchSlot(env);
   const browser = await puppeteer.launch(env.REPORT_BROWSER);
+  let page: Page | null = null;
 
   try {
-    const page = await browser.newPage();
+    page = await browser.newPage();
     await page.setViewport({
       width: 1440,
       height: 2200,
@@ -1570,7 +1612,12 @@ async function renderAdvancedPdfWithBrowserRun(env: Env, reportUrl: string): Pro
 
     return toArrayBuffer(lightweightPdf);
   } finally {
-    await browser.close();
+    await page?.close().catch((error: unknown) => {
+      console.warn(`[monthly-report-automation] browser page close failed ${formatError(error)}`);
+    });
+    await browser.close().catch((error: unknown) => {
+      console.warn(`[monthly-report-automation] browser close failed ${formatError(error)}`);
+    });
   }
 }
 
@@ -1705,7 +1752,7 @@ async function startAdvancedReportGeneration(apiUrl: string): Promise<void> {
 }
 
 async function renderPdfForReportMessage(env: Env, message: ReportQueueMessage): Promise<ArrayBuffer> {
-  return renderWithBrowserRateLimitRetry(async () => {
+  return renderWithBrowserRetry(async () => {
     if (normalizeReportType(message.target.reportType) === "advanced") {
       return renderAdvancedPdfWithBrowserRun(env, buildReportUrl(env, message));
     }
@@ -1848,9 +1895,10 @@ async function sendReportEmail(
 
   const deliveryMode = env.REPORT_EMAIL_DELIVERY_MODE ?? "attachment";
   const attachments: Array<Record<string, string>> = [];
+  const fromAddress = env.RESEND_FROM_MONTHLY_REPORT?.trim() || DEFAULT_FROM_ADDRESS;
 
   const body: Record<string, unknown> = {
-    from: env.RESEND_FROM_MONTHLY_REPORT?.trim() || DEFAULT_FROM_ADDRESS,
+    from: fromAddress,
     to: recipientEmails,
     cc: ccEmails.length > 0 ? ccEmails : undefined,
     subject: buildReportEmailSubject(input.reportType, input.target.clientName, input.reportMonthLabel),
@@ -1884,7 +1932,12 @@ async function sendReportEmail(
   const payload = (await response.json().catch(() => null)) as { id?: string; error?: { message?: string } } | null;
 
   if (!response.ok) {
-    throw new Error(payload?.error?.message ?? `Resend email failed with status ${response.status}.`);
+    throw new Error(
+      formatResendDeliveryError(
+        payload?.error?.message ?? `Resend email failed with status ${response.status}.`,
+        fromAddress
+      )
+    );
   }
 
   return {
@@ -1910,8 +1963,9 @@ async function sendCompletionNotificationEmail(
   const completedCount = input.items.filter((item) => item.status === "completed").length;
   const failedCount = input.failedItems.length;
   const statusLabel = failedCount > 0 ? `${failedCount} failed` : "all completed";
+  const fromAddress = env.RESEND_FROM_MONTHLY_REPORT?.trim() || DEFAULT_FROM_ADDRESS;
   const body: Record<string, unknown> = {
-    from: env.RESEND_FROM_MONTHLY_REPORT?.trim() || DEFAULT_FROM_ADDRESS,
+    from: fromAddress,
     to: recipients,
     cc: cc.length > 0 ? cc : undefined,
     subject: `${subjectPrefix}[Report Automation] Finished - ${input.job.report_month_label} - ${completedCount}/${input.items.length} completed, ${statusLabel}`,
@@ -1934,7 +1988,12 @@ async function sendCompletionNotificationEmail(
   const payload = (await response.json().catch(() => null)) as { id?: string; error?: { message?: string } } | null;
 
   if (!response.ok) {
-    throw new Error(payload?.error?.message ?? `Resend completion notification failed with status ${response.status}.`);
+    throw new Error(
+      formatResendDeliveryError(
+        payload?.error?.message ?? `Resend completion notification failed with status ${response.status}.`,
+        fromAddress
+      )
+    );
   }
 
   return {
@@ -2283,6 +2342,20 @@ function buildEmailLogoUrl(env: Env): string {
   }
 
   return DEFAULT_EMAIL_LOGO_URL;
+}
+
+function formatResendDeliveryError(message: string, fromAddress: string): string {
+  const senderDomain = extractEmailDomain(fromAddress);
+  if (!/domain is not verified|verify a domain|verified domain/i.test(message)) {
+    return message;
+  }
+
+  return `${message} Sender "${fromAddress}" resolves to domain "${senderDomain ?? "unknown"}". Set RESEND_FROM_MONTHLY_REPORT to a Resend-verified sender domain, or add and verify this domain in Resend before running live sends.`;
+}
+
+function extractEmailDomain(value: string): string | null {
+  const match = value.match(/<[^@\s<>]+@([^>\s]+)>|[^@\s<>]+@([^>\s]+)/);
+  return (match?.[1] ?? match?.[2] ?? null)?.toLowerCase() ?? null;
 }
 
 function buildEmailHtml(input: {
