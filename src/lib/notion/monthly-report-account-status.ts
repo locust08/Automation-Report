@@ -16,6 +16,8 @@ interface UpdateMonthlyReportAccountStatusInput {
 
 type NotionPropertySchema = { type?: string };
 
+const missingStatusSchemaWarnings = new Set<string>();
+
 export async function updateMonthlyReportAccountSendStatus(
   input: UpdateMonthlyReportAccountStatusInput
 ): Promise<void> {
@@ -69,9 +71,7 @@ export async function updateMonthlyReportAccountSendStatus(
     }
 
     if (Object.keys(properties).length === 0) {
-      console.warn(
-        `[monthly-report] account send status update skipped: no compatible Notion properties found for page_id=${notionPageId}`
-      );
+      warnMissingStatusSchemaOnce(input.reportType, pageProperties);
       return;
     }
 
@@ -84,6 +84,23 @@ export async function updateMonthlyReportAccountSendStatus(
       `[monthly-report] account send status update failed page_id=${notionPageId} error=${toErrorMessage(error)}`
     );
   }
+}
+
+function warnMissingStatusSchemaOnce(
+  reportType: ScheduledMonthlyReportType,
+  properties: Record<string, NotionPropertySchema | undefined>
+): void {
+  const propertyNames = Object.keys(properties).sort();
+  const schemaKey = `${reportType}:${propertyNames.join("|")}`;
+
+  if (missingStatusSchemaWarnings.has(schemaKey)) {
+    return;
+  }
+
+  missingStatusSchemaWarnings.add(schemaKey);
+  console.info(
+    `[monthly-report] account send status update skipped: no compatible optional Notion status properties found for report_type=${reportType}. Add one of: ${getStatusAliases(reportType).join(", ")}.`
+  );
 }
 
 function getStatusAliases(reportType: ScheduledMonthlyReportType): string[] {

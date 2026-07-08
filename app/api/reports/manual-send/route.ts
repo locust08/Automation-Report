@@ -45,11 +45,13 @@ export async function POST(request: Request) {
   }
 
   const config = MANUAL_REPORTS[reportType];
+  const forceTestMode = process.env.NODE_ENV !== "production";
   const result = await runMonthlyReportJob({
     scheduleDay: config.scheduleDay,
     reportType: config.reportType,
     scheduledDate: resolveCanonicalScheduledDate(config.scheduleDay),
     dateRange: reportType === "biweekly" ? resolveCurrentMonthFirstHalfRange() : undefined,
+    forceTestMode,
     updateAccountSendStatus: true,
   });
   const message =
@@ -69,6 +71,7 @@ export async function POST(request: Request) {
     sentCount: result.emailed,
     skippedCount: result.skipped,
     failedCount: result.failed,
+    testMode: result.testMode,
     warning: result.warning,
     details: result.accountResults.map((item) => ({
       accountName: item.accountName,
