@@ -23,14 +23,28 @@ try {
             spend: "1371.68",
             actions: [
               {
+                action_type: "lead",
+                value: "5",
+              },
+              {
                 action_type: "onsite_conversion.messaging_conversation_started_7d",
-                value: "26",
+                value: "902",
+              },
+            ],
+            cost_per_result: [
+              {
+                indicator: "actions:onsite_conversion.messaging_conversation_started_7d",
+                values: [{ value: "4.748902" }],
               },
             ],
             cost_per_action_type: [
               {
+                action_type: "lead",
+                value: "274.336",
+              },
+              {
                 action_type: "onsite_conversion.messaging_conversation_started_7d",
-                value: "52.7569",
+                value: "4.748902",
               },
             ],
           },
@@ -50,8 +64,8 @@ try {
   });
 
   assert.equal(rows.length, 1);
-  assert.equal(rows[0].results, 26);
-  assert.equal(rows[0].costPerResult, 52.7569);
+  assert.equal(rows[0].results, 902);
+  assert.equal(rows[0].costPerResult, 4.748902);
 } finally {
   globalThis.fetch = originalFetch;
 }

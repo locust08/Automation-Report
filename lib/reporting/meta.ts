@@ -2233,6 +2233,22 @@ function pickResultMetric(input: {
   objective?: string;
   optimizationGoal?: string;
 }): { actionType: string; label: string; value: number; costPerResult: number | null } {
+  // Meta Ads Manager exposes the campaign's selected Results definition through
+  // cost_per_result.indicator. Prefer that explicit action mapping over broad
+  // objective fallbacks because a messaging lead campaign can contain both
+  // generic lead actions and messaging-conversation actions.
+  const configuredResultCostMetric = input.actions?.length
+    ? pickConfiguredResultCostMetric(
+        input.costPerResult,
+        input.costPerObjectiveResult,
+        input.actions,
+        input.costs
+      )
+    : null;
+  if (configuredResultCostMetric) {
+    return configuredResultCostMetric;
+  }
+
   const awarenessResultMetric = pickAwarenessResultMetric(input);
   if (awarenessResultMetric) {
     return awarenessResultMetric;
@@ -2276,16 +2292,6 @@ function pickResultMetric(input: {
 
   if (!actions?.length) {
     return { actionType: "results", label: "Results", value: 0, costPerResult: null };
-  }
-
-  const configuredResultCostMetric = pickConfiguredResultCostMetric(
-    input.costPerResult,
-    input.costPerObjectiveResult,
-    actions,
-    costs
-  );
-  if (configuredResultCostMetric) {
-    return configuredResultCostMetric;
   }
 
   const prioritizedActionTypes = uniqueActionTypes([
