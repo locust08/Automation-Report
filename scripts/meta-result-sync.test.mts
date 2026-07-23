@@ -48,6 +48,19 @@ try {
               },
             ],
           },
+          {
+            campaign_id: "1200000002",
+            campaign_name: "LT | Awareness",
+            objective: "OUTCOME_AWARENESS",
+            optimization_goal: "REACH",
+            impressions: "100000",
+            reach: "80000",
+            clicks: "100",
+            ctr: "0.1",
+            cpm: "10",
+            cpp: "12.5",
+            spend: "1000",
+          },
         ],
       }),
       {
@@ -63,9 +76,11 @@ try {
     endDate: "2026-05-31",
   });
 
-  assert.equal(rows.length, 1);
+  assert.equal(rows.length, 2);
   assert.equal(rows[0].results, 902);
   assert.equal(rows[0].costPerResult, 4.748902);
+  assert.equal(rows[1].results, 0);
+  assert.equal(rows[1].costPerResult, 0);
 } finally {
   globalThis.fetch = originalFetch;
 }

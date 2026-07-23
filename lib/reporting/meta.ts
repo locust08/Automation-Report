@@ -2233,6 +2233,15 @@ function pickResultMetric(input: {
   objective?: string;
   optimizationGoal?: string;
 }): { actionType: string; label: string; value: number; costPerResult: number | null } {
+  // Awareness is evaluated with delivery metrics such as CPM and reach. Meta
+  // exposes reach as the native "result" for those campaigns, but it is not a
+  // conversion and must not be mixed into this report's conversion-style
+  // Results / Cost per Result KPIs.
+  const awarenessResultMetric = pickAwarenessResultMetric(input);
+  if (awarenessResultMetric) {
+    return awarenessResultMetric;
+  }
+
   // Meta Ads Manager exposes the campaign's selected Results definition through
   // cost_per_result.indicator. Prefer that explicit action mapping over broad
   // objective fallbacks because a messaging lead campaign can contain both
@@ -2247,11 +2256,6 @@ function pickResultMetric(input: {
     : null;
   if (configuredResultCostMetric) {
     return configuredResultCostMetric;
-  }
-
-  const awarenessResultMetric = pickAwarenessResultMetric(input);
-  if (awarenessResultMetric) {
-    return awarenessResultMetric;
   }
 
   const trafficResultMetric = pickTrafficResultMetric(input);
@@ -2409,46 +2413,12 @@ function pickAwarenessResultMetric(input: {
     return null;
   }
 
-  const reach = toNumber(input.reach);
-  if (optimizationGoal.includes("REACH") && reach > 0) {
-    return {
-      actionType: "reach",
-      label: "Reach",
-      value: reach,
-      costPerResult: toNumber(input.cpp) || null,
-    };
-  }
-
-  const thruPlayValue = readMetaActionMetricTotal(input.videoThruPlayWatchedActions);
-  if (optimizationGoal.includes("THRUPLAY") && thruPlayValue > 0) {
-    return {
-      actionType: "video_thruplay_watched_actions",
-      label: "ThruPlays",
-      value: thruPlayValue,
-      costPerResult: readMetaActionMetricFirstValue(input.costPerThruPlay),
-    };
-  }
-
-  const estimatedAdRecallers = toNumber(input.estimatedAdRecallers);
-  if (optimizationGoal.includes("AD_RECALL") && estimatedAdRecallers > 0) {
-    return {
-      actionType: "estimated_ad_recallers",
-      label: "Estimated ad recall lift",
-      value: estimatedAdRecallers,
-      costPerResult: toNumber(input.costPerEstimatedAdRecallers) || null,
-    };
-  }
-
-  if (objective.includes("AWARENESS") && reach > 0) {
-    return {
-      actionType: "reach",
-      label: "Reach",
-      value: reach,
-      costPerResult: toNumber(input.cpp) || null,
-    };
-  }
-
-  return null;
+  return {
+    actionType: "awareness",
+    label: "Awareness",
+    value: 0,
+    costPerResult: null,
+  };
 }
 
 function pickTrafficResultMetric(input: {
@@ -2652,34 +2622,6 @@ function normalizeMetaObjectiveResultMetrics(
   }
 
   return [value];
-}
-
-function normalizeMetaActionMetrics(value: MetaActionMetricValue | undefined): MetaActionMetric[] {
-  if (value === undefined || value === null) {
-    return [];
-  }
-
-  if (Array.isArray(value)) {
-    return value;
-  }
-
-  if (typeof value === "string" || typeof value === "number") {
-    return [{ value }];
-  }
-
-  return [value];
-}
-
-function readMetaActionMetricTotal(value: MetaActionMetricValue | undefined): number {
-  return normalizeMetaActionMetrics(value).reduce(
-    (total, metric) => total + toNumber(metric.value),
-    0
-  );
-}
-
-function readMetaActionMetricFirstValue(value: MetaActionMetricValue | undefined): number | null {
-  const metric = normalizeMetaActionMetrics(value).find((item) => toNumber(item.value) > 0);
-  return metric ? toNumber(metric.value) : null;
 }
 
 function readMetaObjectiveResultKey(result: MetaObjectiveResultMetric): string {
