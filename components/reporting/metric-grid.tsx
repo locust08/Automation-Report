@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { TrendingDownIcon, TrendingUpIcon } from "lucide-react";
+import { CircleHelpIcon, TrendingDownIcon, TrendingUpIcon, XIcon } from "lucide-react";
 
 import { getMetricExplanation } from "@/components/reporting/metric-explanation";
 import { formatDelta, formatMetricValue } from "@/lib/reporting/format";
@@ -37,15 +37,14 @@ function MetricSectionContent({
 }) {
   const metrics = section.metrics;
   const metricCount = metrics.length;
-  const [expandedMetricKey, setExpandedMetricKey] = useState<string | null>(null);
-  const [hoveredMetricKey, setHoveredMetricKey] = useState<string | null>(null);
-  const [focusedMetricKey, setFocusedMetricKey] = useState<string | null>(null);
+  const [selectedMetricKey, setSelectedMetricKey] = useState<string | null>(null);
+  const metricSignature = `${section.platform}:${metrics.map((metric) => metric.key).join("|")}`;
+  const [activeMetricState, setActiveMetricState] = useState({ index: 0, signature: metricSignature });
 
   const formattedValues = useMemo(
     () => metrics.map((metric) => formatMetricValue(metric.value, metric.format, metric.displayValue)),
     [metrics]
   );
-
   const longestLabelLength = metrics.reduce((longest, metric) => Math.max(longest, metric.label.length), 0);
   const longestValueLength = formattedValues.reduce((longest, value) => Math.max(longest, value.length), 0);
   const baseLabelSizeRem = metricCount >= 7 ? 1.2 : 1.3;
@@ -54,20 +53,10 @@ function MetricSectionContent({
   const baseValueSizeRem = metricCount >= 7 ? 2.2 : 2.55;
   const shrinkValueByLengthRem = Math.max(0, longestValueLength - 4) * 0.14;
   const fittedValueSizeRem = Math.max(1.35, baseValueSizeRem - shrinkValueByLengthRem);
-  const metricSignature = `${section.platform}:${metrics.map((metric) => metric.key).join("|")}`;
-  const [activeMetricState, setActiveMetricState] = useState({
-    index: 0,
-    signature: metricSignature,
-  });
-  const activeMetricIndex =
-    activeMetricState.signature === metricSignature ? activeMetricState.index : 0;
+  const activeMetricIndex = activeMetricState.signature === metricSignature ? activeMetricState.index : 0;
   const safeActiveIndex = Math.min(activeMetricIndex, Math.max(0, metricCount - 1));
   const activeMetric = metrics[safeActiveIndex];
-  const activeValue = formattedValues[safeActiveIndex] ?? "No Data";
-
-  const toggleExplanation = (key: string) => {
-    setExpandedMetricKey((current) => (current === key ? null : key));
-  };
+  const selectedMetric = metrics.find((metric) => metric.key === selectedMetricKey) ?? null;
 
   return (
     <article className="rounded-[2rem] bg-[#e7e7e7] p-4 shadow-sm sm:p-6">
@@ -103,24 +92,10 @@ function MetricSectionContent({
           ))}
         </div>
 
-        <MetricExplanationCard
-          section={section}
+        <MetricCard
           metric={activeMetric}
-          formattedValue={activeValue}
-          dateRange={dateRange}
-          explanationVisible={
-            expandedMetricKey === activeMetric.key ||
-            hoveredMetricKey === activeMetric.key ||
-            focusedMetricKey === activeMetric.key
-          }
-          onToggle={() => toggleExplanation(activeMetric.key)}
-          onDismiss={() => {
-            setExpandedMetricKey(null);
-            setHoveredMetricKey(null);
-            setFocusedMetricKey(null);
-          }}
-          onHoverChange={(hovered) => setHoveredMetricKey(hovered ? activeMetric.key : null)}
-          onFocusChange={(focused) => setFocusedMetricKey(focused ? activeMetric.key : null)}
+          formattedValue={formattedValues[safeActiveIndex] ?? "No Data"}
+          onOpen={() => setSelectedMetricKey(activeMetric.key)}
           labelClassName="text-sm"
           valueClassName="text-[clamp(1.75rem,8vw,2.4rem)]"
           deltaClassName="mt-2 text-base"
@@ -130,80 +105,53 @@ function MetricSectionContent({
 
       <div className="hidden items-start gap-3 md:grid md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-7">
         {metrics.map((metric, index) => (
-          <MetricExplanationCard
+          <MetricCard
             key={metric.key}
-            section={section}
             metric={metric}
             formattedValue={formattedValues[index] ?? "No Data"}
-            dateRange={dateRange}
-            explanationVisible={
-              expandedMetricKey === metric.key ||
-              hoveredMetricKey === metric.key ||
-              focusedMetricKey === metric.key
-            }
-            onToggle={() => toggleExplanation(metric.key)}
-            onDismiss={() => {
-              setExpandedMetricKey(null);
-              setHoveredMetricKey(null);
-              setFocusedMetricKey(null);
-            }}
-            onHoverChange={(hovered) => setHoveredMetricKey(hovered ? metric.key : null)}
-            onFocusChange={(focused) => setFocusedMetricKey(focused ? metric.key : null)}
+            onOpen={() => setSelectedMetricKey(metric.key)}
             labelClassName="leading-tight"
             labelStyle={{ fontSize: `clamp(0.92rem, 1.45vw, ${fittedLabelSizeRem}rem)` }}
-            valueClassName=""
             valueStyle={{ fontSize: `clamp(1.35rem, 2.2vw, ${fittedValueSizeRem}rem)` }}
             deltaClassName="mt-2 text-sm sm:text-base"
             cardClassName="min-h-[132px] px-2.5 py-3"
           />
         ))}
       </div>
+
+      {selectedMetric ? (
+        <MetricExplanationDialog
+          section={section}
+          metric={selectedMetric}
+          dateRange={dateRange}
+          onClose={() => setSelectedMetricKey(null)}
+        />
+      ) : null}
     </article>
   );
 }
 
-function MetricExplanationCard({
-  section,
+function MetricCard({
   metric,
   formattedValue,
-  dateRange,
-  explanationVisible,
-  onToggle,
-  onDismiss,
-  onHoverChange,
-  onFocusChange,
+  onOpen,
   labelClassName,
   labelStyle,
-  valueClassName,
+  valueClassName = "",
   valueStyle,
   deltaClassName,
   cardClassName,
 }: {
-  section: SummarySection;
   metric: SummaryMetric;
   formattedValue: string;
-  dateRange?: MetricDateRange;
-  explanationVisible: boolean;
-  onToggle: () => void;
-  onDismiss: () => void;
-  onHoverChange: (hovered: boolean) => void;
-  onFocusChange: (focused: boolean) => void;
+  onOpen: () => void;
   labelClassName: string;
   labelStyle?: React.CSSProperties;
-  valueClassName: string;
+  valueClassName?: string;
   valueStyle?: React.CSSProperties;
   deltaClassName: string;
   cardClassName: string;
 }) {
-  const explanation = getMetricExplanation(section.platform, metric);
-  const previousValue = formatMetricValue(metric.previousValue ?? null, metric.format);
-  const currentLabel = dateRange?.currentLabel ?? "Selected period";
-  const previousLabel = dateRange?.previousLabel ?? "Previous period";
-  const explanationId = `metric-explanation-${section.platform}-${metric.key}`;
-  const showExplanation = explanationVisible
-    ? "opacity-100 translate-y-0"
-    : "pointer-events-none translate-y-2 opacity-0";
-
   return (
     <div className="flex h-full min-w-0 flex-col gap-2">
       <p className={`text-center text-red-700 ${labelClassName}`} style={labelStyle}>
@@ -211,61 +159,132 @@ function MetricExplanationCard({
       </p>
       <button
         type="button"
-        onClick={onToggle}
-        onMouseEnter={() => onHoverChange(true)}
-        onMouseLeave={() => onHoverChange(false)}
-        onFocus={() => onFocusChange(true)}
-        onBlur={() => onFocusChange(false)}
-        onKeyDown={(event) => {
-          if (event.key === "Escape" && explanationVisible) {
-            event.preventDefault();
-            event.currentTarget.blur();
-            onDismiss();
-          }
-        }}
-        aria-expanded={explanationVisible}
-        aria-controls={explanationId}
+        onClick={onOpen}
+        aria-haspopup="dialog"
         aria-label={`Show calculation details for ${metric.label}`}
-        className={`group relative isolate flex w-full min-w-0 flex-1 flex-col justify-center overflow-hidden rounded-xl border border-[#d0d0d0] bg-[#ded9e2] text-left shadow-sm transition-all duration-200 hover:-translate-y-1 hover:shadow-lg focus-visible:-translate-y-1 focus-visible:ring-2 focus-visible:ring-red-700 focus-visible:ring-offset-2 focus-visible:outline-none ${cardClassName}`}
+        className={`group relative flex w-full min-w-0 flex-1 flex-col justify-center overflow-hidden rounded-xl border border-[#d0d0d0] bg-[#ded9e2] px-2.5 text-left shadow-sm transition-all duration-200 hover:-translate-y-1 hover:border-[#c2aeb8] hover:shadow-lg focus-visible:-translate-y-1 focus-visible:ring-2 focus-visible:ring-red-700 focus-visible:ring-offset-2 focus-visible:outline-none ${cardClassName}`}
       >
-        <span className={`w-full transition-opacity duration-150 ${explanationVisible ? "opacity-0" : "opacity-100"}`}>
-          <span
-            className={`block w-full text-center font-medium leading-none tracking-tight tabular-nums text-[#37363e] ${valueClassName}`}
-            style={valueStyle}
-          >
-            {formattedValue}
-          </span>
-          <MetricDelta delta={metric.delta} className={deltaClassName} />
-        </span>
-
+        <CircleHelpIcon
+          aria-hidden="true"
+          className="absolute right-2.5 top-2.5 size-4 text-[#9f0019]/70 transition-transform duration-200 group-hover:scale-110 group-focus-visible:scale-110"
+        />
         <span
-          id={explanationId}
-          aria-hidden={!explanationVisible}
-          className={`absolute inset-0 flex flex-col justify-center bg-[#38363f] px-3 py-3 text-left text-white transition-all duration-200 ${showExplanation}`}
+          className={`block w-full text-center font-medium leading-none tracking-tight tabular-nums text-[#37363e] ${valueClassName}`}
+          style={valueStyle}
         >
-          <span className="text-[10px] font-semibold uppercase tracking-wide text-[#f7b7bd]">
-            {explanation.source}
-          </span>
-          <span className="mt-1 text-xs leading-snug">{explanation.formula}</span>
-          {explanation.mixedReason ? (
-            <span className="mt-2 text-xs leading-snug text-[#f0d7da]">{explanation.mixedReason}</span>
-          ) : (
-            <>
-              <span className="mt-2 text-[11px] leading-snug text-[#ded9e2]">
-                {currentLabel}: {formattedValue}
-              </span>
-              <span className="text-[11px] leading-snug text-[#ded9e2]">
-                {previousLabel}: {previousValue}
-              </span>
-              <span className="mt-1 text-[11px] leading-snug text-[#f7b7bd]">
-                {metric.delta === null
-                  ? "No baseline: a percentage cannot be calculated from a zero or unavailable prior value."
-                  : `Change: (current − previous) ÷ previous × 100 = ${formatDelta(metric.delta)}`}
-              </span>
-            </>
-          )}
+          {formattedValue}
+        </span>
+        <MetricDelta delta={metric.delta} className={deltaClassName} />
+        <span className="mt-2 text-center text-[10px] font-semibold uppercase tracking-wide text-[#6f5f67] opacity-0 transition-opacity duration-200 group-hover:opacity-100 group-focus-visible:opacity-100">
+          View calculation
         </span>
       </button>
+    </div>
+  );
+}
+
+function MetricExplanationDialog({
+  section,
+  metric,
+  dateRange,
+  onClose,
+}: {
+  section: SummarySection;
+  metric: SummaryMetric;
+  dateRange?: MetricDateRange;
+  onClose: () => void;
+}) {
+  const explanation = getMetricExplanation(section.platform, metric);
+  const currentValue = formatMetricValue(metric.value, metric.format, metric.displayValue);
+  const previousValue = formatMetricValue(metric.previousValue ?? null, metric.format);
+  const currentLabel = dateRange?.currentLabel ?? "Selected period";
+  const previousLabel = dateRange?.previousLabel ?? "Previous period";
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-[#1f1c20]/55 p-4 backdrop-blur-sm"
+      role="presentation"
+      onMouseDown={onClose}
+    >
+      <section
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={`metric-dialog-title-${section.platform}-${metric.key}`}
+        className="max-h-[calc(100vh-2rem)] w-full max-w-lg overflow-y-auto rounded-2xl border border-white/30 bg-[#f8f6f7] p-5 shadow-2xl sm:p-6"
+        onMouseDown={(event) => event.stopPropagation()}
+        onKeyDown={(event) => {
+          if (event.key === "Escape") {
+            onClose();
+          }
+        }}
+      >
+        <div className="flex items-start justify-between gap-4">
+          <div className="min-w-0">
+            <p className="text-xs font-semibold uppercase tracking-[0.16em] text-[#9f0019]">
+              {explanation.source}
+            </p>
+            <h3
+              id={`metric-dialog-title-${section.platform}-${metric.key}`}
+              className="mt-1 break-words text-2xl font-semibold text-[#37363e]"
+            >
+              {metric.label} calculation
+            </h3>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            autoFocus
+            className="shrink-0 rounded-full p-2 text-[#555] transition-colors hover:bg-[#ebe5e8] hover:text-[#9f0019] focus-visible:ring-2 focus-visible:ring-red-700 focus-visible:outline-none"
+            aria-label="Close calculation details"
+          >
+            <XIcon className="size-5" />
+          </button>
+        </div>
+
+        <div className="mt-5 rounded-xl border border-[#e3dbe0] bg-white p-4">
+          <p className="text-sm font-semibold text-[#37363e]">How this value is calculated</p>
+          <p className="mt-1 break-words text-sm leading-6 text-[#555]">{explanation.formula}</p>
+          {explanation.mixedReason ? (
+            <p className="mt-3 break-words rounded-lg bg-[#fff0f2] p-3 text-sm leading-6 text-[#8d1730]">
+              {explanation.mixedReason}
+            </p>
+          ) : null}
+        </div>
+
+        {explanation.mixedReason ? null : (
+          <>
+            <div className="mt-4 grid gap-3 sm:grid-cols-2">
+              <MetricPeriodValue label={currentLabel} value={currentValue} tone="current" />
+              <MetricPeriodValue label={previousLabel} value={previousValue} tone="previous" />
+            </div>
+            <div className="mt-4 rounded-xl bg-[#38363f] p-4 text-white">
+              <p className="text-sm font-semibold">Period comparison</p>
+              <p className="mt-1 break-words text-sm leading-6 text-[#e4dce1]">
+                {metric.delta === null
+                  ? "No baseline: a percentage cannot be calculated from a zero or unavailable prior value."
+                  : `Change = (current - previous) / previous * 100 = ${formatDelta(metric.delta)}`}
+              </p>
+            </div>
+          </>
+        )}
+      </section>
+    </div>
+  );
+}
+
+function MetricPeriodValue({
+  label,
+  value,
+  tone,
+}: {
+  label: string;
+  value: string;
+  tone: "current" | "previous";
+}) {
+  return (
+    <div className={`min-w-0 rounded-xl p-3 ${tone === "current" ? "bg-[#fff0f2]" : "bg-[#efecef]"}`}>
+      <p className="break-words text-xs font-semibold leading-5 text-[#695d63]">{label}</p>
+      <p className="mt-1 break-words text-2xl font-semibold tabular-nums text-[#37363e]">{value}</p>
     </div>
   );
 }
