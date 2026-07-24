@@ -660,6 +660,10 @@ function formatSummaryMetric(metric: SummaryMetric): string {
 }
 
 function formatMetricValue(metric: SummaryMetric): string {
+  if (metric.displayValue) {
+    return metric.displayValue;
+  }
+
   const value = metric.value ?? 0;
   if (metric.format === "currency") {
     return formatCurrency(value);

@@ -31,6 +31,10 @@ import {
 } from "@/lib/reporting/metrics";
 import { MemoryCacheEntry, readThroughMemoryCache } from "@/lib/reporting/memory-cache";
 import {
+  buildMetaMonthlyOutcomeMetrics,
+  normalizeMetaMonthlyCampaignRows,
+} from "@/lib/reporting/meta-monthly-dashboard";
+import {
   fetchMetaAudienceBreakdown,
   fetchMetaAccountName,
   fetchMetaCampaignRows,
@@ -513,8 +517,8 @@ export async function getOverallReport(input: OverallInput): Promise<OverallRepo
     );
   }
 
-  const metaCurrent = metaCurrentResult.rows;
-  const metaPrevious = metaPreviousResult.rows;
+  const metaCurrent = normalizeMetaMonthlyCampaignRows(metaCurrentResult.rows);
+  const metaPrevious = normalizeMetaMonthlyCampaignRows(metaPreviousResult.rows);
   const googleCurrent = googleCurrentResult.rows.filter((row) => row.platform === "google");
   const googlePrevious = googlePreviousResult.rows.filter((row) => row.platform === "google");
   const youtubeCurrent = googleCurrentResult.rows.filter((row) => row.platform === "googleYoutube");
@@ -809,8 +813,8 @@ async function fetchOverallPerformanceStageData(input: OverallInput): Promise<Ov
     warnings: dedupeWarnings(warnings),
     diagnostics,
     reportRequestId,
-    metaCurrent: metaCurrentResult.rows,
-    metaPrevious: metaPreviousResult.rows,
+    metaCurrent: normalizeMetaMonthlyCampaignRows(metaCurrentResult.rows),
+    metaPrevious: normalizeMetaMonthlyCampaignRows(metaPreviousResult.rows),
     googleCurrent: googleCurrentResult.rows.filter((row) => row.platform === "google"),
     googlePrevious: googlePreviousResult.rows.filter((row) => row.platform === "google"),
     youtubeCurrent: googleCurrentResult.rows.filter((row) => row.platform === "googleYoutube"),
@@ -1575,18 +1579,9 @@ async function fetchByPlatform(args: {
 function buildMetaSummary(currentRows: CampaignRow[], previousRows: CampaignRow[]): SummaryMetric[] {
   const current = aggregateRows(currentRows, "meta");
   const previous = aggregateRows(previousRows, "meta");
-  const currentConversions = aggregateRows(currentRows.filter(isMetaConversionCampaign), "meta");
-  const previousConversions = aggregateRows(previousRows.filter(isMetaConversionCampaign), "meta");
 
   return [
-    metric("results", "Results", currentConversions.results, previousConversions.results, "number"),
-    metric(
-      "costPerResult",
-      "Cost/Results",
-      currentConversions.costPerResult,
-      previousConversions.costPerResult,
-      "currency"
-    ),
+    ...buildMetaMonthlyOutcomeMetrics(currentRows, previousRows),
     metric("clicks", "Clicks", current.clicks, previous.clicks, "number"),
     metric("ctr", "CTR (%)", current.ctr, previous.ctr, "percent"),
     metric("cpm", "CPM", current.cpm, previous.cpm, "currency"),
@@ -1621,6 +1616,7 @@ function metric(
     key,
     label,
     value: currentValue,
+    previousValue,
     delta: computeDelta(currentValue, previousValue),
     format,
   };
@@ -1787,15 +1783,6 @@ async function tryFetchMetaPreview(
       diagnostics: [],
     };
   }
-}
-
-function isMetaConversionCampaign(row: CampaignRow): boolean {
-  const campaignType = row.campaignType.toLowerCase();
-  return (
-    campaignType.includes("lead") ||
-    campaignType.includes("sales") ||
-    campaignType.includes("conversion")
-  );
 }
 
 async function tryFetchMetaCreativeRows(

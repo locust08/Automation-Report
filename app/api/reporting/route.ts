@@ -8,6 +8,7 @@ import {
 } from "@/lib/reporting/overall-cache";
 import { parseRequestContext } from "@/lib/reporting/request";
 import { getOverallReport } from "@/lib/reporting/service";
+import { getImportedOverallReport } from "@/lib/meta-import/reporting";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -28,6 +29,17 @@ export async function GET(request: Request): Promise<NextResponse> {
   const allowCache = searchParams.get("cache") === "1";
 
   try {
+    if (context.source === "meta_csv") {
+      return NextResponse.json(
+        await getImportedOverallReport({
+          accountId: context.accountId,
+          metaAccountId: context.metaAccountId,
+          googleAccountId: null,
+          startDate: context.startDate,
+          endDate: context.endDate,
+        })
+      );
+    }
     if (allowCache && !forceRefresh) {
       const cachedPayload = await readOverallReportCache(cacheKey);
       if (cachedPayload) {

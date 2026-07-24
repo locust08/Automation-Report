@@ -9,6 +9,7 @@ import {
   HouseIcon,
   IdCardIcon,
   SparklesIcon,
+  UploadCloudIcon,
 } from "lucide-react";
 
 import { useScreenshotMode } from "@/components/reporting/use-screenshot-mode";
@@ -47,6 +48,7 @@ export function ReportShell({
     preview: withQuery("/preview", activeQuery),
     advanced: withQuery("/advanced", activeQuery),
     mediaPlan: "/dashboard/media-plan",
+    metaImport: "/meta-import",
   };
 
   return (
@@ -123,6 +125,14 @@ export function ReportShell({
                     className="inline-flex size-10 items-center justify-center rounded-md bg-white/10 hover:bg-white/20"
                   >
                     <ClipboardListIcon className="size-5" />
+                  </Link>
+                  <Link
+                    href={hrefs.metaImport}
+                    title="Meta CSV Import"
+                    aria-label="Open Meta CSV Import page"
+                    className="inline-flex size-10 items-center justify-center rounded-md bg-white/10 hover:bg-white/20"
+                  >
+                    <UploadCloudIcon className="size-5" />
                   </Link>
                 </nav>
               </div>

@@ -12,6 +12,7 @@ export interface ReportFilters {
   platform: "meta" | "google" | "googleYoutube";
   campaignNameFilterMode: "include" | "exclude";
   campaignNameFilterValues: string[];
+  source: "api" | "meta_csv";
 }
 
 const DEFAULT_PLATFORM: ReportFilters["platform"] = "meta";
@@ -54,6 +55,10 @@ export function useReportFilters(initialFilters?: Partial<ReportFilters>): {
         searchParams.getAll("campaignNameFilterValue").length > 0
           ? searchParams.getAll("campaignNameFilterValue")
           : initialFilters?.campaignNameFilterValues ?? [],
+      source:
+        searchParams.get("source") === "meta_csv" || initialFilters?.source === "meta_csv"
+          ? "meta_csv"
+          : "api",
     };
   }, [initialFilters, searchParams]);
 
@@ -73,6 +78,7 @@ export function useReportFilters(initialFilters?: Partial<ReportFilters>): {
     setParam(params, "platform", merged.platform);
     setParam(params, "campaignNameFilterMode", merged.campaignNameFilterValues.length ? merged.campaignNameFilterMode : "");
     setParamValues(params, "campaignNameFilterValue", merged.campaignNameFilterValues);
+    setParam(params, "source", merged.source === "meta_csv" ? "meta_csv" : "");
 
     const query = params.toString();
     const target = query ? `${pathname}?${query}` : pathname;

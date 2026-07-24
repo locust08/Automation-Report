@@ -312,7 +312,7 @@ function Warnings({ warnings }: { warnings: string[] }) {
 }
 
 function formatMetric(metric: SummaryMetric): string {
-  return formatMetricValue(metric.value, metric.format);
+  return formatMetricValue(metric.value, metric.format, metric.displayValue);
 }
 
 function platformLabel(platform: Platform): string {

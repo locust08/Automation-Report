@@ -65,6 +65,9 @@ export function PreviewPageClient() {
     }
     params.set("startDate", filters.startDate);
     params.set("endDate", filters.endDate);
+    if (filters.source === "meta_csv") {
+      params.set("source", "meta_csv");
+    }
     return params.toString();
   }, [
     filters.accountId,
@@ -72,6 +75,7 @@ export function PreviewPageClient() {
     filters.googleAccountId,
     filters.metaAccountId,
     filters.startDate,
+    filters.source,
   ]);
 
   const accountKey = filters.metaAccountId || filters.googleAccountId || filters.accountId || "-";

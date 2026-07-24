@@ -3,6 +3,10 @@ import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
 const { fetchMetaCampaignRows } = require("../lib/reporting/meta.ts") as typeof import("../lib/reporting/meta");
+const {
+  buildMetaMonthlyOutcomeMetrics,
+  normalizeMetaMonthlyCampaignRows,
+} = require("../lib/reporting/meta-monthly-dashboard.ts") as typeof import("../lib/reporting/meta-monthly-dashboard");
 
 const originalFetch = globalThis.fetch;
 
@@ -81,6 +85,71 @@ try {
   assert.equal(rows[0].costPerResult, 4.748902);
   assert.equal(rows[1].results, 0);
   assert.equal(rows[1].costPerResult, 0);
+
+  const monthlyRows = normalizeMetaMonthlyCampaignRows(rows);
+  assert.equal(monthlyRows[1].results, 100000);
+  assert.equal(monthlyRows[1].costPerResult, 10);
+
+  const salesAndLeadRows = [
+    {
+      ...rows[0],
+      campaignType: "Outcome Sales",
+      spend: 500,
+      results: 20,
+    },
+    {
+      ...rows[0],
+      id: "lead-campaign",
+      campaignType: "Outcome Leads",
+      spend: 300,
+      results: 10,
+    },
+    monthlyRows[1],
+    {
+      ...rows[0],
+      id: "traffic-campaign",
+      campaignType: "Outcome Traffic",
+      spend: 200,
+      results: 50,
+    },
+  ];
+  const previousSalesAndLeadRows = [
+    {
+      ...rows[0],
+      campaignType: "Outcome Sales",
+      spend: 300,
+      results: 10,
+    },
+  ];
+  const salesAndLeadMetrics = buildMetaMonthlyOutcomeMetrics(
+    salesAndLeadRows,
+    previousSalesAndLeadRows
+  );
+  assert.equal(salesAndLeadMetrics[0].value, 30);
+  assert.equal(salesAndLeadMetrics[0].previousValue, 10);
+  assert.equal(salesAndLeadMetrics[0].delta, 200);
+  assert.equal(salesAndLeadMetrics[1].value, 800 / 30);
+  assert.equal(salesAndLeadMetrics[1].previousValue, 30);
+  assert.ok(
+    Math.abs((salesAndLeadMetrics[1].delta ?? 0) - ((800 / 30 / 30 - 1) * 100)) < 0.0000001
+  );
+
+  const mixedMetrics = buildMetaMonthlyOutcomeMetrics([monthlyRows[1]], [monthlyRows[1]]);
+  assert.equal(mixedMetrics[0].displayValue, "Mixed");
+  assert.equal(mixedMetrics[0].value, null);
+  assert.equal(mixedMetrics[0].previousValue, null);
+  assert.equal(mixedMetrics[0].delta, null);
+  assert.equal(mixedMetrics[1].displayValue, "Mixed");
+  assert.equal(mixedMetrics[1].delta, null);
+
+  const noPreviousOutcomeMetrics = buildMetaMonthlyOutcomeMetrics(
+    [salesAndLeadRows[0]],
+    [monthlyRows[1]]
+  );
+  assert.equal(noPreviousOutcomeMetrics[0].value, 20);
+  assert.equal(noPreviousOutcomeMetrics[0].previousValue, null);
+  assert.equal(noPreviousOutcomeMetrics[0].delta, null);
+  assert.equal(noPreviousOutcomeMetrics[1].delta, null);
 } finally {
   globalThis.fetch = originalFetch;
 }

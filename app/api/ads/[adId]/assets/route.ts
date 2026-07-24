@@ -4,6 +4,7 @@ import { buildReportingErrorResponse } from "@/lib/reporting/api-error";
 import { buildPreviewDetailsStage } from "@/lib/reporting/preview-stages";
 import { parseRequestContext } from "@/lib/reporting/request";
 import { getPreviewReport } from "@/lib/reporting/service";
+import { getImportedPreviewReport } from "@/lib/meta-import/reporting";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -18,7 +19,8 @@ export async function GET(
   const platform = normalizePlatform(searchParams.get("platform"));
 
   try {
-    const payload = await getPreviewReport({
+    const load = context.source === "meta_csv" ? getImportedPreviewReport : getPreviewReport;
+    const payload = await load({
       accountId: context.accountId,
       metaAccountId: context.metaAccountId,
       googleAccountId: context.googleAccountId,

@@ -85,6 +85,9 @@ export function OverallPageClient({
     }
     params.set("startDate", filters.startDate);
     params.set("endDate", filters.endDate);
+    if (filters.source === "meta_csv") {
+      params.set("source", "meta_csv");
+    }
     return params.toString();
   }, [
     filters.accountId,
@@ -92,6 +95,7 @@ export function OverallPageClient({
     filters.googleAccountId,
     filters.metaAccountId,
     filters.startDate,
+    filters.source,
   ]);
   const activeQueryString = useMemo(() => {
     const params = new URLSearchParams(queryString);
@@ -132,9 +136,7 @@ export function OverallPageClient({
     !summaryQuery.error &&
     !campaignQuery.error &&
     Boolean(summaryQuery.data) &&
-    Boolean(campaignQuery.data) &&
-    (summaryQuery.data?.warnings.length ?? 0) === 0 &&
-    (campaignQuery.data?.warnings.length ?? 0) === 0;
+    Boolean(campaignQuery.data);
   const { showReadyState } = useReportReadyTransition({
     ready: overallReady,
     transitionKey: summaryQuery.successToken,
@@ -273,7 +275,11 @@ export function OverallPageClient({
               <>
                 <ReportWarnings warnings={summaryQuery.data.warnings} />
                 {summaryQuery.data.summaries.map((section) => (
-                  <MetricSection key={section.platform} section={section} />
+                  <MetricSection
+                    key={section.platform}
+                    section={section}
+                    dateRange={summaryQuery.data?.dateRange}
+                  />
                 ))}
               </>
             ) : null}
@@ -415,7 +421,7 @@ export function AccountReportContent({
     <>
       <ReportWarnings warnings={data.warnings} />
       {data.summaries.map((section) => (
-        <MetricSection key={section.platform} section={section} />
+        <MetricSection key={section.platform} section={section} dateRange={data.dateRange} />
       ))}
       <OverallCampaignGroupsTable
         groups={data.campaignGroups}

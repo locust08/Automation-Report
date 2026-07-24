@@ -15,6 +15,8 @@ export interface SummaryMetric {
   key: string;
   label: string;
   value: number | null;
+  previousValue?: number | null;
+  displayValue?: string;
   delta: number | null;
   format: MetricFormat;
 }
@@ -132,6 +134,7 @@ export interface OverallReportPayload {
   audienceClickBreakdown: AudienceClickBreakdownResponse;
   warnings: string[];
   diagnostics?: ReportPerformanceDiagnostic[];
+  dataSource?: "meta_api" | "meta_csv";
 }
 
 export interface ReportPerformanceDiagnostic {
@@ -604,6 +607,7 @@ export interface PreviewReportPayload {
     meta?: MetaPreviewDiagnostics[];
     google: GooglePreviewDiagnostics[];
   };
+  dataSource?: "meta_api" | "meta_csv";
 }
 
 export interface RequestContext {
@@ -614,4 +618,5 @@ export interface RequestContext {
   endDate: string | null;
   campaignType: string | null;
   platform: Platform | null;
+  source: "api" | "meta_csv";
 }
