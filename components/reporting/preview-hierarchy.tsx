@@ -60,7 +60,7 @@ export function PreviewHierarchy({
   initialChildId,
   initialAdId,
   companyName,
-  structureFlowchart,
+  detailsLoading = false,
   onCampaignChange,
   onChildChange,
   onAdChange,
@@ -70,7 +70,7 @@ export function PreviewHierarchy({
   initialChildId?: string;
   initialAdId?: string;
   companyName?: string | null;
-  structureFlowchart?: ReactNode;
+  detailsLoading?: boolean;
   onCampaignChange?: (next: {
     platform: "meta" | "google";
     campaignId: string;
@@ -87,7 +87,7 @@ export function PreviewHierarchy({
         initialChildId={initialChildId}
         initialAdId={initialAdId}
         companyName={companyName}
-        structureFlowchart={structureFlowchart}
+        detailsLoading={detailsLoading}
         onCampaignChange={onCampaignChange}
         onChildChange={onChildChange}
         onAdChange={onAdChange}
@@ -101,7 +101,7 @@ export function PreviewHierarchy({
       initialCampaignId={initialCampaignId}
       initialChildId={initialChildId}
       initialAdId={initialAdId}
-      structureFlowchart={structureFlowchart}
+      detailsLoading={detailsLoading}
       onCampaignChange={onCampaignChange}
       onChildChange={onChildChange}
       onAdChange={onAdChange}
@@ -115,7 +115,7 @@ function MetaAdsPreviewWorkspace({
   initialChildId,
   initialAdId,
   companyName,
-  structureFlowchart,
+  detailsLoading = false,
   onCampaignChange,
   onChildChange,
   onAdChange,
@@ -266,100 +266,97 @@ function MetaAdsPreviewWorkspace({
           </div>
         </div>
 
-        <div className="mt-5 grid gap-4 xl:grid-cols-3">
-          <MetaSelectionCard
-            title="Campaign"
-            icon={<FolderIcon className="size-5" />}
-            accent="rose"
-            items={section.campaigns}
-            selectedId={selectedCampaign?.id ?? ""}
-            selectedLabel={selectedCampaign?.name ?? "Choose campaign"}
-            onSelect={selectCampaign}
-          />
-          <MetaSelectionCard
-            title="Ad Set"
-            icon={<LayoutPanelLeftIcon className="size-5" />}
-            accent="blue"
-            items={children}
-            selectedId={selectedChild?.id ?? ""}
-            selectedLabel={selectedChild?.name ?? "Choose ad set"}
-            onSelect={selectChild}
-            emptyMessage="No ad sets were returned for the selected campaign."
-          />
-          <MetaSelectionCard
-            title="Ad"
-            icon={<MegaphoneIcon className="size-5" />}
-            accent="green"
-            items={ads}
-            selectedId={selectedAd?.id ?? ""}
-            selectedLabel={selectedAd?.name ?? "Choose ad"}
-            onSelect={selectAd}
-            emptyMessage="No ads were returned for the selected ad set."
-          />
-        </div>
+        <MetaCampaignStructureSelector
+          campaigns={section.campaigns}
+          selectedCampaign={selectedCampaign}
+          adSets={children}
+          selectedAdSet={selectedChild}
+          ads={ads}
+          selectedAd={selectedAd}
+          onCampaignSelect={selectCampaign}
+          onAdSetSelect={selectChild}
+          onAdSelect={selectAd}
+        />
 
       </div>
 
-      {structureFlowchart}
+      <div className="relative space-y-6" aria-busy={detailsLoading}>
+        {detailsLoading ? (
+          <div
+            role="status"
+            className="flex items-center gap-3 rounded-2xl border border-[#b9d4ff] bg-[#eff6ff] px-4 py-3 text-sm font-medium text-[#2456a6] shadow-[0_10px_28px_rgba(37,99,235,0.08)]"
+          >
+            <RefreshCwIcon className="size-4 animate-spin" />
+            Retrieving data for the selected Meta ad…
+          </div>
+        ) : null}
 
-      {children.length === 0 ? (
-        <EmptyState message="No ad sets are available under the selected campaign." />
-      ) : null}
+        <div
+          className={`space-y-6 transition-opacity duration-200 ${
+            detailsLoading ? "pointer-events-none opacity-50" : "opacity-100"
+          }`}
+        >
 
-      <section className="rounded-[28px] border border-[#e7edf5] bg-white p-5 shadow-[0_18px_50px_rgba(15,23,42,0.05)] sm:p-6">
-        <div>
-          <h2 className="text-[1.8rem] font-semibold tracking-[-0.03em] text-[#0f172a]">
-            Ad Preview
-          </h2>
-          <p className="mt-2 text-[1rem] leading-7 text-[#64748b]">
-            See how your ad will appear across different placements.
-          </p>
-        </div>
+          {children.length === 0 ? (
+            <EmptyState message="No ad sets are available under the selected campaign." />
+          ) : null}
 
-        <div className="mt-7 grid gap-5 xl:grid-cols-3">
-          {previewGalleryPlacements.map((placement) => (
-            <MetaAdPreviewCard
-              key={placement.key}
-              companyLabel={companyLabel}
-              campaignName={selectedCampaign?.name ?? "Campaign"}
-              creative={creative}
-              activePlacement={placement}
+            <section id="ad-preview" className="scroll-mt-6 rounded-[28px] border border-[#e7edf5] bg-white p-5 shadow-[0_18px_50px_rgba(15,23,42,0.05)] sm:p-6">
+              <div>
+                <h2 className="text-[1.8rem] font-semibold tracking-[-0.03em] text-[#0f172a]">
+                  Ad Preview
+                </h2>
+                <p className="mt-2 text-[1rem] leading-7 text-[#64748b]">
+                  See how your ad will appear across different placements.
+                </p>
+              </div>
+
+              <div className="mt-7 grid gap-5 xl:grid-cols-3">
+                {previewGalleryPlacements.map((placement) => (
+                  <MetaAdPreviewCard
+                    key={placement.key}
+                    companyLabel={companyLabel}
+                    campaignName={selectedCampaign?.name ?? "Campaign"}
+                    creative={creative}
+                    activePlacement={placement}
+                  />
+                ))}
+              </div>
+            </section>
+
+            <section className="rounded-[28px] border border-[#e7edf5] bg-white p-5 shadow-[0_18px_50px_rgba(15,23,42,0.05)] sm:p-6">
+              <h2 className="text-[1.8rem] font-semibold tracking-[-0.03em] text-[#0f172a]">
+                Ad Information
+              </h2>
+              <div className="mt-4 overflow-hidden rounded-[24px] border border-[#e8eef5]">
+                {informationSections.map((item, index) => (
+                  <MetaInformationAccordionItem
+                    key={item.key}
+                    title={item.title}
+                    subtitle={item.subtitle}
+                    icon={item.icon}
+                    defaultOpen={item.defaultOpen}
+                    fields={item.fields}
+                    bordered={index < informationSections.length - 1}
+                  />
+                ))}
+              </div>
+            </section>
+
+            <PerformanceSection
+              performance={performance}
+              emptyMessage="No performance data was returned for the current Meta Ads selection."
             />
-          ))}
-        </div>
-      </section>
 
-      <section className="rounded-[28px] border border-[#e7edf5] bg-white p-5 shadow-[0_18px_50px_rgba(15,23,42,0.05)] sm:p-6">
-        <h2 className="text-[1.8rem] font-semibold tracking-[-0.03em] text-[#0f172a]">
-          Ad Information
-        </h2>
-        <div className="mt-4 overflow-hidden rounded-[24px] border border-[#e8eef5]">
-          {informationSections.map((item, index) => (
-            <MetaInformationAccordionItem
-              key={item.key}
-              title={item.title}
-              subtitle={item.subtitle}
-              icon={item.icon}
-              defaultOpen={item.defaultOpen}
-              fields={item.fields}
-              bordered={index < informationSections.length - 1}
+            <DemographicSection
+              rows={demographics}
+              platformRows={platformDistribution}
+              resultLabel={performance?.resultLabel ?? "Results"}
+              emptyMessage="No demographic data was returned for the current Meta Ads selection."
             />
-          ))}
-        </div>
-      </section>
 
-      <section className="space-y-6">
-        <PerformanceSection
-          performance={performance}
-          emptyMessage="No performance data was returned for the current Meta Ads selection."
-        />
-        <DemographicSection
-          rows={demographics}
-          platformRows={platformDistribution}
-          resultLabel={performance?.resultLabel ?? "Results"}
-          emptyMessage="No demographic data was returned for the current Meta Ads selection."
-        />
-      </section>
+        </div>
+      </div>
 
     </section>
   );
@@ -378,101 +375,197 @@ interface MetaPreviewPlacementDescriptor {
   accent: MetaAccent;
 }
 
-function MetaSelectionCard({
-  title,
-  icon,
-  accent,
-  items,
-  selectedId,
-  selectedLabel,
-  onSelect,
-  emptyMessage,
+function MetaCampaignStructureSelector({
+  campaigns,
+  selectedCampaign,
+  adSets,
+  selectedAdSet,
+  ads,
+  selectedAd,
+  onCampaignSelect,
+  onAdSetSelect,
+  onAdSelect,
 }: {
-  title: string;
-  icon: ReactNode;
-  accent: MetaAccent;
-  items: Array<{ id: string; name: string; status: string }>;
-  selectedId: string;
-  selectedLabel: string;
-  onSelect: (id: string) => void;
-  emptyMessage?: string;
+  campaigns: PreviewCampaignNode[];
+  selectedCampaign: PreviewCampaignNode | null;
+  adSets: PreviewAdGroupNode[];
+  selectedAdSet: PreviewAdGroupNode | null;
+  ads: PreviewAdNode[];
+  selectedAd: PreviewAdNode | null;
+  onCampaignSelect: (id: string) => void;
+  onAdSetSelect: (id: string) => void;
+  onAdSelect: (id: string) => void;
 }) {
-  const [open, setOpen] = useState(false);
+  const [campaignsOpen, setCampaignsOpen] = useState(false);
+  const campaignCanCollapse = campaigns.length > 1;
+  const adsListRef = useRef<HTMLDivElement>(null);
 
-  function handleSelect(id: string) {
-    onSelect(id);
-    setOpen(false);
-  }
+  useEffect(() => {
+    adsListRef.current?.scrollTo({ top: 0 });
+  }, [selectedAdSet?.id]);
 
   return (
-    <div className="min-h-[150px] rounded-[24px] border border-[#e8eef5] bg-white p-5 shadow-[0_10px_26px_rgba(15,23,42,0.04)]">
-      <div className="flex items-start gap-4">
-        <span className={`flex size-14 shrink-0 items-center justify-center rounded-[18px] ${metaAccentIconClassName(accent)}`}>
-          {icon}
-        </span>
-        <div className="min-w-0 flex-1">
-          <p className="text-[0.95rem] font-semibold text-[#0f172a]">{title}</p>
-          {items.length > 0 ? (
+    <div className="mt-5 overflow-hidden rounded-[24px] border border-[#dfe6f0] bg-[#fbfcff]">
+      <div className="grid min-h-[390px] lg:grid-cols-[minmax(270px,0.9fr)_minmax(0,2.1fr)]">
+        <aside className="border-b border-[#dfe6f0] p-4 sm:p-5 lg:border-b-0 lg:border-r">
+          <p className="text-[0.68rem] font-semibold uppercase tracking-[0.14em] text-[#74809a]">
+            Campaign structure
+          </p>
+
+          <div className="relative mt-3">
             <button
               type="button"
-              onClick={() => setOpen((current) => !current)}
-              className="mt-1.5 flex w-full items-start justify-between gap-4 text-left"
-              aria-expanded={open}
+              onClick={() => campaignCanCollapse && setCampaignsOpen((current) => !current)}
+              className={`flex w-full items-center gap-3 rounded-[16px] border border-[#bfd1ff] bg-[#f3f6ff] px-4 py-4 text-left transition ${
+                campaignCanCollapse
+                  ? "cursor-pointer hover:border-[#86a8ff]"
+                  : "cursor-default"
+              }`}
+              aria-expanded={campaignCanCollapse ? campaignsOpen : undefined}
+              aria-controls={campaignCanCollapse ? "meta-active-campaign-options" : undefined}
+              title={selectedCampaign?.name ?? undefined}
             >
-              <span className="min-w-0">
-                <span className="block whitespace-normal break-words text-[1.15rem] font-semibold leading-7 text-[#0f172a]">
-                  {selectedLabel}
+              <span className="flex size-10 shrink-0 items-center justify-center rounded-[12px] bg-[#e5edff] text-[#2864ff]">
+                <FolderIcon className="size-[1.1rem]" />
+              </span>
+              <span className="min-w-0 flex-1">
+                <span className="block truncate text-[0.92rem] font-semibold text-[#14204b]">
+                  {selectedCampaign?.name ?? "Choose campaign"}
                 </span>
-                <span className="mt-2 block text-sm text-[#64748b]">
-                  {open ? "Hide options" : "Choose"}
+                <span className="mt-0.5 block text-xs text-[#68738f]">
+                  {adSets.length} ad {adSets.length === 1 ? "set" : "sets"} ·{" "}
+                  {adSets.reduce((total, adSet) => total + adSet.ads.length, 0)} ads
                 </span>
               </span>
-              <ChevronDownIcon
-                className={`mt-1 size-5 shrink-0 text-[#64748b] transition ${open ? "rotate-180" : ""}`}
-              />
+              {campaignCanCollapse ? (
+                <ChevronDownIcon className={`size-5 text-[#7d89a5] transition ${campaignsOpen ? "rotate-180" : ""}`} />
+              ) : null}
             </button>
-          ) : (
-            <p className="mt-1 text-sm text-[#64748b]">
-              {emptyMessage ?? `No ${title.toLowerCase()} returned.`}
-            </p>
-          )}
-        </div>
-      </div>
 
-      {open && items.length > 0 ? (
-        <div className="mt-3 max-h-72 space-y-2 overflow-y-auto pr-1">
-          {items.map((item) => {
-            const isSelected = item.id === selectedId;
-            const isPaused = isPausedStatus(item.status);
-
-            return (
-              <button
-                key={item.id}
-                type="button"
-                onClick={() => handleSelect(item.id)}
-                className={`flex w-full items-start justify-between gap-3 rounded-2xl border px-3 py-3 text-left transition ${selectionOptionClassName(
-                  isSelected,
-                  isPaused
-                )}`}
+            {campaignCanCollapse && campaignsOpen ? (
+              <div
+                id="meta-active-campaign-options"
+                className="absolute inset-x-0 z-20 mt-2 rounded-[16px] border border-[#dce4f0] bg-white p-2 shadow-[0_18px_45px_rgba(15,23,42,0.14)]"
               >
-                <span className="min-w-0">
-                  <span className="block whitespace-normal break-words text-sm font-semibold leading-5 text-[#0f172a]">
-                    {item.name}
-                  </span>
-                  <span className={`mt-1 block text-xs ${isPaused ? "font-medium text-[#b45309]" : "text-[#64748b]"}`}>
-                    {item.status}
-                  </span>
-                </span>
-                {isSelected ? (
-                  <CheckIcon
-                    className={`mt-0.5 size-4 shrink-0 ${isPaused ? "text-[#d97706]" : "text-[#2563eb]"}`}
-                  />
-                ) : null}
-              </button>
-            );
-          })}
-        </div>
-      ) : null}
+                {campaigns.map((campaign) => (
+                  <button
+                    key={campaign.id}
+                    type="button"
+                    onClick={() => {
+                      onCampaignSelect(campaign.id);
+                      setCampaignsOpen(false);
+                    }}
+                    className={`w-full rounded-[12px] px-3 py-2.5 text-left text-sm font-medium transition ${
+                      campaign.id === selectedCampaign?.id
+                        ? "bg-[#eef3ff] text-[#1f4fc5]"
+                        : "text-[#26324d] hover:bg-[#f7f9fc]"
+                    }`}
+                  >
+                    {campaign.name}
+                  </button>
+                ))}
+              </div>
+            ) : null}
+          </div>
+
+          <div className="mt-4 border-l-2 border-[#e1e7f0] pl-4">
+            <div className="space-y-2">
+              {adSets.map((adSet) => {
+                const selected = adSet.id === selectedAdSet?.id;
+                return (
+                  <button
+                    key={adSet.id}
+                    type="button"
+                    onClick={() => onAdSetSelect(adSet.id)}
+                    className={`flex w-full items-center gap-3 rounded-[14px] border px-3 py-3 text-left transition ${
+                      selected
+                        ? "border-[#6991ff] bg-[#f2f5ff]"
+                        : "border-transparent bg-transparent hover:border-[#dce4f0] hover:bg-white"
+                    }`}
+                  >
+                    <span className={`flex size-9 shrink-0 items-center justify-center rounded-[11px] ${
+                      selected ? "bg-[#e2ebff] text-[#2864ff]" : "bg-[#eef2f7] text-[#5d6b86]"
+                    }`}>
+                      <LayoutPanelLeftIcon className="size-[1.05rem]" />
+                    </span>
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-sm font-semibold text-[#14204b]">{adSet.name}</span>
+                      <span className="mt-0.5 block text-xs text-[#68738f]">
+                        {adSet.ads.length} {adSet.ads.length === 1 ? "ad" : "ads"}
+                      </span>
+                    </span>
+                    <ChevronRightIcon className="size-4 text-[#8792aa]" />
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        </aside>
+
+        <section className="p-4 sm:p-5 lg:p-6">
+          <div>
+            <div>
+              <p className="text-[0.68rem] font-semibold uppercase tracking-[0.14em] text-[#74809a]">
+                Selected ad set
+              </p>
+              <h2 className="mt-2 text-[1.3rem] font-semibold tracking-[-0.02em] text-[#14204b]">
+                {selectedAdSet?.name ?? "No ad set selected"}
+              </h2>
+              <p className="mt-1 text-xs text-[#68738f]">
+                {ads.length} {ads.length === 1 ? "ad" : "ads"} under this ad set
+              </p>
+            </div>
+          </div>
+
+          <div className="mt-5 overflow-hidden rounded-[16px] border border-[#dfe6f0] bg-white">
+            <div className="grid grid-cols-[minmax(0,1fr)_100px_24px] gap-3 bg-[#f4f6fa] px-4 py-3 text-[0.68rem] font-semibold text-[#74809a]">
+              <span>Ad name</span>
+              <span>Status</span>
+              <span />
+            </div>
+            {ads.length > 0 ? (
+              <div
+                ref={adsListRef}
+                className={ads.length > 3 ? "max-h-[183px] overflow-y-auto" : ""}
+              >
+                {ads.map((ad) => {
+                  const selected = ad.id === selectedAd?.id;
+                  const paused = isPausedStatus(ad.status);
+                  return (
+                    <button
+                      key={ad.id}
+                      type="button"
+                      onClick={() => onAdSelect(ad.id)}
+                      className={`grid min-h-[61px] w-full grid-cols-[minmax(0,1fr)_100px_24px] items-center gap-3 border-t border-[#e8edf4] px-4 py-3 text-left transition ${
+                        selected ? "bg-[#f7f9ff]" : "bg-white hover:bg-[#fafbfe]"
+                      }`}
+                    >
+                      <span className="flex min-w-0 items-center gap-3">
+                        <span className="flex size-9 shrink-0 items-center justify-center rounded-[11px] bg-[#edf2ff] text-[#2864ff]">
+                          <ImageIcon className="size-[1.05rem]" />
+                        </span>
+                        <span className="truncate text-sm font-semibold text-[#14204b]">{ad.name}</span>
+                      </span>
+                      <span className={`w-fit rounded-full px-2.5 py-1 text-[0.68rem] font-semibold ${
+                        paused
+                          ? "bg-[#fff1db] text-[#a05a00]"
+                          : "bg-[#e6f7ef] text-[#15734e]"
+                      }`}>
+                        {paused ? "Paused" : "Active"}
+                      </span>
+                      <EllipsisVerticalIcon className="size-4 text-[#7d89a5]" />
+                    </button>
+                  );
+                })}
+              </div>
+            ) : (
+              <p className="px-5 py-8 text-sm text-[#68738f]">
+                No ads were returned for the selected ad set.
+              </p>
+            )}
+          </div>
+        </section>
+      </div>
     </div>
   );
 }
@@ -1131,22 +1224,6 @@ function pickDetailFields(fields: PreviewDetailField[], labels: string[]): Previ
     .filter((field): field is PreviewDetailField => Boolean(field));
 }
 
-function metaAccentIconClassName(accent: MetaAccent): string {
-  if (accent === "green") {
-    return "bg-[#ecfdf3] text-[#16a34a]";
-  }
-  if (accent === "blue") {
-    return "bg-[#edf4ff] text-[#2563eb]";
-  }
-  if (accent === "amber") {
-    return "bg-[#fff7ed] text-[#ea580c]";
-  }
-  if (accent === "rose") {
-    return "bg-[#fff1f2] text-[#ef4444]";
-  }
-  return "bg-[#f5f3ff] text-[#7c3aed]";
-}
-
 function getMetaDisplayDomain(url: string | null): string {
   if (!url) {
     return "meta preview";
@@ -1176,7 +1253,6 @@ function GoogleAdsPreviewWorkspace({
   initialCampaignId,
   initialChildId,
   initialAdId,
-  structureFlowchart,
   onCampaignChange,
   onChildChange,
   onAdChange,
@@ -1262,7 +1338,6 @@ function GoogleAdsPreviewWorkspace({
         </div>
       </div>
 
-      {structureFlowchart}
 
       <div className="grid min-w-0 gap-4 xl:grid-cols-3">
         <SelectionPicker
@@ -2378,7 +2453,7 @@ interface WorkspaceProps {
   initialCampaignId: string;
   initialChildId?: string;
   initialAdId?: string;
-  structureFlowchart?: ReactNode;
+  detailsLoading?: boolean;
   onCampaignChange?: (next: {
     platform: "meta" | "google";
     campaignId: string;
@@ -3041,17 +3116,17 @@ function DemographicSection({
 
       <div className="mt-8 grid gap-5 lg:grid-cols-3">
         <MetaAudienceSummaryCard
-          icon={<UsersIcon className="size-8" />}
+          icon={<UsersIcon className="size-6" />}
           title="Top Audience Segment"
           value={topSegment}
         />
         <MetaAudienceSummaryCard
-          icon={<AwardIcon className="size-8" />}
+          icon={<AwardIcon className="size-6" />}
           title="Best Cost Segment"
           value={bestCostSegment}
         />
         <MetaAudienceSummaryCard
-          icon={<LightbulbIcon className="size-8" />}
+          icon={<LightbulbIcon className="size-6" />}
           title="Key Insight"
           value={keyInsight}
           compact
@@ -3177,12 +3252,12 @@ function MetaInsightCustomizeControl({
 
 function MetaMetricCard({ label, value }: { label: string; value: string }) {
   return (
-    <div className="min-h-[118px] rounded-[12px] border border-[#dbe3ee] bg-white px-5 py-5 shadow-[0_10px_22px_rgba(15,23,42,0.03)] transition duration-200 hover:-translate-y-1 hover:border-[#b8dce3] hover:shadow-[0_16px_30px_rgba(15,23,42,0.08)]">
-      <div className="flex items-center gap-2 text-[0.98rem] font-medium text-[#334155]">
+    <div className="min-h-[102px] rounded-[12px] border border-[#dbe3ee] bg-white px-5 py-4 shadow-[0_10px_22px_rgba(15,23,42,0.03)] transition duration-200 hover:-translate-y-1 hover:border-[#b8dce3] hover:shadow-[0_16px_30px_rgba(15,23,42,0.08)]">
+      <div className="flex items-center gap-2 text-[0.88rem] font-medium text-[#334155]">
         <span>{label}</span>
-        <InfoIcon className="size-4 text-[#94a3b8]" />
+        <InfoIcon className="size-3.5 text-[#94a3b8]" />
       </div>
-      <p className="mt-4 text-[2rem] font-medium leading-none tracking-[-0.03em] text-[#0f172a]">
+      <p className="mt-3 text-[1.65rem] font-medium leading-none tracking-[-0.03em] text-[#0f172a]">
         {value}
       </p>
     </div>
@@ -3235,7 +3310,7 @@ function MetaPerformanceLineChart({
         ))}
 
         {chart.xTicks.map((tick) => (
-          <text key={tick.label} x={tick.x} y="294" fill="#475569" fontSize="13" textAnchor="middle">
+          <text key={`${tick.x}-${tick.label}`} x={tick.x} y="294" fill="#475569" fontSize="13" textAnchor="middle">
             {tick.label}
           </text>
         ))}
@@ -3337,7 +3412,7 @@ function MetaAudienceBarChart({
         preserveAspectRatio="none"
       >
         {chart.yTicks.map((tick) => (
-          <g key={tick.label}>
+          <g key={`${tick.y}-${tick.label}`}>
             <line x1="74" x2="1088" y1={tick.y} y2={tick.y} stroke="#dfe5ec" strokeWidth="1" />
             <text x="44" y={tick.y + 5} fill="#475569" fontSize="13" textAnchor="end">
               {tick.label}
@@ -3688,13 +3763,13 @@ function MetaAudienceSummaryCard({
   compact?: boolean;
 }) {
   return (
-    <div className="flex min-h-[128px] items-center gap-6 rounded-[12px] border border-[#dbe3ee] bg-white px-7 py-6 shadow-[0_12px_28px_rgba(15,23,42,0.035)] transition duration-200 hover:-translate-y-1 hover:border-[#b8dce3] hover:shadow-[0_18px_36px_rgba(15,23,42,0.09)]">
-      <span className="flex size-16 shrink-0 items-center justify-center rounded-[18px] bg-[#e8fbfd] text-[#16bcca]">
+    <div className="flex min-h-[108px] items-center gap-4 rounded-[12px] border border-[#dbe3ee] bg-white px-5 py-4 shadow-[0_12px_28px_rgba(15,23,42,0.035)] transition duration-200 hover:-translate-y-1 hover:border-[#b8dce3] hover:shadow-[0_18px_36px_rgba(15,23,42,0.09)]">
+      <span className="flex size-12 shrink-0 items-center justify-center rounded-[14px] bg-[#e8fbfd] text-[#16bcca]">
         {icon}
       </span>
       <div className="min-w-0">
-        <p className="text-[1.05rem] leading-6 text-[#475569]">{title}</p>
-        <p className={`${compact ? "text-[1.05rem] leading-7" : "text-[1.55rem] leading-8"} mt-3 font-semibold tracking-[-0.02em] text-[#0f172a]`}>
+        <p className="text-[0.92rem] leading-5 text-[#475569]">{title}</p>
+        <p className={`${compact ? "text-[0.92rem] leading-6" : "text-[1.3rem] leading-7"} mt-2 font-semibold tracking-[-0.02em] text-[#0f172a]`}>
           {value}
         </p>
       </div>
