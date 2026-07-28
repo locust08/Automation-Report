@@ -494,8 +494,12 @@ const META_PREVIEW_DEMOGRAPHIC_FIELDS = [
   "campaign_id",
   "adset_id",
   "ad_id",
+  "objective",
+  "optimization_goal",
   "impressions",
+  "reach",
   "clicks",
+  "cpp",
   "spend",
   "actions",
   "cost_per_action_type",
@@ -1975,6 +1979,12 @@ function buildDemographicMap(rows: MetaInsightRow[]): Map<string, PreviewDemogra
         maleSpend: number;
         femaleSpend: number;
         unknownSpend: number;
+        maleResultCostTotal: number;
+        femaleResultCostTotal: number;
+        unknownResultCostTotal: number;
+        maleHasNativeResultCost: boolean;
+        femaleHasNativeResultCost: boolean;
+        unknownHasNativeResultCost: boolean;
       }
     >
   >();
@@ -1995,6 +2005,12 @@ function buildDemographicMap(rows: MetaInsightRow[]): Map<string, PreviewDemogra
       maleSpend: 0,
       femaleSpend: 0,
       unknownSpend: 0,
+      maleResultCostTotal: 0,
+      femaleResultCostTotal: 0,
+      unknownResultCostTotal: 0,
+      maleHasNativeResultCost: false,
+      femaleHasNativeResultCost: false,
+      unknownHasNativeResultCost: false,
     };
     const resultMetric = pickResultMetric({
       objectiveResults: row.objective_results,
@@ -2016,12 +2032,24 @@ function buildDemographicMap(rows: MetaInsightRow[]): Map<string, PreviewDemogra
     if (gender === "male") {
       current.maleResults += resultMetric.value;
       current.maleSpend += spend;
+      if (resultMetric.costPerResult !== null && resultMetric.value > 0) {
+        current.maleResultCostTotal += resultMetric.costPerResult * resultMetric.value;
+        current.maleHasNativeResultCost = true;
+      }
     } else if (gender === "female") {
       current.femaleResults += resultMetric.value;
       current.femaleSpend += spend;
+      if (resultMetric.costPerResult !== null && resultMetric.value > 0) {
+        current.femaleResultCostTotal += resultMetric.costPerResult * resultMetric.value;
+        current.femaleHasNativeResultCost = true;
+      }
     } else {
       current.unknownResults += resultMetric.value;
       current.unknownSpend += spend;
+      if (resultMetric.costPerResult !== null && resultMetric.value > 0) {
+        current.unknownResultCostTotal += resultMetric.costPerResult * resultMetric.value;
+        current.unknownHasNativeResultCost = true;
+      }
     }
 
     perAge.set(ageRange, current);
@@ -2037,9 +2065,24 @@ function buildDemographicMap(rows: MetaInsightRow[]): Map<string, PreviewDemogra
           maleResults: row.maleResults,
           femaleResults: row.femaleResults,
           unknownResults: row.unknownResults,
-          maleCostPerResult: row.maleResults > 0 ? row.maleSpend / row.maleResults : null,
-          femaleCostPerResult: row.femaleResults > 0 ? row.femaleSpend / row.femaleResults : null,
-          unknownCostPerResult: row.unknownResults > 0 ? row.unknownSpend / row.unknownResults : null,
+          maleCostPerResult:
+            row.maleResults > 0
+              ? row.maleHasNativeResultCost
+                ? row.maleResultCostTotal / row.maleResults
+                : row.maleSpend / row.maleResults
+              : null,
+          femaleCostPerResult:
+            row.femaleResults > 0
+              ? row.femaleHasNativeResultCost
+                ? row.femaleResultCostTotal / row.femaleResults
+                : row.femaleSpend / row.femaleResults
+              : null,
+          unknownCostPerResult:
+            row.unknownResults > 0
+              ? row.unknownHasNativeResultCost
+                ? row.unknownResultCostTotal / row.unknownResults
+                : row.unknownSpend / row.unknownResults
+              : null,
         }))
         .sort((left, right) => sortAgeRange(left.ageRange, right.ageRange)),
     ])
@@ -2078,7 +2121,10 @@ function buildPlatformDistributionMap(
       platform: humanizeMetaValue(row.publisher_platform) || "Unknown platform",
       device: humanizeMetaValue(row.device_platform) || "Unknown device",
       results,
-      costPerResult: results > 0 ? spend / results : null,
+      costPerResult:
+        results > 0
+          ? resultMetric.costPerResult ?? spend / results
+          : null,
     };
     rowsByAd.set(adId, [...(rowsByAd.get(adId) ?? []), item]);
   });

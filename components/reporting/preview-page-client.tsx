@@ -442,7 +442,7 @@ function buildPreviewStageQuery(
   const params = new URLSearchParams(queryString);
   // Increment when the preview metric contract changes so long-lived client
   // sessions do not keep displaying an older in-memory stage response.
-  params.set("previewMetricsVersion", "2");
+  params.set("previewMetricsVersion", "3");
   if (selection.platform) {
     params.set("platform", selection.platform);
   }
