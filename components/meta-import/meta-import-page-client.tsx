@@ -4,11 +4,16 @@ import { DragEvent, useCallback, useEffect, useMemo, useRef, useState } from "re
 import Link from "next/link";
 import {
   AlertCircleIcon,
+  BarChart3Icon,
   CheckCircle2Icon,
+  ClipboardListIcon,
   DownloadIcon,
+  EyeIcon,
   FileSpreadsheetIcon,
   HistoryIcon,
+  HouseIcon,
   SearchIcon,
+  SparklesIcon,
   UploadCloudIcon,
 } from "lucide-react";
 
@@ -163,10 +168,35 @@ export function MetaImportPageClient({
     <main className="min-h-screen bg-[#f0f0f0] text-[#111]">
       <div className="mx-auto w-full max-w-[1440px] space-y-6 px-4 py-6 sm:px-6 lg:px-10 lg:py-10">
         <header className="flex flex-col gap-4 rounded-[2rem] bg-[url('/headerbackground.png')] bg-cover bg-center p-6 text-white shadow-sm sm:flex-row sm:items-center sm:justify-between lg:p-9">
-          <div>
+          <div className="min-w-0">
             <p className="text-sm font-medium text-white/75">Reporting tools</p>
             <h1 className="mt-1 text-3xl font-semibold tracking-tight sm:text-5xl">Meta Ads CSV Import</h1>
             <p className="mt-2 max-w-2xl text-sm text-white/80">Upload, validate, map and commit Meta Ads Manager reports without exposing Meta credentials.</p>
+            <nav className="mt-4 flex flex-wrap items-center gap-2" aria-label="Reporting tools navigation">
+              {[
+                { href: "/", label: "Home", icon: HouseIcon },
+                { href: "/overall", label: "Overall", icon: BarChart3Icon },
+                { href: "/preview", label: "Preview", icon: EyeIcon },
+                { href: "/advanced", label: "Advanced Report", icon: SparklesIcon },
+                { href: "/dashboard/media-plan", label: "Media Plan", icon: ClipboardListIcon },
+                { href: "/meta-import", label: "Meta CSV Import", icon: UploadCloudIcon, active: true },
+              ].map(({ href, label, icon: Icon, active }) => (
+                <Link
+                  key={href}
+                  href={href}
+                  title={label}
+                  aria-label={`Open ${label} page`}
+                  aria-current={active ? "page" : undefined}
+                  className={`inline-flex size-10 items-center justify-center rounded-md border transition ${
+                    active
+                      ? "border-white/35 bg-white/25 shadow-sm"
+                      : "border-transparent bg-white/10 hover:border-white/20 hover:bg-white/20"
+                  }`}
+                >
+                  <Icon className="size-5" aria-hidden="true" />
+                </Link>
+              ))}
+            </nav>
           </div>
         </header>
 

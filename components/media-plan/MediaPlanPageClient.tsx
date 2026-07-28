@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useSearchParams } from "next/navigation";
 
 import { MediaPlanEditor } from "@/components/media-plan/MediaPlanEditor";
 import { MediaPlanForm } from "@/components/media-plan/MediaPlanForm";
@@ -49,6 +50,8 @@ const EMPTY_MEDIA_PLAN_HISTORY: MediaPlanHistory = {
 };
 
 export function MediaPlanPageClient() {
+  const searchParams = useSearchParams();
+  const activeQuery = searchParams.toString();
   const [formData, setFormData] = useState<MediaPlanFormData>(DEFAULT_MEDIA_PLAN_FORM);
   const [plan, setPlan] = useState<MediaPlan | null>(null);
   const [planSource, setPlanSource] = useState<MediaPlanSource>(null);
@@ -518,6 +521,7 @@ export function MediaPlanPageClient() {
     <ReportShell
       title="Media Plan"
       dateLabel=""
+      activeQuery={activeQuery}
       headerControlLayout="wide"
       headerDateControl={
         <MediaPlanStatusBar

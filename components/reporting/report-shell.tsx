@@ -43,11 +43,11 @@ export function ReportShell({
 }: ReportShellProps) {
   const { screenshotMode } = useScreenshotMode();
   const hrefs = {
-    home: withQuery("/", activeQuery),
+    home: "/",
     overall: withQuery("/overall", activeQuery),
     preview: withQuery("/preview", activeQuery),
     advanced: withQuery("/advanced", activeQuery),
-    mediaPlan: "/dashboard/media-plan",
+    mediaPlan: withQuery("/dashboard/media-plan", activeQuery),
     metaImport: "/meta-import",
   };
 
