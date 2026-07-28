@@ -374,6 +374,13 @@ export interface PreviewDemographicRow {
   unknownCostPerResult: number | null;
 }
 
+export interface PreviewPlatformDistributionRow {
+  platform: string;
+  device: string;
+  results: number;
+  costPerResult: number | null;
+}
+
 export interface PreviewCreativeAsset {
   id: string;
   name?: string | null;
@@ -433,6 +440,7 @@ export interface PreviewAdNode {
   previewLinks?: PreviewLinkAsset[];
   performance?: PreviewPerformanceSummary | null;
   demographics?: PreviewDemographicRow[];
+  platformDistribution?: PreviewPlatformDistributionRow[];
   finalUrl?: string | null;
   displayPathParts?: string[];
   headlines?: PreviewTextAsset[];
@@ -451,6 +459,7 @@ export interface PreviewAdGroupNode {
   details: PreviewDetailField[];
   performance?: PreviewPerformanceSummary | null;
   demographics?: PreviewDemographicRow[];
+  platformDistribution?: PreviewPlatformDistributionRow[];
   ads: PreviewAdNode[];
 }
 
@@ -463,6 +472,7 @@ export interface PreviewCampaignNode {
   details: PreviewDetailField[];
   performance?: PreviewPerformanceSummary | null;
   demographics?: PreviewDemographicRow[];
+  platformDistribution?: PreviewPlatformDistributionRow[];
   children: PreviewAdGroupNode[];
 }
 
@@ -484,7 +494,8 @@ export type MetaPreviewBlockLabel =
   | "meta-preview-ad-creatives"
   | "meta-preview-preview-links"
   | "meta-preview-insights"
-  | "meta-preview-demographics";
+  | "meta-preview-demographics"
+  | "meta-preview-platforms";
 
 export interface MetaPreviewBlockDiagnostic {
   label: MetaPreviewBlockLabel;

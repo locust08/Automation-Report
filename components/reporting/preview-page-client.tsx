@@ -20,12 +20,14 @@ import { useReportSectionQuery } from "@/components/reporting/use-report-data";
 import { useReportReadyTransition } from "@/components/reporting/use-report-ready-transition";
 import { useReportFilters } from "@/components/reporting/use-report-filters";
 import { formatGoogleAdsAccessPathErrorMessage } from "@/lib/reporting/google-access-path";
-import {
-  getFirstPreviewAd,
-  getFirstPreviewChild,
-} from "@/lib/reporting/preview-stages";
 import { resolvePreviewEntry } from "@/lib/reporting/preview-selection";
-import type { PreviewReportPayload } from "@/lib/reporting/types";
+import type {
+  PreviewAdGroupNode,
+  PreviewAdNode,
+  PreviewCampaignNode,
+  PreviewPlatformSection,
+  PreviewReportPayload,
+} from "@/lib/reporting/types";
 
 export function PreviewPageClient() {
   const router = useRouter();
@@ -91,6 +93,8 @@ export function PreviewPageClient() {
     hasAccountId,
     "Unable to load account structure."
   );
+  const [selectedChildId, setSelectedChildId] = useState("");
+  const [selectedAdId, setSelectedAdId] = useState("");
   const campaignResolution = useMemo(
     () =>
       campaignsQuery.data
@@ -120,10 +124,14 @@ export function PreviewPageClient() {
     hasAccountId && Boolean(selectedCampaign),
     "Unable to load ad groups or ad sets."
   );
-  const selectedChild = useMemo(
-    () => (adGroupsQuery.data ? getFirstPreviewChild(adGroupsQuery.data) : null),
-    [adGroupsQuery.data]
-  );
+  const selectedChild = useMemo(() => {
+    const children = getPreviewChildren(
+      adGroupsQuery.data,
+      selectedStagePlatform,
+      selectedCampaign?.id ?? null
+    );
+    return children.find((child) => child.id === selectedChildId) ?? children[0] ?? null;
+  }, [adGroupsQuery.data, selectedCampaign?.id, selectedChildId, selectedStagePlatform]);
   const adsQueryString = useMemo(
     () =>
       buildPreviewStageQuery(queryString, {
@@ -138,10 +146,21 @@ export function PreviewPageClient() {
     hasAccountId && Boolean(selectedChild),
     "Unable to load ads."
   );
-  const selectedAd = useMemo(
-    () => (adsQuery.data ? getFirstPreviewAd(adsQuery.data) : null),
-    [adsQuery.data]
-  );
+  const selectedAd = useMemo(() => {
+    const ads = getPreviewAds(
+      adsQuery.data,
+      selectedStagePlatform,
+      selectedCampaign?.id ?? null,
+      selectedChild?.id ?? null
+    );
+    return ads.find((ad) => ad.id === selectedAdId) ?? ads[0] ?? null;
+  }, [
+    adsQuery.data,
+    selectedAdId,
+    selectedCampaign?.id,
+    selectedChild?.id,
+    selectedStagePlatform,
+  ]);
   const previewQueryString = useMemo(
     () =>
       buildPreviewStageQuery(queryString, {
@@ -164,18 +183,29 @@ export function PreviewPageClient() {
     hasAccountId && Boolean(selectedAd) && previewVisible && Boolean(previewQuery.data),
     "Unable to load creative assets."
   );
-  const data =
-    assetsQuery.data ??
-    previewQuery.data ??
-    adsQuery.data ??
-    adGroupsQuery.data ??
-    campaignsQuery.data;
   const displayData = useMemo(
     () =>
-      data && campaignsQuery.data
-        ? mergePreviewCampaignOptions(data, campaignsQuery.data)
-        : data,
-    [campaignsQuery.data, data]
+      mergePreviewStagePayloads({
+        campaigns: campaignsQuery.data,
+        adGroups: adGroupsQuery.data,
+        ads: adsQuery.data,
+        details: assetsQuery.data ?? previewQuery.data,
+        platform: selectedStagePlatform,
+        campaignId: selectedCampaign?.id ?? null,
+        adGroupId: selectedChild?.id ?? null,
+        adId: selectedAd?.id ?? null,
+      }),
+    [
+      adGroupsQuery.data,
+      adsQuery.data,
+      assetsQuery.data,
+      campaignsQuery.data,
+      previewQuery.data,
+      selectedAd?.id,
+      selectedCampaign?.id,
+      selectedChild?.id,
+      selectedStagePlatform,
+    ]
   );
   const error =
     campaignsQuery.error ??
@@ -196,8 +226,8 @@ export function PreviewPageClient() {
     adGroupsQuery.error ? adGroupsQuery.retry :
     campaignsQuery.retry;
   const successToken = assetsQuery.successToken ?? previewQuery.successToken;
-  const metaFatalError = data?.metaFatalErrors?.[0] ?? null;
-  const googleFatalError = data?.googleFatalErrors?.[0] ?? null;
+  const metaFatalError = displayData?.metaFatalErrors?.[0] ?? null;
+  const googleFatalError = displayData?.googleFatalErrors?.[0] ?? null;
   const previewResolution = useMemo(
     () =>
       displayData
@@ -237,6 +267,8 @@ export function PreviewPageClient() {
     campaignId: string;
     campaignName: string;
   }) {
+    setSelectedChildId("");
+    setSelectedAdId("");
     const params = new URLSearchParams(searchParams.toString());
     const currentPlatform = params.get("platform");
     const currentCampaignId = params.get("campaignId");
@@ -259,6 +291,15 @@ export function PreviewPageClient() {
     params.set("endDate", filters.endDate);
     const query = params.toString();
     router.replace(query ? `${pathname}?${query}` : pathname);
+  }
+
+  function handleChildChange(childId: string) {
+    setSelectedChildId(childId);
+    setSelectedAdId("");
+  }
+
+  function handleAdChange(adId: string) {
+    setSelectedAdId(adId);
   }
 
   const flowchartPlatform =
@@ -433,9 +474,13 @@ export function PreviewPageClient() {
                 key={`${previewResolution.section.platform}:${previewResolution.campaign.id}`}
                 section={previewResolution.section}
                 initialCampaignId={previewResolution.campaign.id}
+                initialChildId={selectedChild?.id ?? ""}
+                initialAdId={selectedAd?.id ?? ""}
                 companyName={displayData.companyName}
                 structureFlowchart={structureFlowchart}
                 onCampaignChange={handleCampaignChange}
+                onChildChange={handleChildChange}
+                onAdChange={handleAdChange}
               />
             ) : null}
           </>
@@ -475,6 +520,9 @@ function buildPreviewStageQuery(
   }
 ): string {
   const params = new URLSearchParams(queryString);
+  // Increment when the preview metric contract changes so long-lived client
+  // sessions do not keep displaying an older in-memory stage response.
+  params.set("previewMetricsVersion", "2");
   if (selection.platform) {
     params.set("platform", selection.platform);
   }
@@ -487,34 +535,137 @@ function buildPreviewStageQuery(
   return params.toString();
 }
 
-function mergePreviewCampaignOptions(
-  payload: PreviewReportPayload,
-  campaignOptionsPayload: PreviewReportPayload
-): PreviewReportPayload {
+function mergePreviewStagePayloads(input: {
+  campaigns: PreviewReportPayload | null;
+  adGroups: PreviewReportPayload | null;
+  ads: PreviewReportPayload | null;
+  details: PreviewReportPayload | null;
+  platform: PreviewPlatformSection["platform"] | null;
+  campaignId: string | null;
+  adGroupId: string | null;
+  adId: string | null;
+}): PreviewReportPayload | null {
+  const payload = input.details ?? input.ads ?? input.adGroups ?? input.campaigns;
+  if (!payload || !input.campaigns) {
+    return payload;
+  }
+
   return {
     ...payload,
-    sections: payload.sections.map((section) => {
-      const optionSection = campaignOptionsPayload.sections.find(
-        (item) => item.platform === section.platform
-      );
-      if (!optionSection) {
+    sections: input.campaigns.sections.map((section) => {
+      if (!input.platform || section.platform !== input.platform) {
         return section;
       }
 
-      const selectedCampaignsById = new Map(
-        section.campaigns.map((campaign) => [campaign.id, campaign])
-      );
-      const optionCampaignIds = new Set(optionSection.campaigns.map((campaign) => campaign.id));
-
       return {
         ...section,
-        campaigns: [
-          ...optionSection.campaigns.map((campaign) => selectedCampaignsById.get(campaign.id) ?? campaign),
-          ...section.campaigns.filter((campaign) => !optionCampaignIds.has(campaign.id)),
-        ],
+        campaigns: section.campaigns.map((campaign) => {
+          if (!input.campaignId || campaign.id !== input.campaignId) {
+            return campaign;
+          }
+
+          const stageCampaign = findPreviewCampaign(
+            input.adGroups,
+            section.platform,
+            campaign.id
+          );
+          const children = (stageCampaign?.children ?? campaign.children).map((child) => {
+            if (!input.adGroupId || child.id !== input.adGroupId) {
+              return child;
+            }
+
+            const stageChild = findPreviewChild(
+              input.ads,
+              section.platform,
+              campaign.id,
+              child.id
+            );
+            const ads = (stageChild?.ads ?? child.ads).map((ad) => {
+              if (!input.adId || ad.id !== input.adId) {
+                return ad;
+              }
+
+              return (
+                findPreviewAd(
+                  input.details,
+                  section.platform,
+                  campaign.id,
+                  child.id,
+                  ad.id
+                ) ?? ad
+              );
+            });
+
+            return { ...(stageChild ?? child), ads };
+          });
+
+          return { ...(stageCampaign ?? campaign), children };
+        }),
       };
     }),
   };
+}
+
+function getPreviewChildren(
+  payload: PreviewReportPayload | null,
+  platform: PreviewPlatformSection["platform"] | null,
+  campaignId: string | null
+): PreviewAdGroupNode[] {
+  if (!platform || !campaignId) {
+    return [];
+  }
+  return findPreviewCampaign(payload, platform, campaignId)?.children ?? [];
+}
+
+function getPreviewAds(
+  payload: PreviewReportPayload | null,
+  platform: PreviewPlatformSection["platform"] | null,
+  campaignId: string | null,
+  adGroupId: string | null
+): PreviewAdNode[] {
+  if (!platform || !campaignId || !adGroupId) {
+    return [];
+  }
+  return findPreviewChild(payload, platform, campaignId, adGroupId)?.ads ?? [];
+}
+
+function findPreviewCampaign(
+  payload: PreviewReportPayload | null,
+  platform: PreviewPlatformSection["platform"],
+  campaignId: string
+): PreviewCampaignNode | null {
+  return (
+    payload?.sections
+      .find((section) => section.platform === platform)
+      ?.campaigns.find((campaign) => campaign.id === campaignId) ?? null
+  );
+}
+
+function findPreviewChild(
+  payload: PreviewReportPayload | null,
+  platform: PreviewPlatformSection["platform"],
+  campaignId: string,
+  adGroupId: string
+): PreviewAdGroupNode | null {
+  return (
+    findPreviewCampaign(payload, platform, campaignId)?.children.find(
+      (child) => child.id === adGroupId
+    ) ?? null
+  );
+}
+
+function findPreviewAd(
+  payload: PreviewReportPayload | null,
+  platform: PreviewPlatformSection["platform"],
+  campaignId: string,
+  adGroupId: string,
+  adId: string
+): PreviewAdNode | null {
+  return (
+    findPreviewChild(payload, platform, campaignId, adGroupId)?.ads.find(
+      (ad) => ad.id === adId
+    ) ?? null
+  );
 }
 
 function toLocalIsoDate(date: Date): string {

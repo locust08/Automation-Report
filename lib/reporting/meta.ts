@@ -18,6 +18,7 @@ import {
   PreviewDetailField,
   PreviewLinkAsset,
   PreviewPerformanceSummary,
+  PreviewPlatformDistributionRow,
   AudienceClickBreakdownResponse,
   AudienceClickBreakdownItem,
 } from "@/lib/reporting/types";
@@ -240,6 +241,8 @@ interface MetaInsightRow {
   cost_per_thruplay?: MetaActionMetricValue;
   age?: string;
   gender?: string;
+  publisher_platform?: string;
+  device_platform?: string;
   actions?: MetaActionMetric[];
   cost_per_action_type?: MetaActionMetric[];
   country?: string;
@@ -1014,10 +1017,33 @@ export async function fetchMetaPreviewData({
     warnings.push(demographicsBlock.issue);
   }
 
+  const platformsBlock = await runMetaPreviewBlock({
+    accountId,
+    label: "meta-preview-platforms",
+    required: false,
+    fields: [...META_PREVIEW_DEMOGRAPHIC_FIELDS],
+    load: () =>
+      includePerformance
+        ? fetchMetaInsightsCollection({
+            accountId,
+            accessToken,
+            startDate,
+            endDate,
+            breakdowns: ["publisher_platform", "device_platform"],
+            fields: [...META_PREVIEW_DEMOGRAPHIC_FIELDS],
+          })
+        : Promise.resolve([]),
+  });
+  diagnostics.push(platformsBlock.diagnostic);
+  if (platformsBlock.issue) {
+    warnings.push(platformsBlock.issue);
+  }
+
   const creativeMap = creativesBlock.data ?? new Map<string, PreviewCreativeAsset>();
   const previewLinkMap = previewLinksBlock.data ?? new Map<string, PreviewLinkAsset[]>();
   const adPerformanceMap = buildPerformanceMap(insightsBlock.data ?? []);
   const adDemographicMap = buildDemographicMap(demographicsBlock.data ?? []);
+  const adPlatformMap = buildPlatformDistributionMap(platformsBlock.data ?? []);
 
   const adsByAdSet = new Map<string, PreviewCampaignNode["children"][number]["ads"]>();
   visibleAds.forEach((ad) => {
@@ -1047,6 +1073,7 @@ export async function fetchMetaPreviewData({
       previewLinks,
       performance: adPerformanceMap.get(adId) ?? null,
       demographics: adDemographicMap.get(adId) ?? [],
+      platformDistribution: adPlatformMap.get(adId) ?? [],
       finalUrl: creative?.linkUrl ?? null,
     });
     adsByAdSet.set(adSetId, items);
@@ -1102,6 +1129,9 @@ function buildMetaPreviewAdSetsByCampaign(
       ]),
       performance: mergePerformanceSummaries(adItems.map((ad) => ad.performance).filter(Boolean)),
       demographics: mergeDemographicRows(adItems.flatMap((ad) => ad.demographics || [])),
+      platformDistribution: mergePlatformDistributionRows(
+        adItems.flatMap((ad) => ad.platformDistribution || [])
+      ),
       ads: adItems,
     });
     adSetsByCampaign.set(campaignId, items);
@@ -1139,6 +1169,9 @@ function buildMetaPreviewCampaignNodes(
       ]),
       performance: mergePerformanceSummaries(children.map((adSet) => adSet.performance)),
       demographics: mergeDemographicRows(children.flatMap((adSet) => adSet.demographics || [])),
+      platformDistribution: mergePlatformDistributionRows(
+        children.flatMap((adSet) => adSet.platformDistribution || [])
+      ),
       children,
     });
   });
@@ -1863,6 +1896,8 @@ function buildPerformanceMap(rows: MetaInsightRow[]): Map<string, PreviewPerform
       clicks: number;
       landingPageViews: number;
       linkClicks: number;
+      resultCostTotal: number;
+      hasNativeResultCost: boolean;
     }
   >();
 
@@ -1895,11 +1930,17 @@ function buildPerformanceMap(rows: MetaInsightRow[]): Map<string, PreviewPerform
       clicks: 0,
       landingPageViews: 0,
       linkClicks: 0,
+      resultCostTotal: 0,
+      hasNativeResultCost: false,
     };
 
     current.resultLabel =
       current.resultLabel === resultMetric.label ? current.resultLabel : "Results";
     current.results += resultMetric.value;
+    if (resultMetric.costPerResult !== null && resultMetric.value > 0) {
+      current.resultCostTotal += resultMetric.costPerResult * resultMetric.value;
+      current.hasNativeResultCost = true;
+    }
     current.spend += toNumber(row.spend);
     current.impressions += toNumber(row.impressions);
     current.clicks += toNumber(row.clicks);
@@ -1911,7 +1952,13 @@ function buildPerformanceMap(rows: MetaInsightRow[]): Map<string, PreviewPerform
   return new Map(
     Array.from(performanceByAdId.entries()).map(([adId, item]) => [
       adId,
-      finalizePerformanceSummary(item),
+      finalizePerformanceSummary({
+        ...item,
+        costPerResult:
+          item.hasNativeResultCost && item.results > 0
+            ? item.resultCostTotal / item.results
+            : undefined,
+      }),
     ])
   );
 }
@@ -1995,6 +2042,51 @@ function buildDemographicMap(rows: MetaInsightRow[]): Map<string, PreviewDemogra
           unknownCostPerResult: row.unknownResults > 0 ? row.unknownSpend / row.unknownResults : null,
         }))
         .sort((left, right) => sortAgeRange(left.ageRange, right.ageRange)),
+    ])
+  );
+}
+
+function buildPlatformDistributionMap(
+  rows: MetaInsightRow[]
+): Map<string, PreviewPlatformDistributionRow[]> {
+  const rowsByAd = new Map<string, PreviewPlatformDistributionRow[]>();
+
+  rows.forEach((row) => {
+    const adId = row.ad_id?.trim();
+    if (!adId) {
+      return;
+    }
+
+    const resultMetric = pickResultMetric({
+      objectiveResults: row.objective_results,
+      costPerResult: row.cost_per_result,
+      costPerObjectiveResult: row.cost_per_objective_result,
+      reach: row.reach,
+      cpp: row.cpp,
+      estimatedAdRecallers: row.estimated_ad_recallers,
+      costPerEstimatedAdRecallers: row.cost_per_estimated_ad_recallers,
+      videoThruPlayWatchedActions: row.video_thruplay_watched_actions,
+      costPerThruPlay: row.cost_per_thruplay,
+      actions: row.actions,
+      costs: row.cost_per_action_type,
+      objective: row.objective,
+      optimizationGoal: row.optimization_goal,
+    });
+    const results = resultMetric.value;
+    const spend = toNumber(row.spend);
+    const item: PreviewPlatformDistributionRow = {
+      platform: humanizeMetaValue(row.publisher_platform) || "Unknown platform",
+      device: humanizeMetaValue(row.device_platform) || "Unknown device",
+      results,
+      costPerResult: results > 0 ? spend / results : null,
+    };
+    rowsByAd.set(adId, [...(rowsByAd.get(adId) ?? []), item]);
+  });
+
+  return new Map(
+    Array.from(rowsByAd.entries()).map(([adId, items]) => [
+      adId,
+      mergePlatformDistributionRows(items),
     ])
   );
 }
@@ -2117,6 +2209,7 @@ function finalizePerformanceSummary(input: {
   clicks: number;
   landingPageViews: number;
   linkClicks: number;
+  costPerResult?: number;
 }): PreviewPerformanceSummary {
   return {
     resultLabel: input.resultLabel || "Results",
@@ -2127,7 +2220,10 @@ function finalizePerformanceSummary(input: {
     ctr: input.impressions > 0 ? (input.clicks * 100) / input.impressions : 0,
     cpc: input.clicks > 0 ? input.spend / input.clicks : null,
     cpm: input.impressions > 0 ? (input.spend * 1000) / input.impressions : null,
-    costPerResult: input.results > 0 ? input.spend / input.results : null,
+    costPerResult:
+      input.results > 0
+        ? input.costPerResult ?? input.spend / input.results
+        : null,
     landingPageViews: input.landingPageViews,
     linkClicks: input.linkClicks,
   };
@@ -2218,6 +2314,36 @@ function mergeDemographicRows(rows: PreviewDemographicRow[]): PreviewDemographic
     .sort((left, right) => sortAgeRange(left.ageRange, right.ageRange));
 }
 
+function mergePlatformDistributionRows(
+  rows: PreviewPlatformDistributionRow[]
+): PreviewPlatformDistributionRow[] {
+  const totals = new Map<string, { platform: string; device: string; results: number; spend: number }>();
+
+  rows.forEach((row) => {
+    const key = `${row.platform}\u0000${row.device}`;
+    const current = totals.get(key) ?? {
+      platform: row.platform,
+      device: row.device,
+      results: 0,
+      spend: 0,
+    };
+    current.results += row.results;
+    current.spend += (row.costPerResult ?? 0) * row.results;
+    totals.set(key, current);
+  });
+
+  return Array.from(totals.values())
+    .map((row) => ({
+      platform: row.platform,
+      device: row.device,
+      results: row.results,
+      costPerResult: row.results > 0 ? row.spend / row.results : null,
+    }))
+    .sort((left, right) =>
+      left.device.localeCompare(right.device) || left.platform.localeCompare(right.platform)
+    );
+}
+
 function pickResultMetric(input: {
   objectiveResults?: MetaObjectiveResultMetricValue;
   costPerResult?: MetaObjectiveResultMetricValue;
@@ -2233,10 +2359,9 @@ function pickResultMetric(input: {
   objective?: string;
   optimizationGoal?: string;
 }): { actionType: string; label: string; value: number; costPerResult: number | null } {
-  // Awareness is evaluated with delivery metrics such as CPM and reach. Meta
-  // exposes reach as the native "result" for those campaigns, but it is not a
-  // conversion and must not be mixed into this report's conversion-style
-  // Results / Cost per Result KPIs.
+  // Awareness campaigns use delivery outcomes rather than conversion actions.
+  // Preserve Meta's configured awareness result so the preview KPIs match Ads
+  // Manager instead of forcing Results and Cost per result to zero.
   const awarenessResultMetric = pickAwarenessResultMetric(input);
   if (awarenessResultMetric) {
     return awarenessResultMetric;
@@ -2413,12 +2538,67 @@ function pickAwarenessResultMetric(input: {
     return null;
   }
 
+  const estimatedAdRecallers = toNumber(input.estimatedAdRecallers);
+  const costPerEstimatedAdRecaller = toNumber(input.costPerEstimatedAdRecallers);
+  const thruPlays = readMetaMetricValue(input.videoThruPlayWatchedActions);
+  const costPerThruPlay = readMetaMetricValue(input.costPerThruPlay);
+  const reach = toNumber(input.reach);
+
+  if (optimizationGoal.includes("THRUPLAY") && thruPlays > 0) {
+    return {
+      actionType: "video_thruplay_watched_actions",
+      label: "ThruPlays",
+      value: thruPlays,
+      costPerResult: costPerThruPlay > 0 ? costPerThruPlay : null,
+    };
+  }
+
+  if (estimatedAdRecallers > 0) {
+    return {
+      actionType: "estimated_ad_recallers",
+      label: "Estimated ad recallers",
+      value: estimatedAdRecallers,
+      costPerResult: costPerEstimatedAdRecaller > 0 ? costPerEstimatedAdRecaller : null,
+    };
+  }
+
+  if (thruPlays > 0) {
+    return {
+      actionType: "video_thruplay_watched_actions",
+      label: "ThruPlays",
+      value: thruPlays,
+      costPerResult: costPerThruPlay > 0 ? costPerThruPlay : null,
+    };
+  }
+
+  if (reach > 0) {
+    return {
+      actionType: "reach",
+      label: "Reach",
+      value: reach,
+      costPerResult: toNumber(input.cpp) > 0 ? toNumber(input.cpp) : null,
+    };
+  }
+
   return {
     actionType: "awareness",
     label: "Awareness",
     value: 0,
     costPerResult: null,
   };
+}
+
+function readMetaMetricValue(value: MetaActionMetricValue | undefined): number {
+  if (value === undefined || value === null) {
+    return 0;
+  }
+  if (Array.isArray(value)) {
+    return value.reduce((total, item) => total + toNumber(item.value), 0);
+  }
+  if (typeof value === "object") {
+    return toNumber(value.value);
+  }
+  return toNumber(value);
 }
 
 function pickTrafficResultMetric(input: {

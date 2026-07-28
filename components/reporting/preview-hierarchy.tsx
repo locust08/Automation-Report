@@ -50,18 +50,25 @@ import {
   PreviewDemographicRow,
   PreviewDetailField,
   PreviewPerformanceSummary,
+  PreviewPlatformDistributionRow,
   PreviewPlatformSection,
 } from "@/lib/reporting/types";
 
 export function PreviewHierarchy({
   section,
   initialCampaignId,
+  initialChildId,
+  initialAdId,
   companyName,
   structureFlowchart,
   onCampaignChange,
+  onChildChange,
+  onAdChange,
 }: {
   section: PreviewPlatformSection;
   initialCampaignId: string;
+  initialChildId?: string;
+  initialAdId?: string;
   companyName?: string | null;
   structureFlowchart?: ReactNode;
   onCampaignChange?: (next: {
@@ -69,15 +76,21 @@ export function PreviewHierarchy({
     campaignId: string;
     campaignName: string;
   }) => void;
+  onChildChange?: (childId: string) => void;
+  onAdChange?: (adId: string) => void;
 }) {
   if (section.platform === "meta") {
     return (
       <MetaAdsPreviewWorkspace
         section={section}
         initialCampaignId={initialCampaignId}
+        initialChildId={initialChildId}
+        initialAdId={initialAdId}
         companyName={companyName}
         structureFlowchart={structureFlowchart}
         onCampaignChange={onCampaignChange}
+        onChildChange={onChildChange}
+        onAdChange={onAdChange}
       />
     );
   }
@@ -86,8 +99,12 @@ export function PreviewHierarchy({
     <GoogleAdsPreviewWorkspace
       section={section}
       initialCampaignId={initialCampaignId}
+      initialChildId={initialChildId}
+      initialAdId={initialAdId}
       structureFlowchart={structureFlowchart}
       onCampaignChange={onCampaignChange}
+      onChildChange={onChildChange}
+      onAdChange={onAdChange}
     />
   );
 }
@@ -95,9 +112,13 @@ export function PreviewHierarchy({
 function MetaAdsPreviewWorkspace({
   section,
   initialCampaignId,
+  initialChildId,
+  initialAdId,
   companyName,
   structureFlowchart,
   onCampaignChange,
+  onChildChange,
+  onAdChange,
 }: WorkspaceProps & { companyName?: string | null }) {
   const searchParams = useSearchParams();
   const {
@@ -109,11 +130,24 @@ function MetaAdsPreviewWorkspace({
     selectCampaign,
     selectChild,
     selectAd,
-  } = usePreviewSelection(section, initialCampaignId, onCampaignChange);
+  } = usePreviewSelection(
+    section,
+    initialCampaignId,
+    onCampaignChange,
+    initialChildId,
+    initialAdId,
+    onChildChange,
+    onAdChange
+  );
   const performance =
     selectedAd?.performance ?? selectedChild?.performance ?? selectedCampaign?.performance ?? null;
   const demographics =
     selectedAd?.demographics ?? selectedChild?.demographics ?? selectedCampaign?.demographics ?? [];
+  const platformDistribution =
+    selectedAd?.platformDistribution ??
+    selectedChild?.platformDistribution ??
+    selectedCampaign?.platformDistribution ??
+    [];
   const adSetDetails = selectedChild?.details ?? [];
   const adDetails = selectedAd?.details ?? [];
   const creative = selectedAd?.creative ?? null;
@@ -321,6 +355,7 @@ function MetaAdsPreviewWorkspace({
         />
         <DemographicSection
           rows={demographics}
+          platformRows={platformDistribution}
           resultLabel={performance?.resultLabel ?? "Results"}
           emptyMessage="No demographic data was returned for the current Meta Ads selection."
         />
@@ -919,18 +954,24 @@ function MetaInformationAccordionItem({
         </div>
         <ChevronDownIcon className="size-5 shrink-0 text-[#64748b] transition-transform group-open:rotate-180" />
       </summary>
-      <div className="bg-[#fbfdff] px-4 pb-4 sm:px-5">
+      <div className="bg-[#fbfdff] px-4 py-4 sm:px-5">
         {fields.length > 0 ? (
-          <dl className="grid gap-3 pt-1 md:grid-cols-2 xl:grid-cols-3">
+          <dl className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
             {fields.map((field) => (
               <div
                 key={`${title}-${field.label}-${field.value}`}
-                className="rounded-[18px] border border-[#edf2f7] bg-white px-4 py-3"
+                className={`min-w-0 rounded-[18px] border border-[#edf2f7] bg-white px-4 py-3 ${
+                  shouldUseFullWidthInformationField(field, fields.length)
+                    ? "md:col-span-2 xl:col-span-3"
+                    : ""
+                }`}
               >
                 <dt className="text-xs font-semibold uppercase tracking-[0.12em] text-[#94a3b8]">
                   {field.label}
                 </dt>
-                <dd className="mt-2 whitespace-pre-line text-[1rem] leading-7 text-[#1f2937]">{field.value}</dd>
+                <dd className="mt-2 whitespace-pre-wrap break-words [overflow-wrap:anywhere] text-[1rem] leading-7 text-[#1f2937]">
+                  {field.value}
+                </dd>
               </div>
             ))}
           </dl>
@@ -942,6 +983,17 @@ function MetaInformationAccordionItem({
       </div>
     </details>
   );
+}
+
+function shouldUseFullWidthInformationField(
+  field: PreviewDetailField,
+  fieldCount: number
+): boolean {
+  if (fieldCount === 1) {
+    return true;
+  }
+
+  return field.value.length > 120 || field.value.includes("\n");
 }
 
 function buildMetaPreviewPlacements(
@@ -1122,8 +1174,12 @@ function humanizeMetaCta(value: string | null | undefined): string | null {
 function GoogleAdsPreviewWorkspace({
   section,
   initialCampaignId,
+  initialChildId,
+  initialAdId,
   structureFlowchart,
   onCampaignChange,
+  onChildChange,
+  onAdChange,
 }: WorkspaceProps) {
   const searchParams = useSearchParams();
   const {
@@ -1135,7 +1191,15 @@ function GoogleAdsPreviewWorkspace({
     selectCampaign,
     selectChild,
     selectAd,
-  } = usePreviewSelection(section, initialCampaignId, onCampaignChange);
+  } = usePreviewSelection(
+    section,
+    initialCampaignId,
+    onCampaignChange,
+    initialChildId,
+    initialAdId,
+    onChildChange,
+    onAdChange
+  );
   const previewSlides = useMemo(() => buildGoogleAdPreviewVariations(selectedAd), [selectedAd]);
   const adGroupCount = section.campaigns.reduce((count, campaign) => count + campaign.children.length, 0);
   const adCount = section.campaigns.reduce(
@@ -2312,22 +2376,30 @@ function detailField(label: string, value: string | null | undefined): PreviewDe
 interface WorkspaceProps {
   section: PreviewPlatformSection;
   initialCampaignId: string;
+  initialChildId?: string;
+  initialAdId?: string;
   structureFlowchart?: ReactNode;
   onCampaignChange?: (next: {
     platform: "meta" | "google";
     campaignId: string;
     campaignName: string;
   }) => void;
+  onChildChange?: (childId: string) => void;
+  onAdChange?: (adId: string) => void;
 }
 
 function usePreviewSelection(
   section: PreviewPlatformSection,
   initialCampaignId: string,
-  onCampaignChange?: WorkspaceProps["onCampaignChange"]
+  onCampaignChange?: WorkspaceProps["onCampaignChange"],
+  initialChildId = "",
+  initialAdId = "",
+  onChildChange?: WorkspaceProps["onChildChange"],
+  onAdChange?: WorkspaceProps["onAdChange"]
 ) {
   const [campaignIdState, setCampaignIdState] = useState(initialCampaignId);
-  const [selectedChildId, setSelectedChildId] = useState("");
-  const [selectedAdId, setSelectedAdId] = useState("");
+  const [selectedChildId, setSelectedChildId] = useState(initialChildId);
+  const [selectedAdId, setSelectedAdId] = useState(initialAdId);
 
   const selectedCampaignId = useMemo(() => {
     if (section.campaigns.some((campaign) => campaign.id === campaignIdState)) {
@@ -2390,8 +2462,12 @@ function usePreviewSelection(
     selectChild: (childId: string) => {
       setSelectedChildId(childId);
       setSelectedAdId("");
+      onChildChange?.(childId);
     },
-    selectAd: setSelectedAdId,
+    selectAd: (adId: string) => {
+      setSelectedAdId(adId);
+      onAdChange?.(adId);
+    },
   };
 }
 
@@ -2718,12 +2794,19 @@ function PerformanceSection({
     );
   }
 
-  const primaryLabel = performance.resultLabel || "Reach";
+  const awarenessResultLabels = new Set([
+    "Awareness",
+    "Reach",
+    "ThruPlays",
+    "Estimated ad recallers",
+  ]);
+  const primaryLabel = awarenessResultLabels.has(performance.resultLabel)
+    ? "Awareness"
+    : performance.resultLabel || "Awareness";
   const metricOptions = buildMetaPerformanceMetricOptions(performance, primaryLabel);
   const selectedMetric = metricOptions.find((option) => option.key === selectedMetricKey) ?? metricOptions[0];
   const dateRange = META_PERFORMANCE_DATE_RANGES.find((option) => option.key === dateRangeKey) ?? META_PERFORMANCE_DATE_RANGES[2];
-  const primaryValue = selectedMetric.value;
-  const trend = buildMetaPerformanceTrend(primaryValue, dateRange.days);
+  const trend = buildMetaPerformanceTrend(selectedMetric.value, dateRange.days);
   const safeActiveIndex = Math.min(activeIndex, trend.length - 1);
   const activePoint = trend[safeActiveIndex];
   const cards = buildMetaPerformanceKpiCards(performance, primaryLabel).filter((card) => visibleKpis.includes(card.key));
@@ -2801,14 +2884,16 @@ function PerformanceSection({
 
 function DemographicSection({
   rows,
+  platformRows,
   resultLabel,
   emptyMessage,
 }: {
   rows: PreviewDemographicRow[];
+  platformRows: PreviewPlatformDistributionRow[];
   resultLabel: string;
   emptyMessage: string;
 }) {
-  const [activeIndex, setActiveIndex] = useState(Math.max(rows.findIndex((row) => row.ageRange === "25-34"), 0));
+  const [activeIndex, setActiveIndex] = useState<number | null>(null);
   const [audienceView, setAudienceView] = useState<"demographics" | "platform">("demographics");
   const [audienceFilter, setAudienceFilter] = useState("all");
   const [audienceMetric, setAudienceMetric] = useState("results");
@@ -2822,11 +2907,23 @@ function DemographicSection({
   }
 
   const normalizedRows = normalizeMetaDemographicRows(rows);
-  const safeActiveIndex = Math.min(activeIndex, normalizedRows.length - 1);
+  const safeActiveIndex =
+    activeIndex === null ? null : Math.min(activeIndex, normalizedRows.length - 1);
   const totals = buildMetaAudienceTotals(normalizedRows);
   const topSegment = findTopAudienceSegment(normalizedRows);
   const bestCostSegment = findBestCostAudienceSegment(normalizedRows);
   const keyInsight = buildAudienceInsightText(normalizedRows);
+  const platformNames = Array.from(new Set(platformRows.map((row) => row.platform)));
+  const audienceFilterOptions =
+    audienceView === "platform"
+      ? [
+          { key: "all", label: "All" },
+          ...platformNames.map((platform) => ({ key: platform, label: platform })),
+        ]
+      : META_AUDIENCE_FILTER_OPTIONS;
+  const selectedAudienceFilter = audienceFilterOptions.some((option) => option.key === audienceFilter)
+    ? audienceFilter
+    : "all";
 
   return (
     <div className="rounded-[28px] border border-[#e7edf5] bg-white p-5 shadow-[0_22px_60px_rgba(15,23,42,0.08)] sm:p-7">
@@ -2874,9 +2971,9 @@ function DemographicSection({
 
         <div className="grid w-full grid-cols-2 gap-3 sm:w-[340px]">
           <MetaInsightSelectControl
-            label={META_AUDIENCE_FILTER_OPTIONS.find((option) => option.key === audienceFilter)?.label ?? "All"}
-            options={META_AUDIENCE_FILTER_OPTIONS}
-            selectedKey={audienceFilter}
+            label={audienceFilterOptions.find((option) => option.key === selectedAudienceFilter)?.label ?? "All"}
+            options={audienceFilterOptions}
+            selectedKey={selectedAudienceFilter}
             onSelect={setAudienceFilter}
           />
           <MetaInsightSelectControl
@@ -2895,15 +2992,29 @@ function DemographicSection({
         <h3 className="text-[1.35rem] font-semibold tracking-[-0.02em] text-[#0f172a]">
           {audienceView === "demographics" ? "Age and gender distribution" : "Platform distribution"}
         </h3>
-        <MetaAudienceBarChart
-          rows={normalizedRows}
-          activeIndex={safeActiveIndex}
-          onActiveIndexChange={setActiveIndex}
-          metricKey={audienceMetric}
-          filterKey={audienceFilter}
-        />
+        {audienceView === "demographics" ? (
+          <MetaAudienceBarChart
+            rows={normalizedRows}
+            activeIndex={safeActiveIndex}
+            onActiveIndexChange={setActiveIndex}
+            metricKey={audienceMetric}
+            filterKey={selectedAudienceFilter}
+          />
+        ) : platformRows.length > 0 ? (
+          <MetaPlatformBarChart
+            rows={platformRows}
+            metricKey={audienceMetric}
+            filterKey={selectedAudienceFilter}
+          />
+        ) : (
+          <div className="mt-5">
+            <EmptyState message="No platform or device breakdown was returned for the selected ad and date range." />
+          </div>
+        )}
       </div>
 
+      {audienceView === "demographics" ? (
+      <>
       <div className="mt-7 grid gap-5 lg:grid-cols-3">
         <MetaAudienceLegendCard
           color="#5b35c9"
@@ -2946,6 +3057,10 @@ function DemographicSection({
           compact
         />
       </div>
+      </>
+      ) : (
+        <MetaPlatformLegend rows={platformRows} metricKey={audienceMetric} filterKey={selectedAudienceFilter} />
+      )}
     </div>
   );
 }
@@ -3096,6 +3211,7 @@ function MetaPerformanceLineChart({
   return (
     <div className="relative overflow-hidden rounded-[18px] bg-white px-0 pb-1 pt-3">
       <svg
+        key={`${label}-${valueFormat}-${chart.yTicks.map((tick) => tick.label).join("-")}`}
         viewBox="0 0 1120 330"
         role="img"
         aria-label={`${label} trend chart`}
@@ -3103,9 +3219,16 @@ function MetaPerformanceLineChart({
         preserveAspectRatio="none"
       >
         {chart.yTicks.map((tick) => (
-          <g key={tick.label}>
+          <g key={`${tick.y}-${tick.label}`}>
             <line x1="74" x2="1088" y1={tick.y} y2={tick.y} stroke="#dfe5ec" strokeWidth="1" />
-            <text x="44" y={tick.y + 5} fill="#475569" fontSize="13" textAnchor="end">
+            <text
+              x="54"
+              y={tick.y}
+              fill="#475569"
+              fontSize="12"
+              textAnchor="end"
+              dominantBaseline="middle"
+            >
               {tick.label}
             </text>
           </g>
@@ -3180,16 +3303,29 @@ function MetaAudienceBarChart({
   filterKey,
 }: {
   rows: PreviewDemographicRow[];
-  activeIndex: number;
-  onActiveIndexChange: (index: number) => void;
+  activeIndex: number | null;
+  onActiveIndexChange: (index: number | null) => void;
   metricKey: string;
   filterKey: string;
 }) {
   const chart = buildAudienceChartGeometry(rows, metricKey, filterKey);
-  const activeRow = rows[activeIndex] ?? rows[0];
-  const activeGroup = chart.groups[activeIndex] ?? chart.groups[0];
-  const tooltipX = activeGroup ? Math.min(Math.max(activeGroup.x - 8, 120), 980) : 560;
-  const tooltipY = activeGroup ? Math.max(activeGroup.tooltipY - 88, 8) : 24;
+  const activeRow = activeIndex === null ? null : rows[activeIndex] ?? null;
+  const activeGroup = activeIndex === null ? null : chart.groups[activeIndex] ?? null;
+  const tooltipSegments = activeRow
+    ? getVisibleAudienceSegments(filterKey).map((segment) => ({
+        label: segment === "men" ? "Men" : segment === "women" ? "Women" : "Unknown",
+        color: segment === "men" ? "#5b35c9" : segment === "women" ? "#17bec9" : "#c5cbd3",
+        value: getAudienceMetricValue(activeRow, segment, metricKey),
+      }))
+    : [];
+  const tooltipHeight = 40 + tooltipSegments.length * 20;
+  const tooltipWidth = 154;
+  const tooltipX = activeGroup
+    ? Math.min(Math.max(activeGroup.x + 18 - tooltipWidth / 2, 74), 1088 - tooltipWidth)
+    : 560;
+  const tooltipY = activeGroup
+    ? Math.max(activeGroup.tooltipY - tooltipHeight - 12, 8)
+    : 24;
 
   return (
     <div className="relative mt-5 overflow-hidden rounded-[18px] bg-white">
@@ -3215,7 +3351,9 @@ function MetaAudienceBarChart({
             className="cursor-pointer"
             tabIndex={0}
             onMouseEnter={() => onActiveIndexChange(index)}
+            onMouseLeave={() => onActiveIndexChange(null)}
             onFocus={() => onActiveIndexChange(index)}
+            onBlur={() => onActiveIndexChange(null)}
           >
             {group.bars.map((bar) => (
               <rect
@@ -3230,9 +3368,6 @@ function MetaAudienceBarChart({
                 className="origin-bottom transition duration-300 hover:opacity-100"
               />
             ))}
-            {activeIndex === index ? (
-              <circle cx={group.x + 10} cy={group.tooltipY} r="5" fill="#ffffff" stroke="#5b35c9" strokeWidth="4" />
-            ) : null}
             <text x={group.x + 18} y="294" fill="#475569" fontSize="13" textAnchor="middle">
               {group.ageRange}
             </text>
@@ -3241,13 +3376,30 @@ function MetaAudienceBarChart({
 
         {activeRow ? (
           <g transform={`translate(${tooltipX} ${tooltipY})`}>
-            <rect width="120" height="80" rx="8" fill="#ffffff" filter="url(#metaAudienceTooltipShadow)" />
-            <path d="M16 80 L26 92 L36 80 Z" fill="#ffffff" />
+            <rect
+              width="154"
+              height={tooltipHeight}
+              rx="8"
+              fill="#ffffff"
+              filter="url(#metaAudienceTooltipShadow)"
+            />
+            <path
+              d={`M67 ${tooltipHeight} L77 ${tooltipHeight + 12} L87 ${tooltipHeight} Z`}
+              fill="#ffffff"
+            />
             <text x="16" y="22" fill="#334155" fontSize="14">
               {activeRow.ageRange}
             </text>
-            <MetaAudienceTooltipLine y={42} color="#5b35c9" label="Men" value={activeRow.maleResults} />
-            <MetaAudienceTooltipLine y={62} color="#17bec9" label="Women" value={activeRow.femaleResults} />
+            {tooltipSegments.map((segment, index) => (
+              <MetaAudienceTooltipLine
+                key={segment.label}
+                y={42 + index * 20}
+                color={segment.color}
+                label={segment.label}
+                value={segment.value}
+                valueFormat={metricKey === "costPerResult" ? "currency" : "number"}
+              />
+            ))}
           </g>
         ) : null}
 
@@ -3261,16 +3413,226 @@ function MetaAudienceBarChart({
   );
 }
 
+const META_PLATFORM_COLORS = ["#5b35c9", "#17bec9", "#f59e0b", "#ec4899", "#64748b"];
+
+function MetaPlatformBarChart({
+  rows,
+  metricKey,
+  filterKey,
+}: {
+  rows: PreviewPlatformDistributionRow[];
+  metricKey: string;
+  filterKey: string;
+}) {
+  const filteredRows = filterKey === "all" ? rows : rows.filter((row) => row.platform === filterKey);
+  const devices = Array.from(new Set(filteredRows.map((row) => row.device)));
+  const platforms = Array.from(new Set(filteredRows.map((row) => row.platform)));
+  const [activeDevice, setActiveDevice] = useState<string | null>(null);
+  const selectedDevice = activeDevice && devices.includes(activeDevice) ? activeDevice : null;
+  const chartTop = 28;
+  const chartBottom = 270;
+  const chartLeft = 74;
+  const chartRight = 1088;
+  const valueFor = (row: PreviewPlatformDistributionRow) =>
+    metricKey === "costPerResult" ? row.costPerResult ?? 0 : row.results;
+  const maximum = buildNiceAxisScale(Math.max(...filteredRows.map(valueFor), 1));
+  const groupWidth = (chartRight - chartLeft) / Math.max(devices.length, 1);
+  const barWidth = Math.min(groupWidth * 0.22, 30);
+  const tooltipWidth = 154;
+  const tooltipHeight = 42 + platforms.length * 20;
+  const activeDeviceIndex = selectedDevice ? devices.indexOf(selectedDevice) : -1;
+  const activeCenter =
+    activeDeviceIndex >= 0
+      ? chartLeft + activeDeviceIndex * groupWidth + groupWidth / 2
+      : chartLeft;
+  const activeRows = selectedDevice
+    ? filteredRows.filter((row) => row.device === selectedDevice)
+    : [];
+  const activeTop = activeRows.length
+    ? Math.min(
+        ...activeRows.map((row) => {
+          const value = valueFor(row);
+          const height = Math.max(
+            (value / maximum.maximum) * (chartBottom - chartTop),
+            value > 0 ? 4 : 1
+          );
+          return chartBottom - height;
+        })
+      )
+    : chartBottom;
+  const tooltipX = Math.min(
+    Math.max(activeCenter - tooltipWidth / 2, chartLeft),
+    chartRight - tooltipWidth
+  );
+  const tooltipY = Math.max(activeTop - tooltipHeight - 14, 8);
+
+  return (
+    <div className="relative mt-5 overflow-hidden rounded-[18px] bg-white">
+      <svg
+        viewBox="0 0 1120 330"
+        role="img"
+        aria-label="Platform and device distribution chart"
+        className="h-[360px] w-full"
+        preserveAspectRatio="none"
+      >
+        {maximum.ticks.map((value) => {
+          const y = chartBottom - (value / maximum.maximum) * (chartBottom - chartTop);
+          return (
+            <g key={value}>
+              <line x1={chartLeft} x2={chartRight} y1={y} y2={y} stroke="#dfe5ec" strokeWidth="1" />
+              <text x="44" y={y + 5} fill="#475569" fontSize="13" textAnchor="end">
+                {value === 0
+                  ? "0"
+                  : formatCompactAxisNumber(value, metricKey === "costPerResult" ? "currency" : "number")}
+              </text>
+            </g>
+          );
+        })}
+        {devices.map((device, deviceIndex) => {
+          const center = chartLeft + deviceIndex * groupWidth + groupWidth / 2;
+          const deviceRows = platforms
+            .map((platform) => filteredRows.find((row) => row.device === device && row.platform === platform))
+            .filter((row): row is PreviewPlatformDistributionRow => Boolean(row));
+          return (
+            <g
+              key={device}
+              tabIndex={0}
+              className="cursor-pointer"
+              onMouseEnter={() => setActiveDevice(device)}
+              onMouseLeave={() => setActiveDevice(null)}
+              onFocus={() => setActiveDevice(device)}
+              onBlur={() => setActiveDevice(null)}
+            >
+              <rect
+                x={chartLeft + deviceIndex * groupWidth}
+                y={chartTop}
+                width={groupWidth}
+                height={chartBottom - chartTop + 28}
+                fill="transparent"
+              />
+              {deviceRows.map((row, rowIndex) => {
+                const value = valueFor(row);
+                const height = Math.max(
+                  (value / maximum.maximum) * (chartBottom - chartTop),
+                  value > 0 ? 4 : 1
+                );
+                return (
+                  <rect
+                    key={`${device}-${row.platform}`}
+                    x={center + (rowIndex - (deviceRows.length - 1) / 2) * (barWidth + 5) - barWidth / 2}
+                    y={chartBottom - height}
+                    width={barWidth}
+                    height={height}
+                    rx="3"
+                    fill={META_PLATFORM_COLORS[platforms.indexOf(row.platform) % META_PLATFORM_COLORS.length]}
+                  />
+                );
+              })}
+              <text x={center} y="294" fill="#475569" fontSize="13" textAnchor="middle">
+                {device}
+              </text>
+            </g>
+          );
+        })}
+        {selectedDevice ? (
+          <g transform={`translate(${tooltipX} ${tooltipY})`} pointerEvents="none">
+            <rect
+              width={tooltipWidth}
+              height={tooltipHeight}
+              rx="8"
+              fill="#ffffff"
+              filter="url(#metaAudienceTooltipShadow)"
+            />
+            <path
+              d={`M67 ${tooltipHeight} L77 ${tooltipHeight + 10} L87 ${tooltipHeight} Z`}
+              fill="#ffffff"
+            />
+            <text x="16" y="23" fill="#334155" fontSize="14">{selectedDevice}</text>
+            {platforms.map((platform, index) => {
+              const row = filteredRows.find((item) => item.device === selectedDevice && item.platform === platform);
+              return (
+                <MetaAudienceTooltipLine
+                  key={platform}
+                  y={43 + index * 20}
+                  color={META_PLATFORM_COLORS[index % META_PLATFORM_COLORS.length]}
+                  label={platform}
+                  value={row ? valueFor(row) : 0}
+                  valueFormat={metricKey === "costPerResult" ? "currency" : "number"}
+                />
+              );
+            })}
+          </g>
+        ) : null}
+        <defs>
+          <filter id="metaAudienceTooltipShadow" x="-20%" y="-20%" width="140%" height="150%">
+            <feDropShadow dx="0" dy="8" stdDeviation="8" floodColor="#0f172a" floodOpacity="0.15" />
+          </filter>
+        </defs>
+      </svg>
+    </div>
+  );
+}
+
+function MetaPlatformLegend({
+  rows,
+  metricKey,
+  filterKey,
+}: {
+  rows: PreviewPlatformDistributionRow[];
+  metricKey: string;
+  filterKey: string;
+}) {
+  const filteredRows = filterKey === "all" ? rows : rows.filter((row) => row.platform === filterKey);
+  const platforms = Array.from(new Set(filteredRows.map((row) => row.platform)));
+  const totalResults = filteredRows.reduce((sum, row) => sum + row.results, 0);
+
+  return (
+    <div className="mt-7 grid gap-5 sm:grid-cols-2 lg:grid-cols-4">
+      {platforms.map((platform, index) => {
+        const platformRows = filteredRows.filter((row) => row.platform === platform);
+        const results = platformRows.reduce((sum, row) => sum + row.results, 0);
+        const spend = platformRows.reduce(
+          (sum, row) => sum + (row.costPerResult ?? 0) * row.results,
+          0
+        );
+        const value = metricKey === "costPerResult" ? (results > 0 ? spend / results : 0) : results;
+        return (
+          <div key={platform} className="rounded-[14px] border border-[#dbe3ee] bg-white p-5">
+            <div className="flex items-center gap-3 font-semibold text-[#0f172a]">
+              <span
+                className="size-4 rounded"
+                style={{ backgroundColor: META_PLATFORM_COLORS[index % META_PLATFORM_COLORS.length] }}
+              />
+              {platform}
+            </div>
+            <p className="mt-3 text-[#475569]">
+              {metricKey === "costPerResult" ? formatCurrency(value) : formatNumber(value)}
+              {metricKey === "results" && totalResults > 0
+                ? ` (${Math.round((results / totalResults) * 100)}%)`
+                : ""}
+            </p>
+            <p className="mt-1 text-sm text-[#64748b]">
+              {platformRows.map((row) => row.device).join(", ")}
+            </p>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 function MetaAudienceTooltipLine({
   y,
   color,
   label,
   value,
+  valueFormat,
 }: {
   y: number;
   color: string;
   label: string;
   value: number;
+  valueFormat: "number" | "currency";
 }) {
   return (
     <>
@@ -3278,8 +3640,8 @@ function MetaAudienceTooltipLine({
       <text x="32" y={y} fill="#334155" fontSize="12">
         {label}
       </text>
-      <text x="104" y={y} fill="#0f172a" fontSize="12" fontWeight="700" textAnchor="end">
-        {formatNumber(value)}
+      <text x="138" y={y} fill="#0f172a" fontSize="12" fontWeight="700" textAnchor="end">
+        {valueFormat === "currency" ? formatCurrency(value) : formatNumber(value)}
       </text>
     </>
   );
@@ -3418,36 +3780,10 @@ function buildMetaPerformanceTrend(totalValue: number, days: number): MetaPerfor
   const safeDays = Math.max(days, 1);
   const base = Math.max(totalValue / safeDays, 1);
   const allLabels = [
-    "10 May",
-    "11 May",
-    "12 May",
-    "13 May",
-    "14 May",
-    "15 May",
-    "16 May",
-    "17 May",
-    "18 May",
-    "19 May",
-    "20 May",
-    "21 May",
-    "22 May",
-    "23 May",
-    "24 May",
-    "25 May",
-    "26 May",
-    "27 May",
-    "28 May",
-    "29 May",
-    "30 May",
-    "31 May",
-    "1 Jun",
-    "2 Jun",
-    "3 Jun",
-    "4 Jun",
-    "5 Jun",
-    "6 Jun",
-    "7 Jun",
-    "8 Jun",
+    "10 May", "11 May", "12 May", "13 May", "14 May", "15 May", "16 May", "17 May",
+    "18 May", "19 May", "20 May", "21 May", "22 May", "23 May", "24 May", "25 May",
+    "26 May", "27 May", "28 May", "29 May", "30 May", "31 May", "1 Jun", "2 Jun",
+    "3 Jun", "4 Jun", "5 Jun", "6 Jun", "7 Jun", "8 Jun",
   ];
   const allShape = [
     0.45, 0.62, 1.05, 1.52, 1.58, 1.62, 1.68, 1.62, 1.48, 1.36,
@@ -3467,12 +3803,13 @@ function buildLineChartGeometry(
   points: MetaPerformanceTrendPoint[],
   valueFormat: MetaPerformanceMetricOption["format"]
 ) {
-  const chartTop = 32;
+  const chartTop = 44;
   const chartBottom = 270;
   const chartLeft = 74;
   const chartRight = 1088;
   const maxValue = Math.max(...points.map((point) => point.value), 1);
-  const roundedMax = Math.max(Math.ceil(maxValue / 1000) * 1000, 10);
+  const axisScale = buildNiceAxisScale(valueFormat === "number" ? Math.max(maxValue, 4) : maxValue);
+  const roundedMax = axisScale.maximum;
   const xStep = (chartRight - chartLeft) / Math.max(points.length - 1, 1);
   const geometryPoints = points.map((point, index) => {
     const x = chartLeft + index * xStep;
@@ -3483,8 +3820,8 @@ function buildLineChartGeometry(
   return {
     points: geometryPoints,
     path: geometryPoints.map((point, index) => `${index === 0 ? "M" : "L"} ${point.x} ${point.y}`).join(" "),
-    yTicks: [1, 0.75, 0.5, 0.25, 0].map((ratio) => {
-      const value = roundedMax * ratio;
+    yTicks: axisScale.ticks.map((value) => {
+      const ratio = value / roundedMax;
       return {
         y: chartBottom - ratio * (chartBottom - chartTop),
         label: value === 0 ? "0" : formatCompactAxisNumber(value, valueFormat),
@@ -3529,8 +3866,8 @@ function buildAudienceChartGeometry(rows: PreviewDemographicRow[], metricKey: st
     ]),
     1
   );
-  const stepSize = metricKey === "costPerResult" ? 10 : 50000;
-  const roundedMax = Math.max(Math.ceil(maxValue / stepSize) * stepSize, metricKey === "costPerResult" ? 10 : 10);
+  const axisScale = buildNiceAxisScale(maxValue);
+  const roundedMax = axisScale.maximum;
   const groupWidth = (chartRight - chartLeft) / Math.max(rows.length, 1);
   const barWidth = Math.min(groupWidth * 0.16, 18);
 
@@ -3561,13 +3898,35 @@ function buildAudienceChartGeometry(rows: PreviewDemographicRow[], metricKey: st
         bars,
       };
     }),
-    yTicks: [1, 0.75, 0.5, 0.25, 0].map((ratio) => {
-      const value = roundedMax * ratio;
+    yTicks: axisScale.ticks.map((value) => {
+      const ratio = value / roundedMax;
       return {
         y: chartBottom - ratio * (chartBottom - chartTop),
         label: value === 0 ? "0" : formatCompactAxisNumber(value, metricKey === "costPerResult" ? "currency" : "number"),
       };
     }),
+  };
+}
+
+function buildNiceAxisScale(maxValue: number, intervalCount = 4): {
+  maximum: number;
+  ticks: number[];
+} {
+  const safeMax = Number.isFinite(maxValue) && maxValue > 0 ? maxValue : 1;
+  const rawStep = safeMax / intervalCount;
+  const magnitude = 10 ** Math.floor(Math.log10(rawStep));
+  const normalizedStep = rawStep / magnitude;
+  const niceFactors = [1, 1.25, 1.5, 2, 2.5, 3, 4, 5, 6, 7.5, 10];
+  const factor = niceFactors.find((candidate) => candidate >= normalizedStep) ?? 10;
+  const step = factor * magnitude;
+  const maximum = step * intervalCount;
+
+  return {
+    maximum,
+    ticks: Array.from(
+      { length: intervalCount + 1 },
+      (_, index) => maximum - index * step
+    ),
   };
 }
 
@@ -3706,10 +4065,17 @@ function formatNumber(value: number): string {
 
 function formatCompactAxisNumber(value: number, valueFormat: "number" | "currency" | "percent" = "number"): string {
   if (valueFormat === "currency") {
-    return value >= 1000 ? `RM${Math.round(value / 1000)}K` : `RM${Math.round(value)}`;
+    if (value >= 1000) {
+      return `RM${Math.round(value / 1000)}K`;
+    }
+    return `RM${new Intl.NumberFormat("en-MY", {
+      maximumFractionDigits: value < 10 ? 2 : 0,
+    }).format(value)}`;
   }
   if (valueFormat === "percent") {
-    return `${Math.round(value)}%`;
+    return `${new Intl.NumberFormat("en-MY", {
+      maximumFractionDigits: value < 10 ? 2 : 0,
+    }).format(value)}%`;
   }
   if (value >= 1000000) {
     return `${Math.round(value / 1000000)}M`;
