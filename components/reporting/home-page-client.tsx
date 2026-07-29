@@ -140,6 +140,7 @@ export function HomePageClient() {
   const previewHref = `/preview${reportQueryString ? `?${reportQueryString}` : ""}`;
   const advancedHref = `/advanced${reportQueryString ? `?${reportQueryString}` : ""}`;
   const mediaPlanHref = "/dashboard/media-plan";
+  const hasAccountSelection = Boolean(accountId.trim());
   const isShowingRecentAccounts = accountName.trim().length < 2;
   const visibleAccountSuggestions = isShowingRecentAccounts
     ? recentAccounts
@@ -246,6 +247,9 @@ export function HomePageClient() {
 
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (!hasAccountSelection) {
+      return;
+    }
     router.push(overallHref);
   }
 
@@ -389,10 +393,23 @@ export function HomePageClient() {
               onKeyDown={handleAccountNameKeyDown}
               placeholder="Search account name or ID from Notion"
               autoComplete="off"
+              aria-label="Account Name / Ad Account ID"
+              aria-describedby={!hasAccountSelection ? "account-selection-warning" : undefined}
               aria-autocomplete="list"
               aria-expanded={isAccountDropdownOpen}
               className="h-11 border-white/30 bg-white/10 text-white placeholder:text-white/60"
             />
+
+            {!hasAccountSelection ? (
+              <span
+                id="account-selection-warning"
+                className="block text-xs font-medium text-amber-200"
+                role="status"
+              >
+                Select an account to open or send reports. Create Media Plan is available without
+                one.
+              </span>
+            ) : null}
 
             {isAccountDropdownOpen &&
             (accountName.trim().length >= 2 || recentAccounts.length > 0) ? (
@@ -468,6 +485,7 @@ export function HomePageClient() {
           <div className="space-y-3">
             <Button
               type="submit"
+              disabled={!hasAccountSelection}
               className="h-auto min-h-16 w-full whitespace-normal bg-red-600 px-6 py-4 text-center text-base font-semibold leading-snug shadow-lg shadow-red-950/25 hover:bg-red-700"
             >
               View Monthly Performance
@@ -475,27 +493,51 @@ export function HomePageClient() {
             </Button>
 
             <div className="grid gap-3 sm:grid-cols-3">
-              <Button
-                asChild
-                variant="outline"
-                className="h-auto min-h-12 w-full whitespace-normal border-white/30 bg-white/10 px-4 py-3 text-center leading-snug text-white shadow-none hover:bg-white/20 hover:text-white"
-              >
-                <a href={previewHref}>
+              {hasAccountSelection ? (
+                <Button
+                  asChild
+                  variant="outline"
+                  className="h-auto min-h-12 w-full whitespace-normal border-white/30 bg-white/10 px-4 py-3 text-center leading-snug text-white shadow-none hover:bg-white/20 hover:text-white"
+                >
+                  <a href={previewHref}>
+                    Campaign Preview
+                    <EyeIcon data-icon="inline-end" />
+                  </a>
+                </Button>
+              ) : (
+                <Button
+                  type="button"
+                  variant="outline"
+                  disabled
+                  className="h-auto min-h-12 w-full whitespace-normal border-white/30 bg-white/10 px-4 py-3 text-center leading-snug text-white shadow-none"
+                >
                   Campaign Preview
                   <EyeIcon data-icon="inline-end" />
-                </a>
-              </Button>
+                </Button>
+              )}
 
-              <Button
-                asChild
-                variant="outline"
-                className="h-auto min-h-12 w-full whitespace-normal border-white/30 bg-white/10 px-4 py-3 text-center leading-snug text-white shadow-none hover:bg-white/20 hover:text-white"
-              >
-                <a href={advancedHref}>
+              {hasAccountSelection ? (
+                <Button
+                  asChild
+                  variant="outline"
+                  className="h-auto min-h-12 w-full whitespace-normal border-white/30 bg-white/10 px-4 py-3 text-center leading-snug text-white shadow-none hover:bg-white/20 hover:text-white"
+                >
+                  <a href={advancedHref}>
+                    Open Advanced Report
+                    <SlidersHorizontalIcon data-icon="inline-end" />
+                  </a>
+                </Button>
+              ) : (
+                <Button
+                  type="button"
+                  variant="outline"
+                  disabled
+                  className="h-auto min-h-12 w-full whitespace-normal border-white/30 bg-white/10 px-4 py-3 text-center leading-snug text-white shadow-none"
+                >
                   Open Advanced Report
                   <SlidersHorizontalIcon data-icon="inline-end" />
-                </a>
-              </Button>
+                </Button>
+              )}
 
               <Button
                 type="button"
@@ -504,7 +546,7 @@ export function HomePageClient() {
                   setIsSendModalOpen(true);
                   setSendError(null);
                 }}
-                disabled={isSending}
+                disabled={!hasAccountSelection || isSending}
                 className="h-auto min-h-12 w-full whitespace-normal border-white/30 bg-white/10 px-4 py-3 text-center leading-snug text-white shadow-none hover:bg-white/20 hover:text-white"
               >
                 Send Report
@@ -527,13 +569,23 @@ export function HomePageClient() {
           </span>
         </a>
 
-        <a
-          href={advancedHref}
-          className="mt-5 inline-flex items-center gap-2 text-xs text-white/80 underline-offset-4 hover:underline"
-        >
-          <LinkIcon className="size-4" />
-          Open advanced report without prefilled ID
-        </a>
+        {hasAccountSelection ? (
+          <a
+            href={advancedHref}
+            className="mt-5 inline-flex items-center gap-2 text-xs text-white/80 underline-offset-4 hover:underline"
+          >
+            <LinkIcon className="size-4" />
+            Open advanced report without prefilled ID
+          </a>
+        ) : (
+          <span
+            className="mt-5 inline-flex cursor-not-allowed items-center gap-2 text-xs text-white/40"
+            aria-disabled="true"
+          >
+            <LinkIcon className="size-4" />
+            Select an account to open the advanced report
+          </span>
+        )}
       </div>
 
       {isSendModalOpen ? (
