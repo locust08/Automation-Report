@@ -12,6 +12,12 @@ import {
   UploadCloudIcon,
 } from "lucide-react";
 
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { useScreenshotMode } from "@/components/reporting/use-screenshot-mode";
 
 interface ReportShellProps {
@@ -85,56 +91,32 @@ export function ReportShell({
                 >
                   {title}
                 </h1>
-                <nav className="flex flex-wrap items-center gap-2" data-report-export-exclude="true">
-                  <Link
-                    href={hrefs.home}
-                    title="Home"
-                    aria-label="Open Home page"
-                    className="inline-flex size-10 items-center justify-center rounded-md bg-white/10 hover:bg-white/20"
+                <TooltipProvider delayDuration={200}>
+                  <nav
+                    className="flex flex-wrap items-center gap-2"
+                    data-report-export-exclude="true"
+                    aria-label="Report navigation"
                   >
-                    <HouseIcon className="size-5" />
-                  </Link>
-                  <Link
-                    href={hrefs.overall}
-                    title="Overall"
-                    aria-label="Open Overall page"
-                    className="inline-flex size-10 items-center justify-center rounded-md bg-white/10 hover:bg-white/20"
-                  >
-                    <BarChart3Icon className="size-5" />
-                  </Link>
-                  <Link
-                    href={hrefs.preview}
-                    title="Preview"
-                    aria-label="Open Preview page"
-                    className="inline-flex size-10 items-center justify-center rounded-md bg-white/10 hover:bg-white/20"
-                  >
-                    <EyeIcon className="size-5" />
-                  </Link>
-                  <Link
-                    href={hrefs.advanced}
-                    title="Advanced Report"
-                    aria-label="Open Advanced Report page"
-                    className="inline-flex size-10 items-center justify-center rounded-md bg-white/10 hover:bg-white/20"
-                  >
-                    <SparklesIcon className="size-5" />
-                  </Link>
-                  <Link
-                    href={hrefs.mediaPlan}
-                    title="Media Plan"
-                    aria-label="Open Media Plan page"
-                    className="inline-flex size-10 items-center justify-center rounded-md bg-white/10 hover:bg-white/20"
-                  >
-                    <ClipboardListIcon className="size-5" />
-                  </Link>
-                  <Link
-                    href={hrefs.metaImport}
-                    title="Meta CSV Import"
-                    aria-label="Open Meta CSV Import page"
-                    className="inline-flex size-10 items-center justify-center rounded-md bg-white/10 hover:bg-white/20"
-                  >
-                    <UploadCloudIcon className="size-5" />
-                  </Link>
-                </nav>
+                    <ReportNavLink href={hrefs.home} label="Home">
+                      <HouseIcon className="size-5" />
+                    </ReportNavLink>
+                    <ReportNavLink href={hrefs.overall} label="Monthly Performance">
+                      <BarChart3Icon className="size-5" />
+                    </ReportNavLink>
+                    <ReportNavLink href={hrefs.preview} label="Campaign Preview">
+                      <EyeIcon className="size-5" />
+                    </ReportNavLink>
+                    <ReportNavLink href={hrefs.advanced} label="Advanced Report">
+                      <SparklesIcon className="size-5" />
+                    </ReportNavLink>
+                    <ReportNavLink href={hrefs.mediaPlan} label="Create Media Plan">
+                      <ClipboardListIcon className="size-5" />
+                    </ReportNavLink>
+                    <ReportNavLink href={hrefs.metaImport} label="Import Meta CSV">
+                      <UploadCloudIcon className="size-5" />
+                    </ReportNavLink>
+                  </nav>
+                </TooltipProvider>
               </div>
               {headerDateControl ? (
                 <div
@@ -182,6 +164,37 @@ export function ReportShell({
         </section>
       </div>
     </main>
+  );
+}
+
+function ReportNavLink({
+  href,
+  label,
+  children,
+}: {
+  href: string;
+  label: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <Link
+          href={href}
+          aria-label={label}
+          className="inline-flex size-10 items-center justify-center rounded-md bg-white/10 outline-none transition hover:bg-white/20 focus-visible:ring-2 focus-visible:ring-white/90 focus-visible:ring-offset-2 focus-visible:ring-offset-red-900"
+        >
+          {children}
+        </Link>
+      </TooltipTrigger>
+      <TooltipContent
+        side="bottom"
+        sideOffset={8}
+        className="border border-white/15 bg-[#211114] px-3 py-2 text-sm font-medium text-white shadow-xl"
+      >
+        {label}
+      </TooltipContent>
+    </Tooltip>
   );
 }
 
