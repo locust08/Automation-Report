@@ -11,6 +11,7 @@ import {
 import type { ReactNode } from "react";
 import {
   CalendarDaysIcon,
+  ChevronDownIcon,
   ChevronLeftIcon,
   ChevronRightIcon,
   IdCardIcon,
@@ -348,16 +349,21 @@ function ReportAccountSearchInput({
 }) {
   const [suggestions, setSuggestions] = useState<AccountSearchSuggestion[]>([]);
   const [recentAccounts, setRecentAccounts] = useState<AccountSearchSuggestion[]>([]);
+  const [searchQuery, setSearchQuery] = useState("");
   const [searchState, setSearchState] = useState<"idle" | "loading" | "success" | "error">(
     "idle"
   );
   const [searchError, setSearchError] = useState<string | null>(null);
   const [isOpen, setIsOpen] = useState(false);
-  const [highlightedIndex, setHighlightedIndex] = useState(-1);
+  const [highlightedId, setHighlightedId] = useState<string | null>(null);
   const requestId = useRef(0);
-  const query = entry.searchText.trim();
-  const showRecent = query.length < 2;
-  const visibleSuggestions = showRecent ? recentAccounts : suggestions;
+  const searchInputRef = useRef<HTMLInputElement>(null);
+  const query = searchQuery.trim();
+  const resultSuggestions = suggestions.filter(
+    (suggestion) =>
+      !recentAccounts.some((recent) => recent.notionPageId === suggestion.notionPageId)
+  );
+  const navigableSuggestions = [...recentAccounts, ...resultSuggestions];
 
   useEffect(() => {
     try {
@@ -379,7 +385,7 @@ function ReportAccountSearchInput({
     requestId.current += 1;
     const currentRequestId = requestId.current;
 
-    if (query.length < 2 || entry.accountId) {
+    if (query.length < 2) {
       setSuggestions([]);
       setSearchState("idle");
       setSearchError(null);
@@ -412,14 +418,14 @@ function ReportAccountSearchInput({
         const nextSuggestions = Array.isArray(payload.accounts) ? payload.accounts : [];
         setSuggestions(nextSuggestions);
         setSearchState("success");
-        setHighlightedIndex(nextSuggestions.length > 0 ? 0 : -1);
+        setHighlightedId(nextSuggestions[0]?.notionPageId ?? null);
       } catch (error) {
         if (controller.signal.aborted || currentRequestId !== requestId.current) {
           return;
         }
         setSuggestions([]);
         setSearchState("error");
-        setHighlightedIndex(-1);
+        setHighlightedId(null);
         setSearchError(error instanceof Error ? error.message : "Unable to search accounts.");
       }
     }, ACCOUNT_SEARCH_DEBOUNCE_MS);
@@ -428,7 +434,15 @@ function ReportAccountSearchInput({
       controller.abort();
       window.clearTimeout(timeoutId);
     };
-  }, [entry.accountId, query]);
+  }, [query]);
+
+  useEffect(() => {
+    if (!isOpen) {
+      return;
+    }
+    const frameId = window.requestAnimationFrame(() => searchInputRef.current?.focus());
+    return () => window.cancelAnimationFrame(frameId);
+  }, [isOpen]);
 
   function selectSuggestion(suggestion: AccountSearchSuggestion) {
     const nextRecent = [
@@ -442,129 +456,218 @@ function ReportAccountSearchInput({
       // Keep the selection available in memory when browser storage is unavailable.
     }
     onSelect(suggestion);
+    setSearchQuery("");
     setIsOpen(false);
-    setHighlightedIndex(-1);
+    setHighlightedId(null);
   }
 
   function handleKeyDown(event: KeyboardEvent<HTMLInputElement>) {
     if (event.key === "Escape") {
       setIsOpen(false);
-      setHighlightedIndex(-1);
+      setHighlightedId(null);
       return;
     }
 
     if (event.key === "ArrowDown" || event.key === "ArrowUp") {
-      if (visibleSuggestions.length === 0) {
+      if (navigableSuggestions.length === 0) {
         return;
       }
       event.preventDefault();
-      setIsOpen(true);
-      setHighlightedIndex((current) => {
-        if (event.key === "ArrowDown") {
-          return current < visibleSuggestions.length - 1 ? current + 1 : 0;
-        }
-        return current > 0 ? current - 1 : visibleSuggestions.length - 1;
-      });
+      const currentIndex = navigableSuggestions.findIndex(
+        (suggestion) => suggestion.notionPageId === highlightedId
+      );
+      const nextIndex =
+        event.key === "ArrowDown"
+          ? currentIndex < navigableSuggestions.length - 1
+            ? currentIndex + 1
+            : 0
+          : currentIndex > 0
+            ? currentIndex - 1
+            : navigableSuggestions.length - 1;
+      setHighlightedId(navigableSuggestions[nextIndex]?.notionPageId ?? null);
       return;
     }
 
-    if (event.key === "Enter" && isOpen && highlightedIndex >= 0) {
-      const suggestion = visibleSuggestions[highlightedIndex];
+    if (event.key === "Enter" && highlightedId) {
+      const suggestion = navigableSuggestions.find(
+        (item) => item.notionPageId === highlightedId
+      );
       if (suggestion) {
         event.preventDefault();
         selectSuggestion(suggestion);
+        return;
+      }
+    }
+
+    if (event.key === "Enter") {
+      const directAccountId = extractAdAccountIdFromAccountSearchInput(query);
+      if (directAccountId) {
+        event.preventDefault();
+        onChange(directAccountId);
+        setSearchQuery("");
+        setIsOpen(false);
+        setHighlightedId(null);
       }
     }
   }
 
   return (
-    <label
-      className="relative flex w-full min-w-0 flex-1 items-center gap-2 rounded-md border border-input bg-background px-3 sm:w-auto"
+    <div
+      className="relative w-full min-w-0 flex-1 sm:w-auto"
       onBlur={(event) => {
         if (!event.currentTarget.contains(event.relatedTarget)) {
           setIsOpen(false);
-          setHighlightedIndex(-1);
+          setHighlightedId(null);
         }
       }}
     >
-      <IdCardIcon className="size-4 shrink-0 text-muted-foreground" />
-      <Input
-        value={entry.searchText}
-        onChange={(event) => onChange(event.target.value)}
-        onFocus={() => {
-          if (query.length >= 2 || recentAccounts.length > 0) {
-            setIsOpen(true);
-            setHighlightedIndex(visibleSuggestions.length > 0 ? 0 : -1);
-          }
+      <button
+        type="button"
+        onClick={() => {
+          setIsOpen((current) => !current);
+          setHighlightedId(recentAccounts[0]?.notionPageId ?? null);
         }}
-        onKeyDown={handleKeyDown}
-        className="h-10 border-0 shadow-none focus-visible:ring-0"
-        placeholder="Search account name or ID"
+        className="flex h-10 w-full min-w-0 items-center gap-2 rounded-md border border-input bg-background px-3 text-left text-sm shadow-xs outline-none transition focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50"
         aria-label={`${entry.platform === "meta" ? "Meta Ads" : "Google Ads"} account`}
-        aria-autocomplete="list"
         aria-expanded={isOpen}
-        autoComplete="off"
-      />
+        aria-haspopup="listbox"
+      >
+        <IdCardIcon className="size-4 shrink-0 text-muted-foreground" />
+        <span
+          className={cn(
+            "min-w-0 flex-1 truncate",
+            entry.accountId ? "text-foreground" : "text-muted-foreground"
+          )}
+        >
+          {entry.searchText || "Select an account"}
+        </span>
+        <ChevronDownIcon
+          className={cn(
+            "size-4 shrink-0 text-muted-foreground transition-transform",
+            isOpen && "rotate-180"
+          )}
+        />
+      </button>
 
-      {isOpen && (query.length >= 2 || recentAccounts.length > 0) ? (
-        <div className="absolute left-0 right-0 top-full z-50 mt-2 overflow-hidden rounded-xl border border-border bg-popover text-popover-foreground shadow-xl">
-          {showRecent && recentAccounts.length > 0 ? (
-            <div className="border-b border-border px-3 py-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
-              Recent accounts
+      {isOpen ? (
+        <div className="absolute left-0 right-0 top-full z-50 mt-2 min-w-[320px] overflow-hidden rounded-xl border border-border bg-popover p-2 text-popover-foreground shadow-xl">
+          <div className="relative">
+            <SearchIcon className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              ref={searchInputRef}
+              value={searchQuery}
+              onChange={(event) => {
+                setSearchQuery(event.target.value);
+                setHighlightedId(null);
+              }}
+              onKeyDown={handleKeyDown}
+              className="h-10 pl-9"
+              placeholder="Search account name or ID"
+              aria-label="Search accounts"
+              aria-autocomplete="list"
+              autoComplete="off"
+            />
+          </div>
+
+          <div className="mt-2 max-h-80 overflow-auto">
+            <div className="px-2 py-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+              Recent
             </div>
-          ) : null}
-          {!showRecent && searchState === "loading" ? (
-            <div className="flex items-center gap-2 px-3 py-3 text-sm text-muted-foreground">
-              <Loader2Icon className="size-4 animate-spin" />
-              Searching Notion accounts...
+            {recentAccounts.length > 0 ? (
+              <AccountSuggestionList
+                suggestions={recentAccounts}
+                highlightedId={highlightedId}
+                onSelect={selectSuggestion}
+                onHighlight={setHighlightedId}
+              />
+            ) : (
+              <p className="px-2 py-2 text-sm text-muted-foreground">
+                No recent accounts yet.
+              </p>
+            )}
+
+            <div className="mt-1 border-t border-border px-2 pb-1 pt-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+              Results
             </div>
-          ) : null}
-          {!showRecent && searchState === "error" ? (
-            <div className="px-3 py-3 text-sm text-destructive">
+            {query.length < 2 ? (
+              <p className="px-2 py-2 text-sm text-muted-foreground">
+                Type at least 2 characters to search Notion.
+              </p>
+            ) : searchState === "loading" ? (
+              <div className="flex items-center gap-2 px-3 py-3 text-sm text-muted-foreground">
+                <Loader2Icon className="size-4 animate-spin" />
+                Searching Notion accounts...
+              </div>
+            ) : searchState === "error" ? (
+              <div className="px-3 py-3 text-sm text-destructive">
               {searchError ?? "Unable to search accounts."}
-            </div>
-          ) : null}
-          {!showRecent && searchState === "success" && suggestions.length === 0 ? (
-            <div className="px-3 py-3 text-sm text-muted-foreground">
+              </div>
+            ) : searchState === "success" && suggestions.length === 0 ? (
+              <div className="px-3 py-3 text-sm text-muted-foreground">
               No matching account found.
-            </div>
-          ) : null}
-          {visibleSuggestions.length > 0 ? (
-            <ul className="max-h-72 overflow-auto py-1">
-              {visibleSuggestions.map((suggestion, index) => (
-                <li key={suggestion.notionPageId}>
-                  <button
-                    type="button"
-                    onMouseDown={(event) => event.preventDefault()}
-                    onClick={() => selectSuggestion(suggestion)}
-                    className={cn(
-                      "grid w-full gap-1 px-3 py-2 text-left text-sm transition",
-                      index === highlightedIndex
-                        ? "bg-red-600 text-white"
-                        : "hover:bg-accent hover:text-accent-foreground"
-                    )}
-                  >
-                    <span className="font-semibold">
-                      {formatAccountSuggestionLabel(suggestion)}
-                    </span>
-                    <span
-                      className={cn(
-                        "text-xs",
-                        index === highlightedIndex
-                          ? "text-white/75"
-                          : "text-muted-foreground"
-                      )}
-                    >
-                      {suggestion.country ?? "No country set"}
-                    </span>
-                  </button>
-                </li>
-              ))}
-            </ul>
-          ) : null}
+              </div>
+            ) : resultSuggestions.length > 0 ? (
+              <AccountSuggestionList
+                suggestions={resultSuggestions}
+                highlightedId={highlightedId}
+                onSelect={selectSuggestion}
+                onHighlight={setHighlightedId}
+              />
+            ) : null}
+          </div>
         </div>
       ) : null}
-    </label>
+    </div>
+  );
+}
+
+function AccountSuggestionList({
+  suggestions,
+  highlightedId,
+  onSelect,
+  onHighlight,
+}: {
+  suggestions: AccountSearchSuggestion[];
+  highlightedId: string | null;
+  onSelect: (suggestion: AccountSearchSuggestion) => void;
+  onHighlight: (notionPageId: string) => void;
+}) {
+  return (
+    <ul className="space-y-1" role="listbox">
+      {suggestions.map((suggestion) => {
+        const highlighted = suggestion.notionPageId === highlightedId;
+        return (
+          <li key={suggestion.notionPageId}>
+            <button
+              type="button"
+              role="option"
+              aria-selected={highlighted}
+              onMouseDown={(event) => event.preventDefault()}
+              onMouseEnter={() => onHighlight(suggestion.notionPageId)}
+              onClick={() => onSelect(suggestion)}
+              className={cn(
+                "grid w-full gap-1 rounded-md px-3 py-2 text-left text-sm transition",
+                highlighted
+                  ? "bg-red-600 text-white"
+                  : "hover:bg-accent hover:text-accent-foreground"
+              )}
+            >
+              <span className="font-semibold">
+                {formatAccountSuggestionLabel(suggestion)}
+              </span>
+              <span
+                className={cn(
+                  "text-xs",
+                  highlighted ? "text-white/75" : "text-muted-foreground"
+                )}
+              >
+                {suggestion.country ?? "No country set"}
+              </span>
+            </button>
+          </li>
+        );
+      })}
+    </ul>
   );
 }
 
