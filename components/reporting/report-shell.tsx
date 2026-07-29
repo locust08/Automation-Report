@@ -188,7 +188,7 @@ function ReportNavLink({
         </Link>
       </TooltipTrigger>
       <TooltipContent
-        side="bottom"
+        side="top"
         sideOffset={8}
         className="border border-white/15 bg-[#211114] px-3 py-2 text-sm font-medium text-white shadow-xl"
       >
