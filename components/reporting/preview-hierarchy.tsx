@@ -301,6 +301,11 @@ function MetaAdsPreviewWorkspace({
             <EmptyState message="No ad sets are available under the selected campaign." />
           ) : null}
 
+            <PerformanceSection
+              performance={performance}
+              emptyMessage="No performance data was returned for the current Meta Ads selection."
+            />
+
             <section id="ad-preview" className="scroll-mt-6 rounded-[28px] border border-[#e7edf5] bg-white p-5 shadow-[0_18px_50px_rgba(15,23,42,0.05)] sm:p-6">
               <div>
                 <h2 className="text-[1.8rem] font-semibold tracking-[-0.03em] text-[#0f172a]">
@@ -342,11 +347,6 @@ function MetaAdsPreviewWorkspace({
                 ))}
               </div>
             </section>
-
-            <PerformanceSection
-              performance={performance}
-              emptyMessage="No performance data was returned for the current Meta Ads selection."
-            />
 
             <DemographicSection
               rows={demographics}
