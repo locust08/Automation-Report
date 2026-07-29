@@ -10,6 +10,7 @@ test("GET returns safe account suggestions from Notion search", async () => {
   process.env.NOTION_TOKEN = "secret_test_token";
   process.env.NOTION_DATABASE_ID = "11111111111111111111111111111111";
 
+  let notionQueryCount = 0;
   globalThis.fetch = (async (input: RequestInfo | URL) => {
     const url = String(input);
     if (url.includes("/databases/")) {
@@ -22,6 +23,7 @@ test("GET returns safe account suggestions from Notion search", async () => {
     }
 
     if (url.includes("/data_sources/data-source-1/query")) {
+      notionQueryCount += 1;
       return new Response(
         JSON.stringify({
           results: [
@@ -70,6 +72,12 @@ test("GET returns safe account suggestions from Notion search", async () => {
       ],
     });
     assert.equal(JSON.stringify(payload).includes("secret_test_token"), false);
+
+    const cachedResponse = await GET(
+      new Request("https://example.test/api/notion/accounts/search?q=academy")
+    );
+    assert.equal(cachedResponse.status, 200);
+    assert.equal(notionQueryCount, 1);
   } finally {
     globalThis.fetch = ORIGINAL_FETCH;
     process.env = { ...ORIGINAL_ENV };

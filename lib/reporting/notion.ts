@@ -493,6 +493,13 @@ export interface NotionQueryPage {
   properties?: Record<string, NotionPageProperty | undefined>;
 }
 
+const NOTION_ACCOUNT_SEARCH_CACHE_TTL_MS = 5 * 60 * 1000;
+const notionAccountSearchCache = new Map<
+  string,
+  { expiresAt: number; pages: NotionQueryPage[] }
+>();
+const notionAccountSearchRequests = new Map<string, Promise<NotionQueryPage[]>>();
+
 export async function queryNotionDatabasePages(input: {
   notionAccessToken: string | null;
   notionDatabaseId: string | null;
@@ -573,11 +580,41 @@ export async function searchNotionAdAccounts(input: {
     return { accounts: [] };
   }
 
-  const pages = await queryNotionDatabasePages({
-    notionAccessToken: input.notionAccessToken,
-    notionDatabaseId: input.notionDatabaseId,
-    pageSize: 100,
-  });
+  const notionConfig = resolveNotionConfig(
+    {
+      notionAccessToken: input.notionAccessToken,
+      notionDatabaseId: input.notionDatabaseId,
+    },
+    { log: false }
+  );
+  const cacheKey = notionConfig.databaseId;
+  const cached = notionAccountSearchCache.get(cacheKey);
+  const now = Date.now();
+
+  let pages: NotionQueryPage[];
+  if (cached && cached.expiresAt > now) {
+    pages = cached.pages;
+  } else {
+    let request = notionAccountSearchRequests.get(cacheKey);
+    if (!request) {
+      request = queryNotionDatabasePages({
+        notionAccessToken: notionConfig.notionAccessToken,
+        notionDatabaseId: notionConfig.databaseId,
+        pageSize: 100,
+      });
+      notionAccountSearchRequests.set(cacheKey, request);
+    }
+
+    try {
+      pages = await request;
+      notionAccountSearchCache.set(cacheKey, {
+        expiresAt: Date.now() + NOTION_ACCOUNT_SEARCH_CACHE_TTL_MS,
+        pages,
+      });
+    } finally {
+      notionAccountSearchRequests.delete(cacheKey);
+    }
+  }
 
   return buildNotionAccountSearchResponse(input.query, pages, input.limit);
 }

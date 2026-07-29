@@ -37,6 +37,8 @@ const COUNTRIES = [
 
 const SUPPORTED_COUNTRIES = new Set(COUNTRIES.map((country) => country.value));
 const ACCOUNT_SEARCH_DEBOUNCE_MS = 300;
+const RECENT_ACCOUNTS_STORAGE_KEY = "ads-reporting-recent-accounts";
+const RECENT_ACCOUNTS_LIMIT = 5;
 
 type AccountSearchSuggestion = {
   accountName: string;
@@ -117,6 +119,7 @@ export function HomePageClient() {
   const [highlightedAccountIndex, setHighlightedAccountIndex] = useState(-1);
   const [selectedAccountSuggestion, setSelectedAccountSuggestion] =
     useState<AccountSearchSuggestion | null>(null);
+  const [recentAccounts, setRecentAccounts] = useState<AccountSearchSuggestion[]>([]);
   const accountSearchRequestId = useRef(0);
   const [isSendModalOpen, setIsSendModalOpen] = useState(false);
   const [selectedReportType, setSelectedReportType] = useState<ManualReportType>("monthly");
@@ -137,6 +140,38 @@ export function HomePageClient() {
   const previewHref = `/preview${reportQueryString ? `?${reportQueryString}` : ""}`;
   const advancedHref = `/advanced${reportQueryString ? `?${reportQueryString}` : ""}`;
   const mediaPlanHref = "/dashboard/media-plan";
+  const isShowingRecentAccounts = accountName.trim().length < 2;
+  const visibleAccountSuggestions = isShowingRecentAccounts
+    ? recentAccounts
+    : accountSuggestions;
+
+  useEffect(() => {
+    try {
+      const storedValue = window.localStorage.getItem(RECENT_ACCOUNTS_STORAGE_KEY);
+      const storedAccounts = storedValue ? (JSON.parse(storedValue) as unknown) : [];
+      if (Array.isArray(storedAccounts)) {
+        setRecentAccounts(
+          storedAccounts
+            .filter(
+              (account): account is AccountSearchSuggestion =>
+                Boolean(
+                  account &&
+                    typeof account === "object" &&
+                    "accountName" in account &&
+                    typeof account.accountName === "string" &&
+                    "adAccountId" in account &&
+                    typeof account.adAccountId === "string" &&
+                    "notionPageId" in account &&
+                    typeof account.notionPageId === "string"
+                )
+            )
+            .slice(0, RECENT_ACCOUNTS_LIMIT)
+        );
+      }
+    } catch {
+      window.localStorage.removeItem(RECENT_ACCOUNTS_STORAGE_KEY);
+    }
+  }, []);
 
   useEffect(() => {
     const query = accountName.trim();
@@ -227,6 +262,18 @@ export function HomePageClient() {
     if (suggestion.country && SUPPORTED_COUNTRIES.has(suggestion.country)) {
       setCountry(suggestion.country);
     }
+    setRecentAccounts((current) => {
+      const next = [
+        suggestion,
+        ...current.filter((account) => account.notionPageId !== suggestion.notionPageId),
+      ].slice(0, RECENT_ACCOUNTS_LIMIT);
+      try {
+        window.localStorage.setItem(RECENT_ACCOUNTS_STORAGE_KEY, JSON.stringify(next));
+      } catch {
+        // Keep recent accounts available for this session when storage is unavailable.
+      }
+      return next;
+    });
     setIsAccountDropdownOpen(false);
     setHighlightedAccountIndex(-1);
   }
@@ -239,7 +286,7 @@ export function HomePageClient() {
     }
 
     if (event.key === "ArrowDown" || event.key === "ArrowUp") {
-      if (accountSuggestions.length === 0) {
+      if (visibleAccountSuggestions.length === 0) {
         return;
       }
 
@@ -247,15 +294,15 @@ export function HomePageClient() {
       setIsAccountDropdownOpen(true);
       setHighlightedAccountIndex((current) => {
         if (event.key === "ArrowDown") {
-          return current < accountSuggestions.length - 1 ? current + 1 : 0;
+          return current < visibleAccountSuggestions.length - 1 ? current + 1 : 0;
         }
-        return current > 0 ? current - 1 : accountSuggestions.length - 1;
+        return current > 0 ? current - 1 : visibleAccountSuggestions.length - 1;
       });
       return;
     }
 
     if (event.key === "Enter" && isAccountDropdownOpen && highlightedAccountIndex >= 0) {
-      const suggestion = accountSuggestions[highlightedAccountIndex];
+      const suggestion = visibleAccountSuggestions[highlightedAccountIndex];
       if (suggestion) {
         event.preventDefault();
         selectAccountSuggestion(suggestion);
@@ -326,8 +373,9 @@ export function HomePageClient() {
               value={accountName}
               onChange={(event) => handleAccountNameChange(event.target.value)}
               onFocus={() => {
-                if (accountName.trim().length >= 2) {
+                if (accountName.trim().length >= 2 || recentAccounts.length > 0) {
                   setIsAccountDropdownOpen(true);
+                  setHighlightedAccountIndex(0);
                 }
               }}
               onKeyDown={handleAccountNameKeyDown}
@@ -338,28 +386,37 @@ export function HomePageClient() {
               className="h-11 border-white/30 bg-white/10 text-white placeholder:text-white/60"
             />
 
-            {isAccountDropdownOpen && accountName.trim().length >= 2 ? (
+            {isAccountDropdownOpen &&
+            (accountName.trim().length >= 2 || recentAccounts.length > 0) ? (
               <div className="absolute left-0 right-0 top-full z-30 mt-2 overflow-hidden rounded-xl border border-white/20 bg-black/85 shadow-2xl backdrop-blur-md">
-                {accountSearchState === "loading" ? (
+                {isShowingRecentAccounts && recentAccounts.length > 0 ? (
+                  <div className="border-b border-white/10 px-3 py-2 text-xs font-medium uppercase tracking-wide text-white/60">
+                    Recent accounts
+                  </div>
+                ) : null}
+
+                {!isShowingRecentAccounts && accountSearchState === "loading" ? (
                   <div className="flex items-center gap-2 px-3 py-3 text-sm text-white/75">
                     <Loader2Icon className="size-4 animate-spin" />
                     Searching Notion accounts...
                   </div>
                 ) : null}
 
-                {accountSearchState === "error" ? (
+                {!isShowingRecentAccounts && accountSearchState === "error" ? (
                   <div className="px-3 py-3 text-sm text-red-100">
                     {accountSearchError ?? "Unable to search Notion accounts."}
                   </div>
                 ) : null}
 
-                {accountSearchState === "success" && accountSuggestions.length === 0 ? (
+                {!isShowingRecentAccounts &&
+                accountSearchState === "success" &&
+                accountSuggestions.length === 0 ? (
                   <div className="px-3 py-3 text-sm text-white/70">No matching account found.</div>
                 ) : null}
 
-                {accountSuggestions.length > 0 ? (
+                {visibleAccountSuggestions.length > 0 ? (
                   <ul className="max-h-72 overflow-auto py-1">
-                    {accountSuggestions.map((suggestion, index) => (
+                    {visibleAccountSuggestions.map((suggestion, index) => (
                       <li key={suggestion.notionPageId}>
                         <button
                           type="button"
@@ -400,49 +457,52 @@ export function HomePageClient() {
             </Select>
           </label>
 
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          <div className="space-y-3">
             <Button
               type="submit"
-              className="h-auto min-h-12 w-full whitespace-normal bg-red-600 px-4 py-3 text-center leading-snug hover:bg-red-700"
+              className="h-auto min-h-16 w-full whitespace-normal bg-red-600 px-6 py-4 text-center text-base font-semibold leading-snug shadow-lg shadow-red-950/25 hover:bg-red-700"
             >
-              Open Overall Performance
+              View Monthly Performance
               <ArrowRightIcon data-icon="inline-end" />
             </Button>
 
-            <Button
-              asChild
-              variant="outline"
-              className="h-auto min-h-12 w-full whitespace-normal border-white/30 bg-white/10 px-4 py-3 text-center leading-snug text-white shadow-none hover:bg-white/20 hover:text-white"
-            >
-              <a href={previewHref}>
-                Open Preview Page
-                <EyeIcon data-icon="inline-end" />
-              </a>
-            </Button>
+            <div className="grid gap-3 sm:grid-cols-3">
+              <Button
+                asChild
+                variant="outline"
+                className="h-auto min-h-12 w-full whitespace-normal border-white/30 bg-white/10 px-4 py-3 text-center leading-snug text-white shadow-none hover:bg-white/20 hover:text-white"
+              >
+                <a href={previewHref}>
+                  Campaign Preview
+                  <EyeIcon data-icon="inline-end" />
+                </a>
+              </Button>
 
-            <Button
-              asChild
-              variant="outline"
-              className="h-auto min-h-12 w-full whitespace-normal border-white/30 bg-transparent px-4 py-3 text-center leading-snug text-white shadow-none hover:bg-white/10 hover:text-white"
-            >
-              <a href={advancedHref}>
-                Open Advanced Report
-                <SlidersHorizontalIcon data-icon="inline-end" />
-              </a>
-            </Button>
+              <Button
+                asChild
+                variant="outline"
+                className="h-auto min-h-12 w-full whitespace-normal border-white/30 bg-white/10 px-4 py-3 text-center leading-snug text-white shadow-none hover:bg-white/20 hover:text-white"
+              >
+                <a href={advancedHref}>
+                  Open Advanced Report
+                  <SlidersHorizontalIcon data-icon="inline-end" />
+                </a>
+              </Button>
 
-            <Button
-              type="button"
-              onClick={() => {
-                setIsSendModalOpen(true);
-                setSendError(null);
-              }}
-              disabled={isSending}
-              className="h-auto min-h-12 w-full whitespace-normal bg-red-600 px-4 py-3 text-center leading-snug hover:bg-red-700"
-            >
-              Send Report
-              <SendIcon data-icon="inline-end" />
-            </Button>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => {
+                  setIsSendModalOpen(true);
+                  setSendError(null);
+                }}
+                disabled={isSending}
+                className="h-auto min-h-12 w-full whitespace-normal border-white/30 bg-white/10 px-4 py-3 text-center leading-snug text-white shadow-none hover:bg-white/20 hover:text-white"
+              >
+                Send Report
+                <SendIcon data-icon="inline-end" />
+              </Button>
+            </div>
           </div>
         </form>
 
