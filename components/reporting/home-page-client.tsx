@@ -367,7 +367,15 @@ export function HomePageClient() {
         </h1>
 
         <form onSubmit={handleSubmit} className="mt-8 space-y-4">
-          <label className="relative block space-y-2">
+          <label
+            className="relative block space-y-2"
+            onBlur={(event) => {
+              if (!event.currentTarget.contains(event.relatedTarget)) {
+                setIsAccountDropdownOpen(false);
+                setHighlightedAccountIndex(-1);
+              }
+            }}
+          >
             <span className="text-sm text-white/80">Account Name / Ad Account ID *</span>
             <Input
               value={accountName}
