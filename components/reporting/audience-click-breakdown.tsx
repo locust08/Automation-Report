@@ -128,7 +128,7 @@ export function AudienceClickBreakdownSection({
         )}
       </div>
 
-      <div className="grid gap-4 lg:grid-cols-2">
+      <div className="grid gap-4 xl:grid-cols-2">
         <AudienceChartCard title="Age Breakdown" chartType={chartType}>
           <AudienceChart rows={ageRows} chartType={chartType} />
         </AudienceChartCard>
@@ -434,7 +434,7 @@ function PieChart({ rows }: { rows: AudienceBreakdownRow[] }) {
 
   return (
     <div
-      className="grid min-h-[17rem] gap-4 lg:grid-cols-[minmax(180px,240px)_minmax(0,1fr)] lg:items-center"
+      className="grid min-h-[17rem] gap-4 lg:grid-cols-[minmax(120px,145px)_minmax(0,1fr)] lg:items-center"
       onMouseLeave={() => setActiveIndex(null)}
     >
       <div className="flex justify-center">
@@ -442,7 +442,7 @@ function PieChart({ rows }: { rows: AudienceBreakdownRow[] }) {
           viewBox="0 0 220 220"
           role="img"
           aria-label="Audience click percentage pie chart"
-          className="h-[14rem] w-[14rem] max-w-full"
+          className="h-[12rem] w-[12rem] max-w-full lg:h-[8.5rem] lg:w-[8.5rem] xl:h-[9rem] xl:w-[9rem]"
         >
           {segments.map((segment, index) => {
             const active = activeIndex === index;
@@ -481,11 +481,11 @@ function PieChart({ rows }: { rows: AudienceBreakdownRow[] }) {
       </div>
 
       <div className="min-w-0 space-y-3">
-        <div className="rounded-xl border border-[#e5e5e5] bg-[#fafafa] px-4 py-3">
+        <div className="w-full max-w-xs rounded-xl border border-[#e5e5e5] bg-[#fafafa] px-3 py-2">
           <p className="text-xs font-medium uppercase tracking-[0.08em] text-[#777]">
             {activeRow ? activeRow.label : "Total clicks"}
           </p>
-          <p className="mt-1 text-2xl font-semibold text-[#222]">
+          <p className="mt-0.5 text-xl font-semibold text-[#222]">
             {activeRow ? activePercent : formatCompactNumber(total)}
           </p>
         </div>
@@ -501,13 +501,13 @@ function PieChart({ rows }: { rows: AudienceBreakdownRow[] }) {
                 onFocus={() => setActiveIndex(index)}
                 onBlur={() => setActiveIndex(null)}
                 className={cn(
-                  "flex min-w-0 items-center justify-between gap-3 rounded-lg border px-3 py-2 text-left transition-colors",
+                  "flex min-w-0 items-center justify-between gap-1.5 rounded-lg border px-2 py-2 text-left transition-colors",
                   active
                     ? "border-[#f1b0b0] bg-[#fff5f5] text-[#b80000]"
                     : "border-[#ededed] bg-white text-[#333]"
                 )}
               >
-                <span className="flex min-w-0 items-center gap-2">
+                <span className="flex min-w-0 items-center gap-1.5">
                   <span
                     className="size-2.5 shrink-0 rounded-full"
                     style={{
@@ -515,9 +515,11 @@ function PieChart({ rows }: { rows: AudienceBreakdownRow[] }) {
                         active ? "#b80000" : PIE_COLORS[index % PIE_COLORS.length],
                     }}
                   />
-                  <span className="min-w-0 truncate text-sm font-medium">{row.label}</span>
+                  <span className="min-w-0 whitespace-nowrap text-xs font-medium leading-4">
+                    {row.label}
+                  </span>
                 </span>
-                <span className="shrink-0 text-sm font-semibold">{formatPercent(row.clicks, total)}</span>
+                <span className="shrink-0 text-xs font-semibold">{formatPercent(row.clicks, total)}</span>
               </button>
             );
           })}
