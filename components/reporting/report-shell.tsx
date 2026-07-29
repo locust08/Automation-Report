@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { usePathname } from "next/navigation";
 import {
   BarChart3Icon,
   CalendarDaysIcon,
@@ -48,6 +49,7 @@ export function ReportShell({
   children,
 }: ReportShellProps) {
   const { screenshotMode } = useScreenshotMode();
+  const pathname = usePathname();
   const hrefs = {
     home: "/",
     overall: withQuery("/overall", activeQuery),
@@ -97,22 +99,42 @@ export function ReportShell({
                     data-report-export-exclude="true"
                     aria-label="Report navigation"
                   >
-                    <ReportNavLink href={hrefs.home} label="Home">
+                    <ReportNavLink href={hrefs.home} label="Home" active={pathname === "/"}>
                       <HouseIcon className="size-5" />
                     </ReportNavLink>
-                    <ReportNavLink href={hrefs.overall} label="Monthly Performance">
+                    <ReportNavLink
+                      href={hrefs.overall}
+                      label="Monthly Performance"
+                      active={pathname === "/overall"}
+                    >
                       <BarChart3Icon className="size-5" />
                     </ReportNavLink>
-                    <ReportNavLink href={hrefs.preview} label="Campaign Preview">
+                    <ReportNavLink
+                      href={hrefs.preview}
+                      label="Campaign Preview"
+                      active={pathname === "/preview"}
+                    >
                       <EyeIcon className="size-5" />
                     </ReportNavLink>
-                    <ReportNavLink href={hrefs.advanced} label="Advanced Report">
+                    <ReportNavLink
+                      href={hrefs.advanced}
+                      label="Advanced Report"
+                      active={pathname === "/advanced"}
+                    >
                       <SparklesIcon className="size-5" />
                     </ReportNavLink>
-                    <ReportNavLink href={hrefs.mediaPlan} label="Create Media Plan">
+                    <ReportNavLink
+                      href={hrefs.mediaPlan}
+                      label="Create Media Plan"
+                      active={pathname === "/dashboard/media-plan"}
+                    >
                       <ClipboardListIcon className="size-5" />
                     </ReportNavLink>
-                    <ReportNavLink href={hrefs.metaImport} label="Import Meta CSV">
+                    <ReportNavLink
+                      href={hrefs.metaImport}
+                      label="Import Meta CSV"
+                      active={pathname === "/meta-import"}
+                    >
                       <UploadCloudIcon className="size-5" />
                     </ReportNavLink>
                   </nav>
@@ -170,10 +192,12 @@ export function ReportShell({
 function ReportNavLink({
   href,
   label,
+  active,
   children,
 }: {
   href: string;
   label: string;
+  active: boolean;
   children: React.ReactNode;
 }) {
   return (
@@ -182,7 +206,12 @@ function ReportNavLink({
         <Link
           href={href}
           aria-label={label}
-          className="inline-flex size-10 items-center justify-center rounded-md bg-white/10 outline-none transition hover:bg-white/20 focus-visible:ring-2 focus-visible:ring-white/90 focus-visible:ring-offset-2 focus-visible:ring-offset-red-900"
+          aria-current={active ? "page" : undefined}
+          className={`inline-flex size-10 items-center justify-center rounded-md outline-none transition focus-visible:ring-2 focus-visible:ring-white/90 focus-visible:ring-offset-2 focus-visible:ring-offset-red-900 ${
+            active
+              ? "bg-white text-[#9f0712] shadow-md hover:bg-white"
+              : "bg-white/10 text-white hover:bg-white/20"
+          }`}
         >
           {children}
         </Link>
