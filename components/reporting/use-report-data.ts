@@ -63,6 +63,7 @@ type InFlightQueryValue = {
 const queryResponseCache = new Map<string, CachedQueryValue<unknown>>();
 const inFlightQueries = new Map<string, InFlightQueryValue>();
 const MAX_QUERY_CACHE_ENTRIES = 100;
+const OVERALL_STAGE_QUERY_CACHE_TTL_MS = 2 * 60 * 1000;
 
 function extractErrorMessage(
   payload: ReportingErrorPayload | null | undefined,
@@ -115,9 +116,13 @@ function useReportQuery<T>(
     }
 
     const existingRequest = inFlightQueries.get(queryKey);
+    const requestUrl =
+      requestVersion > 0
+        ? `${queryKey}${queryKey.includes("?") ? "&" : "?"}cacheRefresh=${requestVersion}`
+        : queryKey;
     const requestPromise =
       existingRequest?.promise ??
-      fetch(queryKey, {
+      fetch(requestUrl, {
         cache: "no-store",
       })
         .then(async (response) => {
@@ -253,7 +258,8 @@ export function useOverallSummaryStage(
     `/api/reports/${encodeURIComponent(accountKey || "-")}/summary`,
     queryString,
     enabled,
-    "Unable to load summary metrics."
+    "Unable to load summary metrics.",
+    OVERALL_STAGE_QUERY_CACHE_TTL_MS
   );
 }
 
@@ -266,7 +272,8 @@ export function useOverallCampaignPerformanceStage(
     `/api/reports/${encodeURIComponent(accountKey || "-")}/campaign-performance`,
     queryString,
     enabled,
-    "Unable to load campaign performance."
+    "Unable to load campaign performance.",
+    OVERALL_STAGE_QUERY_CACHE_TTL_MS
   );
 }
 
@@ -279,7 +286,8 @@ export function useOverallAudienceBreakdownStage(
     `/api/reports/${encodeURIComponent(accountKey || "-")}/tables`,
     queryString,
     enabled,
-    "Unable to load breakdown tables."
+    "Unable to load breakdown tables.",
+    OVERALL_STAGE_QUERY_CACHE_TTL_MS
   );
 }
 

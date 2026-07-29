@@ -25,6 +25,7 @@ export async function GET(
       googleAccountId: context.googleAccountId,
       startDate: context.startDate,
       endDate: context.endDate,
+      cacheRefreshKey: searchParams.get("cacheRefresh") ?? searchParams.get("refresh"),
     });
 
     return NextResponse.json(payload);

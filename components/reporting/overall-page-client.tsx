@@ -53,6 +53,7 @@ export function OverallPageClient({
   const { screenshotMode } = useScreenshotMode();
   const [resolvedLabels, setResolvedLabels] = useState<ResolvedAccountLabel[]>([]);
   const [readyAccountKeys, setReadyAccountKeys] = useState<Record<string, boolean>>({});
+  const [refreshKey, setRefreshKey] = useState(0);
   const campaignNameFilter = useMemo<CampaignNameFilter | null>(() => {
     const values = getCampaignNameOptions(filters.campaignNameFilterValues);
     return values.length > 0
@@ -106,6 +107,14 @@ export function OverallPageClient({
     }
     return params.toString();
   }, [campaignNameFilter, queryString]);
+  const stageQueryString = useMemo(() => {
+    if (refreshKey <= 0) {
+      return queryString;
+    }
+    const params = new URLSearchParams(queryString);
+    params.set("refresh", String(refreshKey));
+    return params.toString();
+  }, [queryString, refreshKey]);
 
   const accountReportEntries = useMemo(
     () => buildAccountReportEntries(filters, queryString),
@@ -119,12 +128,12 @@ export function OverallPageClient({
   );
   const summaryQuery = useOverallSummaryStage(
     accountKey,
-    queryString,
+    stageQueryString,
     hasAccountId && !splitByAccount
   );
   const campaignQuery = useOverallCampaignPerformanceStage(
     accountKey,
-    queryString,
+    stageQueryString,
     hasAccountId && !splitByAccount
   );
   const data = summaryQuery.data;
@@ -221,7 +230,21 @@ export function OverallPageClient({
           submitLabel="Reload"
           compact
           footerContent={<ReportDownloadButton fileNamePrefix={title} />}
-          onApply={(next) => setFilters(next)}
+          onApply={(next) => {
+            const unchanged =
+              next.accountId === filters.accountId &&
+              next.metaAccountId === filters.metaAccountId &&
+              next.googleAccountId === filters.googleAccountId &&
+              next.startDate === filters.startDate &&
+              next.endDate === filters.endDate &&
+              next.source === filters.source;
+            if (unchanged) {
+              setRefreshKey(Date.now());
+              return;
+            }
+            setRefreshKey(0);
+            setFilters(next);
+          }}
           onReset={() =>
             setFilters({
               accountId: "",
@@ -312,7 +335,7 @@ export function OverallPageClient({
 
             <LazyAudienceBreakdown
               accountKey={accountKey}
-              queryString={queryString}
+              queryString={stageQueryString}
               enabled={hasAccountId}
               screenshotMode={screenshotMode}
               summaryData={summaryQuery.data}

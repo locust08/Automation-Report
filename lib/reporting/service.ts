@@ -78,6 +78,7 @@ export interface OverallInput {
   startDate: string | null;
   endDate: string | null;
   diagnosticsMode?: boolean;
+  cacheRefreshKey?: string | null;
   previewStage?: PreviewFetchStage;
   previewSelection?: PreviewFetchSelection;
 }
@@ -164,11 +165,23 @@ const GOOGLE_FETCH_CACHE_MAX_ENTRIES = parsePositiveIntegerEnv(
   process.env.REPORTING_GOOGLE_CACHE_MAX_ENTRIES,
   200
 );
+const OVERALL_PERFORMANCE_CACHE_TTL_MS = parsePositiveIntegerEnv(
+  process.env.REPORTING_OVERALL_PERFORMANCE_CACHE_TTL_MS,
+  2 * 60 * 1000
+);
+const OVERALL_PERFORMANCE_CACHE_MAX_ENTRIES = parsePositiveIntegerEnv(
+  process.env.REPORTING_OVERALL_PERFORMANCE_CACHE_MAX_ENTRIES,
+  100
+);
 const OVERALL_REPORT_SLOW_STAGE_WARNING_MS = parsePositiveIntegerEnv(
   process.env.REPORTING_SLOW_STAGE_WARNING_MS,
   10 * 1000
 );
 
+const overallPerformanceStageCache = new Map<
+  string,
+  MemoryCacheEntry<OverallPerformanceData>
+>();
 const googleCampaignRowsCache = new Map<
   string,
   MemoryCacheEntry<{ rows: CampaignRow[]; warnings: string[] }>
@@ -703,7 +716,42 @@ export async function getOverallAudienceBreakdownStage(
 }
 
 async function getOverallPerformanceStageData(input: OverallInput): Promise<OverallPerformanceData> {
-  return fetchOverallPerformanceStageData(input);
+  const baseCacheKey = JSON.stringify({
+    accountId: input.accountId,
+    metaAccountId: input.metaAccountId,
+    googleAccountId: input.googleAccountId,
+    startDate: input.startDate,
+    endDate: input.endDate,
+    diagnosticsMode: Boolean(input.diagnosticsMode),
+  });
+  const refreshKey = input.cacheRefreshKey?.trim() || null;
+  if (refreshKey) {
+    overallPerformanceStageCache.delete(baseCacheKey);
+  }
+  const cacheKey = refreshKey ? `${baseCacheKey}|refresh=${refreshKey}` : baseCacheKey;
+
+  const performance = await readThroughMemoryCache(
+    overallPerformanceStageCache,
+    cacheKey,
+    () => fetchOverallPerformanceStageData(input),
+    {
+      ttlMs: OVERALL_PERFORMANCE_CACHE_TTL_MS,
+      maxEntries: OVERALL_PERFORMANCE_CACHE_MAX_ENTRIES,
+    }
+  );
+  if (!refreshKey) {
+    return performance;
+  }
+
+  return readThroughMemoryCache(
+    overallPerformanceStageCache,
+    baseCacheKey,
+    async () => performance,
+    {
+      ttlMs: OVERALL_PERFORMANCE_CACHE_TTL_MS,
+      maxEntries: OVERALL_PERFORMANCE_CACHE_MAX_ENTRIES,
+    }
+  );
 }
 
 async function fetchOverallPerformanceStageData(input: OverallInput): Promise<OverallPerformanceData> {
