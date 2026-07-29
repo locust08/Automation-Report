@@ -5,10 +5,12 @@ import { useRouter, useSearchParams } from "next/navigation";
 import {
   ArrowRightIcon,
   CalendarDaysIcon,
+  ChevronDownIcon,
   ClipboardListIcon,
   EyeIcon,
   LinkIcon,
   Loader2Icon,
+  SearchIcon,
   SendIcon,
   SlidersHorizontalIcon,
   XIcon,
@@ -111,16 +113,16 @@ export function HomePageClient() {
   const initialCountry = useMemo(() => searchParams.get("country") ?? "MY", [searchParams]);
   const [accountName, setAccountName] = useState("");
   const [accountId, setAccountId] = useState("");
+  const [accountSearchQuery, setAccountSearchQuery] = useState("");
   const [country, setCountry] = useState(initialCountry);
   const [accountSuggestions, setAccountSuggestions] = useState<AccountSearchSuggestion[]>([]);
   const [accountSearchState, setAccountSearchState] = useState<AccountSearchState>("idle");
   const [accountSearchError, setAccountSearchError] = useState<string | null>(null);
   const [isAccountDropdownOpen, setIsAccountDropdownOpen] = useState(false);
   const [highlightedAccountIndex, setHighlightedAccountIndex] = useState(-1);
-  const [selectedAccountSuggestion, setSelectedAccountSuggestion] =
-    useState<AccountSearchSuggestion | null>(null);
   const [recentAccounts, setRecentAccounts] = useState<AccountSearchSuggestion[]>([]);
   const accountSearchRequestId = useRef(0);
+  const accountSearchInputRef = useRef<HTMLInputElement>(null);
   const [isSendModalOpen, setIsSendModalOpen] = useState(false);
   const [selectedReportType, setSelectedReportType] = useState<ManualReportType>("monthly");
   const [isSending, setIsSending] = useState(false);
@@ -141,10 +143,12 @@ export function HomePageClient() {
   const advancedHref = `/advanced${reportQueryString ? `?${reportQueryString}` : ""}`;
   const mediaPlanHref = "/dashboard/media-plan";
   const hasAccountSelection = Boolean(accountId.trim());
-  const isShowingRecentAccounts = accountName.trim().length < 2;
-  const visibleAccountSuggestions = isShowingRecentAccounts
-    ? recentAccounts
-    : accountSuggestions;
+  const normalizedAccountSearchQuery = accountSearchQuery.trim();
+  const resultAccountSuggestions = accountSuggestions.filter(
+    (suggestion) =>
+      !recentAccounts.some((recent) => recent.notionPageId === suggestion.notionPageId)
+  );
+  const visibleAccountSuggestions = [...recentAccounts, ...resultAccountSuggestions];
 
   useEffect(() => {
     try {
@@ -175,7 +179,7 @@ export function HomePageClient() {
   }, []);
 
   useEffect(() => {
-    const query = accountName.trim();
+    const query = normalizedAccountSearchQuery;
     accountSearchRequestId.current += 1;
     const requestId = accountSearchRequestId.current;
 
@@ -183,16 +187,6 @@ export function HomePageClient() {
       setAccountSuggestions([]);
       setAccountSearchState("idle");
       setAccountSearchError(null);
-      setIsAccountDropdownOpen(false);
-      setHighlightedAccountIndex(-1);
-      return;
-    }
-
-    if (selectedAccountSuggestion && query === formatAccountSuggestionLabel(selectedAccountSuggestion)) {
-      setAccountSuggestions([]);
-      setAccountSearchState("idle");
-      setAccountSearchError(null);
-      setIsAccountDropdownOpen(false);
       setHighlightedAccountIndex(-1);
       return;
     }
@@ -226,7 +220,7 @@ export function HomePageClient() {
         const accounts = Array.isArray(payload.accounts) ? payload.accounts : [];
         setAccountSuggestions(accounts);
         setAccountSearchState("success");
-        setHighlightedAccountIndex(accounts.length > 0 ? 0 : -1);
+        setHighlightedAccountIndex(accounts.length > 0 ? recentAccounts.length : -1);
       } catch (error) {
         if (controller.signal.aborted || requestId !== accountSearchRequestId.current) {
           return;
@@ -243,7 +237,15 @@ export function HomePageClient() {
       controller.abort();
       window.clearTimeout(timeoutId);
     };
-  }, [accountName, selectedAccountSuggestion]);
+  }, [normalizedAccountSearchQuery, recentAccounts.length]);
+
+  useEffect(() => {
+    if (!isAccountDropdownOpen) {
+      return;
+    }
+    const frameId = window.requestAnimationFrame(() => accountSearchInputRef.current?.focus());
+    return () => window.cancelAnimationFrame(frameId);
+  }, [isAccountDropdownOpen]);
 
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -253,14 +255,7 @@ export function HomePageClient() {
     router.push(overallHref);
   }
 
-  function handleAccountNameChange(value: string) {
-    setAccountName(value);
-    setAccountId(extractAdAccountIdFromAccountSearchInput(value));
-    setSelectedAccountSuggestion(null);
-  }
-
   function selectAccountSuggestion(suggestion: AccountSearchSuggestion) {
-    setSelectedAccountSuggestion(suggestion);
     setAccountName(formatAccountSuggestionLabel(suggestion));
     setAccountId(suggestion.adAccountId);
     if (suggestion.country && SUPPORTED_COUNTRIES.has(suggestion.country)) {
@@ -278,6 +273,7 @@ export function HomePageClient() {
       }
       return next;
     });
+    setAccountSearchQuery("");
     setIsAccountDropdownOpen(false);
     setHighlightedAccountIndex(-1);
   }
@@ -310,6 +306,19 @@ export function HomePageClient() {
       if (suggestion) {
         event.preventDefault();
         selectAccountSuggestion(suggestion);
+        return;
+      }
+    }
+
+    if (event.key === "Enter") {
+      const directAccountId = extractAdAccountIdFromAccountSearchInput(accountSearchQuery);
+      if (directAccountId) {
+        event.preventDefault();
+        setAccountName(directAccountId);
+        setAccountId(directAccountId);
+        setAccountSearchQuery("");
+        setIsAccountDropdownOpen(false);
+        setHighlightedAccountIndex(-1);
       }
     }
   }
@@ -371,7 +380,7 @@ export function HomePageClient() {
         </h1>
 
         <form onSubmit={handleSubmit} className="mt-8 space-y-4">
-          <label
+          <div
             className="relative block space-y-2"
             onBlur={(event) => {
               if (!event.currentTarget.contains(event.relatedTarget)) {
@@ -381,24 +390,32 @@ export function HomePageClient() {
             }}
           >
             <span className="text-sm text-white/80">Account Name / Ad Account ID *</span>
-            <Input
-              value={accountName}
-              onChange={(event) => handleAccountNameChange(event.target.value)}
-              onFocus={() => {
-                if (accountName.trim().length >= 2 || recentAccounts.length > 0) {
-                  setIsAccountDropdownOpen(true);
-                  setHighlightedAccountIndex(0);
-                }
+            <button
+              type="button"
+              onClick={() => {
+                setIsAccountDropdownOpen((current) => !current);
+                setHighlightedAccountIndex(recentAccounts.length > 0 ? 0 : -1);
               }}
-              onKeyDown={handleAccountNameKeyDown}
-              placeholder="Search account name or ID from Notion"
-              autoComplete="off"
               aria-label="Account Name / Ad Account ID"
               aria-describedby={!hasAccountSelection ? "account-selection-warning" : undefined}
-              aria-autocomplete="list"
               aria-expanded={isAccountDropdownOpen}
-              className="h-11 border-white/30 bg-white/10 text-white placeholder:text-white/60"
-            />
+              aria-haspopup="listbox"
+              className="flex h-11 w-full items-center gap-3 rounded-md border border-white/30 bg-white/10 px-3 text-left text-sm text-white outline-none transition hover:bg-white/15 focus-visible:border-white/60 focus-visible:ring-2 focus-visible:ring-white/30"
+            >
+              <SearchIcon className="size-4 shrink-0 text-white/60" />
+              <span
+                className={`min-w-0 flex-1 truncate ${
+                  hasAccountSelection ? "text-white" : "text-white/60"
+                }`}
+              >
+                {accountName || "Select an account"}
+              </span>
+              <ChevronDownIcon
+                className={`size-4 shrink-0 text-white/60 transition-transform ${
+                  isAccountDropdownOpen ? "rotate-180" : ""
+                }`}
+              />
+            </button>
 
             {!hasAccountSelection ? (
               <span
@@ -411,43 +428,95 @@ export function HomePageClient() {
               </span>
             ) : null}
 
-            {isAccountDropdownOpen &&
-            (accountName.trim().length >= 2 || recentAccounts.length > 0) ? (
-              <div className="absolute left-0 right-0 top-full z-30 mt-2 overflow-hidden rounded-xl border border-white/20 bg-black/85 shadow-2xl backdrop-blur-md">
-                {isShowingRecentAccounts && recentAccounts.length > 0 ? (
-                  <div className="border-b border-white/10 px-3 py-2 text-xs font-medium uppercase tracking-wide text-white/60">
-                    Recent accounts
-                  </div>
-                ) : null}
+            {isAccountDropdownOpen ? (
+              <div className="absolute left-0 right-0 top-full z-30 mt-2 overflow-hidden rounded-xl border border-white/20 bg-black/90 p-2 shadow-2xl backdrop-blur-md">
+                <div className="relative">
+                  <SearchIcon className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-white/50" />
+                  <Input
+                    ref={accountSearchInputRef}
+                    value={accountSearchQuery}
+                    onChange={(event) => {
+                      setAccountSearchQuery(event.target.value);
+                      setHighlightedAccountIndex(-1);
+                    }}
+                    onKeyDown={handleAccountNameKeyDown}
+                    placeholder="Search account name or ID"
+                    autoComplete="off"
+                    aria-label="Search accounts"
+                    aria-autocomplete="list"
+                    className="h-11 border-white/25 bg-white/10 pl-9 text-white placeholder:text-white/50"
+                  />
+                </div>
 
-                {!isShowingRecentAccounts && accountSearchState === "loading" ? (
-                  <div className="flex items-center gap-2 px-3 py-3 text-sm text-white/75">
+                <div className="mt-2 max-h-80 overflow-auto">
+                  <div className="px-2 py-1.5 text-xs font-semibold uppercase tracking-wide text-white/55">
+                    Recent
+                  </div>
+                  {recentAccounts.length > 0 ? (
+                    <ul className="space-y-1" role="listbox">
+                      {recentAccounts.map((suggestion, index) => (
+                        <li key={suggestion.notionPageId}>
+                          <button
+                            type="button"
+                            role="option"
+                            aria-selected={index === highlightedAccountIndex}
+                            onMouseDown={(event) => event.preventDefault()}
+                            onMouseEnter={() => setHighlightedAccountIndex(index)}
+                            onClick={() => selectAccountSuggestion(suggestion)}
+                            className={`grid w-full gap-1 rounded-md px-3 py-2 text-left text-sm transition ${
+                              index === highlightedAccountIndex
+                                ? "bg-red-600 text-white"
+                                : "text-white hover:bg-white/10"
+                            }`}
+                          >
+                            <span className="font-semibold">
+                              {formatAccountSuggestionLabel(suggestion)}
+                            </span>
+                            <span className="text-xs text-white/65">
+                              {suggestion.country ?? "No country set"}
+                            </span>
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <p className="px-2 py-2 text-sm text-white/55">No recent accounts yet.</p>
+                  )}
+
+                  <div className="mt-1 border-t border-white/10 px-2 pb-1 pt-3 text-xs font-semibold uppercase tracking-wide text-white/55">
+                    Results
+                  </div>
+                  {normalizedAccountSearchQuery.length < 2 ? (
+                    <p className="px-2 py-2 text-sm text-white/55">
+                      Type at least 2 characters to search Notion.
+                    </p>
+                  ) : accountSearchState === "loading" ? (
+                    <div className="flex items-center gap-2 px-3 py-3 text-sm text-white/75">
                     <Loader2Icon className="size-4 animate-spin" />
                     Searching Notion accounts...
                   </div>
-                ) : null}
-
-                {!isShowingRecentAccounts && accountSearchState === "error" ? (
-                  <div className="px-3 py-3 text-sm text-red-100">
+                  ) : accountSearchState === "error" ? (
+                    <div className="px-3 py-3 text-sm text-red-200">
                     {accountSearchError ?? "Unable to search Notion accounts."}
                   </div>
-                ) : null}
-
-                {!isShowingRecentAccounts &&
-                accountSearchState === "success" &&
-                accountSuggestions.length === 0 ? (
-                  <div className="px-3 py-3 text-sm text-white/70">No matching account found.</div>
-                ) : null}
-
-                {visibleAccountSuggestions.length > 0 ? (
-                  <ul className="max-h-72 overflow-auto py-1">
-                    {visibleAccountSuggestions.map((suggestion, index) => (
+                  ) : accountSearchState === "success" && accountSuggestions.length === 0 ? (
+                    <div className="px-3 py-3 text-sm text-white/60">
+                      No matching account found.
+                    </div>
+                  ) : resultAccountSuggestions.length > 0 ? (
+                    <ul className="space-y-1" role="listbox">
+                      {resultAccountSuggestions.map((suggestion, resultIndex) => {
+                        const index = recentAccounts.length + resultIndex;
+                        return (
                       <li key={suggestion.notionPageId}>
                         <button
                           type="button"
+                          role="option"
+                          aria-selected={index === highlightedAccountIndex}
                           onMouseDown={(event) => event.preventDefault()}
+                          onMouseEnter={() => setHighlightedAccountIndex(index)}
                           onClick={() => selectAccountSuggestion(suggestion)}
-                          className={`grid w-full gap-1 px-3 py-2 text-left text-sm transition ${
+                          className={`grid w-full gap-1 rounded-md px-3 py-2 text-left text-sm transition ${
                             index === highlightedAccountIndex
                               ? "bg-red-600 text-white"
                               : "text-white hover:bg-white/10"
@@ -459,12 +528,14 @@ export function HomePageClient() {
                           </span>
                         </button>
                       </li>
-                    ))}
+                        );
+                      })}
                   </ul>
-                ) : null}
+                  ) : null}
+                </div>
               </div>
             ) : null}
-          </label>
+          </div>
 
           <label className="block space-y-2">
             <span className="text-sm text-white/80">Country</span>
