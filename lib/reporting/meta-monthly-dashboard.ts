@@ -15,6 +15,30 @@ export function buildMetaMonthlyOutcomeMetrics(
   const previous = aggregateSalesAndLeadOutcomes(previousRows);
 
   if (!current.hasEligibleCampaign) {
+    const currentAwareness = getSingleAwarenessOutcome(currentRows);
+    const previousAwareness = getSingleAwarenessOutcome(previousRows);
+    if (currentAwareness) {
+      const deltaEligible = Boolean(previousAwareness);
+      return [
+        outcomeMetric(
+          "results",
+          "Results",
+          currentAwareness.results,
+          previousAwareness?.results ?? 0,
+          "number",
+          deltaEligible
+        ),
+        outcomeMetric(
+          "costPerResult",
+          "Cost/Results",
+          currentAwareness.costPerResult,
+          previousAwareness?.costPerResult ?? 0,
+          "currency",
+          deltaEligible
+        ),
+      ];
+    }
+
     return [
       mixedOutcomeMetric("results", "Results", "number"),
       mixedOutcomeMetric("costPerResult", "Cost/Results", "currency"),
@@ -40,6 +64,25 @@ export function buildMetaMonthlyOutcomeMetrics(
       deltaEligible
     ),
   ];
+}
+
+function getSingleAwarenessOutcome(
+  rows: CampaignRow[]
+): Pick<CampaignRow, "results" | "costPerResult"> | null {
+  const reportableRows = rows.filter(
+    (row) => row.platform === "meta" && row.spend > MIN_REPORTING_CAMPAIGN_SPEND
+  );
+  if (
+    reportableRows.length !== 1 ||
+    !reportableRows[0].campaignType.toLowerCase().includes("awareness")
+  ) {
+    return null;
+  }
+
+  return {
+    results: reportableRows[0].results,
+    costPerResult: reportableRows[0].costPerResult,
+  };
 }
 
 function isMetaSalesOrLeadCampaign(row: CampaignRow): boolean {

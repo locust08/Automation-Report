@@ -47,27 +47,27 @@ function MetricSectionContent({
   );
   const longestLabelLength = metrics.reduce((longest, metric) => Math.max(longest, metric.label.length), 0);
   const longestValueLength = formattedValues.reduce((longest, value) => Math.max(longest, value.length), 0);
-  const baseLabelSizeRem = metricCount >= 7 ? 1.2 : 1.3;
-  const shrinkLabelByLengthRem = Math.max(0, longestLabelLength - 10) * 0.035;
-  const fittedLabelSizeRem = Math.max(0.92, baseLabelSizeRem - shrinkLabelByLengthRem);
-  const baseValueSizeRem = metricCount >= 7 ? 2.2 : 2.55;
-  const shrinkValueByLengthRem = Math.max(0, longestValueLength - 4) * 0.14;
-  const fittedValueSizeRem = Math.max(1.35, baseValueSizeRem - shrinkValueByLengthRem);
+  const baseLabelSizeRem = metricCount >= 7 ? 1 : 1.1;
+  const shrinkLabelByLengthRem = Math.max(0, longestLabelLength - 10) * 0.03;
+  const fittedLabelSizeRem = Math.max(0.82, baseLabelSizeRem - shrinkLabelByLengthRem);
+  const baseValueSizeRem = metricCount >= 7 ? 1.55 : 1.85;
+  const shrinkValueByLengthRem = Math.max(0, longestValueLength - 4) * 0.1;
+  const fittedValueSizeRem = Math.max(1.05, baseValueSizeRem - shrinkValueByLengthRem);
   const activeMetricIndex = activeMetricState.signature === metricSignature ? activeMetricState.index : 0;
   const safeActiveIndex = Math.min(activeMetricIndex, Math.max(0, metricCount - 1));
   const activeMetric = metrics[safeActiveIndex];
   const selectedMetric = metrics.find((metric) => metric.key === selectedMetricKey) ?? null;
 
   return (
-    <article className="rounded-[2rem] bg-[#e7e7e7] p-4 shadow-sm sm:p-6">
-      <div className="mb-4 flex items-center gap-4">
+    <article className="rounded-[1.5rem] bg-[#e7e7e7] p-3 shadow-sm sm:p-4">
+      <div className="mb-3 flex items-center gap-3">
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img
           src={section.logoPath}
           alt={`${section.title} logo`}
-          width={140}
-          height={44}
-          className="h-11 w-auto object-contain"
+          width={112}
+          height={32}
+          className="h-8 w-auto object-contain"
           loading="eager"
           decoding="sync"
         />
@@ -103,7 +103,7 @@ function MetricSectionContent({
         />
       </div>
 
-      <div className="hidden items-start gap-3 md:grid md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-7">
+      <div className="hidden items-start gap-2 md:grid md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-7">
         {metrics.map((metric, index) => (
           <MetricCard
             key={metric.key}
@@ -111,10 +111,10 @@ function MetricSectionContent({
             formattedValue={formattedValues[index] ?? "No Data"}
             onOpen={() => setSelectedMetricKey(metric.key)}
             labelClassName="leading-tight"
-            labelStyle={{ fontSize: `clamp(0.92rem, 1.45vw, ${fittedLabelSizeRem}rem)` }}
-            valueStyle={{ fontSize: `clamp(1.35rem, 2.2vw, ${fittedValueSizeRem}rem)` }}
-            deltaClassName="mt-2 text-sm sm:text-base"
-            cardClassName="min-h-[132px] px-2.5 py-3"
+            labelStyle={{ fontSize: `clamp(0.82rem, 1.2vw, ${fittedLabelSizeRem}rem)` }}
+            valueStyle={{ fontSize: `clamp(1.05rem, 1.55vw, ${fittedValueSizeRem}rem)` }}
+            deltaClassName="mt-1.5 text-xs sm:text-sm"
+            cardClassName="min-h-[104px] px-2 py-2.5"
           />
         ))}
       </div>
@@ -153,7 +153,7 @@ function MetricCard({
   cardClassName: string;
 }) {
   return (
-    <div className="flex h-full min-w-0 flex-col gap-2">
+    <div className="flex h-full min-w-0 flex-col gap-1.5">
       <p className={`text-center text-red-700 ${labelClassName}`} style={labelStyle}>
         {metric.label}
       </p>
@@ -162,11 +162,11 @@ function MetricCard({
         onClick={onOpen}
         aria-haspopup="dialog"
         aria-label={`Show calculation details for ${metric.label}`}
-        className={`group relative flex w-full min-w-0 flex-1 flex-col justify-center overflow-hidden rounded-xl border border-[#d0d0d0] bg-[#ded9e2] px-2.5 text-left shadow-sm transition-all duration-200 hover:-translate-y-1 hover:border-[#c2aeb8] hover:shadow-lg focus-visible:-translate-y-1 focus-visible:ring-2 focus-visible:ring-red-700 focus-visible:ring-offset-2 focus-visible:outline-none ${cardClassName}`}
+        className={`group relative flex w-full min-w-0 flex-1 flex-col justify-center overflow-hidden rounded-lg border border-[#d0d0d0] bg-[#ded9e2] px-2 text-left shadow-sm transition-all duration-200 hover:-translate-y-0.5 hover:border-[#c2aeb8] hover:shadow-md focus-visible:-translate-y-0.5 focus-visible:ring-2 focus-visible:ring-red-700 focus-visible:ring-offset-2 focus-visible:outline-none ${cardClassName}`}
       >
         <CircleHelpIcon
           aria-hidden="true"
-          className="absolute right-2.5 top-2.5 size-4 text-[#9f0019]/70 transition-transform duration-200 group-hover:scale-110 group-focus-visible:scale-110"
+          className="absolute right-2 top-2 size-3.5 text-[#9f0019]/70 transition-transform duration-200 group-hover:scale-110 group-focus-visible:scale-110"
         />
         <span
           className={`block w-full text-center font-medium leading-none tracking-tight tabular-nums text-[#37363e] ${valueClassName}`}
@@ -175,7 +175,7 @@ function MetricCard({
           {formattedValue}
         </span>
         <MetricDelta delta={metric.delta} className={deltaClassName} />
-        <span className="mt-2 text-center text-[10px] font-semibold uppercase tracking-wide text-[#6f5f67] opacity-0 transition-opacity duration-200 group-hover:opacity-100 group-focus-visible:opacity-100">
+        <span className="mt-1.5 text-center text-[9px] font-semibold uppercase tracking-wide text-[#6f5f67] opacity-0 transition-opacity duration-200 group-hover:opacity-100 group-focus-visible:opacity-100">
           View calculation
         </span>
       </button>

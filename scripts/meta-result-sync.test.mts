@@ -136,13 +136,21 @@ try {
     Math.abs((salesAndLeadMetrics[1].delta ?? 0) - ((800 / 30 / 30 - 1) * 100)) < 0.0000001
   );
 
-  const mixedMetrics = buildMetaMonthlyOutcomeMetrics([monthlyRows[1]], [monthlyRows[1]]);
+  const awarenessMetrics = buildMetaMonthlyOutcomeMetrics([monthlyRows[1]], [monthlyRows[1]]);
+  assert.equal(awarenessMetrics[0].value, 80000);
+  assert.equal(awarenessMetrics[0].previousValue, 80000);
+  assert.equal(awarenessMetrics[0].delta, 0);
+  assert.equal(awarenessMetrics[1].value, 12.5);
+  assert.equal(awarenessMetrics[1].previousValue, 12.5);
+  assert.equal(awarenessMetrics[1].delta, 0);
+
+  const mixedMetrics = buildMetaMonthlyOutcomeMetrics(
+    [monthlyRows[1], salesAndLeadRows[3]],
+    []
+  );
   assert.equal(mixedMetrics[0].displayValue, "Mixed");
   assert.equal(mixedMetrics[0].value, null);
-  assert.equal(mixedMetrics[0].previousValue, null);
-  assert.equal(mixedMetrics[0].delta, null);
   assert.equal(mixedMetrics[1].displayValue, "Mixed");
-  assert.equal(mixedMetrics[1].delta, null);
 
   const noPreviousOutcomeMetrics = buildMetaMonthlyOutcomeMetrics(
     [salesAndLeadRows[0]],
