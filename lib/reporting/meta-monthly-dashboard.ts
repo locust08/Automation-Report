@@ -4,17 +4,7 @@ import { CampaignRow, SummaryMetric } from "@/lib/reporting/types";
 const MIXED_OUTCOME_VALUE = "Mixed";
 
 export function normalizeMetaMonthlyCampaignRows(rows: CampaignRow[]): CampaignRow[] {
-  return rows.map((row) => {
-    if (!isMetaAwarenessCampaign(row)) {
-      return row;
-    }
-
-    return {
-      ...row,
-      results: row.impressions,
-      costPerResult: row.cpm,
-    };
-  });
+  return rows;
 }
 
 export function buildMetaMonthlyOutcomeMetrics(
@@ -50,10 +40,6 @@ export function buildMetaMonthlyOutcomeMetrics(
       deltaEligible
     ),
   ];
-}
-
-function isMetaAwarenessCampaign(row: CampaignRow): boolean {
-  return row.platform === "meta" && row.campaignType.toLowerCase().includes("awareness");
 }
 
 function isMetaSalesOrLeadCampaign(row: CampaignRow): boolean {

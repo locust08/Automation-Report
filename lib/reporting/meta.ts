@@ -2599,6 +2599,15 @@ function pickAwarenessResultMetric(input: {
     };
   }
 
+  if (optimizationGoal.includes("REACH") && reach > 0) {
+    return {
+      actionType: "reach",
+      label: "Reach",
+      value: reach,
+      costPerResult: toNumber(input.cpp) > 0 ? toNumber(input.cpp) : null,
+    };
+  }
+
   if (estimatedAdRecallers > 0) {
     return {
       actionType: "estimated_ad_recallers",

@@ -63,6 +63,8 @@ try {
             ctr: "0.1",
             cpm: "10",
             cpp: "12.5",
+            estimated_ad_recallers: "5000",
+            cost_per_estimated_ad_recallers: "0.2",
             spend: "1000",
           },
         ],
@@ -83,12 +85,12 @@ try {
   assert.equal(rows.length, 2);
   assert.equal(rows[0].results, 902);
   assert.equal(rows[0].costPerResult, 4.748902);
-  assert.equal(rows[1].results, 0);
-  assert.equal(rows[1].costPerResult, 0);
+  assert.equal(rows[1].results, 80000);
+  assert.equal(rows[1].costPerResult, 12.5);
 
   const monthlyRows = normalizeMetaMonthlyCampaignRows(rows);
-  assert.equal(monthlyRows[1].results, 100000);
-  assert.equal(monthlyRows[1].costPerResult, 10);
+  assert.equal(monthlyRows[1].results, 80000);
+  assert.equal(monthlyRows[1].costPerResult, 12.5);
 
   const salesAndLeadRows = [
     {
