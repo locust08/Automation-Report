@@ -1,10 +1,11 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { Fragment, useMemo, useState } from "react";
 import Link from "next/link";
 import { ChevronDownIcon, ChevronLeftIcon, ChevronRightIcon, ExternalLinkIcon } from "lucide-react";
 
 import { CampaignNameFilterControl } from "@/components/reporting/campaign-name-filter-control";
+import { CampaignHierarchyTree } from "@/components/reporting/campaign-hierarchy-tree";
 import { Button } from "@/components/ui/button";
 import type { CampaignNameFilter } from "@/lib/reporting/campaign-name-filter";
 import { filterRowsByCampaignName, getCampaignNameOptions } from "@/lib/reporting/campaign-name-filter";
@@ -53,6 +54,52 @@ export function OverallCampaignGroupsTable({
       .filter((group): group is CampaignGroup => Boolean(group));
   }, [campaignNameFilter, groups]);
   const hasCampaignNameFilter = Boolean(campaignNameFilter?.values.length);
+  const hierarchySignature = useMemo(
+    () =>
+      `${queryString}::${visibleGroups
+        .flatMap((group) => group.rows.map((row) => campaignHierarchyKey(row)))
+        .join("|")}`,
+    [queryString, visibleGroups]
+  );
+  const [hierarchyState, setHierarchyState] = useState<{
+    signature: string;
+    campaignKey: string | null;
+    adGroupId: string | null;
+  }>({
+    signature: "",
+    campaignKey: null,
+    adGroupId: null,
+  });
+  const expandedCampaignKey =
+    hierarchyState.signature === hierarchySignature
+      ? hierarchyState.campaignKey
+      : null;
+  const expandedAdGroupId =
+    hierarchyState.signature === hierarchySignature
+      ? hierarchyState.adGroupId
+      : null;
+
+  const toggleCampaign = (row: CampaignRow) => {
+    const key = campaignHierarchyKey(row);
+    setHierarchyState((current) => ({
+      signature: hierarchySignature,
+      campaignKey:
+        current.signature === hierarchySignature && current.campaignKey === key
+          ? null
+          : key,
+      adGroupId: null,
+    }));
+  };
+  const setExpandedAdGroupId = (adGroupId: string | null) => {
+    setHierarchyState((current) => ({
+      signature: hierarchySignature,
+      campaignKey:
+        current.signature === hierarchySignature
+          ? current.campaignKey
+          : null,
+      adGroupId,
+    }));
+  };
 
   if (visibleGroups.length === 0 && !hasCampaignNameFilter) {
     return null;
@@ -91,6 +138,11 @@ export function OverallCampaignGroupsTable({
                   row={row}
                   actionHref={`/campaign/${encodeURIComponent(group.campaignType)}?platform=${group.platform}${queryString}`}
                   previewHref={buildPreviewHref(row, queryString)}
+                  hierarchyOpen={expandedCampaignKey === campaignHierarchyKey(row)}
+                  expandedAdGroupId={expandedAdGroupId}
+                  onHierarchyToggle={() => toggleCampaign(row)}
+                  onExpandedAdGroupChange={setExpandedAdGroupId}
+                  hierarchyQueryString={queryString}
                 />
               ))}
               <CampaignMobileCard row={group.totals} forceTitle="Grand Total" />
@@ -127,41 +179,81 @@ export function OverallCampaignGroupsTable({
                   </tr>
                 </thead>
                 <tbody>
-                  {group.rows.map((row) => (
-                    <tr key={row.id} className="border-b border-border/40 hover:bg-muted/20">
-                      <td className="px-1.5 py-2 align-top whitespace-normal break-words leading-5">
-                        {buildPreviewHref(row, queryString) ? (
-                          <Link
-                            className="font-medium text-[#9f0019] hover:underline"
-                            href={buildPreviewHref(row, queryString)!}
+                  {group.rows.map((row) => {
+                    const hierarchyOpen =
+                      expandedCampaignKey === campaignHierarchyKey(row);
+                    const hierarchyAvailable = supportsCampaignHierarchy(row);
+                    return (
+                      <Fragment key={row.id}>
+                        <tr className="border-b border-border/40 hover:bg-muted/20">
+                          <td className="px-1.5 py-2 align-top whitespace-normal break-words leading-5">
+                            <div className="flex min-w-0 items-center gap-1">
+                              {hierarchyAvailable ? (
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  size="icon-xs"
+                                  aria-label={`${hierarchyOpen ? "Collapse" : "Expand"} ${row.campaignName} hierarchy`}
+                                  aria-expanded={hierarchyOpen}
+                                  className="shrink-0 text-[#6d7482]"
+                                  onClick={() => toggleCampaign(row)}
+                                  data-report-export-exclude="true"
+                                >
+                                  <ChevronRightIcon
+                                    className={`size-3.5 transition-transform ${
+                                      hierarchyOpen ? "rotate-90" : ""
+                                    }`}
+                                  />
+                                </Button>
+                              ) : null}
+                              {buildPreviewHref(row, queryString) ? (
+                                <Link
+                                  className="min-w-0 font-medium text-[#9f0019] hover:underline"
+                                  href={buildPreviewHref(row, queryString)!}
+                                >
+                                  {row.campaignName}
+                                </Link>
+                              ) : (
+                                row.campaignName
+                              )}
+                            </div>
+                          </td>
+                          <td className="px-1.5 py-2 text-center tabular-nums whitespace-nowrap">{formatCompactNumber(row.impressions)}</td>
+                          <td className="px-1.5 py-2 text-center tabular-nums whitespace-nowrap">{formatCompactNumber(row.clicks)}</td>
+                          <td className="px-1.5 py-2 text-center tabular-nums whitespace-nowrap">{formatCompactNumber(row.ctr)}</td>
+                          <td className="px-1.5 py-2 text-center tabular-nums whitespace-nowrap">{formatCompactNumber(row.cpm)}</td>
+                          <td className="px-1.5 py-2 text-center tabular-nums whitespace-nowrap">{formatCompactNumber(row.results)}</td>
+                          <td className="px-1.5 py-2 text-center tabular-nums whitespace-nowrap">{formatCompactNumber(row.costPerResult)}</td>
+                          <td className="px-1.5 py-2 text-center tabular-nums whitespace-nowrap">{formatCompactNumber(row.spend)}</td>
+                          <td
+                            className="px-1.5 py-2 text-center whitespace-nowrap"
+                            data-report-export-exclude="true"
                           >
-                            {row.campaignName}
-                          </Link>
-                        ) : (
-                          row.campaignName
-                        )}
-                      </td>
-                      <td className="px-1.5 py-2 text-center tabular-nums whitespace-nowrap">{formatCompactNumber(row.impressions)}</td>
-                      <td className="px-1.5 py-2 text-center tabular-nums whitespace-nowrap">{formatCompactNumber(row.clicks)}</td>
-                      <td className="px-1.5 py-2 text-center tabular-nums whitespace-nowrap">{formatCompactNumber(row.ctr)}</td>
-                      <td className="px-1.5 py-2 text-center tabular-nums whitespace-nowrap">{formatCompactNumber(row.cpm)}</td>
-                      <td className="px-1.5 py-2 text-center tabular-nums whitespace-nowrap">{formatCompactNumber(row.results)}</td>
-                      <td className="px-1.5 py-2 text-center tabular-nums whitespace-nowrap">{formatCompactNumber(row.costPerResult)}</td>
-                      <td className="px-1.5 py-2 text-center tabular-nums whitespace-nowrap">{formatCompactNumber(row.spend)}</td>
-                      <td
-                        className="px-1.5 py-2 text-center whitespace-nowrap"
-                        data-report-export-exclude="true"
-                      >
-                        <Link
-                          className="inline-flex items-center gap-1 text-red-700 hover:underline"
-                          href={`/campaign/${encodeURIComponent(group.campaignType)}?platform=${group.platform}${queryString}`}
-                        >
-                          View
-                          <ExternalLinkIcon className="size-3.5" />
-                        </Link>
-                      </td>
-                    </tr>
-                  ))}
+                            <Link
+                              className="inline-flex items-center gap-1 text-red-700 hover:underline"
+                              href={`/campaign/${encodeURIComponent(group.campaignType)}?platform=${group.platform}${queryString}`}
+                            >
+                              View
+                              <ExternalLinkIcon className="size-3.5" />
+                            </Link>
+                          </td>
+                        </tr>
+                        {hierarchyAvailable && hierarchyOpen ? (
+                          <tr className="border-b border-border/40 bg-[#fbfcfe]">
+                            <td colSpan={9} className="px-4 pb-3 pt-1">
+                              <CampaignHierarchyTree
+                                campaign={row}
+                                queryString={queryString}
+                                open={hierarchyOpen}
+                                expandedAdGroupId={expandedAdGroupId}
+                                onExpandedAdGroupChange={setExpandedAdGroupId}
+                              />
+                            </td>
+                          </tr>
+                        ) : null}
+                      </Fragment>
+                    );
+                  })}
                   <tr className="bg-[#f9f9f9] font-semibold">
                     <td className="px-1.5 py-2 align-top whitespace-normal break-words leading-5">Grand Total</td>
                     <td className="px-1.5 py-2 text-center tabular-nums whitespace-nowrap">{formatCompactNumber(group.totals.impressions)}</td>
@@ -359,21 +451,57 @@ function CampaignMobileCard({
   forceTitle,
   actionHref,
   previewHref,
+  hierarchyOpen = false,
+  expandedAdGroupId = null,
+  onHierarchyToggle,
+  onExpandedAdGroupChange,
+  hierarchyQueryString = "",
 }: {
   row: CampaignRow;
   forceTitle?: string;
   actionHref?: string;
   previewHref?: string | null;
+  hierarchyOpen?: boolean;
+  expandedAdGroupId?: string | null;
+  onHierarchyToggle?: () => void;
+  onExpandedAdGroupChange?: (adGroupId: string | null) => void;
+  hierarchyQueryString?: string;
 }) {
+  const hierarchyAvailable =
+    !forceTitle &&
+    supportsCampaignHierarchy(row) &&
+    Boolean(onHierarchyToggle) &&
+    Boolean(onExpandedAdGroupChange);
+
   return (
     <article className="rounded-lg border border-border/50 bg-[#f9f9f9] p-3 shadow-sm">
-      {previewHref && !forceTitle ? (
-        <Link className="text-sm font-semibold text-[#9f0019] hover:underline" href={previewHref}>
-          {row.campaignName}
-        </Link>
-      ) : (
-        <p className="text-sm font-semibold text-[#454545]">{forceTitle ?? row.campaignName}</p>
-      )}
+      <div className="flex min-w-0 items-start gap-1">
+        {hierarchyAvailable ? (
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-xs"
+            aria-label={`${hierarchyOpen ? "Collapse" : "Expand"} ${row.campaignName} hierarchy`}
+            aria-expanded={hierarchyOpen}
+            className="shrink-0 text-[#6d7482]"
+            onClick={onHierarchyToggle}
+            data-report-export-exclude="true"
+          >
+            <ChevronRightIcon
+              className={`size-3.5 transition-transform ${
+                hierarchyOpen ? "rotate-90" : ""
+              }`}
+            />
+          </Button>
+        ) : null}
+        {previewHref && !forceTitle ? (
+          <Link className="min-w-0 text-sm font-semibold text-[#9f0019] hover:underline" href={previewHref}>
+            {row.campaignName}
+          </Link>
+        ) : (
+          <p className="min-w-0 text-sm font-semibold text-[#454545]">{forceTitle ?? row.campaignName}</p>
+        )}
+      </div>
       <dl className="mt-2 grid grid-cols-2 gap-x-3 gap-y-2 text-xs">
         {CAMPAIGN_MOBILE_METRICS.map((metric) => (
           <div key={`${row.id}-${metric.key}`} className="space-y-0.5">
@@ -387,6 +515,17 @@ function CampaignMobileCard({
           View
           <ExternalLinkIcon className="size-3.5" />
         </Link>
+      ) : null}
+      {hierarchyAvailable && hierarchyOpen && onExpandedAdGroupChange ? (
+        <div className="mt-3 border-t border-border/50 pt-2">
+          <CampaignHierarchyTree
+            campaign={row}
+            queryString={hierarchyQueryString}
+            open={hierarchyOpen}
+            expandedAdGroupId={expandedAdGroupId}
+            onExpandedAdGroupChange={onExpandedAdGroupChange}
+          />
+        </div>
       ) : null}
     </article>
   );
@@ -419,4 +558,12 @@ function buildPreviewHref(row: CampaignRow, queryString: string): string | null 
   params.set("campaignName", row.campaignName);
   const query = params.toString();
   return query ? `/preview?${query}` : "/preview";
+}
+
+function supportsCampaignHierarchy(row: CampaignRow): boolean {
+  return row.platform === "meta" || row.platform === "google";
+}
+
+function campaignHierarchyKey(row: CampaignRow): string {
+  return `${row.platform}:${row.id}`;
 }
