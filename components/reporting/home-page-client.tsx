@@ -9,6 +9,7 @@ import {
   ClipboardListIcon,
   EyeIcon,
   LinkIcon,
+  ListChecksIcon,
   Loader2Icon,
   SearchIcon,
   SendIcon,
@@ -142,6 +143,7 @@ export function HomePageClient() {
   const previewHref = `/preview${reportQueryString ? `?${reportQueryString}` : ""}`;
   const advancedHref = `/advanced${reportQueryString ? `?${reportQueryString}` : ""}`;
   const mediaPlanHref = "/dashboard/media-plan";
+  const billingHref = "/billing";
   const hasAccountSelection = Boolean(accountId.trim());
   const normalizedAccountSearchQuery = accountSearchQuery.trim();
   const resultAccountSuggestions = accountSuggestions.filter(
@@ -637,6 +639,19 @@ export function HomePageClient() {
           </span>
           <span className="text-sm leading-relaxed text-white/78">
             Generate Google Search campaign plan and create paused campaign after approval.
+          </span>
+        </a>
+
+        <a
+          href={billingHref}
+          className="mt-3 grid gap-2 rounded-2xl border border-white/25 bg-white/10 p-4 text-white transition hover:bg-white/15"
+        >
+          <span className="flex items-center gap-2 text-base font-semibold">
+            <ListChecksIcon className="size-5" />
+            Daily Billing
+          </span>
+          <span className="text-sm leading-relaxed text-white/78">
+            Review billing alerts and checklist progress across all companies and ad platforms.
           </span>
         </a>
 

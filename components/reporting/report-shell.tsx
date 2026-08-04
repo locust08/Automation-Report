@@ -9,6 +9,7 @@ import {
   EyeIcon,
   HouseIcon,
   IdCardIcon,
+  ListChecksIcon,
   SparklesIcon,
   UploadCloudIcon,
 } from "lucide-react";
@@ -57,6 +58,7 @@ export function ReportShell({
     advanced: withQuery("/advanced", activeQuery),
     mediaPlan: withQuery("/dashboard/media-plan", activeQuery),
     metaImport: "/meta-import",
+    billing: "/billing",
   };
 
   return (
@@ -129,6 +131,13 @@ export function ReportShell({
                       active={pathname === "/dashboard/media-plan"}
                     >
                       <ClipboardListIcon className="size-5" />
+                    </ReportNavLink>
+                    <ReportNavLink
+                      href={hrefs.billing}
+                      label="Billing Operations"
+                      active={pathname === "/billing"}
+                    >
+                      <ListChecksIcon className="size-5" />
                     </ReportNavLink>
                     <ReportNavLink
                       href={hrefs.metaImport}

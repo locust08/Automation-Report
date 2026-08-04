@@ -26,7 +26,9 @@
     "cf:advanced-cache:migrate": "cd cloudflare/advanced-report-cache && doppler run -- npx wrangler d1 migrations apply automation-advanced-report-cache --remote",
     "cf:advanced-cache:deploy": "cd cloudflare/advanced-report-cache && doppler run -- npx wrangler deploy",
     "cf:meta-import:migrate": "cd cloudflare/meta-csv-import && doppler run -- npx wrangler d1 migrations apply automation-meta-csv-import --remote",
-    "cf:meta-import:deploy": "cd cloudflare/meta-csv-import && doppler run -- npx wrangler deploy"
+    "cf:meta-import:deploy": "cd cloudflare/meta-csv-import && doppler run -- npx wrangler deploy",
+    "cf:billing:dev": "cd cloudflare/billing-operations-api && doppler run -- npx wrangler dev --port 8788",
+    "cf:billing:deploy": "cd cloudflare/billing-operations-api && doppler run -- npx wrangler deploy"
   },
   "dependencies": {
     "@base-ui/react": "^1.2.0",
