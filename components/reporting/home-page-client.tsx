@@ -144,6 +144,7 @@ export function HomePageClient() {
   const advancedHref = `/advanced${reportQueryString ? `?${reportQueryString}` : ""}`;
   const mediaPlanHref = "/dashboard/media-plan";
   const billingHref = "/billing";
+  const searchTermOptimizationHref = `/search-term-optimization${reportQueryString ? `?${reportQueryString}` : ""}`;
   const hasAccountSelection = Boolean(accountId.trim());
   const normalizedAccountSearchQuery = accountSearchQuery.trim();
   const resultAccountSuggestions = accountSuggestions.filter(
@@ -654,6 +655,21 @@ export function HomePageClient() {
             Review billing alerts and checklist progress across all companies and ad platforms.
           </span>
         </a>
+
+        {hasAccountSelection ? (
+          <a
+            href={searchTermOptimizationHref}
+            className="mt-3 grid gap-2 rounded-2xl border border-white/25 bg-white/10 p-4 text-white transition hover:bg-white/15"
+          >
+            <span className="flex items-center gap-2 text-base font-semibold">
+              <SearchIcon className="size-5" />
+              Search Term Optimization
+            </span>
+            <span className="text-sm leading-relaxed text-white/78">
+              Review live Google Ads search terms and prepare safe optimization proposals.
+            </span>
+          </a>
+        ) : null}
 
         {hasAccountSelection ? (
           <a

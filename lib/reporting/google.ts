@@ -32,6 +32,7 @@ import {
   PreviewSitelinkAsset,
   PreviewTextAsset,
   TopKeywordRow,
+  SearchTermReviewRow,
 } from "@/lib/reporting/types";
 import {
   DEFAULT_GOOGLE_ADS_FALLBACK_LOGIN_CUSTOMER_ID,
@@ -341,9 +342,21 @@ interface GoogleAdsResult {
     geoTargetProvince?: string;
     geoTargetRegion?: string;
     geoTargetState?: string;
+    keyword?: {
+      info?: {
+        text?: string;
+        matchType?: string;
+      };
+    };
+  };
+  searchTermView?: {
+    searchTerm?: string;
+    status?: string;
   };
   adGroupCriterion?: {
     criterionId?: string;
+    negative?: boolean;
+    status?: string;
     ageRange?: {
       type?: string;
     };
@@ -376,6 +389,162 @@ interface GoogleAdsResult {
     auctionInsightSearchAbsoluteTopImpressionPercentage?: number | string;
     auctionInsightSearchOutrankingShare?: number | string;
   };
+}
+
+export async function fetchGoogleSearchTermReviewRows(
+  input: GoogleFetchInput
+): Promise<SearchTermReviewRow[]> {
+  const context = await resolveVerifiedGoogleAdsContext({
+    customerId: input.customerId,
+    apiVersion: input.apiVersion,
+    developerToken: input.developerToken,
+    accessToken: input.accessToken,
+    refreshToken: input.refreshToken,
+    clientId: input.clientId,
+    clientSecret: input.clientSecret,
+    loginCustomerId: input.loginCustomerId,
+    accessPath: input.accessPath ?? null,
+    fallbackLoginCustomerId: input.fallbackLoginCustomerId ?? null,
+  });
+
+  const [results, adResults, criterionResults] = await Promise.all([
+    fetchGoogleAdsResults({
+    customerId: context.customerId,
+    apiVersion: input.apiVersion,
+    developerToken: input.developerToken,
+    accessToken: input.accessToken,
+    refreshToken: input.refreshToken,
+    clientId: input.clientId,
+    clientSecret: input.clientSecret,
+    loginCustomerId: context.loginCustomerId,
+    query: `
+      SELECT
+        campaign.id,
+        campaign.name,
+        ad_group.id,
+        ad_group.name,
+        search_term_view.search_term,
+        search_term_view.status,
+        segments.keyword.info.text,
+        segments.keyword.info.match_type,
+        metrics.impressions,
+        metrics.clicks,
+        metrics.cost_micros,
+        metrics.conversions
+      FROM search_term_view
+      WHERE campaign.status = 'ENABLED'
+        AND ad_group.status = 'ENABLED'
+        AND campaign.advertising_channel_type = 'SEARCH'
+        AND segments.date BETWEEN '${input.startDate}' AND '${input.endDate}'
+      ORDER BY metrics.cost_micros DESC
+    `,
+    }),
+    fetchGoogleAdsResults({
+      customerId: context.customerId,
+      apiVersion: input.apiVersion,
+      developerToken: input.developerToken,
+      accessToken: input.accessToken,
+      refreshToken: input.refreshToken,
+      clientId: input.clientId,
+      clientSecret: input.clientSecret,
+      loginCustomerId: context.loginCustomerId,
+      query: `
+        SELECT ad_group.id, ad_group_ad.ad.final_urls
+        FROM ad_group_ad
+        WHERE campaign.status = 'ENABLED'
+          AND ad_group.status = 'ENABLED'
+          AND ad_group_ad.status = 'ENABLED'
+          AND campaign.advertising_channel_type = 'SEARCH'
+      `,
+    }),
+    fetchGoogleAdsResults({
+      customerId: context.customerId,
+      apiVersion: input.apiVersion,
+      developerToken: input.developerToken,
+      accessToken: input.accessToken,
+      refreshToken: input.refreshToken,
+      clientId: input.clientId,
+      clientSecret: input.clientSecret,
+      loginCustomerId: context.loginCustomerId,
+      query: `
+        SELECT
+          ad_group.id,
+          ad_group_criterion.keyword.text,
+          ad_group_criterion.negative,
+          ad_group_criterion.status
+        FROM keyword_view
+        WHERE campaign.status = 'ENABLED'
+          AND ad_group.status = 'ENABLED'
+          AND ad_group_criterion.status != 'REMOVED'
+      `,
+    }),
+  ]);
+
+  const destinationByAdGroup = new Map<string, string>();
+  adResults.forEach((result) => {
+    const adGroupId = String(result.adGroup?.id ?? "");
+    const destination = result.adGroupAd?.ad?.finalUrls?.find((value) => value.trim());
+    if (adGroupId && destination && !destinationByAdGroup.has(adGroupId)) {
+      destinationByAdGroup.set(adGroupId, destination);
+    }
+  });
+  const positiveKeywordsByAdGroup = new Map<string, string[]>();
+  const negativeKeywordsByAdGroup = new Map<string, Set<string>>();
+  criterionResults.forEach((result) => {
+    const adGroupId = String(result.adGroup?.id ?? "");
+    const keyword = normalizeSearchTermText(result.adGroupCriterion?.keyword?.text ?? "");
+    if (!adGroupId || !keyword) return;
+    if (result.adGroupCriterion?.negative) {
+      const values = negativeKeywordsByAdGroup.get(adGroupId) ?? new Set<string>();
+      values.add(keyword);
+      negativeKeywordsByAdGroup.set(adGroupId, values);
+    } else {
+      const values = positiveKeywordsByAdGroup.get(adGroupId) ?? [];
+      values.push(keyword);
+      positiveKeywordsByAdGroup.set(adGroupId, values);
+    }
+  });
+
+  return results.map((result, index) => {
+    const term = result.searchTermView?.searchTerm?.trim() || "Unknown search term";
+    const campaignId = String(result.campaign?.id ?? "");
+    const adGroupId = String(result.adGroup?.id ?? "");
+    return {
+      id: `${context.customerId}-${campaignId}-${adGroupId}-${index}`,
+      accountId: context.customerId,
+      campaignId,
+      campaignName: result.campaign?.name?.trim() || "Untitled campaign",
+      adGroupId,
+      adGroupName: result.adGroup?.name?.trim() || "Untitled ad group",
+      searchTerm: term,
+      triggeringKeyword: result.segments?.keyword?.info?.text?.trim() || null,
+      matchType: result.segments?.keyword?.info?.matchType?.trim() || null,
+      destinationUrl: destinationByAdGroup.get(adGroupId) ?? null,
+      hasPositiveKeywordOverlap: hasKeywordOverlap(
+        normalizeSearchTermText(term),
+        positiveKeywordsByAdGroup.get(adGroupId) ?? []
+      ),
+      alreadyNegative: negativeKeywordsByAdGroup.get(adGroupId)?.has(normalizeSearchTermText(term)) ?? false,
+      impressions: Number(result.metrics?.impressions ?? 0),
+      clicks: Number(result.metrics?.clicks ?? 0),
+      cost: Number(result.metrics?.costMicros ?? 0) / 1_000_000,
+      conversions: Number(result.metrics?.conversions ?? 0),
+      classification: "Awaiting AI review",
+      recommendedAction: "pending review" as const,
+      confidence: null,
+      reason: "Live Google Ads data loaded. AI classification has not been run.",
+      specialReview: false,
+    };
+  });
+}
+
+function normalizeSearchTermText(value: string): string {
+  return value.toLowerCase().trim().replace(/\s+/g, " ");
+}
+
+function hasKeywordOverlap(term: string, keywords: string[]): boolean {
+  if (!term) return false;
+  return keywords.some((keyword) => term === keyword || term.includes(keyword) || keyword.includes(term));
 }
 
 interface ParsedGoogleResponse {

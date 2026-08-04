@@ -20,6 +20,7 @@ import {
   fetchGoogleVideoCreativePerformanceRows,
   fetchGooglePreviewData,
   fetchGoogleTopKeywordRows,
+  fetchGoogleSearchTermReviewRows,
   isGoogleAdsAccessPathError,
 } from "@/lib/reporting/google";
 import {
@@ -68,6 +69,7 @@ import {
   SummarySection,
   TopKeywordRow,
   TopKeywordsPayload,
+  SearchTermReviewPayload,
 } from "@/lib/reporting/types";
 import { isNotionIntegrationError, resolveGoogleAccountsFromNotion } from "@/lib/reporting/notion";
 
@@ -1224,6 +1226,55 @@ export async function getTopKeywordsReport(input: OverallInput): Promise<TopKeyw
     rows,
     totals,
     warnings: dedupeWarnings(warnings),
+  };
+}
+
+export async function getSearchTermReviewReport(
+  input: OverallInput
+): Promise<SearchTermReviewPayload> {
+  const credentials = getCredentials();
+  if (!credentials.googleDeveloperToken) {
+    throw new Error("GOOGLE_ADS_DEVELOPER_TOKEN is required to load search terms.");
+  }
+
+  const dateRange = buildDateRange(input.startDate, input.endDate);
+  const { resolvedAccountIds, googleManagerContext } = await resolveReportAccountContext(
+    input,
+    credentials
+  );
+  const accountId = resolvedAccountIds.googleAccountIds[0];
+  if (!accountId) {
+    throw new Error("Select a Google Ads account to load search terms.");
+  }
+
+  const companyName = await resolveCompanyNameForReport({
+    credentials,
+    accountId: input.accountId,
+    resolvedAccountIds,
+    googleLoginCustomerIdByAccount: googleManagerContext.loginCustomerIdByAccount,
+  });
+  const rows = await fetchGoogleSearchTermReviewRows({
+    customerId: accountId,
+    apiVersion: credentials.googleAdsApiVersion,
+    developerToken: credentials.googleDeveloperToken,
+    accessToken: credentials.googleAccessToken,
+    refreshToken: credentials.googleRefreshToken,
+    clientId: credentials.googleClientId,
+    clientSecret: credentials.googleClientSecret,
+    loginCustomerId: googleManagerContext.loginCustomerIdByAccount[accountId] ?? null,
+    accessPath: googleManagerContext.accessPathByAccount[accountId] ?? null,
+    fallbackLoginCustomerId: credentials.googleLoginCustomerId,
+    startDate: dateRange.startDate,
+    endDate: dateRange.endDate,
+  });
+
+  return {
+    companyName,
+    accountId,
+    dateRange,
+    rows,
+    warnings: googleManagerContext.messages,
+    liveData: true,
   };
 }
 

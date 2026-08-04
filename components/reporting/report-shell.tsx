@@ -11,6 +11,7 @@ import {
   IdCardIcon,
   ListChecksIcon,
   SparklesIcon,
+  SearchIcon,
   UploadCloudIcon,
 } from "lucide-react";
 
@@ -31,6 +32,7 @@ interface ReportShellProps {
   activeQuery?: string;
   reportReady?: boolean;
   suppressExportHeader?: boolean;
+  preHeaderContent?: React.ReactNode;
   children: React.ReactNode;
 }
 
@@ -47,6 +49,7 @@ export function ReportShell({
   activeQuery = "",
   reportReady = false,
   suppressExportHeader = false,
+  preHeaderContent,
   children,
 }: ReportShellProps) {
   const { screenshotMode } = useScreenshotMode();
@@ -59,6 +62,7 @@ export function ReportShell({
     mediaPlan: withQuery("/dashboard/media-plan", activeQuery),
     metaImport: "/meta-import",
     billing: "/billing",
+    searchTerms: withQuery("/search-term-optimization", activeQuery),
   };
 
   return (
@@ -70,6 +74,10 @@ export function ReportShell({
       <div className={`${REPORT_PAGE_FRAME_CLASS} ${screenshotMode ? "!min-h-0 !flex-none" : ""}`}>
         {screenshotMode && !suppressExportHeader ? (
           <ReportExportHeader title={title} dateLabel={dateLabel} activeQuery={activeQuery} />
+        ) : null}
+
+        {!screenshotMode && preHeaderContent ? (
+          <div className="mb-4" data-report-export-exclude="true">{preHeaderContent}</div>
         ) : null}
 
         <section
@@ -131,6 +139,13 @@ export function ReportShell({
                       active={pathname === "/dashboard/media-plan"}
                     >
                       <ClipboardListIcon className="size-5" />
+                    </ReportNavLink>
+                    <ReportNavLink
+                      href={hrefs.searchTerms}
+                      label="Search Term Optimization"
+                      active={pathname === "/search-term-optimization"}
+                    >
+                      <SearchIcon className="size-5" />
                     </ReportNavLink>
                     <ReportNavLink
                       href={hrefs.billing}

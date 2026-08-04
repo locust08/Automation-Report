@@ -280,6 +280,39 @@ export interface TopKeywordsPayload {
   warnings: string[];
 }
 
+export interface SearchTermReviewRow {
+  id: string;
+  accountId: string;
+  campaignId: string;
+  campaignName: string;
+  adGroupId: string;
+  adGroupName: string;
+  searchTerm: string;
+  triggeringKeyword: string | null;
+  matchType: string | null;
+  destinationUrl: string | null;
+  hasPositiveKeywordOverlap: boolean | null;
+  alreadyNegative: boolean;
+  impressions: number;
+  clicks: number;
+  cost: number;
+  conversions: number;
+  classification: string;
+  recommendedAction: "pending review" | "negative exact" | "add exact" | "special review needed" | "no action";
+  confidence: number | null;
+  reason: string;
+  specialReview: boolean;
+}
+
+export interface SearchTermReviewPayload {
+  companyName: string;
+  accountId: string;
+  dateRange: DateRangeConfig;
+  rows: SearchTermReviewRow[];
+  warnings: string[];
+  liveData: boolean;
+}
+
 export interface AuctionInsightRow {
   id: string;
   displayDomain: string;
