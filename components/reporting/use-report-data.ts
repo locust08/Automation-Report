@@ -7,6 +7,7 @@ import {
   GoogleAdsAccessPathErrorPayload,
   AuctionInsightsPayload,
   CampaignComparisonPayload,
+  GoogleAdsHealthStagePayload,
   InsightsPayload,
   OverallReportPayload,
   Platform,
@@ -357,5 +358,17 @@ export function useInsightsReport(
     queryString,
     enabled,
     "Unable to load insights data."
+  );
+}
+
+export function useGoogleAdsHealthReport(
+  queryString: string,
+  enabled: boolean
+): LoadingState<GoogleAdsHealthStagePayload> {
+  return useReportQuery<GoogleAdsHealthStagePayload>(
+    "/api/reporting/health",
+    queryString,
+    enabled,
+    "Unable to load Google Ads Health."
   );
 }

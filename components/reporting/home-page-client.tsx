@@ -8,6 +8,7 @@ import {
   ChevronDownIcon,
   ClipboardListIcon,
   EyeIcon,
+  HeartPulseIcon,
   LinkIcon,
   Loader2Icon,
   SearchIcon,
@@ -45,6 +46,7 @@ const RECENT_ACCOUNTS_LIMIT = 5;
 type AccountSearchSuggestion = {
   accountName: string;
   adAccountId: string;
+  platform: "meta" | "google" | null;
   country: string | null;
   notionPageId: string;
 };
@@ -113,6 +115,7 @@ export function HomePageClient() {
   const initialCountry = useMemo(() => searchParams.get("country") ?? "MY", [searchParams]);
   const [accountName, setAccountName] = useState("");
   const [accountId, setAccountId] = useState("");
+  const [accountPlatform, setAccountPlatform] = useState<"meta" | "google" | null>(null);
   const [accountSearchQuery, setAccountSearchQuery] = useState("");
   const [country, setCountry] = useState(initialCountry);
   const [accountSuggestions, setAccountSuggestions] = useState<AccountSearchSuggestion[]>([]);
@@ -141,6 +144,12 @@ export function HomePageClient() {
   const overallHref = `/overall${reportQueryString ? `?${reportQueryString}` : ""}`;
   const previewHref = `/preview${reportQueryString ? `?${reportQueryString}` : ""}`;
   const advancedHref = `/advanced${reportQueryString ? `?${reportQueryString}` : ""}`;
+  const healthHref = useMemo(() => {
+    const params = new URLSearchParams();
+    if (accountId.trim()) params.set("accountId", accountId.trim());
+    if (accountPlatform) params.set("platform", accountPlatform);
+    return `/health?${params.toString()}`;
+  }, [accountId, accountPlatform]);
   const mediaPlanHref = "/dashboard/media-plan";
   const hasAccountSelection = Boolean(accountId.trim());
   const normalizedAccountSearchQuery = accountSearchQuery.trim();
@@ -166,6 +175,10 @@ export function HomePageClient() {
                     typeof account.accountName === "string" &&
                     "adAccountId" in account &&
                     typeof account.adAccountId === "string" &&
+                    (!("platform" in account) ||
+                      account.platform === null ||
+                      account.platform === "meta" ||
+                      account.platform === "google") &&
                     "notionPageId" in account &&
                     typeof account.notionPageId === "string"
                 )
@@ -258,6 +271,7 @@ export function HomePageClient() {
   function selectAccountSuggestion(suggestion: AccountSearchSuggestion) {
     setAccountName(formatAccountSuggestionLabel(suggestion));
     setAccountId(suggestion.adAccountId);
+    setAccountPlatform(suggestion.platform);
     if (suggestion.country && SUPPORTED_COUNTRIES.has(suggestion.country)) {
       setCountry(suggestion.country);
     }
@@ -316,6 +330,7 @@ export function HomePageClient() {
         event.preventDefault();
         setAccountName(directAccountId);
         setAccountId(directAccountId);
+        setAccountPlatform(inferAccountPlatform(directAccountId));
         setAccountSearchQuery("");
         setIsAccountDropdownOpen(false);
         setHighlightedAccountIndex(-1);
@@ -563,7 +578,7 @@ export function HomePageClient() {
               <ArrowRightIcon data-icon="inline-end" />
             </Button>
 
-            <div className="grid gap-3 sm:grid-cols-3">
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
               {hasAccountSelection ? (
                 <Button
                   asChild
@@ -607,6 +622,29 @@ export function HomePageClient() {
                 >
                   Open Advanced Report
                   <SlidersHorizontalIcon data-icon="inline-end" />
+                </Button>
+              )}
+
+              {hasAccountSelection ? (
+                <Button
+                  asChild
+                  variant="outline"
+                  className="h-auto min-h-12 w-full whitespace-normal border-white/30 bg-white/10 px-4 py-3 text-center leading-snug text-white shadow-none hover:bg-white/20 hover:text-white"
+                >
+                  <a href={healthHref}>
+                    View Health Report
+                    <HeartPulseIcon data-icon="inline-end" />
+                  </a>
+                </Button>
+              ) : (
+                <Button
+                  type="button"
+                  variant="outline"
+                  disabled
+                  className="h-auto min-h-12 w-full whitespace-normal border-white/30 bg-white/10 px-4 py-3 text-center leading-snug text-white shadow-none"
+                >
+                  View Health Report
+                  <HeartPulseIcon data-icon="inline-end" />
                 </Button>
               )}
 
@@ -844,4 +882,12 @@ function SummaryStat({ label, value }: { label: string; value: string }) {
       <div className="mt-1 break-words text-sm font-semibold">{value}</div>
     </div>
   );
+}
+
+function inferAccountPlatform(accountId: string): "meta" | "google" | null {
+  const trimmed = accountId.trim().toLowerCase();
+  const digits = trimmed.replace(/\D/g, "");
+  if (trimmed.startsWith("act_") || digits.length > 10) return "meta";
+  if (digits.length === 10) return "google";
+  return null;
 }

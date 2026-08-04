@@ -8,6 +8,7 @@ import {
   ClipboardListIcon,
   EyeIcon,
   HouseIcon,
+  HeartPulseIcon,
   IdCardIcon,
   SparklesIcon,
   UploadCloudIcon,
@@ -55,6 +56,7 @@ export function ReportShell({
     overall: withQuery("/overall", activeQuery),
     preview: withQuery("/preview", activeQuery),
     advanced: withQuery("/advanced", activeQuery),
+    health: withQuery("/health", activeQuery),
     mediaPlan: withQuery("/dashboard/media-plan", activeQuery),
     metaImport: "/meta-import",
   };
@@ -122,6 +124,13 @@ export function ReportShell({
                       active={pathname === "/advanced"}
                     >
                       <SparklesIcon className="size-5" />
+                    </ReportNavLink>
+                    <ReportNavLink
+                      href={hrefs.health}
+                      label="Google Ads Health"
+                      active={pathname === "/health"}
+                    >
+                      <HeartPulseIcon className="size-5" />
                     </ReportNavLink>
                     <ReportNavLink
                       href={hrefs.mediaPlan}

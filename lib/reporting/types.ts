@@ -1,5 +1,52 @@
 export type Platform = "meta" | "google" | "googleYoutube";
 
+export type GoogleAdsHealthStage = "core" | "policy" | "delivery" | "destination";
+export type GoogleAdsHealthSeverity = "critical" | "high" | "warning";
+export type GoogleAdsHealthCategory =
+  | "account"
+  | "policy"
+  | "budget"
+  | "experiment"
+  | "schedule"
+  | "delivery"
+  | "location"
+  | "destination";
+
+export interface GoogleAdsHealthResourceNode {
+  resourceType: string;
+  resourceId: string;
+  resourceName: string;
+}
+
+export interface GoogleAdsHealthFinding {
+  id: string;
+  code: string;
+  severity: GoogleAdsHealthSeverity;
+  category: GoogleAdsHealthCategory;
+  summary: string;
+  details: string;
+  resourceType: string;
+  resourceId: string;
+  resourceName: string;
+  resourceHierarchy: GoogleAdsHealthResourceNode[];
+  googleAdsUrl: string | null;
+  notionUrl: string | null;
+  destinationUrl: string | null;
+}
+
+export interface GoogleAdsHealthStagePayload {
+  accountId: string;
+  accountName: string;
+  platform: "google";
+  stage: GoogleAdsHealthStage;
+  status: "completed";
+  scannedAt: string;
+  queriesCompleted: number;
+  truncated: boolean;
+  warnings: string[];
+  findings: GoogleAdsHealthFinding[];
+}
+
 export type MetricFormat = "number" | "currency" | "percent";
 
 export interface DateRangeConfig {

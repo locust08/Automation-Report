@@ -77,6 +77,26 @@ interface GoogleAccountNameInput {
   loginCustomerId: string | null;
 }
 
+export interface GoogleHealthQueryInput {
+  customerId: string;
+  apiVersion: string;
+  developerToken: string;
+  accessToken: string | null;
+  refreshToken: string | null;
+  clientId: string | null;
+  clientSecret: string | null;
+  loginCustomerId: string | null;
+  accessPath: string | null;
+  fallbackLoginCustomerId: string | null;
+  queries: Array<{ key: string; query: string | string[] }>;
+}
+
+export interface GoogleHealthQueryResult {
+  rowsByKey: Record<string, unknown[]>;
+  loginCustomerIdUsed: string | null;
+  queriesCompleted: number;
+}
+
 export interface GooglePreviewAccountResolution {
   customerId: string;
   loginCustomerId: string | null;
@@ -629,6 +649,52 @@ export async function fetchGoogleAccountName({
   const firstResult = parsed.json?.results?.[0];
   const name = firstResult?.customer?.descriptiveName || firstResult?.customer?.descriptive_name;
   return name?.trim() || null;
+}
+
+export async function fetchGoogleHealthQuerySurfaces(
+  input: GoogleHealthQueryInput
+): Promise<GoogleHealthQueryResult> {
+  const context = await resolveVerifiedGoogleAdsContext({
+    customerId: input.customerId,
+    apiVersion: input.apiVersion,
+    developerToken: input.developerToken,
+    accessToken: input.accessToken,
+    refreshToken: input.refreshToken,
+    clientId: input.clientId,
+    clientSecret: input.clientSecret,
+    loginCustomerId: input.loginCustomerId,
+    accessPath: input.accessPath,
+    fallbackLoginCustomerId: input.fallbackLoginCustomerId,
+  });
+  const rowsByKey: Record<string, unknown[]> = {};
+  let queriesCompleted = 0;
+
+  for (const item of input.queries) {
+    try {
+      const queries = Array.isArray(item.query) ? item.query : [item.query];
+      rowsByKey[item.key] = await fetchGoogleAdsResultsWithFallback({
+        customerId: context.customerId,
+        apiVersion: input.apiVersion,
+        developerToken: input.developerToken,
+        accessToken: input.accessToken,
+        refreshToken: input.refreshToken,
+        clientId: input.clientId,
+        clientSecret: input.clientSecret,
+        loginCustomerId: context.loginCustomerId,
+        queries,
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unknown Google Ads request failure.";
+      throw new Error(`Google Ads Health query \"${item.key}\" failed: ${message}`);
+    }
+    queriesCompleted += 1;
+  }
+
+  return {
+    rowsByKey,
+    loginCustomerIdUsed: context.loginCustomerId,
+    queriesCompleted,
+  };
 }
 
 export async function fetchGoogleCampaignRows({
@@ -4705,6 +4771,7 @@ async function executeGoogleAdsStreamRequest(input: {
     const streamError = findStreamBatchError(streamBatches);
     const failureMessage =
       streamError ??
+      parsed.errorMessage ??
       topLevelError ??
       (!parsed.ok
         ? `Google Ads API request failed with status ${parsed.status}. The customer ID may not be accessible.`
@@ -5162,21 +5229,63 @@ function extractGoogleAdsErrorInfo(
   const candidate = topLevel as
     | {
         details?: Array<{
-          errors?: Array<{ errorCode?: Record<string, string | null | undefined> }>;
+          errors?: Array<{
+            errorCode?: Record<string, string | null | undefined>;
+            message?: string;
+            location?: {
+              fieldPathElements?: Array<{ fieldName?: string; index?: number }>;
+            };
+          }>;
         }>;
       }
     | undefined;
 
-  const detailErrorCode = candidate?.details
-    ?.flatMap((detail) => detail.errors ?? [])
+  const detailErrors = candidate?.details?.flatMap((detail) => detail.errors ?? []) ?? [];
+  const nestedFailure = findNestedGoogleAdsFailure(json);
+  const detailErrorCode = [...detailErrors, ...(nestedFailure ? [nestedFailure] : [])]
     .map((item) => item.errorCode ?? {})
     .flatMap((errorCodeRecord) => Object.entries(errorCodeRecord))
     .find(([, value]) => Boolean(value));
+  const detailError = detailErrors.find((item) => item.message?.trim()) ?? nestedFailure;
+  const fieldPath = detailError?.location?.fieldPathElements
+    ?.map((item) => item.fieldName?.trim())
+    .filter((item): item is string => Boolean(item))
+    .join(".");
+  const detailedMessage = detailError?.message?.trim();
 
   return {
     errorCode: detailErrorCode ? `${detailErrorCode[0]}:${detailErrorCode[1]}` : null,
-    errorMessage: errorMessage ?? null,
+    errorMessage: detailedMessage
+      ? `${detailedMessage}${fieldPath ? ` (${fieldPath})` : ""}`
+      : errorMessage ?? null,
   };
+}
+
+function findNestedGoogleAdsFailure(value: unknown, depth = 0): {
+  errorCode?: Record<string, string | null | undefined>;
+  message?: string;
+  location?: { fieldPathElements?: Array<{ fieldName?: string; index?: number }> };
+} | undefined {
+  if (!value || depth > 8) return undefined;
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const found = findNestedGoogleAdsFailure(item, depth + 1);
+      if (found) return found;
+    }
+    return undefined;
+  }
+  if (typeof value !== "object") return undefined;
+  const candidate = value as {
+    errorCode?: Record<string, string | null | undefined>;
+    message?: string;
+    location?: { fieldPathElements?: Array<{ fieldName?: string; index?: number }> };
+  };
+  if (candidate.errorCode && candidate.message?.trim()) return candidate;
+  for (const nested of Object.values(value)) {
+    const found = findNestedGoogleAdsFailure(nested, depth + 1);
+    if (found) return found;
+  }
+  return undefined;
 }
 
 function classifyGoogleAdsFailure(

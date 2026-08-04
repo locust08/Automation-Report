@@ -55,6 +55,7 @@ interface AdAccountRecord {
 export interface NotionAccountSearchSuggestion {
   accountName: string;
   adAccountId: string;
+  platform: "meta" | "google" | null;
   country: "MY" | "SG" | "AU" | "US" | null;
   notionPageId: string;
 }
@@ -703,11 +704,27 @@ function mapNotionAccountSearchSuggestion(
   return {
     accountName,
     adAccountId,
+    platform: normalizeAccountSearchPlatform(
+      getNotionPropertyTextByAliases(properties, ["Platform", "Ad Platform", "Channel"])
+    ),
     country: normalizeSupportedCountry(
       getNotionPropertyTextByAliases(properties, ["Country", "country", "Market", "Location"])
     ),
     notionPageId: page.id,
   };
+}
+
+function normalizeAccountSearchPlatform(
+  value: string | null
+): NotionAccountSearchSuggestion["platform"] {
+  const normalized = value?.trim().toLowerCase() ?? "";
+  if (normalized.includes("google")) {
+    return "google";
+  }
+  if (normalized.includes("meta") || normalized.includes("facebook")) {
+    return "meta";
+  }
+  return null;
 }
 
 function getNotionPropertyTextByAliases(

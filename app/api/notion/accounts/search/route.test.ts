@@ -42,6 +42,10 @@ test("GET returns safe account suggestions from Notion search", async () => {
                   type: "select",
                   select: { name: "Malaysia" },
                 },
+                Platform: {
+                  type: "select",
+                  select: { name: "Google" },
+                },
               },
             },
           ],
@@ -66,6 +70,7 @@ test("GET returns safe account suggestions from Notion search", async () => {
         {
           accountName: "Acme Academy",
           adAccountId: "697-252-8848",
+          platform: "google",
           country: "MY",
           notionPageId: "page-1",
         },

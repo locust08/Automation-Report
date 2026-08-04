@@ -24,6 +24,12 @@ Multi-page reporting website for Meta Ads Manager + Google Ads Manager with a sh
 - `/auction` Auction page (Google Ads Manager extraction):
   - Auction insights domain metrics
   - Average benchmark row
+- `/health` Read-only Google Ads account health scan:
+  - Loads core, policy, delivery/location, and destination checks progressively
+  - Uses the existing Google Ads OAuth/developer-token credentials and Notion access-path resolution
+  - Uses one shared five-minute scan window across every stage and does not change Google Ads resources
+  - Mirrors the reference monitor's delivery thresholds, policy surfaces, URL normalization, redirect classification, user agents, retry behavior, and 15-second destination timeout
+  - Probes up to 100 public landing-page URLs; private and local network destinations are rejected
 - `/dashboard/media-plan` Media Plan setup page:
   - User enters Website URL, Ad Budget, and Google CID
   - OpenAI generates a structured Google Search media plan with `OPENAI_MEDIA_PLAN_MODEL` and `OPENAI_MEDIA_PLAN_PROMPT_ID`
