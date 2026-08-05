@@ -26,14 +26,16 @@ Supabase Auth remains responsible for email addresses, password hashes, sessions
 create table public.ad_automation_report_users (
   id uuid primary key references auth.users(id) on delete cascade,
   full_name text,
-  role text not null default 'viewer'
+  role text not null default 'specialist'
     check (
       role in (
-        'admin',
-        'paid_media_specialist',
+        'pms',
+        'co',
+        'specialist',
         'approver',
-        'project_manager',
-        'viewer'
+        'tl',
+        'pm',
+        'admin'
       )
     ),
   is_active boolean not null default true,

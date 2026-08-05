@@ -32,6 +32,9 @@ export type OptimizationResult = {
   executionEligibility: boolean;
   executionStatus: ExecutionStatus;
   verificationStatus: VerificationStatus;
+  reviewDecision?: "approved" | "rejected" | "to_be_determined";
+  reviewStatus?: string;
+  recommendationId?: string;
 };
 
 export type OptimizationDashboardPayload = {

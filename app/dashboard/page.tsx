@@ -1,15 +1,12 @@
 import { Suspense } from "react";
-import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 
 import { HomePageClient } from "@/components/reporting/home-page-client";
 import { ReportRouteLoading } from "@/components/reporting/report-route-loading";
-import { AUTH_COOKIE_NAME, verifyAuthToken } from "@/lib/auth/session";
+import { getServerAuthSession } from "@/lib/auth/server-session";
 
 export default async function DashboardPage() {
-  const cookieStore = await cookies();
-  const token = cookieStore.get(AUTH_COOKIE_NAME)?.value;
-  const session = token ? await verifyAuthToken(token) : null;
+  const session = await getServerAuthSession();
 
   if (!session) {
     redirect("/");
@@ -17,7 +14,7 @@ export default async function DashboardPage() {
 
   return (
     <Suspense fallback={<ReportRouteLoading kind="fallback" />}>
-      <HomePageClient displayName={session.fullName?.trim() || session.email} />
+      <HomePageClient displayName={session.fullName?.trim() || session.email} role={session.role} />
     </Suspense>
   );
 }

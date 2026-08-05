@@ -13,6 +13,11 @@
 # testing
 /coverage
 /artifacts/
+/data/*.sqlite
+/data/*.sqlite-shm
+/data/*.sqlite-wal
+__pycache__/
+*.py[cod]
 
 # next.js
 /.next/

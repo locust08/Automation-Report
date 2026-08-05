@@ -1,17 +1,23 @@
 import { NextResponse, type NextRequest } from "next/server";
 
-import { AUTH_COOKIE_NAME, verifyAuthToken } from "@/lib/auth/session";
+import { getCurrentAuthSession } from "@/lib/auth/current-session";
+import { AUTH_COOKIE_NAME } from "@/lib/auth/session";
 
 export async function proxy(request: NextRequest) {
   const token = request.cookies.get(AUTH_COOKIE_NAME)?.value;
-  const session = token ? await verifyAuthToken(token) : null;
+  const session = token ? await getCurrentAuthSession(token) : null;
   const isLoginPage = request.nextUrl.pathname === "/";
   const isDashboard = request.nextUrl.pathname.startsWith("/dashboard");
   const isBilling = request.nextUrl.pathname.startsWith("/billing");
   const isSearchTermOptimization = request.nextUrl.pathname.startsWith("/search-term-optimization");
+  const isUserManagement = request.nextUrl.pathname.startsWith("/user-management");
 
-  if (!session && (isDashboard || isBilling || isSearchTermOptimization)) {
+  if (!session && (isDashboard || isBilling || isSearchTermOptimization || isUserManagement)) {
     return NextResponse.redirect(new URL("/", request.url));
+  }
+
+  if (session && session.role !== "admin" && isUserManagement) {
+    return NextResponse.redirect(new URL("/dashboard", request.url));
   }
 
   if (session && isLoginPage) {
@@ -22,5 +28,5 @@ export async function proxy(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/", "/dashboard/:path*", "/billing/:path*", "/search-term-optimization/:path*"],
+  matcher: ["/", "/dashboard/:path*", "/billing/:path*", "/search-term-optimization/:path*", "/user-management/:path*"],
 };

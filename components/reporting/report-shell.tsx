@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { useEffect, useState } from "react";
 import {
   BarChart3Icon,
   CalendarDaysIcon,
@@ -14,6 +15,7 @@ import {
   SearchCheckIcon,
   SparklesIcon,
   UploadCloudIcon,
+  UsersRoundIcon,
 } from "lucide-react";
 
 import {
@@ -53,6 +55,16 @@ export function ReportShell({
 }: ReportShellProps) {
   const { screenshotMode } = useScreenshotMode();
   const pathname = usePathname();
+  const [currentRole, setCurrentRole] = useState<string | null>(null);
+  useEffect(() => {
+    const controller = new AbortController();
+    void fetch("/api/auth/session", { cache: "no-store", signal: controller.signal })
+      .then(async (response) => response.ok ? response.json() as Promise<{ user?: { role?: string } }> : null)
+      .then((payload) => setCurrentRole(payload?.user?.role ?? null))
+      .catch(() => undefined);
+    return () => controller.abort();
+  }, []);
+  const isAdmin = currentRole === "admin";
   const hrefs = {
     home: "/",
     overall: withQuery("/overall", activeQuery),
@@ -62,6 +74,7 @@ export function ReportShell({
     metaImport: "/meta-import",
     billing: "/billing",
     searchTermOptimization: "/search-term-optimization",
+    userManagement: "/user-management",
   };
 
   return (
@@ -149,13 +162,22 @@ export function ReportShell({
                     >
                       <UploadCloudIcon className="size-5" />
                     </ReportNavLink>
-                    <ReportNavLink
+                    {currentRole ? <ReportNavLink
                       href={hrefs.searchTermOptimization}
                       label="Search Term Optimization"
                       active={pathname === "/search-term-optimization"}
                     >
                       <SearchCheckIcon className="size-5" />
-                    </ReportNavLink>
+                    </ReportNavLink> : null}
+                    {isAdmin ? <>
+                      <ReportNavLink
+                        href={hrefs.userManagement}
+                        label="User Management"
+                        active={pathname === "/user-management"}
+                      >
+                        <UsersRoundIcon className="size-5" />
+                      </ReportNavLink>
+                    </> : null}
                     <ReportLogoutButton />
                   </nav>
                 </TooltipProvider>

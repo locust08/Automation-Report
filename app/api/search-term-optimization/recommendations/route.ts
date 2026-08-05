@@ -1,18 +1,17 @@
-import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
 
-import { AUTH_COOKIE_NAME, verifyAuthToken } from "@/lib/auth/session";
+import { getServerAuthSession } from "@/lib/auth/server-session";
 import { getGoogleRecommendationsForAccount } from "@/lib/search-term-optimization/repository";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
 export async function GET(request: Request) {
-  const cookieStore = await cookies();
-  const token = cookieStore.get(AUTH_COOKIE_NAME)?.value;
-  if (!token || !(await verifyAuthToken(token))) {
+  const session = await getServerAuthSession();
+  if (!session) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
+  if (session.role !== "admin") return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
   const accountId = new URL(request.url).searchParams.get("accountId")?.trim() || undefined;
   try {

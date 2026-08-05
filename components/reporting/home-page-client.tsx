@@ -110,9 +110,10 @@ const MANUAL_REPORT_OPTIONS: Array<{
 
 type HomePageClientProps = {
   displayName?: string;
+  role?: string;
 };
 
-export function HomePageClient({ displayName }: HomePageClientProps) {
+export function HomePageClient({ displayName, role }: HomePageClientProps) {
   const router = useRouter();
 
   const searchParams = useSearchParams();
@@ -673,15 +674,15 @@ export function HomePageClient({ displayName }: HomePageClientProps) {
               Daily Billing
             </span>
           </a>
-          <a
-            href={searchTermOptimizationHref}
-            className="flex items-center rounded-2xl border border-white/25 bg-white/10 p-4 text-white transition hover:bg-white/15"
-          >
-            <span className="flex items-center gap-2 text-base font-semibold">
-              <SearchIcon className="size-5" />
-              Search Term Optimization
-            </span>
-          </a>
+          {role ? <a
+              href={searchTermOptimizationHref}
+              className="flex items-center rounded-2xl border border-white/25 bg-white/10 p-4 text-white transition hover:bg-white/15"
+            >
+              <span className="flex items-center gap-2 text-base font-semibold">
+                <SearchIcon className="size-5" />
+                Search Term Optimization
+              </span>
+            </a> : null}
         </div>
 
         {hasAccountSelection ? (

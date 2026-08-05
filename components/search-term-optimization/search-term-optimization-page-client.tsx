@@ -10,6 +10,7 @@ import {
   ExternalLinkIcon,
   SearchIcon,
   ShieldAlertIcon,
+  CircleHelpIcon,
   XIcon,
 } from "lucide-react";
 
@@ -21,6 +22,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Spinner } from "@/components/ui/spinner";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { ReportShell } from "@/components/reporting/report-shell";
+import { AUTH_ROLE_LABELS, type AuthRole } from "@/lib/auth/roles";
 import type {
   OptimizationDashboardPayload,
   OptimizationResult,
@@ -34,22 +36,30 @@ type CategoryFilter =
   | "add exact"
   | "negative phrase"
   | "no action"
+  | "approved"
+  | "rejected"
+  | "to_be_determined"
   | "unadded/unexcluded";
 
-type ReviewDecision = "approved" | "rejected";
+type ReviewDecision = "approved" | "rejected" | "to_be_determined";
 
 type AccountSuggestion = {
   accountName: string;
   adAccountId: string;
 };
 
-export function SearchTermOptimizationPageClient() {
+const REVIEW_ROLES: AuthRole[] = ["pms", "specialist", "approver", "admin"];
+
+export function SearchTermOptimizationPageClient({ role }: { role: AuthRole }) {
+  const isAdmin = role === "admin";
+  const canReview = REVIEW_ROLES.includes(role);
   const [data, setData] = useState<OptimizationDashboardPayload | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [categoryFilter, setCategoryFilter] = useState<CategoryFilter>("special review needed");
   const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
   const [decisions, setDecisions] = useState<Record<string, ReviewDecision>>({});
+  const [decisionError, setDecisionError] = useState<string | null>(null);
   const [categoryPages, setCategoryPages] = useState<Record<string, number>>({});
   const [campaignFilter, setCampaignFilter] = useState("all");
   const [accountQuery, setAccountQuery] = useState("");
@@ -71,6 +81,11 @@ export function SearchTermOptimizationPageClient() {
       const payload = (await response.json()) as OptimizationDashboardPayload & { error?: string };
       if (!response.ok) throw new Error(payload.error ?? "Unable to load optimization data.");
       setData(payload);
+      setDecisions(Object.fromEntries(
+        payload.results
+          .filter((row) => row.reviewDecision)
+          .map((row) => [row.id, row.reviewDecision as ReviewDecision]),
+      ));
       setRecommendationsLoaded(false);
       setGoogleRecommendations([]);
       setGoogleRecommendationsWarning(null);
@@ -117,7 +132,9 @@ export function SearchTermOptimizationPageClient() {
       const matchesFilter = categoryFilter === "all"
         || (categoryFilter === "unadded/unexcluded"
           ? unaddedKeys.has(`${row.searchTerm.toLowerCase()}|${row.campaign}|${row.adGroup}`)
-          : normalizeAction(row.proposedAction) === categoryFilter);
+          : categoryFilter === "approved" || categoryFilter === "rejected" || categoryFilter === "to_be_determined"
+            ? row.reviewDecision === categoryFilter
+            : normalizeAction(row.proposedAction) === categoryFilter);
       const matchesCampaign = campaignFilter === "all" || row.campaign === campaignFilter;
       return matchesFilter && matchesCampaign;
     });
@@ -148,7 +165,7 @@ export function SearchTermOptimizationPageClient() {
     : [];
 
   const cacheKey = data
-    ? `search-term-review:${data.account.customerId}:${data.account.lastAnalysisAt}`
+    ? `search-term-review:${role}:${data.account.customerId}:${data.account.lastAnalysisAt}`
     : null;
 
   useEffect(() => {
@@ -159,13 +176,11 @@ export function SearchTermOptimizationPageClient() {
       const parsed = JSON.parse(cached) as {
         categoryFilter?: CategoryFilter;
         selectedIds?: string[];
-        decisions?: Record<string, ReviewDecision>;
         categoryPages?: Record<string, number>;
       };
       window.queueMicrotask(() => {
         if (parsed.categoryFilter) setCategoryFilter(parsed.categoryFilter);
         setSelectedIds(new Set(parsed.selectedIds ?? []));
-        setDecisions(parsed.decisions ?? {});
         setCategoryPages(parsed.categoryPages ?? {});
       });
     } catch {
@@ -178,10 +193,9 @@ export function SearchTermOptimizationPageClient() {
     window.localStorage.setItem(cacheKey, JSON.stringify({
       categoryFilter,
       selectedIds: [...selectedIds],
-      decisions,
       categoryPages,
     }));
-  }, [cacheKey, categoryFilter, categoryPages, decisions, selectedIds]);
+  }, [cacheKey, categoryFilter, categoryPages, selectedIds]);
 
   function toggleRow(id: string, checked: boolean) {
     setSelectedIds((current) => {
@@ -199,13 +213,31 @@ export function SearchTermOptimizationPageClient() {
     });
   }
 
-  function decideCategory(rows: OptimizationResult[], decision: ReviewDecision) {
+  async function decideCategory(rows: OptimizationResult[], decision: ReviewDecision) {
+    if (!canReview) return;
     const selected = rows.filter((row) => selectedIds.has(row.id));
     const targets = selected.length > 0 ? selected : rows;
-    setDecisions((current) => ({
-      ...current,
-      ...Object.fromEntries(targets.map((row) => [row.id, decision])),
-    }));
+    setDecisionError(null);
+    try {
+      const response = await fetch("/api/search-term-optimization/reviews", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ recommendationIds: targets.map((row) => row.id), decision }),
+      });
+      const payload = await response.json() as { error?: string };
+      if (!response.ok) throw new Error(payload.error ?? "Unable to save the review decision.");
+      setDecisions((current) => ({
+        ...current,
+        ...Object.fromEntries(targets.map((row) => [row.id, decision])),
+      }));
+      setSelectedIds((current) => {
+        const next = new Set(current);
+        targets.forEach((row) => next.delete(row.id));
+        return next;
+      });
+    } catch (caught) {
+      setDecisionError(caught instanceof Error ? caught.message : "Unable to save the review decision.");
+    }
   }
 
   const loadUnaddedSearchTerms = useCallback(async () => {
@@ -240,7 +272,7 @@ export function SearchTermOptimizationPageClient() {
     >
       <div className="space-y-5 text-neutral-950">
         <section className="relative rounded-3xl border border-neutral-200 bg-white p-5 shadow-sm sm:p-7">
-          <div className="mb-5">
+          {isAdmin ? <div className="mb-5">
             <label className="mb-2 block text-sm font-semibold text-neutral-800">Notion account search</label>
             <div className="relative max-w-2xl">
               <SearchIcon className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-neutral-400" />
@@ -271,12 +303,15 @@ export function SearchTermOptimizationPageClient() {
                 </div>
               )}
             </div>
-          </div>
+          </div> : null}
 
           <div className="flex flex-col justify-between gap-5 lg:flex-row lg:items-end">
             <div>
               <div className="mb-3 flex items-center gap-2">
                 <Badge className="bg-neutral-700 text-white">Manual review mode</Badge>
+                <Badge variant="outline" className={canReview ? "border-emerald-200 bg-emerald-50 text-emerald-800" : "border-neutral-200 bg-neutral-100 text-neutral-700"}>
+                  {AUTH_ROLE_LABELS[role]} · {canReview ? "Review access" : "Read-only"}
+                </Badge>
               </div>
               <h1 className="text-3xl font-semibold sm:text-5xl">
                 {data?.account.customerName ?? "Search-Term Optimization"}
@@ -307,10 +342,10 @@ export function SearchTermOptimizationPageClient() {
               {cards.map(([key, label, value]) => (
                 <div
                   key={key}
-                  className="rounded-2xl border border-neutral-200 bg-white p-4 text-left shadow-sm"
+                  className="flex min-h-[122px] flex-col rounded-2xl border border-neutral-200 bg-white p-4 text-left shadow-sm"
                 >
-                  <span className="text-xs font-semibold uppercase tracking-wide text-neutral-500">{label}</span>
-                  <span className="mt-2 block text-3xl font-semibold">{value}</span>
+                  <span className="min-h-10 text-xs font-semibold uppercase leading-5 tracking-wide text-neutral-500">{label}</span>
+                  <span className="mt-auto block pt-2 text-3xl font-semibold leading-none tabular-nums">{value}</span>
                 </div>
               ))}
             </section>
@@ -318,11 +353,17 @@ export function SearchTermOptimizationPageClient() {
             <section className="rounded-2xl border border-neutral-200 bg-white p-5 shadow-sm">
               <div className="grid max-w-3xl gap-3 sm:grid-cols-2">
                 <div><p className="mb-1 text-xs font-semibold uppercase tracking-wide text-neutral-500">Campaign</p><Select value={campaignFilter} onValueChange={setCampaignFilter}><SelectTrigger className="w-full cursor-pointer bg-white transition hover:bg-neutral-50"><SelectValue placeholder="All campaigns" /></SelectTrigger><SelectContent><SelectItem value="all">All campaigns</SelectItem>{campaignOptions.map((campaign) => <SelectItem key={campaign} value={campaign}>{campaign}</SelectItem>)}</SelectContent></Select></div>
-                <div><p className="mb-1 text-xs font-semibold uppercase tracking-wide text-neutral-500">Category</p><Select value={categoryFilter} onValueChange={(value) => setCategoryFilter(value as CategoryFilter)}><SelectTrigger className="w-full cursor-pointer bg-white transition hover:bg-neutral-50"><SelectValue placeholder="Special review needed" /></SelectTrigger><SelectContent><SelectItem value="special review needed">Special review needed</SelectItem><SelectItem value="negative exact">Negative exact</SelectItem><SelectItem value="add exact">Add exact</SelectItem><SelectItem value="negative phrase">Negative phrase</SelectItem><SelectItem value="no action">No action</SelectItem><SelectItem value="unadded/unexcluded">Unadded/Unexcluded</SelectItem><SelectItem value="all">All categories</SelectItem></SelectContent></Select></div>
+                <div><p className="mb-1 text-xs font-semibold uppercase tracking-wide text-neutral-500">Category</p><Select value={categoryFilter} onValueChange={(value) => setCategoryFilter(value as CategoryFilter)}><SelectTrigger className="w-full cursor-pointer bg-white transition hover:bg-neutral-50"><SelectValue placeholder="Special review needed" /></SelectTrigger><SelectContent><SelectItem value="special review needed">Special review needed</SelectItem><SelectItem value="negative exact">Negative exact</SelectItem><SelectItem value="add exact">Add exact</SelectItem><SelectItem value="negative phrase">Negative phrase</SelectItem><SelectItem value="no action">No action</SelectItem><SelectItem value="approved">Approved</SelectItem><SelectItem value="rejected">Rejected</SelectItem><SelectItem value="to_be_determined">To be determined</SelectItem>{isAdmin ? <SelectItem value="unadded/unexcluded">Unadded/Unexcluded</SelectItem> : null}<SelectItem value="all">All categories</SelectItem></SelectContent></Select></div>
               </div>
               {categoryFilter === "unadded/unexcluded" && recommendationsLoading ? <LoadingDataIndicator label="Loading current Google Ads status..." compact /> : null}
               {categoryFilter === "unadded/unexcluded" && googleRecommendationsWarning ? <p className="mt-3 text-sm text-amber-700">{googleRecommendationsWarning}</p> : null}
             </section>
+
+            {decisionError ? (
+              <p role="alert" className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
+                {decisionError}
+              </p>
+            ) : null}
 
             <section className="space-y-4">
               {grouped.map(([adGroup, rows]) => (
@@ -337,7 +378,9 @@ export function SearchTermOptimizationPageClient() {
                     <SafetyScoreLegend />
                   </div>
                   <div className="space-y-5 p-4">
-                    {groupRowsByAction(rows).map(([action, actionRows]) => {
+                    {(categoryFilter === "approved" || categoryFilter === "rejected" || categoryFilter === "to_be_determined"
+                      ? [[categoryFilter, rows] as [string, OptimizationResult[]]]
+                      : groupRowsByAction(rows)).map(([action, actionRows]) => {
                       const categoryId = `${adGroup}:${action}`;
                       return <ActionGroupTable
                         key={`${action}-${campaignFilter}-${categoryFilter}`}
@@ -350,6 +393,7 @@ export function SearchTermOptimizationPageClient() {
                         onToggleRow={toggleRow}
                         onToggleCategory={toggleCategory}
                         onDecision={decideCategory}
+                        canReview={canReview && action !== "no action"}
                       />;
                     })}
                   </div>
@@ -429,6 +473,7 @@ function ActionGroupTable({
   onToggleRow,
   onToggleCategory,
   onDecision,
+  canReview,
 }: {
   action: string;
   rows: OptimizationResult[];
@@ -439,6 +484,7 @@ function ActionGroupTable({
   onToggleRow: (id: string, checked: boolean) => void;
   onToggleCategory: (rows: OptimizationResult[], checked: boolean) => void;
   onDecision: (rows: OptimizationResult[], decision: ReviewDecision) => void;
+  canReview: boolean;
 }) {
   const pageCount = Math.max(1, Math.ceil(rows.length / RESULTS_PER_PAGE));
   const safePage = Math.min(page, pageCount);
@@ -451,18 +497,19 @@ function ActionGroupTable({
     <section className="overflow-hidden rounded-xl border border-neutral-200">
       <div className="flex flex-wrap items-center justify-between gap-3 border-b bg-neutral-100 px-4 py-3">
         <div className="flex items-center gap-3">
-          <Checkbox
+          {canReview ? <Checkbox
             checked={allSelected}
             onCheckedChange={(checked) => onToggleCategory(rows, checked === true)}
             aria-label={`Select all ${humanize(action)} terms`}
             className="cursor-pointer"
-          />
+          /> : null}
           <h3 className="font-semibold">{humanize(action)}</h3>
           <Badge variant="outline" className="bg-white">{rows.length} terms</Badge>
           {selectedCount > 0 ? <span className="text-xs font-medium text-neutral-500">{selectedCount} selected</span> : null}
         </div>
-        {allSelected ? <div className="flex items-center gap-2">
+        {canReview && allSelected ? <div className="flex items-center gap-2">
           <DecisionButton label="Approve selected rows" decision="approved" size="category" onClick={() => onDecision(rows, "approved")} />
+          <DecisionButton label="Mark selected rows as to be determined" decision="to_be_determined" size="category" onClick={() => onDecision(rows, "to_be_determined")} />
           <DecisionButton label="Reject selected rows" decision="rejected" size="category" onClick={() => onDecision(rows, "rejected")} />
         </div> : null}
       </div>
@@ -470,13 +517,13 @@ function ActionGroupTable({
         <table className="min-w-[620px] w-full text-left text-sm">
           <thead className="bg-neutral-50 text-xs uppercase tracking-wide text-neutral-500">
             <tr>
-              {["", "Search term", "Clicks", "Spend", "Conv.", "Classification", "Score", "Decision"].map((heading, index) => (
+              {(canReview ? ["", "Search term", "Clicks", "Spend", "Conv.", "Classification", "Score", "Decision"] : ["Search term", "Clicks", "Spend", "Conv.", "Classification", "Score"]).map((heading, index) => (
                 <th key={`${heading}-${index}`} className="px-4 py-3 font-semibold">{heading}</th>
               ))}
             </tr>
           </thead>
           <tbody className="divide-y">
-            {pageRows.map((row) => <ResultRow key={row.id} row={row} selected={selectedIds.has(row.id)} decision={decisions[row.id]} showRowActions={!allSelected} onToggle={onToggleRow} onDecision={onDecision} />)}
+            {pageRows.map((row) => <ResultRow key={row.id} row={row} selected={selectedIds.has(row.id)} decision={decisions[row.id]} showRowActions={!allSelected} onToggle={onToggleRow} onDecision={onDecision} canReview={canReview} />)}
           </tbody>
         </table>
       </div>
@@ -509,10 +556,10 @@ function groupRowsByAction(rows: OptimizationResult[]) {
   });
 }
 
-function ResultRow({ row, selected, decision, showRowActions, onToggle, onDecision }: { row: OptimizationResult; selected: boolean; decision?: ReviewDecision; showRowActions: boolean; onToggle: (id: string, checked: boolean) => void; onDecision: (rows: OptimizationResult[], decision: ReviewDecision) => void }) {
+function ResultRow({ row, selected, decision, showRowActions, onToggle, onDecision, canReview }: { row: OptimizationResult; selected: boolean; decision?: ReviewDecision; showRowActions: boolean; onToggle: (id: string, checked: boolean) => void; onDecision: (rows: OptimizationResult[], decision: ReviewDecision) => void; canReview: boolean }) {
   return (
-    <tr className={`align-top ${decision === "approved" ? "bg-emerald-50/60" : decision === "rejected" ? "bg-red-50/60" : "hover:bg-neutral-50/70"}`}>
-      <td className="px-4 py-4"><Checkbox checked={selected} onCheckedChange={(checked) => onToggle(row.id, checked === true)} aria-label={`Select ${row.searchTerm}`} className="cursor-pointer" /></td>
+    <tr className={`align-top ${decision === "approved" ? "bg-emerald-100/80" : decision === "rejected" ? "bg-red-100/80" : decision === "to_be_determined" ? "bg-amber-100/80" : "hover:bg-neutral-50/70"}`}>
+      {canReview ? <td className="px-4 py-4"><Checkbox checked={selected} onCheckedChange={(checked) => onToggle(row.id, checked === true)} aria-label={`Select ${row.searchTerm}`} className="cursor-pointer" /></td> : null}
       <td className="px-4 py-4 font-semibold">{row.searchTerm}</td>
       <td className="px-4 py-4 tabular-nums">{row.clicks}</td>
       <td className="px-4 py-4 tabular-nums">RM {row.spend.toFixed(2)}</td>
@@ -521,15 +568,23 @@ function ResultRow({ row, selected, decision, showRowActions, onToggle, onDecisi
       <td className="px-4 py-4">
         <span className="flex items-center gap-1 font-semibold"><ScoreIcon row={row} /> {row.safetyScore}</span>
       </td>
-      <td className="px-4 py-4">
-        {showRowActions ? <div className="flex items-center gap-1"><DecisionButton label="Approve" decision="approved" onClick={() => onDecision([row], "approved")} /><DecisionButton label="Reject" decision="rejected" onClick={() => onDecision([row], "rejected")} /></div> : decision === "approved" ? <span className="inline-flex items-center gap-1 font-semibold text-emerald-700"><CheckIcon className="size-4" />Approved</span> : decision === "rejected" ? <span className="inline-flex items-center gap-1 font-semibold text-red-700"><XIcon className="size-4" />Rejected</span> : <span className="text-neutral-400">Pending</span>}
-      </td>
+      {canReview ? <td className="px-4 py-4">
+        {showRowActions ? <div className="flex flex-wrap items-center gap-1"><DecisionButton label="Approve" decision="approved" onClick={() => onDecision([row], "approved")} /><DecisionButton label="To be determined" decision="to_be_determined" onClick={() => onDecision([row], "to_be_determined")} /><DecisionButton label="Reject" decision="rejected" onClick={() => onDecision([row], "rejected")} /></div> : <DecisionStatus decision={decision} />}
+      </td> : null}
     </tr>
   );
 }
 
+function DecisionStatus({ decision }: { decision?: ReviewDecision }) {
+  if (decision === "approved") return <span className="font-semibold text-emerald-700">Approved</span>;
+  if (decision === "rejected") return <span className="font-semibold text-red-700">Rejected</span>;
+  if (decision === "to_be_determined") return <span className="font-semibold text-amber-700">To be determined</span>;
+  return <span className="text-neutral-400">Pending</span>;
+}
+
 function DecisionButton({ label, decision, size = "row", onClick }: { label: string; decision: ReviewDecision; size?: "row" | "category"; onClick: () => void }) {
   const approved = decision === "approved";
+  const toBeDetermined = decision === "to_be_determined";
   return (
     <Tooltip>
       <TooltipTrigger asChild>
@@ -538,10 +593,10 @@ function DecisionButton({ label, decision, size = "row", onClick }: { label: str
           size="icon"
           variant={size === "category" ? "outline" : "ghost"}
           aria-label={label}
-          className={`${size === "category" ? "size-9 border-transparent" : "size-8"} cursor-pointer transition ${approved ? "bg-emerald-600/10 text-emerald-700 hover:bg-emerald-600/20 hover:text-emerald-800" : "bg-red-600/10 text-red-700 hover:bg-red-600/20 hover:text-red-800"}`}
+          className={`${size === "category" ? "size-9 border-transparent" : "size-8"} cursor-pointer transition ${approved ? "bg-emerald-600/10 text-emerald-700 hover:bg-emerald-600/20 hover:text-emerald-800" : toBeDetermined ? "bg-amber-500/10 text-amber-700 hover:bg-amber-500/20 hover:text-amber-800" : "bg-red-600/10 text-red-700 hover:bg-red-600/20 hover:text-red-800"}`}
           onClick={onClick}
         >
-          {approved ? <CheckIcon className="size-4" /> : <XIcon className="size-4" />}
+          {approved ? <CheckIcon className="size-4" /> : toBeDetermined ? <CircleHelpIcon className="size-4" /> : <XIcon className="size-4" />}
         </Button>
       </TooltipTrigger>
       <TooltipContent side="top" sideOffset={8} className="border border-white/15 bg-[#211114] px-3 py-2 text-sm font-medium text-white shadow-xl">
