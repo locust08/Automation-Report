@@ -161,7 +161,7 @@ export function SearchTermOptimizationPageClient({ role }: { role: AuthRole }) {
                   ? row.reviewStatus === "approver_rejected"
                   : categoryFilter === "returned_for_clarification"
                     ? row.reviewStatus === "returned_for_clarification"
-                    : normalizeAction(row.proposedAction) === categoryFilter);
+                    : !row.reviewDecision && normalizeAction(row.proposedAction) === categoryFilter);
       const matchesCampaign = campaignFilter === "all" || row.campaign === campaignFilter;
       return matchesFilter && matchesCampaign;
     });
@@ -257,11 +257,8 @@ export function SearchTermOptimizationPageClient({ role }: { role: AuthRole }) {
         ...current,
         ...Object.fromEntries(targets.map((row) => [row.id, decision])),
       }));
-      setSelectedIds((current) => {
-        const next = new Set(current);
-        targets.forEach((row) => next.delete(row.id));
-        return next;
-      });
+      setSelectedIds(new Set());
+      await load(data?.account.customerId);
     } catch (caught) {
       setDecisionError(caught instanceof Error ? caught.message : "Unable to save the review decision.");
     }
@@ -295,6 +292,7 @@ export function SearchTermOptimizationPageClient({ role }: { role: AuthRole }) {
           : row),
       } : current);
       setSelectedIds(new Set());
+      await load(data?.account.customerId);
     } catch (caught) {
       setDecisionError(caught instanceof Error ? caught.message : "Unable to save the approver decision.");
     }
@@ -411,8 +409,8 @@ export function SearchTermOptimizationPageClient({ role }: { role: AuthRole }) {
             </section>
 
             <section className="rounded-2xl border border-neutral-200 bg-white p-5 shadow-sm">
-              {isAdmin ? <div className="mb-4 max-w-sm"><p className="mb-1 text-xs font-semibold uppercase tracking-wide text-neutral-500">Workflow</p><Select value={workflowMode} onValueChange={(value) => setWorkflowMode(value as WorkflowMode)}><SelectTrigger className="w-full cursor-pointer bg-white"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="specialist">Specialist review</SelectItem><SelectItem value="approver">Approver queue</SelectItem></SelectContent></Select></div> : null}
-              <div className="grid max-w-3xl gap-3 sm:grid-cols-2">
+              <div className={`grid gap-3 ${isAdmin ? "md:grid-cols-3" : "sm:grid-cols-2"}`}>
+                {isAdmin ? <div><p className="mb-1 text-xs font-semibold uppercase tracking-wide text-neutral-500">Workflow</p><Select value={workflowMode} onValueChange={(value) => setWorkflowMode(value as WorkflowMode)}><SelectTrigger className="w-full cursor-pointer bg-white transition hover:bg-neutral-50"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="specialist">Specialist review</SelectItem><SelectItem value="approver">Approver queue</SelectItem></SelectContent></Select></div> : null}
                 <div><p className="mb-1 text-xs font-semibold uppercase tracking-wide text-neutral-500">Campaign</p><Select value={campaignFilter} onValueChange={setCampaignFilter}><SelectTrigger className="w-full cursor-pointer bg-white transition hover:bg-neutral-50"><SelectValue placeholder="All campaigns" /></SelectTrigger><SelectContent><SelectItem value="all">All campaigns</SelectItem>{campaignOptions.map((campaign) => <SelectItem key={campaign} value={campaign}>{campaign}</SelectItem>)}</SelectContent></Select></div>
                 <div><p className="mb-1 text-xs font-semibold uppercase tracking-wide text-neutral-500">Category</p><Select value={categoryFilter} onValueChange={(value) => setCategoryFilter(value as CategoryFilter)}><SelectTrigger className="w-full cursor-pointer bg-white transition hover:bg-neutral-50"><SelectValue /></SelectTrigger><SelectContent>{workflowMode === "approver" ? <><SelectItem value="awaiting_approval">Awaiting approval</SelectItem><SelectItem value="approved_for_publishing">Approved for publishing</SelectItem><SelectItem value="approver_rejected">Approver rejected</SelectItem><SelectItem value="returned_for_clarification">Returned for clarification</SelectItem></> : <><SelectItem value="special review needed">Special review needed</SelectItem><SelectItem value="negative exact">Negative exact</SelectItem><SelectItem value="add exact">Add exact</SelectItem><SelectItem value="negative phrase">Negative phrase</SelectItem><SelectItem value="no action">No action</SelectItem><SelectItem value="approved">Approved</SelectItem><SelectItem value="rejected">Rejected</SelectItem><SelectItem value="to_be_determined">To be determined</SelectItem>{isAdmin ? <SelectItem value="unadded/unexcluded">Unadded/Unexcluded</SelectItem> : null}</>}<SelectItem value="all">All categories</SelectItem></SelectContent></Select></div>
               </div>
@@ -441,7 +439,7 @@ export function SearchTermOptimizationPageClient({ role }: { role: AuthRole }) {
                   <div className="space-y-5 p-4">
                     {((["approved", "rejected", "to_be_determined", "awaiting_approval", "approved_for_publishing", "approver_rejected", "returned_for_clarification"] as CategoryFilter[]).includes(categoryFilter)
                       ? [[categoryFilter, rows] as [string, OptimizationResult[]]]
-                      : groupRowsByAction(rows)).map(([action, actionRows]) => {
+                      : groupRowsByAction(rows, workflowMode)).map(([action, actionRows]) => {
                       const categoryId = `${adGroup}:${action}`;
                       return <ActionGroupTable
                         key={`${action}-${campaignFilter}-${categoryFilter}`}
@@ -601,7 +599,7 @@ function ActionGroupTable({
           <thead className="bg-neutral-50 text-xs uppercase tracking-wide text-neutral-500">
             <tr>
               {(canReview || canApprove ? ["", "Search term", "Clicks", "Spend", "Conv.", "Classification", "Score", "Decision"] : approverView ? ["Search term", "Clicks", "Spend", "Conv.", "Classification", "Score", "Decision"] : ["Search term", "Clicks", "Spend", "Conv.", "Classification", "Score"]).map((heading, index) => (
-                <th key={`${heading}-${index}`} className="px-4 py-3 font-semibold">{heading}</th>
+                <th key={`${heading}-${index}`} className={`px-4 py-3 font-semibold ${heading === "Search term" ? "text-left" : "text-center"}`}>{heading}</th>
               ))}
             </tr>
           </thead>
@@ -628,10 +626,17 @@ function ActionGroupTable({
   );
 }
 
-function groupRowsByAction(rows: OptimizationResult[]) {
-  const order = ["special review needed", "negative exact", "add exact", "negative phrase", "no action"];
+function groupRowsByAction(rows: OptimizationResult[], workflowMode: WorkflowMode) {
+  const order = workflowMode === "approver"
+    ? ["awaiting_approval", "approved_for_publishing", "approver_rejected", "returned_for_clarification"]
+    : ["special review needed", "negative exact", "add exact", "negative phrase", "no action", "approved", "rejected", "to_be_determined"];
   const groups = new Map<string, OptimizationResult[]>();
-  for (const row of rows) groups.set(row.proposedAction, [...(groups.get(row.proposedAction) ?? []), row]);
+  for (const row of rows) {
+    const category = workflowMode === "approver"
+      ? row.reviewStatus === "ready_for_approval" ? "awaiting_approval" : row.reviewStatus ?? "awaiting_approval"
+      : row.reviewDecision ?? row.proposedAction;
+    groups.set(category, [...(groups.get(category) ?? []), row]);
+  }
   return [...groups.entries()].sort(([left], [right]) => {
     const leftIndex = order.indexOf(left);
     const rightIndex = order.indexOf(right);
@@ -642,24 +647,28 @@ function groupRowsByAction(rows: OptimizationResult[]) {
 function ResultRow({ row, selected, decision, approverDecision, showRowActions, onToggle, onDecision, onApproverDecision, canReview, canApprove, approverView }: { row: OptimizationResult; selected: boolean; decision?: ReviewDecision; approverDecision?: ApproverDecision; showRowActions: boolean; onToggle: (id: string, checked: boolean) => void; onDecision: (rows: OptimizationResult[], decision: ReviewDecision) => void; onApproverDecision: (rows: OptimizationResult[], decision: ApproverDecision) => void; canReview: boolean; canApprove: boolean; approverView: boolean }) {
   const visibleDecision = approverView ? approverDecision : decision;
   return (
-    <tr className={`align-top ${visibleDecision === "approved" ? "bg-emerald-100/80" : visibleDecision === "rejected" ? "bg-red-100/80" : visibleDecision === "returned" || visibleDecision === "to_be_determined" ? "bg-amber-100/80" : "hover:bg-neutral-50/70"}`}>
-      {canReview || canApprove ? <td className="px-4 py-4"><Checkbox checked={selected} onCheckedChange={(checked) => onToggle(row.id, checked === true)} aria-label={`Select ${row.searchTerm}`} className="cursor-pointer" /></td> : null}
+    <tr className={`align-middle ${visibleDecision === "approved" ? "bg-emerald-100/80" : visibleDecision === "rejected" ? "bg-red-100/80" : visibleDecision === "returned" || visibleDecision === "to_be_determined" ? "bg-amber-100/80" : "hover:bg-neutral-50/70"}`}>
+      {canReview || canApprove ? <td className="px-4 py-4 text-center"><Checkbox checked={selected} onCheckedChange={(checked) => onToggle(row.id, checked === true)} aria-label={`Select ${row.searchTerm}`} className="cursor-pointer" /></td> : null}
       <td className="px-4 py-4 font-semibold">
         <span>{row.searchTerm}</span>
         {approverView ? <ReviewHistoryDetails row={row} /> : null}
       </td>
-      <td className="px-4 py-4 tabular-nums">{row.clicks}</td>
-      <td className="px-4 py-4 tabular-nums">RM {row.spend.toFixed(2)}</td>
-      <td className="px-4 py-4 tabular-nums">{row.conversions.toFixed(2)}</td>
-      <td className="px-4 py-4"><Badge variant="outline">{humanize(row.classification)}</Badge></td>
-      <td className="px-4 py-4">
-        <span className="flex items-center gap-1 font-semibold"><ScoreIcon row={row} /> {row.safetyScore}</span>
+      <td className="px-4 py-4 text-center tabular-nums">{row.clicks}</td>
+      <td className="px-4 py-4 text-center tabular-nums">RM {row.spend.toFixed(2)}</td>
+      <td className="px-4 py-4 text-center tabular-nums">{row.conversions.toFixed(2)}</td>
+      <td className="px-4 py-4 text-center"><Badge variant="outline">{humanize(row.classification)}</Badge></td>
+      <td className="px-4 py-4 text-center">
+        <span className="flex items-center justify-center gap-1 font-semibold"><ScoreIcon row={row} /> {row.safetyScore}</span>
       </td>
-      {canReview ? <td className="px-4 py-4">
-        {showRowActions ? <div className="flex flex-wrap items-center gap-1"><DecisionButton label="Approve" decision="approved" onClick={() => onDecision([row], "approved")} /><DecisionButton label="To be determined" decision="to_be_determined" onClick={() => onDecision([row], "to_be_determined")} /><DecisionButton label="Reject" decision="rejected" onClick={() => onDecision([row], "rejected")} /></div> : <DecisionStatus decision={decision} />}
+      {canReview ? <td className="px-4 py-4 text-center">
+        {showRowActions ? <div className="flex items-center justify-center gap-1">
+          {decision !== "approved" ? <DecisionButton label="Approve" decision="approved" onClick={() => onDecision([row], "approved")} /> : null}
+          {decision !== "to_be_determined" ? <DecisionButton label="To be determined" decision="to_be_determined" onClick={() => onDecision([row], "to_be_determined")} /> : null}
+          {decision !== "rejected" ? <DecisionButton label="Reject" decision="rejected" onClick={() => onDecision([row], "rejected")} /> : null}
+        </div> : <DecisionStatus decision={decision} />}
       </td> : null}
-      {approverView ? <td className="px-4 py-4">
-        {canApprove && showRowActions ? <div className="flex items-center gap-1"><ApproverDecisionButton label="Approve for publishing" decision="approved" onClick={() => onApproverDecision([row], "approved")} /><ApproverDecisionButton label="Return for clarification" decision="returned" onClick={() => onApproverDecision([row], "returned")} /><ApproverDecisionButton label="Reject" decision="rejected" onClick={() => onApproverDecision([row], "rejected")} /></div> : <ApproverDecisionStatus decision={approverDecision} status={row.reviewStatus} />}
+      {approverView ? <td className="px-4 py-4 text-center">
+        {canApprove && showRowActions ? <div className="flex items-center justify-center gap-1"><ApproverDecisionButton label="Approve for publishing" decision="approved" onClick={() => onApproverDecision([row], "approved")} /><ApproverDecisionButton label="Return for clarification" decision="returned" onClick={() => onApproverDecision([row], "returned")} /><ApproverDecisionButton label="Reject" decision="rejected" onClick={() => onApproverDecision([row], "rejected")} /></div> : <ApproverDecisionStatus decision={approverDecision} status={row.reviewStatus} />}
       </td> : null}
     </tr>
   );

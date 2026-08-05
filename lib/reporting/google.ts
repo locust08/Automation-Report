@@ -155,8 +155,11 @@ interface GoogleAdsResult {
     resourceName?: string;
   };
   detailPlacementView?: {
+    resourceName?: string;
     placement?: string;
     displayName?: string;
+    placementType?: string;
+    groupPlacementTargetUrl?: string;
   };
   groupPlacementView?: {
     targetUrl?: string;
@@ -704,6 +707,122 @@ export async function fetchGoogleCampaignRows({
       return row;
     })
     .filter(hasReportableCampaignSpend);
+}
+
+export interface GooglePlacementPerformanceRow {
+  resourceName: string;
+  placement: string;
+  displayName: string;
+  placementType: string;
+  targetUrl: string | null;
+  campaignId: string;
+  campaignName: string;
+  adGroupId: string;
+  adGroupName: string;
+  impressions: number;
+  clicks: number;
+  spend: number;
+  conversions: number;
+  videoViews: number;
+}
+
+export async function fetchGooglePlacementPerformanceRows(input: GoogleFetchInput): Promise<GooglePlacementPerformanceRow[]> {
+  const context = await resolveVerifiedGoogleAdsContext({
+    customerId: input.customerId,
+    apiVersion: input.apiVersion,
+    developerToken: input.developerToken,
+    accessToken: input.accessToken,
+    refreshToken: input.refreshToken,
+    clientId: input.clientId,
+    clientSecret: input.clientSecret,
+    loginCustomerId: input.loginCustomerId,
+    accessPath: input.accessPath ?? null,
+    fallbackLoginCustomerId: input.fallbackLoginCustomerId ?? null,
+  });
+  const results = await fetchGoogleAdsResultsWithFallback({
+    customerId: context.customerId,
+    apiVersion: input.apiVersion,
+    developerToken: input.developerToken,
+    accessToken: input.accessToken,
+    refreshToken: input.refreshToken,
+    clientId: input.clientId,
+    clientSecret: input.clientSecret,
+    loginCustomerId: context.loginCustomerId,
+    queries: [`
+      SELECT
+        detail_placement_view.resource_name,
+        detail_placement_view.placement,
+        detail_placement_view.display_name,
+        detail_placement_view.placement_type,
+        detail_placement_view.group_placement_target_url,
+        campaign.id,
+        campaign.name,
+        ad_group.id,
+        ad_group.name,
+        metrics.impressions,
+        metrics.clicks,
+        metrics.cost_micros,
+        metrics.conversions,
+        metrics.video_views
+      FROM detail_placement_view
+      WHERE segments.date BETWEEN '${input.startDate}' AND '${input.endDate}'
+        AND campaign.status != 'REMOVED'
+      ORDER BY metrics.cost_micros DESC
+    `, `
+      SELECT
+        detail_placement_view.resource_name,
+        detail_placement_view.placement,
+        detail_placement_view.display_name,
+        detail_placement_view.placement_type,
+        detail_placement_view.group_placement_target_url,
+        campaign.id,
+        campaign.name,
+        ad_group.id,
+        ad_group.name,
+        metrics.impressions,
+        metrics.clicks,
+        metrics.cost_micros,
+        metrics.conversions
+      FROM detail_placement_view
+      WHERE segments.date BETWEEN '${input.startDate}' AND '${input.endDate}'
+        AND campaign.status != 'REMOVED'
+      ORDER BY metrics.cost_micros DESC
+    `, `
+      SELECT
+        detail_placement_view.resource_name,
+        detail_placement_view.placement,
+        detail_placement_view.display_name,
+        detail_placement_view.placement_type,
+        campaign.id,
+        campaign.name,
+        ad_group.id,
+        ad_group.name,
+        metrics.impressions,
+        metrics.clicks,
+        metrics.cost_micros,
+        metrics.conversions
+      FROM detail_placement_view
+      WHERE segments.date BETWEEN '${input.startDate}' AND '${input.endDate}'
+        AND campaign.status != 'REMOVED'
+      ORDER BY metrics.cost_micros DESC
+    `],
+  });
+  return results.map((result, index) => ({
+    resourceName: result.detailPlacementView?.resourceName ?? `placement-${index}`,
+    placement: result.detailPlacementView?.placement?.trim() || "Unknown placement",
+    displayName: result.detailPlacementView?.displayName?.trim() || result.detailPlacementView?.placement?.trim() || "Unknown placement",
+    placementType: result.detailPlacementView?.placementType?.trim() || "UNKNOWN",
+    targetUrl: result.detailPlacementView?.groupPlacementTargetUrl?.trim() || null,
+    campaignId: result.campaign?.id ?? "unknown",
+    campaignName: result.campaign?.name?.trim() || "Unknown campaign",
+    adGroupId: result.adGroup?.id ?? "unknown",
+    adGroupName: result.adGroup?.name?.trim() || "Unknown ad group",
+    impressions: toNumber(result.metrics?.impressions),
+    clicks: toNumber(result.metrics?.clicks),
+    spend: microsToCurrency(result.metrics?.costMicros),
+    conversions: toNumber(result.metrics?.conversions),
+    videoViews: toNumber(result.metrics?.videoViews),
+  }));
 }
 
 export function buildGoogleCampaignRowsQueries(startDate: string, endDate: string): string[] {

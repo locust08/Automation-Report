@@ -12,6 +12,7 @@ import {
   IdCardIcon,
   ListChecksIcon,
   LogOutIcon,
+  PanelsTopLeftIcon,
   SearchCheckIcon,
   SparklesIcon,
   UploadCloudIcon,
@@ -74,6 +75,7 @@ export function ReportShell({
     metaImport: "/meta-import",
     billing: "/billing",
     searchTermOptimization: "/search-term-optimization",
+    placementOptimization: "/placement-optimization",
     userManagement: "/user-management",
   };
 
@@ -149,18 +151,18 @@ export function ReportShell({
                       <ClipboardListIcon className="size-5" />
                     </ReportNavLink>
                     <ReportNavLink
-                      href={hrefs.billing}
-                      label="Billing Operations"
-                      active={pathname === "/billing"}
-                    >
-                      <ListChecksIcon className="size-5" />
-                    </ReportNavLink>
-                    <ReportNavLink
                       href={hrefs.metaImport}
                       label="Import Meta CSV"
                       active={pathname === "/meta-import"}
                     >
                       <UploadCloudIcon className="size-5" />
+                    </ReportNavLink>
+                    <ReportNavLink
+                      href={hrefs.billing}
+                      label="Billing Operations"
+                      active={pathname === "/billing"}
+                    >
+                      <ListChecksIcon className="size-5" />
                     </ReportNavLink>
                     {currentRole ? <ReportNavLink
                       href={hrefs.searchTermOptimization}
@@ -168,6 +170,13 @@ export function ReportShell({
                       active={pathname === "/search-term-optimization"}
                     >
                       <SearchCheckIcon className="size-5" />
+                    </ReportNavLink> : null}
+                    {currentRole && ["co", "approver", "pm", "admin"].includes(currentRole) ? <ReportNavLink
+                      href={hrefs.placementOptimization}
+                      label="Placement Optimization"
+                      active={pathname === "/placement-optimization"}
+                    >
+                      <PanelsTopLeftIcon className="size-5" />
                     </ReportNavLink> : null}
                     {isAdmin ? <>
                       <ReportNavLink

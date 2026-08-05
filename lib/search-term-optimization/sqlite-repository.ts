@@ -196,11 +196,13 @@ export function persistDashboardToSqlite(payload: OptimizationDashboardPayload):
           id: saved.recommendation_id ? String(saved.recommendation_id) : `term-${saved.search_term_id}`,
           recommendationId: saved.recommendation_id ? String(saved.recommendation_id) : undefined,
           reviewStatus: saved.review_status ?? undefined,
-          reviewDecision: saved.current_decision === "submit_for_approval"
+          reviewDecision: saved.current_decision === "submit_for_approval" || saved.current_decision === "approver_approved"
             ? "approved"
-            : saved.current_decision === "reject"
+            : saved.current_decision === "reject" || saved.current_decision === "approver_rejected"
               ? "rejected"
-              : saved.current_decision === "kiv" ? "to_be_determined" : undefined,
+              : saved.current_decision === "kiv" || saved.current_decision === "return_to_specialist"
+                ? "to_be_determined"
+                : undefined,
           approverDecision: saved.current_decision === "approver_approved"
             ? "approved"
             : saved.current_decision === "approver_rejected"
