@@ -13,6 +13,9 @@
 # testing
 /coverage
 /artifacts/
+/output/
+/outputs/
+/tmp/
 /data/*.sqlite
 /data/*.sqlite-shm
 /data/*.sqlite-wal

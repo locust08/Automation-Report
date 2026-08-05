@@ -39,26 +39,35 @@ type CategoryFilter =
   | "approved"
   | "rejected"
   | "to_be_determined"
+  | "awaiting_approval"
+  | "approved_for_publishing"
+  | "approver_rejected"
+  | "returned_for_clarification"
   | "unadded/unexcluded";
 
 type ReviewDecision = "approved" | "rejected" | "to_be_determined";
+type ApproverDecision = "approved" | "rejected" | "returned";
+type WorkflowMode = "specialist" | "approver";
 
 type AccountSuggestion = {
   accountName: string;
   adAccountId: string;
 };
 
-const REVIEW_ROLES: AuthRole[] = ["pms", "specialist", "approver", "admin"];
+const REVIEW_ROLES: AuthRole[] = ["pms", "specialist", "admin"];
 
 export function SearchTermOptimizationPageClient({ role }: { role: AuthRole }) {
   const isAdmin = role === "admin";
-  const canReview = REVIEW_ROLES.includes(role);
+  const [workflowMode, setWorkflowMode] = useState<WorkflowMode>(role === "approver" ? "approver" : "specialist");
+  const canReview = REVIEW_ROLES.includes(role) && workflowMode === "specialist";
+  const canApprove = (role === "approver" || role === "admin") && workflowMode === "approver";
   const [data, setData] = useState<OptimizationDashboardPayload | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
-  const [categoryFilter, setCategoryFilter] = useState<CategoryFilter>("special review needed");
+  const [categoryFilter, setCategoryFilter] = useState<CategoryFilter>(role === "approver" ? "awaiting_approval" : "special review needed");
   const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
   const [decisions, setDecisions] = useState<Record<string, ReviewDecision>>({});
+  const [approverDecisions, setApproverDecisions] = useState<Record<string, ApproverDecision>>({});
   const [decisionError, setDecisionError] = useState<string | null>(null);
   const [categoryPages, setCategoryPages] = useState<Record<string, number>>({});
   const [campaignFilter, setCampaignFilter] = useState("all");
@@ -85,6 +94,11 @@ export function SearchTermOptimizationPageClient({ role }: { role: AuthRole }) {
         payload.results
           .filter((row) => row.reviewDecision)
           .map((row) => [row.id, row.reviewDecision as ReviewDecision]),
+      ));
+      setApproverDecisions(Object.fromEntries(
+        payload.results
+          .filter((row) => row.approverDecision)
+          .map((row) => [row.id, row.approverDecision as ApproverDecision]),
       ));
       setRecommendationsLoaded(false);
       setGoogleRecommendations([]);
@@ -126,6 +140,11 @@ export function SearchTermOptimizationPageClient({ role }: { role: AuthRole }) {
     };
   }, [accountQuery]);
 
+  useEffect(() => {
+    setCategoryFilter(workflowMode === "approver" ? "awaiting_approval" : "special review needed");
+    setSelectedIds(new Set());
+  }, [workflowMode]);
+
   const visibleResults = useMemo(() => {
     const unaddedKeys = new Set(googleRecommendations.map((row) => `${row.searchTerm.toLowerCase()}|${row.campaign}|${row.adGroup}`));
     return (data?.results ?? []).filter((row) => {
@@ -134,7 +153,15 @@ export function SearchTermOptimizationPageClient({ role }: { role: AuthRole }) {
           ? unaddedKeys.has(`${row.searchTerm.toLowerCase()}|${row.campaign}|${row.adGroup}`)
           : categoryFilter === "approved" || categoryFilter === "rejected" || categoryFilter === "to_be_determined"
             ? row.reviewDecision === categoryFilter
-            : normalizeAction(row.proposedAction) === categoryFilter);
+            : categoryFilter === "awaiting_approval"
+              ? row.reviewStatus === "ready_for_approval"
+              : categoryFilter === "approved_for_publishing"
+                ? row.reviewStatus === "approved_for_publishing"
+                : categoryFilter === "approver_rejected"
+                  ? row.reviewStatus === "approver_rejected"
+                  : categoryFilter === "returned_for_clarification"
+                    ? row.reviewStatus === "returned_for_clarification"
+                    : normalizeAction(row.proposedAction) === categoryFilter);
       const matchesCampaign = campaignFilter === "all" || row.campaign === campaignFilter;
       return matchesFilter && matchesCampaign;
     });
@@ -165,7 +192,7 @@ export function SearchTermOptimizationPageClient({ role }: { role: AuthRole }) {
     : [];
 
   const cacheKey = data
-    ? `search-term-review:${role}:${data.account.customerId}:${data.account.lastAnalysisAt}`
+    ? `search-term-review:${role}:${workflowMode}:${data.account.customerId}:${data.account.lastAnalysisAt}`
     : null;
 
   useEffect(() => {
@@ -240,6 +267,39 @@ export function SearchTermOptimizationPageClient({ role }: { role: AuthRole }) {
     }
   }
 
+  async function decideApproval(rows: OptimizationResult[], decision: ApproverDecision) {
+    if (!canApprove) return;
+    const selected = rows.filter((row) => selectedIds.has(row.id));
+    const targets = selected.length > 0 ? selected : rows;
+    setDecisionError(null);
+    try {
+      const response = await fetch("/api/search-term-optimization/approvals", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ recommendationIds: targets.map((row) => row.id), decision }),
+      });
+      const payload = await response.json() as { error?: string };
+      if (!response.ok) throw new Error(payload.error ?? "Unable to save the approver decision.");
+      setApproverDecisions((current) => ({
+        ...current,
+        ...Object.fromEntries(targets.map((row) => [row.id, decision])),
+      }));
+      setData((current) => current ? {
+        ...current,
+        results: current.results.map((row) => targets.some((target) => target.id === row.id)
+          ? {
+              ...row,
+              reviewStatus: decision === "approved" ? "approved_for_publishing" : decision === "rejected" ? "approver_rejected" : "returned_for_clarification",
+              approverDecision: decision,
+            }
+          : row),
+      } : current);
+      setSelectedIds(new Set());
+    } catch (caught) {
+      setDecisionError(caught instanceof Error ? caught.message : "Unable to save the approver decision.");
+    }
+  }
+
   const loadUnaddedSearchTerms = useCallback(async () => {
     if (recommendationsLoaded || recommendationsLoading || !data) return;
     setRecommendationsLoading(true);
@@ -309,8 +369,8 @@ export function SearchTermOptimizationPageClient({ role }: { role: AuthRole }) {
             <div>
               <div className="mb-3 flex items-center gap-2">
                 <Badge className="bg-neutral-700 text-white">Manual review mode</Badge>
-                <Badge variant="outline" className={canReview ? "border-emerald-200 bg-emerald-50 text-emerald-800" : "border-neutral-200 bg-neutral-100 text-neutral-700"}>
-                  {AUTH_ROLE_LABELS[role]} · {canReview ? "Review access" : "Read-only"}
+                <Badge variant="outline" className={canReview || canApprove ? "border-emerald-200 bg-emerald-50 text-emerald-800" : "border-neutral-200 bg-neutral-100 text-neutral-700"}>
+                  {AUTH_ROLE_LABELS[role]} · {canApprove ? "Approval access" : canReview ? "Review access" : "Read-only"}
                 </Badge>
               </div>
               <h1 className="text-3xl font-semibold sm:text-5xl">
@@ -351,9 +411,10 @@ export function SearchTermOptimizationPageClient({ role }: { role: AuthRole }) {
             </section>
 
             <section className="rounded-2xl border border-neutral-200 bg-white p-5 shadow-sm">
+              {isAdmin ? <div className="mb-4 max-w-sm"><p className="mb-1 text-xs font-semibold uppercase tracking-wide text-neutral-500">Workflow</p><Select value={workflowMode} onValueChange={(value) => setWorkflowMode(value as WorkflowMode)}><SelectTrigger className="w-full cursor-pointer bg-white"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="specialist">Specialist review</SelectItem><SelectItem value="approver">Approver queue</SelectItem></SelectContent></Select></div> : null}
               <div className="grid max-w-3xl gap-3 sm:grid-cols-2">
                 <div><p className="mb-1 text-xs font-semibold uppercase tracking-wide text-neutral-500">Campaign</p><Select value={campaignFilter} onValueChange={setCampaignFilter}><SelectTrigger className="w-full cursor-pointer bg-white transition hover:bg-neutral-50"><SelectValue placeholder="All campaigns" /></SelectTrigger><SelectContent><SelectItem value="all">All campaigns</SelectItem>{campaignOptions.map((campaign) => <SelectItem key={campaign} value={campaign}>{campaign}</SelectItem>)}</SelectContent></Select></div>
-                <div><p className="mb-1 text-xs font-semibold uppercase tracking-wide text-neutral-500">Category</p><Select value={categoryFilter} onValueChange={(value) => setCategoryFilter(value as CategoryFilter)}><SelectTrigger className="w-full cursor-pointer bg-white transition hover:bg-neutral-50"><SelectValue placeholder="Special review needed" /></SelectTrigger><SelectContent><SelectItem value="special review needed">Special review needed</SelectItem><SelectItem value="negative exact">Negative exact</SelectItem><SelectItem value="add exact">Add exact</SelectItem><SelectItem value="negative phrase">Negative phrase</SelectItem><SelectItem value="no action">No action</SelectItem><SelectItem value="approved">Approved</SelectItem><SelectItem value="rejected">Rejected</SelectItem><SelectItem value="to_be_determined">To be determined</SelectItem>{isAdmin ? <SelectItem value="unadded/unexcluded">Unadded/Unexcluded</SelectItem> : null}<SelectItem value="all">All categories</SelectItem></SelectContent></Select></div>
+                <div><p className="mb-1 text-xs font-semibold uppercase tracking-wide text-neutral-500">Category</p><Select value={categoryFilter} onValueChange={(value) => setCategoryFilter(value as CategoryFilter)}><SelectTrigger className="w-full cursor-pointer bg-white transition hover:bg-neutral-50"><SelectValue /></SelectTrigger><SelectContent>{workflowMode === "approver" ? <><SelectItem value="awaiting_approval">Awaiting approval</SelectItem><SelectItem value="approved_for_publishing">Approved for publishing</SelectItem><SelectItem value="approver_rejected">Approver rejected</SelectItem><SelectItem value="returned_for_clarification">Returned for clarification</SelectItem></> : <><SelectItem value="special review needed">Special review needed</SelectItem><SelectItem value="negative exact">Negative exact</SelectItem><SelectItem value="add exact">Add exact</SelectItem><SelectItem value="negative phrase">Negative phrase</SelectItem><SelectItem value="no action">No action</SelectItem><SelectItem value="approved">Approved</SelectItem><SelectItem value="rejected">Rejected</SelectItem><SelectItem value="to_be_determined">To be determined</SelectItem>{isAdmin ? <SelectItem value="unadded/unexcluded">Unadded/Unexcluded</SelectItem> : null}</>}<SelectItem value="all">All categories</SelectItem></SelectContent></Select></div>
               </div>
               {categoryFilter === "unadded/unexcluded" && recommendationsLoading ? <LoadingDataIndicator label="Loading current Google Ads status..." compact /> : null}
               {categoryFilter === "unadded/unexcluded" && googleRecommendationsWarning ? <p className="mt-3 text-sm text-amber-700">{googleRecommendationsWarning}</p> : null}
@@ -378,7 +439,7 @@ export function SearchTermOptimizationPageClient({ role }: { role: AuthRole }) {
                     <SafetyScoreLegend />
                   </div>
                   <div className="space-y-5 p-4">
-                    {(categoryFilter === "approved" || categoryFilter === "rejected" || categoryFilter === "to_be_determined"
+                    {((["approved", "rejected", "to_be_determined", "awaiting_approval", "approved_for_publishing", "approver_rejected", "returned_for_clarification"] as CategoryFilter[]).includes(categoryFilter)
                       ? [[categoryFilter, rows] as [string, OptimizationResult[]]]
                       : groupRowsByAction(rows)).map(([action, actionRows]) => {
                       const categoryId = `${adGroup}:${action}`;
@@ -388,12 +449,16 @@ export function SearchTermOptimizationPageClient({ role }: { role: AuthRole }) {
                         rows={actionRows}
                         selectedIds={selectedIds}
                         decisions={decisions}
+                        approverDecisions={approverDecisions}
                         page={categoryPages[categoryId] ?? 1}
                         onPageChange={(page) => setCategoryPages((current) => ({ ...current, [categoryId]: page }))}
                         onToggleRow={toggleRow}
                         onToggleCategory={toggleCategory}
                         onDecision={decideCategory}
+                        onApproverDecision={decideApproval}
                         canReview={canReview && action !== "no action"}
+                        canApprove={canApprove && action === "awaiting_approval"}
+                        approverView={workflowMode === "approver"}
                       />;
                     })}
                   </div>
@@ -401,6 +466,11 @@ export function SearchTermOptimizationPageClient({ role }: { role: AuthRole }) {
               ))}
               {grouped.length === 0 ? <p className="rounded-2xl bg-white p-6 text-center text-neutral-500">No results match the selected filter.</p> : null}
             </section>
+
+            {workflowMode === "approver" ? <section className="overflow-hidden rounded-2xl border border-neutral-200 bg-white shadow-sm">
+              <div className="flex items-center justify-between border-b bg-neutral-50 px-5 py-4"><h2 className="text-lg font-semibold">Approved change sets</h2><Badge variant="outline" className="bg-white">{data.changeSets.length} batches</Badge></div>
+              {data.changeSets.length > 0 ? <div className="divide-y">{data.changeSets.map((changeSet) => <div key={changeSet.id} className="grid gap-2 px-5 py-4 text-sm sm:grid-cols-4"><span className="font-semibold">Change set #{changeSet.id}</span><span>{changeSet.itemCount} items</span><span>{humanize(changeSet.status)}</span><span className="text-neutral-500">{changeSet.approvedByEmail} · {formatDateTime(changeSet.approvedAt)}</span></div>)}</div> : <p className="px-5 py-6 text-sm text-neutral-500">No approved change sets yet.</p>}
+            </section> : null}
 
             <section className="relative overflow-hidden rounded-2xl border border-white/30 bg-neutral-900/75 p-5 text-white shadow-xl backdrop-blur-md" aria-label="Automatic action history to be implemented">
               <div className="pointer-events-none absolute inset-0 bg-gradient-to-br from-white/15 via-white/5 to-black/20" />
@@ -468,23 +538,31 @@ function ActionGroupTable({
   rows,
   selectedIds,
   decisions,
+  approverDecisions,
   page,
   onPageChange,
   onToggleRow,
   onToggleCategory,
   onDecision,
+  onApproverDecision,
   canReview,
+  canApprove,
+  approverView,
 }: {
   action: string;
   rows: OptimizationResult[];
   selectedIds: Set<string>;
   decisions: Record<string, ReviewDecision>;
+  approverDecisions: Record<string, ApproverDecision>;
   page: number;
   onPageChange: (page: number) => void;
   onToggleRow: (id: string, checked: boolean) => void;
   onToggleCategory: (rows: OptimizationResult[], checked: boolean) => void;
   onDecision: (rows: OptimizationResult[], decision: ReviewDecision) => void;
+  onApproverDecision: (rows: OptimizationResult[], decision: ApproverDecision) => void;
   canReview: boolean;
+  canApprove: boolean;
+  approverView: boolean;
 }) {
   const pageCount = Math.max(1, Math.ceil(rows.length / RESULTS_PER_PAGE));
   const safePage = Math.min(page, pageCount);
@@ -497,7 +575,7 @@ function ActionGroupTable({
     <section className="overflow-hidden rounded-xl border border-neutral-200">
       <div className="flex flex-wrap items-center justify-between gap-3 border-b bg-neutral-100 px-4 py-3">
         <div className="flex items-center gap-3">
-          {canReview ? <Checkbox
+          {canReview || canApprove ? <Checkbox
             checked={allSelected}
             onCheckedChange={(checked) => onToggleCategory(rows, checked === true)}
             aria-label={`Select all ${humanize(action)} terms`}
@@ -512,18 +590,23 @@ function ActionGroupTable({
           <DecisionButton label="Mark selected rows as to be determined" decision="to_be_determined" size="category" onClick={() => onDecision(rows, "to_be_determined")} />
           <DecisionButton label="Reject selected rows" decision="rejected" size="category" onClick={() => onDecision(rows, "rejected")} />
         </div> : null}
+        {canApprove && allSelected ? <div className="flex items-center gap-2">
+          <ApproverDecisionButton label="Approve selected change set" decision="approved" onClick={() => onApproverDecision(rows, "approved")} />
+          <ApproverDecisionButton label="Return selected rows for clarification" decision="returned" onClick={() => onApproverDecision(rows, "returned")} />
+          <ApproverDecisionButton label="Reject selected rows" decision="rejected" onClick={() => onApproverDecision(rows, "rejected")} />
+        </div> : null}
       </div>
       <div className="overflow-x-auto">
         <table className="min-w-[620px] w-full text-left text-sm">
           <thead className="bg-neutral-50 text-xs uppercase tracking-wide text-neutral-500">
             <tr>
-              {(canReview ? ["", "Search term", "Clicks", "Spend", "Conv.", "Classification", "Score", "Decision"] : ["Search term", "Clicks", "Spend", "Conv.", "Classification", "Score"]).map((heading, index) => (
+              {(canReview || canApprove ? ["", "Search term", "Clicks", "Spend", "Conv.", "Classification", "Score", "Decision"] : approverView ? ["Search term", "Clicks", "Spend", "Conv.", "Classification", "Score", "Decision"] : ["Search term", "Clicks", "Spend", "Conv.", "Classification", "Score"]).map((heading, index) => (
                 <th key={`${heading}-${index}`} className="px-4 py-3 font-semibold">{heading}</th>
               ))}
             </tr>
           </thead>
           <tbody className="divide-y">
-            {pageRows.map((row) => <ResultRow key={row.id} row={row} selected={selectedIds.has(row.id)} decision={decisions[row.id]} showRowActions={!allSelected} onToggle={onToggleRow} onDecision={onDecision} canReview={canReview} />)}
+            {pageRows.map((row) => <ResultRow key={row.id} row={row} selected={selectedIds.has(row.id)} decision={decisions[row.id]} approverDecision={approverDecisions[row.id]} showRowActions={!allSelected} onToggle={onToggleRow} onDecision={onDecision} onApproverDecision={onApproverDecision} canReview={canReview} canApprove={canApprove} approverView={approverView} />)}
           </tbody>
         </table>
       </div>
@@ -556,11 +639,15 @@ function groupRowsByAction(rows: OptimizationResult[]) {
   });
 }
 
-function ResultRow({ row, selected, decision, showRowActions, onToggle, onDecision, canReview }: { row: OptimizationResult; selected: boolean; decision?: ReviewDecision; showRowActions: boolean; onToggle: (id: string, checked: boolean) => void; onDecision: (rows: OptimizationResult[], decision: ReviewDecision) => void; canReview: boolean }) {
+function ResultRow({ row, selected, decision, approverDecision, showRowActions, onToggle, onDecision, onApproverDecision, canReview, canApprove, approverView }: { row: OptimizationResult; selected: boolean; decision?: ReviewDecision; approverDecision?: ApproverDecision; showRowActions: boolean; onToggle: (id: string, checked: boolean) => void; onDecision: (rows: OptimizationResult[], decision: ReviewDecision) => void; onApproverDecision: (rows: OptimizationResult[], decision: ApproverDecision) => void; canReview: boolean; canApprove: boolean; approverView: boolean }) {
+  const visibleDecision = approverView ? approverDecision : decision;
   return (
-    <tr className={`align-top ${decision === "approved" ? "bg-emerald-100/80" : decision === "rejected" ? "bg-red-100/80" : decision === "to_be_determined" ? "bg-amber-100/80" : "hover:bg-neutral-50/70"}`}>
-      {canReview ? <td className="px-4 py-4"><Checkbox checked={selected} onCheckedChange={(checked) => onToggle(row.id, checked === true)} aria-label={`Select ${row.searchTerm}`} className="cursor-pointer" /></td> : null}
-      <td className="px-4 py-4 font-semibold">{row.searchTerm}</td>
+    <tr className={`align-top ${visibleDecision === "approved" ? "bg-emerald-100/80" : visibleDecision === "rejected" ? "bg-red-100/80" : visibleDecision === "returned" || visibleDecision === "to_be_determined" ? "bg-amber-100/80" : "hover:bg-neutral-50/70"}`}>
+      {canReview || canApprove ? <td className="px-4 py-4"><Checkbox checked={selected} onCheckedChange={(checked) => onToggle(row.id, checked === true)} aria-label={`Select ${row.searchTerm}`} className="cursor-pointer" /></td> : null}
+      <td className="px-4 py-4 font-semibold">
+        <span>{row.searchTerm}</span>
+        {approverView ? <ReviewHistoryDetails row={row} /> : null}
+      </td>
       <td className="px-4 py-4 tabular-nums">{row.clicks}</td>
       <td className="px-4 py-4 tabular-nums">RM {row.spend.toFixed(2)}</td>
       <td className="px-4 py-4 tabular-nums">{row.conversions.toFixed(2)}</td>
@@ -571,7 +658,30 @@ function ResultRow({ row, selected, decision, showRowActions, onToggle, onDecisi
       {canReview ? <td className="px-4 py-4">
         {showRowActions ? <div className="flex flex-wrap items-center gap-1"><DecisionButton label="Approve" decision="approved" onClick={() => onDecision([row], "approved")} /><DecisionButton label="To be determined" decision="to_be_determined" onClick={() => onDecision([row], "to_be_determined")} /><DecisionButton label="Reject" decision="rejected" onClick={() => onDecision([row], "rejected")} /></div> : <DecisionStatus decision={decision} />}
       </td> : null}
+      {approverView ? <td className="px-4 py-4">
+        {canApprove && showRowActions ? <div className="flex items-center gap-1"><ApproverDecisionButton label="Approve for publishing" decision="approved" onClick={() => onApproverDecision([row], "approved")} /><ApproverDecisionButton label="Return for clarification" decision="returned" onClick={() => onApproverDecision([row], "returned")} /><ApproverDecisionButton label="Reject" decision="rejected" onClick={() => onApproverDecision([row], "rejected")} /></div> : <ApproverDecisionStatus decision={approverDecision} status={row.reviewStatus} />}
+      </td> : null}
     </tr>
+  );
+}
+
+function ReviewHistoryDetails({ row }: { row: OptimizationResult }) {
+  const events = row.reviewHistory ?? [];
+  return (
+    <details className="mt-2 max-w-xs text-xs font-normal text-neutral-500">
+      <summary className="cursor-pointer select-none font-medium text-neutral-600 hover:text-neutral-900">
+        Review history ({events.length})
+      </summary>
+      <div className="mt-2 space-y-2 rounded-lg border bg-white p-2 shadow-sm">
+        {events.length > 0 ? events.map((event) => (
+          <div key={event.id} className="border-b pb-2 last:border-0 last:pb-0">
+            <p className="font-medium text-neutral-800">{humanize(event.action)}</p>
+            <p>{event.reviewerEmail} · {humanize(event.reviewerRole)}</p>
+            <p>{formatDateTime(event.createdAt)}</p>
+          </div>
+        )) : <p>No specialist decision history recorded.</p>}
+      </div>
+    </details>
   );
 }
 
@@ -580,6 +690,35 @@ function DecisionStatus({ decision }: { decision?: ReviewDecision }) {
   if (decision === "rejected") return <span className="font-semibold text-red-700">Rejected</span>;
   if (decision === "to_be_determined") return <span className="font-semibold text-amber-700">To be determined</span>;
   return <span className="text-neutral-400">Pending</span>;
+}
+
+function ApproverDecisionStatus({ decision, status }: { decision?: ApproverDecision; status?: string }) {
+  if (decision === "approved" || status === "approved_for_publishing") return <span className="font-semibold text-emerald-700">Approved for publishing</span>;
+  if (decision === "rejected" || status === "approver_rejected") return <span className="font-semibold text-red-700">Approver rejected</span>;
+  if (decision === "returned" || status === "returned_for_clarification") return <span className="font-semibold text-amber-700">Returned for clarification</span>;
+  return <span className="text-neutral-500">Awaiting approval</span>;
+}
+
+function ApproverDecisionButton({ label, decision, onClick }: { label: string; decision: ApproverDecision; onClick: () => void }) {
+  const approved = decision === "approved";
+  const returned = decision === "returned";
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <Button
+          type="button"
+          size="icon"
+          variant="ghost"
+          aria-label={label}
+          className={`size-8 cursor-pointer transition ${approved ? "bg-emerald-600/10 text-emerald-700 hover:bg-emerald-600/20" : returned ? "bg-amber-500/10 text-amber-700 hover:bg-amber-500/20" : "bg-red-600/10 text-red-700 hover:bg-red-600/20"}`}
+          onClick={onClick}
+        >
+          {approved ? <CheckIcon className="size-4" /> : returned ? <CircleHelpIcon className="size-4" /> : <XIcon className="size-4" />}
+        </Button>
+      </TooltipTrigger>
+      <TooltipContent side="top" sideOffset={8} className="border border-white/15 bg-[#211114] px-3 py-2 text-sm font-medium text-white shadow-xl">{label}</TooltipContent>
+    </Tooltip>
+  );
 }
 
 function DecisionButton({ label, decision, size = "row", onClick }: { label: string; decision: ReviewDecision; size?: "row" | "category"; onClick: () => void }) {

@@ -20,6 +20,14 @@ try {
     order by id desc
     limit 20
   `).all());
+
+  console.log("Latest approved change sets");
+  console.table(database.prepare(`
+    select id, google_customer_id, status, item_count, approved_by_email, approved_at
+    from ad_automation_search_term_change_sets
+    order by id desc
+    limit 20
+  `).all());
 } finally {
   database.close();
 }

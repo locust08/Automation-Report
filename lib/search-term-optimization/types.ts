@@ -9,6 +9,16 @@ export type ScoreBreakdownItem = {
   status: "yes" | "no" | "unknown";
 };
 
+export type OptimizationReviewEvent = {
+  id: string;
+  reviewerEmail: string;
+  reviewerRole: string;
+  action: string;
+  previousStatus: string | null;
+  resultingStatus: string;
+  createdAt: string;
+};
+
 export type OptimizationResult = {
   id: string;
   searchTerm: string;
@@ -35,6 +45,16 @@ export type OptimizationResult = {
   reviewDecision?: "approved" | "rejected" | "to_be_determined";
   reviewStatus?: string;
   recommendationId?: string;
+  approverDecision?: "approved" | "rejected" | "returned";
+  reviewHistory?: OptimizationReviewEvent[];
+};
+
+export type OptimizationChangeSet = {
+  id: string;
+  status: string;
+  itemCount: number;
+  approvedByEmail: string;
+  approvedAt: string;
 };
 
 export type OptimizationDashboardPayload = {
@@ -64,6 +84,7 @@ export type OptimizationDashboardPayload = {
   history: OptimizationResult[];
   googleRecommendations: GoogleKeywordRecommendation[];
   googleRecommendationsWarning: string | null;
+  changeSets: OptimizationChangeSet[];
 };
 
 export type GoogleKeywordRecommendation = {

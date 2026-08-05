@@ -45,9 +45,9 @@ create table if not exists ad_automation_search_term_recommendations (
   existing_negative integer not null default 0 check (existing_negative in (0, 1)),
   previous_decision text,
   review_status text not null default 'pending'
-    check (review_status in ('pending', 'in_review', 'kept', 'excluded', 'rejected', 'kiv', 'feedback_requested', 'ready_for_approval')),
+    check (review_status in ('pending', 'in_review', 'kept', 'excluded', 'rejected', 'kiv', 'feedback_requested', 'ready_for_approval', 'approved_for_publishing', 'approver_rejected', 'returned_for_clarification')),
   current_decision text
-    check (current_decision is null or current_decision in ('keep', 'exclude', 'reject', 'kiv', 'request_pm_feedback', 'request_client_feedback', 'submit_for_approval')),
+    check (current_decision is null or current_decision in ('keep', 'exclude', 'reject', 'kiv', 'request_pm_feedback', 'request_client_feedback', 'submit_for_approval', 'approver_approved', 'approver_rejected', 'return_to_specialist')),
   assigned_reviewer_user_id text,
   last_reviewed_by_user_id text,
   last_reviewed_at text,
@@ -63,11 +63,39 @@ create table if not exists ad_automation_search_term_reviews (
   reviewer_email text not null,
   reviewer_role text not null default 'pms',
   action text not null default 'start_review'
-    check (action in ('start_review', 'keep', 'exclude', 'reject', 'mark_kiv', 'request_pm_feedback', 'request_client_feedback', 'submit_for_approval', 'reopen')),
+    check (action in ('start_review', 'keep', 'exclude', 'reject', 'mark_kiv', 'request_pm_feedback', 'request_client_feedback', 'submit_for_approval', 'reopen', 'approver_approve', 'approver_reject', 'return_for_clarification')),
   comment text,
   previous_status text,
   resulting_status text not null default 'in_review',
   metadata text not null default '{}' check (json_valid(metadata))
+);
+
+create table if not exists ad_automation_search_term_change_sets (
+  id integer primary key autoincrement,
+  created_at text not null default (datetime('now')),
+  google_customer_id text not null,
+  status text not null default 'ready_for_publishing'
+    check (status in ('ready_for_publishing', 'publishing', 'published', 'failed', 'cancelled')),
+  approved_by_user_id text not null,
+  approved_by_email text not null,
+  approved_at text not null default (datetime('now')),
+  item_count integer not null check (item_count > 0),
+  idempotency_key text not null unique
+);
+
+create table if not exists ad_automation_search_term_change_set_items (
+  id integer primary key autoincrement,
+  change_set_id integer not null
+    references ad_automation_search_term_change_sets(id) on delete cascade,
+  recommendation_id integer not null
+    references ad_automation_search_term_recommendations(id),
+  search_term text not null,
+  campaign_name text not null,
+  ad_group_name text not null,
+  proposed_action text not null,
+  safety_score integer not null,
+  snapshot_json text not null check (json_valid(snapshot_json)),
+  unique (change_set_id, recommendation_id)
 );
 
 create unique index if not exists ad_search_terms_identity_idx
@@ -82,3 +110,7 @@ create index if not exists ad_search_term_reviews_recommendation_idx
   on ad_automation_search_term_reviews (recommendation_id, created_at desc);
 create index if not exists ad_search_term_reviews_reviewer_idx
   on ad_automation_search_term_reviews (reviewer_user_id, created_at desc);
+create index if not exists ad_search_term_change_sets_account_idx
+  on ad_automation_search_term_change_sets (google_customer_id, status, created_at desc);
+create index if not exists ad_search_term_change_set_items_recommendation_idx
+  on ad_automation_search_term_change_set_items (recommendation_id);

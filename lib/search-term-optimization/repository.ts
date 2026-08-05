@@ -102,6 +102,7 @@ export class ManualRunnerOutputRepository implements SearchTermOptimizationRepos
       history: results.filter((row) => row.verificationStatus === "verified"),
       googleRecommendations: [],
       googleRecommendationsWarning: null,
+      changeSets: [],
     };
   }
 }

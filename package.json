@@ -9,6 +9,7 @@
     "search-terms:sqlite:init": "node scripts/init-search-term-sqlite.mjs",
     "search-terms:sqlite:test": "node scripts/search-term-sqlite-smoke.mjs",
     "search-terms:sqlite:inspect": "node scripts/inspect-search-term-sqlite.mjs",
+    "search-terms:sqlite:approver-test": "tsx scripts/search-term-approver-sqlite.test.mts",
     "send:drive-pdf-emails": "node --import jiti/register scripts/send-drive-pdf-report-emails.mjs",
     "monthly:pdf:benchmark": "tsx scripts/monthly-report-pdf-benchmark.ts",
     "monthly-report:test:notion": "tsx scripts/monthly-report-pre-scheduler-test.ts notion",

@@ -6,7 +6,7 @@ import { saveSpecialistDecision, type SpecialistDecision } from "@/lib/search-te
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
-const REVIEW_ROLES = new Set(["pms", "specialist", "approver", "admin"]);
+const REVIEW_ROLES = new Set(["pms", "specialist", "admin"]);
 
 export async function POST(request: Request) {
   const session = await getServerAuthSession();
