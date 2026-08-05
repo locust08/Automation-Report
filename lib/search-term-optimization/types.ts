@@ -21,16 +21,30 @@ export type OptimizationReviewEvent = {
 
 export type OptimizationResult = {
   id: string;
+  searchTermId?: string;
+  searchTermResourceName: string | null;
   searchTerm: string;
+  campaignId: string | null;
   campaign: string;
+  adGroupId: string | null;
   adGroup: string;
+  assetGroup: string | null;
   destinationUrl: string;
   triggeringKeyword: string | null;
   matchType: string | null;
+  addedExcludedStatus: string | null;
   impressions: number;
   clicks: number;
   spend: number;
   conversions: number;
+  qualifiedLeads: number | null;
+  spamLeads: number | null;
+  invalidLeads: number | null;
+  clientComplaints: number | null;
+  firstDetectedAt: string | null;
+  lastReviewedAt: string | null;
+  dataRetrievedAt: string;
+  previousDecision: string | null;
   classification: string;
   mismatchCategory: string;
   proposedAction: string;

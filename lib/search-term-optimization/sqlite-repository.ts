@@ -3,6 +3,7 @@ import { dirname, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
 import type { OptimizationDashboardPayload, OptimizationResult, OptimizationReviewEvent } from "@/lib/search-term-optimization/types";
+import { safetyBand } from "@/lib/search-term-optimization/scoring";
 
 type StoredResult = {
   search_term_id: number;
@@ -11,6 +12,13 @@ type StoredResult = {
   campaign_name: string;
   ad_group_name: string;
   search_term: string;
+  qualified_leads: number | null;
+  spam_leads: number | null;
+  invalid_leads: number | null;
+  client_complaints: number | null;
+  first_detected_at: string | null;
+  last_reviewed_at: string | null;
+  previous_decision: string | null;
   current_decision: string | null;
   review_status: string | null;
 };
@@ -43,8 +51,18 @@ function openDatabase() {
   const database = new DatabaseSync(databasePath);
   const schema = readFileSync(resolve("lib/search-term-optimization/sqlite-schema.sql"), "utf8");
   migrateApproverSchema(database, schema);
+  ensureSearchTermColumns(database);
   database.exec("pragma foreign_keys = on;");
   return database;
+}
+
+function ensureSearchTermColumns(database: DatabaseSync) {
+  const existing = new Set((database.prepare("pragma table_info(ad_automation_search_terms)").all() as Array<{ name: string }>).map((column) => column.name));
+  const columns: Array<[string, string]> = [
+    ["source_resource_name", "text"], ["asset_group_name", "text"],
+    ["added_excluded_status", "text"], ["data_retrieved_at", "text"],
+  ];
+  for (const [name, type] of columns) if (!existing.has(name)) database.exec(`alter table ad_automation_search_terms add column ${name} ${type}`);
 }
 
 function migrateApproverSchema(database: DatabaseSync, schema: string) {
@@ -87,20 +105,27 @@ export function persistDashboardToSqlite(payload: OptimizationDashboardPayload):
   try {
     const upsertSearchTerm = database.prepare(`
       insert into ad_automation_search_terms (
-        google_customer_id, customer_name, source_run_id, campaign_name, ad_group_name, search_term,
-        triggering_keyword, match_type, destination_url, impressions, clicks, spend,
-        conversions, updated_at
-      ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+        google_customer_id, customer_name, source_run_id, source_resource_name,
+        campaign_id, campaign_name, ad_group_id, ad_group_name, asset_group_name, search_term,
+        triggering_keyword, match_type, added_excluded_status, destination_url, impressions, clicks, spend,
+        conversions, data_retrieved_at, updated_at
+      ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
       on conflict do update set
         customer_name = excluded.customer_name,
         source_run_id = excluded.source_run_id,
+        source_resource_name = excluded.source_resource_name,
+        campaign_id = excluded.campaign_id,
+        ad_group_id = excluded.ad_group_id,
+        asset_group_name = excluded.asset_group_name,
         triggering_keyword = excluded.triggering_keyword,
         match_type = excluded.match_type,
+        added_excluded_status = excluded.added_excluded_status,
         destination_url = excluded.destination_url,
         impressions = excluded.impressions,
         clicks = excluded.clicks,
         spend = excluded.spend,
         conversions = excluded.conversions,
+        data_retrieved_at = excluded.data_retrieved_at,
         updated_at = datetime('now')
       returning id
     `);
@@ -127,9 +152,10 @@ export function persistDashboardToSqlite(payload: OptimizationDashboardPayload):
     database.exec("begin immediate;");
     for (const row of payload.results) {
       const savedTerm = upsertSearchTerm.get(
-        payload.account.customerId, payload.account.customerName, payload.account.lastAnalysisAt, row.campaign, row.adGroup,
-        row.searchTerm, row.triggeringKeyword, row.matchType, row.destinationUrl,
-        row.impressions, row.clicks, row.spend, row.conversions,
+        payload.account.customerId, payload.account.customerName, payload.account.lastAnalysisAt, row.searchTermResourceName,
+        row.campaignId, row.campaign, row.adGroupId, row.adGroup, row.assetGroup, row.searchTerm,
+        row.triggeringKeyword, row.matchType, row.addedExcludedStatus, row.destinationUrl,
+        row.impressions, row.clicks, row.spend, row.conversions, row.dataRetrievedAt,
       ) as { id: number };
       if (row.proposedAction === "no action") {
         removeRecommendation.run(savedTerm.id);
@@ -146,6 +172,8 @@ export function persistDashboardToSqlite(payload: OptimizationDashboardPayload):
     const stored = database.prepare(`
       select st.id as search_term_id, rec.id as recommendation_id,
              st.google_customer_id, st.campaign_name, st.ad_group_name, st.search_term,
+             st.qualified_leads, st.spam_leads, st.invalid_leads, st.client_complaints,
+             st.first_detected_at, rec.last_reviewed_at, rec.previous_decision,
              rec.current_decision, rec.review_status
       from ad_automation_search_terms st
       left join ad_automation_search_term_recommendations rec on rec.search_term_id = st.id
@@ -191,8 +219,16 @@ export function persistDashboardToSqlite(payload: OptimizationDashboardPayload):
       results: payload.results.map((row) => {
         const saved = byIdentity.get(identity(payload.account.customerId, row));
         if (!saved) return row;
-        return {
+        return applyStoredContext({
           ...row,
+          searchTermId: String(saved.search_term_id),
+          qualifiedLeads: saved.qualified_leads,
+          spamLeads: saved.spam_leads,
+          invalidLeads: saved.invalid_leads,
+          clientComplaints: saved.client_complaints,
+          firstDetectedAt: saved.first_detected_at,
+          lastReviewedAt: saved.last_reviewed_at,
+          previousDecision: saved.previous_decision,
           id: saved.recommendation_id ? String(saved.recommendation_id) : `term-${saved.search_term_id}`,
           recommendationId: saved.recommendation_id ? String(saved.recommendation_id) : undefined,
           reviewStatus: saved.review_status ?? undefined,
@@ -211,7 +247,7 @@ export function persistDashboardToSqlite(payload: OptimizationDashboardPayload):
           reviewHistory: saved.recommendation_id
             ? reviewEventsByRecommendation.get(saved.recommendation_id) ?? []
             : [],
-        };
+        });
       }),
       changeSets: changeSets.map((changeSet) => ({
         id: String(changeSet.id),
@@ -227,6 +263,20 @@ export function persistDashboardToSqlite(payload: OptimizationDashboardPayload):
   } finally {
     database.close();
   }
+}
+
+function applyStoredContext(row: OptimizationResult): OptimizationResult {
+  const qualifiedSignal = row.qualifiedLeads === null ? null : row.qualifiedLeads === 0;
+  const scoreBreakdown = row.scoreBreakdown.map((item) => item.signal === "No available qualified-lead signal"
+    ? { ...item, applied: qualifiedSignal === true, status: qualifiedSignal === null ? "unknown" as const : qualifiedSignal ? "yes" as const : "no" as const }
+    : item);
+  const safetyScore = Math.max(0, Math.min(100, scoreBreakdown.reduce((total, item) => total + (item.applied ? item.points : 0), 0)));
+  const unknownGate = "Required signal is unknown: qualified-lead signal";
+  const hardGateFailures = row.hardGateFailures.filter((failure) => failure !== unknownGate && failure !== "Search term has qualified leads");
+  if (row.qualifiedLeads === null) hardGateFailures.push(unknownGate);
+  else if (row.qualifiedLeads > 0) hardGateFailures.push("Search term has qualified leads");
+  const executionEligibility = safetyScore >= 90 && hardGateFailures.length === 0;
+  return { ...row, scoreBreakdown, safetyScore, safetyBand: safetyBand(safetyScore), hardGateFailures, executionEligibility };
 }
 
 export function saveApproverDecision(input: {
@@ -274,7 +324,7 @@ export function saveApproverDecision(input: {
     }
     const update = database.prepare(`
       update ad_automation_search_term_recommendations
-      set review_status = ?, current_decision = ?, last_reviewed_by_user_id = ?,
+      set review_status = ?, previous_decision = current_decision, current_decision = ?, last_reviewed_by_user_id = ?,
           last_reviewed_at = datetime('now'), updated_at = datetime('now')
       where id = ? and review_status = 'ready_for_approval'
     `);
@@ -354,7 +404,7 @@ export function saveSpecialistDecision(input: {
     `);
     const update = database.prepare(`
       update ad_automation_search_term_recommendations
-      set review_status = ?, current_decision = ?, last_reviewed_by_user_id = ?,
+      set review_status = ?, previous_decision = current_decision, current_decision = ?, last_reviewed_by_user_id = ?,
           last_reviewed_at = datetime('now'), updated_at = datetime('now')
       where id = ?
     `);

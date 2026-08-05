@@ -11,6 +11,8 @@ import {
   SearchIcon,
   ShieldAlertIcon,
   CircleHelpIcon,
+  FileUpIcon,
+  SaveIcon,
   XIcon,
 } from "lucide-react";
 
@@ -28,6 +30,7 @@ import type {
   OptimizationResult,
   GoogleKeywordRecommendation,
 } from "@/lib/search-term-optimization/types";
+import type { LeadQualityValues } from "@/lib/search-term-optimization/lead-quality-repository";
 
 type CategoryFilter =
   | "all"
@@ -78,6 +81,9 @@ export function SearchTermOptimizationPageClient({ role }: { role: AuthRole }) {
   const [recommendationsLoaded, setRecommendationsLoaded] = useState(false);
   const [googleRecommendations, setGoogleRecommendations] = useState<GoogleKeywordRecommendation[]>([]);
   const [googleRecommendationsWarning, setGoogleRecommendationsWarning] = useState<string | null>(null);
+  const [leadQualityMessage, setLeadQualityMessage] = useState<string | null>(null);
+  const [leadImportErrors, setLeadImportErrors] = useState<Array<{ row: number; message: string }>>([]);
+  const [leadQualitySaving, setLeadQualitySaving] = useState(false);
 
   const load = useCallback(async (accountId?: string) => {
     setLoading(true);
@@ -298,6 +304,45 @@ export function SearchTermOptimizationPageClient({ role }: { role: AuthRole }) {
     }
   }
 
+  async function updateLeadQuality(row: OptimizationResult, values: LeadQualityValues) {
+    if (!row.searchTermId || !canReview) return;
+    setLeadQualitySaving(true); setDecisionError(null);
+    try {
+      const response = await fetch("/api/search-term-optimization/lead-quality", {
+        method: "PATCH", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ searchTermId: row.searchTermId, ...values }),
+      });
+      const payload = await response.json() as { error?: string };
+      if (!response.ok) throw new Error(payload.error ?? "Unable to update lead quality.");
+      setLeadQualityMessage(`Lead quality updated for ${row.searchTerm}.`);
+      await load(data?.account.customerId);
+    } catch (caught) { setDecisionError(caught instanceof Error ? caught.message : "Unable to update lead quality."); }
+    finally { setLeadQualitySaving(false); }
+  }
+
+  async function importLeadQuality(file: File) {
+    setLeadQualitySaving(true); setDecisionError(null); setLeadQualityMessage(null); setLeadImportErrors([]);
+    try {
+      const formData = new FormData(); formData.set("file", file);
+      const response = await fetch("/api/search-term-optimization/lead-quality", { method: "POST", body: formData });
+      const payload = await response.json() as { updated?: number; errors?: Array<{ row: number; message: string }>; error?: string };
+      if (!response.ok && !payload.errors) throw new Error(payload.error ?? "Unable to import lead quality.");
+      setLeadImportErrors(payload.errors ?? []);
+      setLeadQualityMessage(`${payload.updated ?? 0} search terms updated${payload.errors?.length ? `; ${payload.errors.length} rows need attention` : ""}.`);
+      await load(data?.account.customerId);
+    } catch (caught) { setDecisionError(caught instanceof Error ? caught.message : "Unable to import lead quality."); }
+    finally { setLeadQualitySaving(false); }
+  }
+
+  function downloadImportErrors() {
+    const csv = ["row,message", ...leadImportErrors.map((error) => `${error.row},"${error.message.replaceAll('"', '""')}"`)].join("\n");
+    downloadText(csv, "lead-quality-import-errors.csv", "text/csv");
+  }
+
+  function downloadLeadTemplate() {
+    downloadText("customer_id,campaign,ad_group,search_term,qualified_leads,spam_leads,invalid_leads,client_complaints\n", "lead-quality-template.csv", "text/csv");
+  }
+
   const loadUnaddedSearchTerms = useCallback(async () => {
     if (recommendationsLoaded || recommendationsLoading || !data) return;
     setRecommendationsLoading(true);
@@ -414,6 +459,15 @@ export function SearchTermOptimizationPageClient({ role }: { role: AuthRole }) {
                 <div><p className="mb-1 text-xs font-semibold uppercase tracking-wide text-neutral-500">Campaign</p><Select value={campaignFilter} onValueChange={setCampaignFilter}><SelectTrigger className="w-full cursor-pointer bg-white transition hover:bg-neutral-50"><SelectValue placeholder="All campaigns" /></SelectTrigger><SelectContent><SelectItem value="all">All campaigns</SelectItem>{campaignOptions.map((campaign) => <SelectItem key={campaign} value={campaign}>{campaign}</SelectItem>)}</SelectContent></Select></div>
                 <div><p className="mb-1 text-xs font-semibold uppercase tracking-wide text-neutral-500">Category</p><Select value={categoryFilter} onValueChange={(value) => setCategoryFilter(value as CategoryFilter)}><SelectTrigger className="w-full cursor-pointer bg-white transition hover:bg-neutral-50"><SelectValue /></SelectTrigger><SelectContent>{workflowMode === "approver" ? <><SelectItem value="awaiting_approval">Awaiting approval</SelectItem><SelectItem value="approved_for_publishing">Approved for publishing</SelectItem><SelectItem value="approver_rejected">Approver rejected</SelectItem><SelectItem value="returned_for_clarification">Returned for clarification</SelectItem></> : <><SelectItem value="special review needed">Special review needed</SelectItem><SelectItem value="negative exact">Negative exact</SelectItem><SelectItem value="add exact">Add exact</SelectItem><SelectItem value="negative phrase">Negative phrase</SelectItem><SelectItem value="no action">No action</SelectItem><SelectItem value="approved">Approved</SelectItem><SelectItem value="rejected">Rejected</SelectItem><SelectItem value="to_be_determined">To be determined</SelectItem>{isAdmin ? <SelectItem value="unadded/unexcluded">Unadded/Unexcluded</SelectItem> : null}</>}<SelectItem value="all">All categories</SelectItem></SelectContent></Select></div>
               </div>
+              {canReview ? <div className="mt-4 flex flex-wrap items-center gap-3 border-t pt-4">
+                <label className="inline-flex cursor-pointer items-center gap-2 rounded-md bg-red-700 px-3 py-2 text-sm font-semibold text-white transition hover:bg-red-800">
+                  <FileUpIcon className="size-4" /> {leadQualitySaving ? "Importing..." : "Import lead-quality CSV"}
+                  <input type="file" accept=".csv,text/csv" className="sr-only" disabled={leadQualitySaving} onChange={(event) => { const file = event.target.files?.[0]; if (file) void importLeadQuality(file); event.currentTarget.value = ""; }} />
+                </label>
+                <Button type="button" variant="outline" className="cursor-pointer" onClick={downloadLeadTemplate}>Download CSV template</Button>
+                {leadImportErrors.length ? <Button type="button" variant="outline" className="cursor-pointer" onClick={downloadImportErrors}>Download import errors</Button> : null}
+                {leadQualityMessage ? <span className="text-sm text-neutral-600">{leadQualityMessage}</span> : null}
+              </div> : null}
               {categoryFilter === "unadded/unexcluded" && recommendationsLoading ? <LoadingDataIndicator label="Loading current Google Ads status..." compact /> : null}
               {categoryFilter === "unadded/unexcluded" && googleRecommendationsWarning ? <p className="mt-3 text-sm text-amber-700">{googleRecommendationsWarning}</p> : null}
             </section>
@@ -457,6 +511,8 @@ export function SearchTermOptimizationPageClient({ role }: { role: AuthRole }) {
                         canReview={canReview && action !== "no action"}
                         canApprove={canApprove && action === "awaiting_approval"}
                         approverView={workflowMode === "approver"}
+                        onLeadQualityUpdate={updateLeadQuality}
+                        leadQualitySaving={leadQualitySaving}
                       />;
                     })}
                   </div>
@@ -546,6 +602,8 @@ function ActionGroupTable({
   canReview,
   canApprove,
   approverView,
+  onLeadQualityUpdate,
+  leadQualitySaving,
 }: {
   action: string;
   rows: OptimizationResult[];
@@ -561,6 +619,8 @@ function ActionGroupTable({
   canReview: boolean;
   canApprove: boolean;
   approverView: boolean;
+  onLeadQualityUpdate: (row: OptimizationResult, values: LeadQualityValues) => Promise<void>;
+  leadQualitySaving: boolean;
 }) {
   const pageCount = Math.max(1, Math.ceil(rows.length / RESULTS_PER_PAGE));
   const safePage = Math.min(page, pageCount);
@@ -604,7 +664,7 @@ function ActionGroupTable({
             </tr>
           </thead>
           <tbody className="divide-y">
-            {pageRows.map((row) => <ResultRow key={row.id} row={row} selected={selectedIds.has(row.id)} decision={decisions[row.id]} approverDecision={approverDecisions[row.id]} showRowActions={!allSelected} onToggle={onToggleRow} onDecision={onDecision} onApproverDecision={onApproverDecision} canReview={canReview} canApprove={canApprove} approverView={approverView} />)}
+            {pageRows.map((row) => <ResultRow key={row.id} row={row} selected={selectedIds.has(row.id)} decision={decisions[row.id]} approverDecision={approverDecisions[row.id]} showRowActions={!allSelected} onToggle={onToggleRow} onDecision={onDecision} onApproverDecision={onApproverDecision} canReview={canReview} canApprove={canApprove} approverView={approverView} onLeadQualityUpdate={onLeadQualityUpdate} leadQualitySaving={leadQualitySaving} />)}
           </tbody>
         </table>
       </div>
@@ -644,13 +704,14 @@ function groupRowsByAction(rows: OptimizationResult[], workflowMode: WorkflowMod
   });
 }
 
-function ResultRow({ row, selected, decision, approverDecision, showRowActions, onToggle, onDecision, onApproverDecision, canReview, canApprove, approverView }: { row: OptimizationResult; selected: boolean; decision?: ReviewDecision; approverDecision?: ApproverDecision; showRowActions: boolean; onToggle: (id: string, checked: boolean) => void; onDecision: (rows: OptimizationResult[], decision: ReviewDecision) => void; onApproverDecision: (rows: OptimizationResult[], decision: ApproverDecision) => void; canReview: boolean; canApprove: boolean; approverView: boolean }) {
+function ResultRow({ row, selected, decision, approverDecision, showRowActions, onToggle, onDecision, onApproverDecision, canReview, canApprove, approverView, onLeadQualityUpdate, leadQualitySaving }: { row: OptimizationResult; selected: boolean; decision?: ReviewDecision; approverDecision?: ApproverDecision; showRowActions: boolean; onToggle: (id: string, checked: boolean) => void; onDecision: (rows: OptimizationResult[], decision: ReviewDecision) => void; onApproverDecision: (rows: OptimizationResult[], decision: ApproverDecision) => void; canReview: boolean; canApprove: boolean; approverView: boolean; onLeadQualityUpdate: (row: OptimizationResult, values: LeadQualityValues) => Promise<void>; leadQualitySaving: boolean }) {
   const visibleDecision = approverView ? approverDecision : decision;
   return (
     <tr className={`align-middle ${visibleDecision === "approved" ? "bg-emerald-100/80" : visibleDecision === "rejected" ? "bg-red-100/80" : visibleDecision === "returned" || visibleDecision === "to_be_determined" ? "bg-amber-100/80" : "hover:bg-neutral-50/70"}`}>
       {canReview || canApprove ? <td className="px-4 py-4 text-center"><Checkbox checked={selected} onCheckedChange={(checked) => onToggle(row.id, checked === true)} aria-label={`Select ${row.searchTerm}`} className="cursor-pointer" /></td> : null}
       <td className="px-4 py-4 font-semibold">
         <span>{row.searchTerm}</span>
+        <SearchTermContextDetails key={`${row.id}:${row.qualifiedLeads}:${row.spamLeads}:${row.invalidLeads}:${row.clientComplaints}`} row={row} editable={canReview} saving={leadQualitySaving} onSave={onLeadQualityUpdate} />
         {approverView ? <ReviewHistoryDetails row={row} /> : null}
       </td>
       <td className="px-4 py-4 text-center tabular-nums">{row.clicks}</td>
@@ -692,6 +753,32 @@ function ReviewHistoryDetails({ row }: { row: OptimizationResult }) {
       </div>
     </details>
   );
+}
+
+function SearchTermContextDetails({ row, editable, saving, onSave }: { row: OptimizationResult; editable: boolean; saving: boolean; onSave: (row: OptimizationResult, values: LeadQualityValues) => Promise<void> }) {
+  const [values, setValues] = useState<LeadQualityValues>({ qualifiedLeads: row.qualifiedLeads, spamLeads: row.spamLeads, invalidLeads: row.invalidLeads, clientComplaints: row.clientComplaints });
+  const field = (key: keyof LeadQualityValues, label: string) => <label className="block"><span className="text-[11px] font-semibold uppercase text-neutral-500">{label}</span><Input type="number" min={0} step={1} value={values[key] ?? ""} disabled={!editable || saving} placeholder="Not available" className="mt-1 h-8" onChange={(event) => setValues((current) => ({ ...current, [key]: event.target.value === "" ? null : Number(event.target.value) }))} /></label>;
+  return <details className="mt-2 min-w-72 text-xs font-normal text-neutral-500">
+    <summary className="cursor-pointer select-none font-medium text-neutral-600 hover:text-neutral-900">Performance and lead context</summary>
+    <div className="mt-2 space-y-3 rounded-lg border bg-white p-3 shadow-sm">
+      <dl className="grid gap-x-4 gap-y-2 sm:grid-cols-2">
+        <ContextValue label="Triggering keyword" value={row.triggeringKeyword} />
+        <ContextValue label="Match type" value={row.matchType} />
+        <ContextValue label="Google status" value={row.addedExcludedStatus} />
+        <ContextValue label="Asset group" value={row.assetGroup} />
+        <ContextValue label="First detected" value={row.firstDetectedAt ? formatDateTime(row.firstDetectedAt) : null} />
+        <ContextValue label="Last reviewed" value={row.lastReviewedAt ? formatDateTime(row.lastReviewedAt) : null} />
+        <ContextValue label="Previous decision" value={row.previousDecision ? humanize(row.previousDecision) : null} />
+        <ContextValue label="Retrieved" value={formatDateTime(row.dataRetrievedAt)} />
+      </dl>
+      <div className="grid gap-2 sm:grid-cols-2">{field("qualifiedLeads", "Qualified leads")}{field("spamLeads", "Spam leads")}{field("invalidLeads", "Invalid leads")}{field("clientComplaints", "Client complaints")}</div>
+      {editable ? <Button type="button" size="sm" disabled={saving} className="cursor-pointer bg-red-700 hover:bg-red-800" onClick={() => void onSave(row, values)}><SaveIcon className="size-4" /> Save lead quality</Button> : null}
+    </div>
+  </details>;
+}
+
+function ContextValue({ label, value }: { label: string; value: string | null }) {
+  return <div><dt className="text-[11px] font-semibold uppercase text-neutral-400">{label}</dt><dd className="mt-0.5 text-neutral-700">{value?.trim() || "Not available"}</dd></div>;
 }
 
 function DecisionStatus({ decision }: { decision?: ReviewDecision }) {
@@ -771,4 +858,10 @@ function humanize(value: string) {
 
 function formatDateTime(value: string) {
   return new Intl.DateTimeFormat("en-MY", { dateStyle: "medium", timeStyle: "short" }).format(new Date(value));
+}
+
+function downloadText(content: string, filename: string, type: string) {
+  const url = URL.createObjectURL(new Blob([content], { type }));
+  const link = document.createElement("a"); link.href = url; link.download = filename; link.click();
+  URL.revokeObjectURL(url);
 }

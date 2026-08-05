@@ -34,6 +34,21 @@ type RawRow = {
   conversions: number;
 };
 
+type GoogleSearchTermContext = {
+  resourceName: string | null;
+  campaignId: string | null;
+  campaignName: string;
+  adGroupId: string | null;
+  adGroupName: string;
+  triggeringKeyword: string | null;
+  matchType: string | null;
+  addedExcludedStatus: string | null;
+  impressions: number;
+  clicks: number;
+  spend: number;
+  conversions: number;
+};
+
 type RawOutput = {
   customerId: string;
   customerIdNormalized: string;
@@ -66,9 +81,10 @@ export class ManualRunnerOutputRepository implements SearchTermOptimizationRepos
       .join(" ")
       .toLowerCase();
     const landingContextLoaded = landingText.length > 0;
+    const googleContext = await getCachedGoogleSearchTermContext(raw).catch(() => new Map<string, GoogleSearchTermContext>());
 
     const results = raw.allRows.map((row, index) =>
-      mapResult({ row, index, criteria, landingText, landingContextLoaded, fresh, automationEnabled }),
+      mapResult({ row, index, criteria, landingText, landingContextLoaded, fresh, automationEnabled, generatedAt, googleContext }),
     );
 
     return {
@@ -225,8 +241,14 @@ function mapResult(input: {
   landingContextLoaded: boolean;
   fresh: boolean;
   automationEnabled: boolean;
+  generatedAt: string;
+  googleContext: Map<string, GoogleSearchTermContext>;
 }): OptimizationResult {
   const { row, criteria, landingText } = input;
+  const live = input.googleContext.get(searchTermIdentity(row.campaignName, row.adGroupName, row.searchTerm));
+  const effectiveConversions = live?.conversions ?? row.conversions;
+  const effectiveClicks = live?.clicks ?? row.clicks;
+  const effectiveSpend = live?.spend ?? row.cost;
   const normalizedTerm = normalizeText(row.searchTerm);
   const positiveExactOverlap = criteria.some(
     (criterion) =>
@@ -249,11 +271,11 @@ function mapResult(input: {
   const score = calculateSafetyScore({
     mismatchIsClear: row.mismatchIsClear,
     mismatchCategory: row.mismatchCategory,
-    conversions: row.conversions,
+    conversions: effectiveConversions,
     noPositiveKeywordOverlap: !positiveExactOverlap,
     landingIntentAbsent,
     noQualifiedLeadSignal: null,
-    hasPaidClicksOrSpend: row.clicks > 0 || row.cost > 0,
+    hasPaidClicksOrSpend: effectiveClicks > 0 || effectiveSpend > 0,
     meaningIsAmbiguous,
     requiresConfirmation,
   });
@@ -261,7 +283,7 @@ function mapResult(input: {
   const hardGateFailures = evaluateHardGates({
     automationEnabled: input.automationEnabled,
     proposedAction: row.proposedAction,
-    conversions: row.conversions,
+    conversions: effectiveConversions,
     landingContextLoaded: input.landingContextLoaded,
     googleAdsDataFresh: input.fresh,
     alreadyNegative,
@@ -275,16 +297,29 @@ function mapResult(input: {
 
   return {
     id: row.term_id ?? `${input.index}-${normalizedTerm}`,
+    searchTermResourceName: live?.resourceName ?? null,
     searchTerm: row.searchTerm,
-    campaign: row.campaignName,
-    adGroup: row.adGroupName,
+    campaignId: live?.campaignId ?? null,
+    campaign: live?.campaignName ?? row.campaignName,
+    adGroupId: live?.adGroupId ?? null,
+    adGroup: live?.adGroupName ?? row.adGroupName,
+    assetGroup: null,
     destinationUrl: row.destinationUrl,
-    triggeringKeyword: null,
-    matchType: null,
-    impressions: row.impressions,
-    clicks: row.clicks,
-    spend: row.cost,
-    conversions: row.conversions,
+    triggeringKeyword: live?.triggeringKeyword ?? null,
+    matchType: live?.matchType ?? null,
+    addedExcludedStatus: live?.addedExcludedStatus ?? (alreadyNegative ? "EXCLUDED" : null),
+    impressions: live?.impressions ?? row.impressions,
+    clicks: effectiveClicks,
+    spend: effectiveSpend,
+    conversions: effectiveConversions,
+    qualifiedLeads: null,
+    spamLeads: null,
+    invalidLeads: null,
+    clientComplaints: null,
+    firstDetectedAt: null,
+    lastReviewedAt: null,
+    dataRetrievedAt: input.generatedAt,
+    previousDecision: null,
     classification: row.mismatchIsClear ? row.mismatchCategory : row.relevance ?? "unclassified",
     mismatchCategory: row.mismatchCategory,
     proposedAction: row.proposedAction,
@@ -297,6 +332,85 @@ function mapResult(input: {
     executionStatus: executionEligibility ? "eligible" : actionNeedsReview ? "review-required" : "not-eligible",
     verificationStatus: "not-applicable",
   };
+}
+
+const searchTermContextCache = globalThis as typeof globalThis & {
+  __searchTermContextCache?: Map<string, { expiresAt: number; rows: Map<string, GoogleSearchTermContext> }>;
+};
+
+async function getCachedGoogleSearchTermContext(raw: RawOutput) {
+  searchTermContextCache.__searchTermContextCache ??= new Map();
+  const customerId = raw.customerIdNormalized || raw.customerId.replace(/\D/g, "");
+  const key = `${customerId}:${raw.dateRange.startDate}:${raw.dateRange.endDate}`;
+  const cached = searchTermContextCache.__searchTermContextCache.get(key);
+  if (cached && cached.expiresAt > Date.now()) return cached.rows;
+  const rows = await fetchGoogleSearchTermContext(raw);
+  searchTermContextCache.__searchTermContextCache.set(key, { expiresAt: Date.now() + 10 * 60 * 1000, rows });
+  return rows;
+}
+
+async function fetchGoogleSearchTermContext(raw: RawOutput) {
+  const credentials = getCredentials();
+  if (!credentials.googleDeveloperToken) throw new Error("Google Ads developer token is unavailable.");
+  const accessToken = await resolveRecommendationAccessToken(credentials);
+  const customerId = raw.customerIdNormalized || raw.customerId.replace(/\D/g, "");
+  const loginCustomerId = (raw.loginCustomerIdUsed || credentials.googleLoginCustomerId || "").replace(/\D/g, "");
+  const query = `
+    SELECT search_term_view.resource_name, search_term_view.search_term, search_term_view.status,
+      campaign.id, campaign.name, ad_group.id, ad_group.name,
+      segments.search_term_match_type, segments.keyword.info.text,
+      metrics.impressions, metrics.clicks, metrics.cost_micros, metrics.conversions
+    FROM search_term_view
+    WHERE segments.date BETWEEN '${raw.dateRange.startDate}' AND '${raw.dateRange.endDate}'
+  `;
+  const response = await fetch(`https://googleads.googleapis.com/${credentials.googleAdsApiVersion}/customers/${customerId}/googleAds:searchStream`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      "developer-token": credentials.googleDeveloperToken,
+      ...(loginCustomerId ? { "login-customer-id": loginCustomerId } : {}),
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({ query }),
+    cache: "no-store",
+  });
+  if (!response.ok) throw new Error(`Google search-term context failed (${response.status}).`);
+  const batches = await response.json() as Array<{ results?: Array<{
+    searchTermView?: { resourceName?: string; searchTerm?: string; status?: string };
+    campaign?: { id?: string; name?: string };
+    adGroup?: { id?: string; name?: string };
+    segments?: { searchTermMatchType?: string; keyword?: { info?: { text?: string } } };
+    metrics?: { impressions?: string; clicks?: string; costMicros?: string; conversions?: number };
+  }> }>;
+  const rows = new Map<string, GoogleSearchTermContext>();
+  for (const result of batches.flatMap((batch) => batch.results ?? [])) {
+    const term = result.searchTermView?.searchTerm?.trim();
+    const campaignName = result.campaign?.name ?? "Unknown campaign";
+    const adGroupName = result.adGroup?.name ?? "Unknown ad group";
+    if (!term) continue;
+    const key = searchTermIdentity(campaignName, adGroupName, term);
+    const existing = rows.get(key);
+    const keyword = result.segments?.keyword?.info?.text ?? null;
+    rows.set(key, {
+      resourceName: result.searchTermView?.resourceName ?? null,
+      campaignId: result.campaign?.id ?? null,
+      campaignName,
+      adGroupId: result.adGroup?.id ?? null,
+      adGroupName,
+      triggeringKeyword: existing?.triggeringKeyword && keyword && existing.triggeringKeyword !== keyword ? "Multiple keywords" : keyword ?? existing?.triggeringKeyword ?? null,
+      matchType: result.segments?.searchTermMatchType ?? null,
+      addedExcludedStatus: result.searchTermView?.status ?? null,
+      impressions: (existing?.impressions ?? 0) + Number(result.metrics?.impressions ?? 0),
+      clicks: (existing?.clicks ?? 0) + Number(result.metrics?.clicks ?? 0),
+      spend: (existing?.spend ?? 0) + Number(result.metrics?.costMicros ?? 0) / 1_000_000,
+      conversions: (existing?.conversions ?? 0) + Number(result.metrics?.conversions ?? 0),
+    });
+  }
+  return rows;
+}
+
+function searchTermIdentity(campaign: string, adGroup: string, term: string) {
+  return `${normalizeText(campaign)}\u0000${normalizeText(adGroup)}\u0000${normalizeText(term)}`;
 }
 
 async function readLatestManualRunnerOutput(accountId?: string): Promise<RawOutput> {

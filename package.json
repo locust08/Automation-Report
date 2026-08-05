@@ -8,6 +8,7 @@
     "notion:smoke": "node scripts/notion-smoke.mjs",
     "search-terms:sqlite:init": "node scripts/init-search-term-sqlite.mjs",
     "search-terms:sqlite:test": "node scripts/search-term-sqlite-smoke.mjs",
+    "search-terms:lead-quality:test": "tsx scripts/search-term-lead-quality.test.mts",
     "search-terms:sqlite:inspect": "node scripts/inspect-search-term-sqlite.mjs",
     "search-terms:sqlite:approver-test": "tsx scripts/search-term-approver-sqlite.test.mts",
     "placements:sqlite:test": "tsx scripts/placement-optimization-sqlite.test.mts",
