@@ -11,6 +11,7 @@ import {
   XIcon,
 } from "lucide-react";
 import { ReportShell } from "@/components/reporting/report-shell";
+import { AccountEscalationNotice } from "@/components/team-lead-monitoring/account-escalation-notice";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -332,6 +333,7 @@ export function PlacementOptimizationPageClient({ role }: { role: AuthRole }) {
             </>
           ) : null}
         </section>
+        <AccountEscalationNotice module="placement" accountId={data?.account.customerId} />
         {data ? (
           <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
             {[

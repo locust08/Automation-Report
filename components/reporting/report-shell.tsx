@@ -14,6 +14,7 @@ import {
   LogOutIcon,
   PanelsTopLeftIcon,
   SearchCheckIcon,
+  ShieldAlertIcon,
   SparklesIcon,
   UploadCloudIcon,
   UsersRoundIcon,
@@ -77,6 +78,7 @@ export function ReportShell({
     searchTermOptimization: "/search-term-optimization",
     placementOptimization: "/placement-optimization",
     userManagement: "/user-management",
+    teamLeadMonitoring: "/team-lead-monitoring",
   };
 
   return (
@@ -171,12 +173,19 @@ export function ReportShell({
                     >
                       <SearchCheckIcon className="size-5" />
                     </ReportNavLink> : null}
-                    {currentRole && ["co", "approver", "pm", "admin"].includes(currentRole) ? <ReportNavLink
+                    {currentRole && ["co", "approver", "pm", "tl", "admin"].includes(currentRole) ? <ReportNavLink
                       href={hrefs.placementOptimization}
                       label="Placement Optimization"
                       active={pathname === "/placement-optimization"}
                     >
                       <PanelsTopLeftIcon className="size-5" />
+                    </ReportNavLink> : null}
+                    {currentRole && ["tl", "admin"].includes(currentRole) ? <ReportNavLink
+                      href={hrefs.teamLeadMonitoring}
+                      label="Team Lead Monitoring"
+                      active={pathname === "/team-lead-monitoring"}
+                    >
+                      <ShieldAlertIcon className="size-5" />
                     </ReportNavLink> : null}
                     {isAdmin ? <>
                       <ReportNavLink

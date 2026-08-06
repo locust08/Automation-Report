@@ -15,6 +15,7 @@
     "search-terms:scheduler:doppler": "doppler run -- npm run search-terms:scheduler",
     "search-terms:settings:test": "tsx scripts/search-term-account-settings.test.mts",
     "placements:sqlite:test": "tsx scripts/placement-optimization-sqlite.test.mts",
+    "team-lead:sqlite:test": "tsx scripts/team-lead-monitoring-sqlite.test.mts",
     "send:drive-pdf-emails": "node --import jiti/register scripts/send-drive-pdf-report-emails.mjs",
     "monthly:pdf:benchmark": "tsx scripts/monthly-report-pdf-benchmark.ts",
     "monthly-report:test:notion": "tsx scripts/monthly-report-pre-scheduler-test.ts notion",

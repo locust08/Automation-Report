@@ -24,6 +24,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Spinner } from "@/components/ui/spinner";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { ReportShell } from "@/components/reporting/report-shell";
+import { AccountEscalationNotice } from "@/components/team-lead-monitoring/account-escalation-notice";
 import { AUTH_ROLE_LABELS, type AuthRole } from "@/lib/auth/roles";
 import type {
   OptimizationDashboardPayload,
@@ -641,6 +642,8 @@ export function SearchTermOptimizationPageClient({ role }: { role: AuthRole }) {
             </div>
           </div>
         </section>
+
+        <AccountEscalationNotice module="search_term" accountId={data?.account.customerId} />
 
         {!analysisLoading && error && !accountPerformance && error.includes("No completed search-term analysis output was found") ? (
           <section className="rounded-2xl border border-neutral-200 bg-white p-5 text-neutral-700 shadow-sm">
