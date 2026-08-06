@@ -1,0 +1,18 @@
+[project]
+name = "automation-report-search-term-review-runner"
+version = "0.1.0"
+requires-python = ">=3.11"
+dependencies = []
+
+[dependency-groups]
+ads = [
+  "google-ads>=25.1.0",
+]
+ads-agent = [
+  "beautifulsoup4>=4.14.2",
+  "httpx>=0.28.1",
+  "openai-agents>=0.6.3",
+  "pydantic>=2.12.5",
+  "tenacity>=9.1.2",
+  "tzdata>=2025.2",
+]

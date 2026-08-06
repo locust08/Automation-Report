@@ -41,6 +41,7 @@ create table if not exists ad_automation_search_term_recommendations (
   ai_reason text,
   proposed_action text not null
     check (proposed_action in ('negative exact', 'negative phrase', 'add exact', 'special review needed')),
+  source_action text,
   safety_score integer not null default 0 check (safety_score between 0 and 100),
   safety_band text not null default 'no-automatic-action'
     check (safety_band in ('auto-safe', 'review-recommended', 'no-automatic-action')),

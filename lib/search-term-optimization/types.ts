@@ -9,16 +9,6 @@ export type ScoreBreakdownItem = {
   status: "yes" | "no" | "unknown";
 };
 
-export type OptimizationReviewEvent = {
-  id: string;
-  reviewerEmail: string;
-  reviewerRole: string;
-  action: string;
-  previousStatus: string | null;
-  resultingStatus: string;
-  createdAt: string;
-};
-
 export type OptimizationResult = {
   id: string;
   searchTermId?: string;
@@ -59,8 +49,7 @@ export type OptimizationResult = {
   reviewDecision?: "approved" | "rejected" | "to_be_determined";
   reviewStatus?: string;
   recommendationId?: string;
-  approverDecision?: "approved" | "rejected" | "returned";
-  reviewHistory?: OptimizationReviewEvent[];
+  approverDecision?: "accepted" | "rejected";
 };
 
 export type OptimizationChangeSet = {

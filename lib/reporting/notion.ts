@@ -57,6 +57,7 @@ export interface NotionAccountSearchSuggestion {
   adAccountId: string;
   country: "MY" | "SG" | "AU" | "US" | null;
   notionPageId: string;
+  accessPath?: string | null;
 }
 
 export interface NotionAccountSearchResponse {
@@ -700,6 +701,13 @@ function mapNotionAccountSearchSuggestion(
     return null;
   }
 
+  const accessPath = getNotionPropertyTextByAliases(properties, [
+    "Google Ads Access Path",
+    "Access Path",
+    "Google Manager Account",
+    "Manager Account",
+  ]);
+
   return {
     accountName,
     adAccountId,
@@ -707,6 +715,7 @@ function mapNotionAccountSearchSuggestion(
       getNotionPropertyTextByAliases(properties, ["Country", "country", "Market", "Location"])
     ),
     notionPageId: page.id,
+    ...(accessPath ? { accessPath } : {}),
   };
 }
 

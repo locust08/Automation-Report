@@ -139,6 +139,7 @@ interface GoogleAdsResult {
   };
   customer?: {
     id?: string;
+    optimizationScore?: number | string;
   };
   genderView?: {
     gender?: string;
@@ -182,6 +183,7 @@ interface GoogleAdsResult {
     biddingStrategyType?: string;
     startDate?: string;
     endDate?: string;
+    optimizationScore?: number | string;
     networkSettings?: {
       targetGoogleSearch?: boolean;
       targetSearchNetwork?: boolean;
@@ -707,6 +709,46 @@ export async function fetchGoogleCampaignRows({
       return row;
     })
     .filter(hasReportableCampaignSpend);
+}
+
+export interface GoogleOptimizationOverview {
+  optimizationScore: number | null;
+  campaigns: Array<{ id: string; name: string; optimizationScore: number | null; clicks: number; conversions: number; conversionRate: number }>;
+}
+
+export async function fetchGoogleOptimizationOverview(input: GoogleFetchInput): Promise<GoogleOptimizationOverview> {
+  const context = await resolveVerifiedGoogleAdsContext({
+    customerId: input.customerId, apiVersion: input.apiVersion, developerToken: input.developerToken,
+    accessToken: input.accessToken, refreshToken: input.refreshToken, clientId: input.clientId,
+    clientSecret: input.clientSecret, loginCustomerId: input.loginCustomerId,
+    accessPath: input.accessPath ?? null, fallbackLoginCustomerId: input.fallbackLoginCustomerId ?? null,
+  });
+  const [customerRows, campaignRows] = await Promise.all([
+    fetchGoogleAdsResultsWithFallback({
+      customerId: context.customerId, apiVersion: input.apiVersion, developerToken: input.developerToken,
+      accessToken: input.accessToken, refreshToken: input.refreshToken, clientId: input.clientId,
+      clientSecret: input.clientSecret, loginCustomerId: context.loginCustomerId,
+      queries: ["SELECT customer.optimization_score FROM customer LIMIT 1"],
+    }),
+    fetchGoogleAdsResultsWithFallback({
+      customerId: context.customerId, apiVersion: input.apiVersion, developerToken: input.developerToken,
+      accessToken: input.accessToken, refreshToken: input.refreshToken, clientId: input.clientId,
+      clientSecret: input.clientSecret, loginCustomerId: context.loginCustomerId,
+      queries: [`SELECT campaign.id, campaign.name, campaign.optimization_score, metrics.clicks, metrics.conversions FROM campaign WHERE segments.date DURING LAST_30_DAYS AND campaign.status != 'REMOVED'`],
+    }),
+  ]);
+  const optimizationScore = nullablePercent(customerRows[0]?.customer?.optimizationScore);
+  const campaigns = campaignRows.map((row) => {
+    const clicks = toNumber(row.metrics?.clicks); const conversions = toNumber(row.metrics?.conversions);
+    return { id: row.campaign?.id ?? row.campaign?.name ?? "unknown", name: row.campaign?.name?.trim() || "Untitled campaign", optimizationScore: nullablePercent(row.campaign?.optimizationScore), clicks, conversions, conversionRate: clicks > 0 ? conversions * 100 / clicks : 0 };
+  }).sort((left, right) => (left.optimizationScore ?? Number.POSITIVE_INFINITY) - (right.optimizationScore ?? Number.POSITIVE_INFINITY));
+  return { optimizationScore, campaigns };
+}
+
+function nullablePercent(value: string | number | undefined) {
+  if (value == null || value === "") return null;
+  const number = Number(value);
+  return Number.isFinite(number) ? number * 100 : null;
 }
 
 export interface GooglePlacementPerformanceRow {

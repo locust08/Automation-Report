@@ -65,6 +65,13 @@ type RawOutput = {
   allRows: RawRow[];
 };
 
+export type GenerateSearchTermAnalysisInput = {
+  accountId: string;
+  accountName: string;
+  loginCustomerId?: string | null;
+  days?: number;
+};
+
 export interface SearchTermOptimizationRepository {
   getDashboard(accountId?: string): Promise<OptimizationDashboardPayload>;
 }
@@ -83,9 +90,16 @@ export class ManualRunnerOutputRepository implements SearchTermOptimizationRepos
     const landingContextLoaded = landingText.length > 0;
     const googleContext = await getCachedGoogleSearchTermContext(raw).catch(() => new Map<string, GoogleSearchTermContext>());
 
-    const results = raw.allRows.map((row, index) =>
+    const mappedResults = raw.allRows.map((row, index) =>
       mapResult({ row, index, criteria, landingText, landingContextLoaded, fresh, automationEnabled, generatedAt, googleContext }),
     );
+    // SQLite intentionally stores one recommendation per account/campaign/ad
+    // group/search-term identity. The Google source can return that identity
+    // more than once (for example across keyword/match segments), so collapse
+    // it before persistence and before React receives row IDs.
+    const results = [...new Map(
+      mappedResults.map((row) => [searchTermIdentity(row.campaign, row.adGroup, row.searchTerm), row]),
+    ).values()];
 
     return {
       account: {
@@ -121,6 +135,100 @@ export class ManualRunnerOutputRepository implements SearchTermOptimizationRepos
       changeSets: [],
     };
   }
+}
+
+/**
+ * Creates the local, manual-review snapshot consumed by this module. This is a
+ * deliberately conservative fallback for accounts that have not yet been run
+ * through the Python/AI skill: it retrieves every Search term and leaves any
+ * uncertain classification for a human instead of manufacturing confidence.
+ */
+export async function generateSearchTermAnalysis(input: GenerateSearchTermAnalysisInput): Promise<string> {
+  const customerId = input.accountId.replace(/\D/g, "");
+  if (customerId.length !== 10) throw new Error("Google Ads customer ID must contain 10 digits.");
+  const credentials = getCredentials();
+  if (!credentials.googleDeveloperToken) throw new Error("Google Ads developer token is unavailable.");
+  const accessToken = await resolveRecommendationAccessToken(credentials);
+  const loginCustomerId = (input.loginCustomerId || credentials.googleLoginCustomerId || "").replace(/\D/g, "");
+  const end = new Date();
+  const start = new Date(end);
+  start.setUTCDate(start.getUTCDate() - Math.max(1, input.days ?? 30) + 1);
+  const startDate = start.toISOString().slice(0, 10);
+  const endDate = end.toISOString().slice(0, 10);
+  const query = `
+    SELECT search_term_view.resource_name, search_term_view.search_term, search_term_view.status,
+      campaign.id, campaign.name, ad_group.id, ad_group.name,
+      segments.search_term_match_type, segments.keyword.info.text,
+      metrics.impressions, metrics.clicks, metrics.cost_micros, metrics.conversions
+    FROM search_term_view
+    WHERE segments.date BETWEEN '${startDate}' AND '${endDate}'
+    ORDER BY metrics.cost_micros DESC
+  `;
+  const response = await fetch(`https://googleads.googleapis.com/${credentials.googleAdsApiVersion}/customers/${customerId}/googleAds:searchStream`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      "developer-token": credentials.googleDeveloperToken,
+      ...(loginCustomerId ? { "login-customer-id": loginCustomerId } : {}),
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({ query }),
+    cache: "no-store",
+  });
+  if (!response.ok) throw new Error(`Google search-term retrieval failed (${response.status}): ${(await response.text()).slice(0, 1_000)}`);
+  const batches = await response.json() as Array<{ results?: Array<{
+    searchTermView?: { resourceName?: string; searchTerm?: string; status?: string };
+    campaign?: { id?: string; name?: string };
+    adGroup?: { id?: string; name?: string };
+    segments?: { searchTermMatchType?: string; keyword?: { info?: { text?: string } } };
+    metrics?: { impressions?: string; clicks?: string; costMicros?: string; conversions?: number };
+  }> }>;
+  const sourceRows = batches.flatMap((batch) => batch.results ?? []);
+  const allRows: RawRow[] = sourceRows.flatMap((result, index) => {
+    const searchTerm = result.searchTermView?.searchTerm?.trim();
+    if (!searchTerm) return [];
+    const conversions = Number(result.metrics?.conversions ?? 0);
+    return [{
+      term_id: result.searchTermView?.resourceName ?? `${customerId}-${index}`,
+      searchTerm,
+      campaignName: result.campaign?.name ?? "Unknown campaign",
+      adGroupName: result.adGroup?.name ?? "Unknown ad group",
+      destinationUrl: "",
+      proposedAction: "no action",
+      specialReview: "yes",
+      relevance: "unclear",
+      mismatchIsClear: false,
+      mismatchCategory: "unclear_human_review",
+      reason: conversions > 0
+        ? "The term produced conversions and requires human review before any exclusion."
+        : "Fresh Google Ads term awaiting conservative human classification.",
+      cost: Number(result.metrics?.costMicros ?? 0) / 1_000_000,
+      impressions: Number(result.metrics?.impressions ?? 0),
+      clicks: Number(result.metrics?.clicks ?? 0),
+      conversions,
+    }];
+  });
+  const generatedAt = new Date().toISOString();
+  const raw: RawOutput = {
+    customerId: `${customerId.slice(0, 3)}-${customerId.slice(3, 6)}-${customerId.slice(6)}`,
+    customerIdNormalized: customerId,
+    customerName: input.accountName.trim() || `Google Ads ${customerId}`,
+    generatedAt,
+    loginCustomerIdUsed: loginCustomerId || undefined,
+    dateRange: { startDate, endDate },
+    source: { termsReviewed: allRows.length, mutatingGoogleAdsChanges: false },
+    siteContexts: {},
+    safetyCorpus: { keywordCriteria: [] },
+    allRows,
+  };
+  const directory = path.join(process.cwd(), "tmp");
+  await fs.mkdir(directory, { recursive: true });
+  const filename = `google_ads_search_term_review_agent_${customerId}_${startDate.replaceAll("-", "")}_${endDate.replaceAll("-", "")}.json`;
+  const outputPath = path.join(directory, filename);
+  const temporaryPath = `${outputPath}.${process.pid}.tmp`;
+  await fs.writeFile(temporaryPath, JSON.stringify(raw, null, 2), "utf8");
+  await fs.rename(temporaryPath, outputPath);
+  return outputPath;
 }
 
 export async function getGoogleRecommendationsForAccount(accountId?: string) {
@@ -296,7 +404,11 @@ function mapResult(input: {
   const actionNeedsReview = row.proposedAction !== "no action" && !executionEligibility;
 
   return {
-    id: row.term_id ?? `${input.index}-${normalizedTerm}`,
+    // The manual runner's term_id is not guaranteed to be unique across
+    // campaigns/ad groups. SQLite replaces this with its recommendation ID
+    // after persistence; until then, use the same composite identity as the
+    // database rather than exposing a colliding source ID to React/actions.
+    id: sourceResultId(row, input.index),
     searchTermResourceName: live?.resourceName ?? null,
     searchTerm: row.searchTerm,
     campaignId: live?.campaignId ?? null,
@@ -411,6 +523,13 @@ async function fetchGoogleSearchTermContext(raw: RawOutput) {
 
 function searchTermIdentity(campaign: string, adGroup: string, term: string) {
   return `${normalizeText(campaign)}\u0000${normalizeText(adGroup)}\u0000${normalizeText(term)}`;
+}
+
+function sourceResultId(row: RawRow, index: number) {
+  const identity = [row.campaignName, row.adGroupName, row.searchTerm]
+    .map((value) => encodeURIComponent(normalizeText(value)))
+    .join("::");
+  return identity || `source-row-${index}`;
 }
 
 async function readLatestManualRunnerOutput(accountId?: string): Promise<RawOutput> {

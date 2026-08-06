@@ -466,3 +466,22 @@
     animation: none;
   }
 }
+@keyframes search-analysis-progress {
+  0% {
+    transform: translateX(-110%);
+  }
+  100% {
+    transform: translateX(310%);
+  }
+}
+
+.search-analysis-progress {
+  animation: search-analysis-progress 1.6s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .search-analysis-progress {
+    animation: none;
+    width: 65%;
+  }
+}

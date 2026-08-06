@@ -2,7 +2,7 @@ import { mkdirSync, readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
-import type { OptimizationDashboardPayload, OptimizationResult, OptimizationReviewEvent } from "@/lib/search-term-optimization/types";
+import type { OptimizationDashboardPayload, OptimizationResult } from "@/lib/search-term-optimization/types";
 import { safetyBand } from "@/lib/search-term-optimization/scoring";
 
 type StoredResult = {
@@ -31,19 +31,8 @@ type StoredChangeSet = {
   approved_at: string;
 };
 
-type StoredReviewEvent = {
-  id: number;
-  recommendation_id: number;
-  reviewer_email: string;
-  reviewer_role: string;
-  action: string;
-  previous_status: string | null;
-  resulting_status: string;
-  created_at: string;
-};
-
 export type SpecialistDecision = "approved" | "rejected" | "to_be_determined";
-export type ApproverDecision = "approved" | "rejected" | "returned";
+export type ApproverDecision = "accepted" | "rejected";
 
 function openDatabase() {
   const databasePath = resolve(process.env.SEARCH_TERM_SQLITE_PATH || "data/search-term-optimization.sqlite");
@@ -63,6 +52,14 @@ function ensureSearchTermColumns(database: DatabaseSync) {
     ["added_excluded_status", "text"], ["data_retrieved_at", "text"],
   ];
   for (const [name, type] of columns) if (!existing.has(name)) database.exec(`alter table ad_automation_search_terms add column ${name} ${type}`);
+  const recommendationColumns = new Set((database.prepare("pragma table_info(ad_automation_search_term_recommendations)").all() as Array<{ name: string }>).map((column) => column.name));
+  if (!recommendationColumns.has("source_action")) database.exec("alter table ad_automation_search_term_recommendations add column source_action text");
+  // Legacy specialist rejections were terminal. They now require Final Review.
+  database.exec(`
+    update ad_automation_search_term_recommendations
+    set review_status = 'ready_for_approval', updated_at = datetime('now')
+    where review_status = 'rejected' and current_decision = 'reject'
+  `);
 }
 
 function migrateApproverSchema(database: DatabaseSync, schema: string) {
@@ -131,24 +128,21 @@ export function persistDashboardToSqlite(payload: OptimizationDashboardPayload):
     `);
     const upsertRecommendation = database.prepare(`
       insert into ad_automation_search_term_recommendations (
-        search_term_id, classification, mismatch_category, ai_reason, proposed_action,
+        search_term_id, classification, mismatch_category, ai_reason, proposed_action, source_action,
         safety_score, safety_band, score_breakdown, hard_gate_failures, updated_at
-      ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+      ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
       on conflict do update set
         classification = excluded.classification,
         mismatch_category = excluded.mismatch_category,
         ai_reason = excluded.ai_reason,
         proposed_action = excluded.proposed_action,
+        source_action = excluded.source_action,
         safety_score = excluded.safety_score,
         safety_band = excluded.safety_band,
         score_breakdown = excluded.score_breakdown,
         hard_gate_failures = excluded.hard_gate_failures,
         updated_at = datetime('now')
     `);
-    const removeRecommendation = database.prepare(`
-      delete from ad_automation_search_term_recommendations where search_term_id = ?
-    `);
-
     database.exec("begin immediate;");
     for (const row of payload.results) {
       const savedTerm = upsertSearchTerm.get(
@@ -157,15 +151,12 @@ export function persistDashboardToSqlite(payload: OptimizationDashboardPayload):
         row.triggeringKeyword, row.matchType, row.addedExcludedStatus, row.destinationUrl,
         row.impressions, row.clicks, row.spend, row.conversions, row.dataRetrievedAt,
       ) as { id: number };
-      if (row.proposedAction === "no action") {
-        removeRecommendation.run(savedTerm.id);
-      } else {
-        upsertRecommendation.run(
-          savedTerm.id, row.classification, row.mismatchCategory, row.explanation,
-          row.proposedAction, row.safetyScore, row.safetyBand,
-          JSON.stringify(row.scoreBreakdown), JSON.stringify(row.hardGateFailures),
-        );
-      }
+      upsertRecommendation.run(
+        savedTerm.id, row.classification, row.mismatchCategory, row.explanation,
+        row.proposedAction === "no action" ? "special review needed" : row.proposedAction,
+        row.proposedAction, row.safetyScore, row.safetyBand,
+        JSON.stringify(row.scoreBreakdown), JSON.stringify(row.hardGateFailures),
+      );
     }
     database.exec("commit;");
 
@@ -189,31 +180,6 @@ export function persistDashboardToSqlite(payload: OptimizationDashboardPayload):
       order by id desc
       limit 20
     `).all(payload.account.customerId) as unknown as StoredChangeSet[];
-    const storedReviewEvents = database.prepare(`
-      select reviews.id, reviews.recommendation_id, reviews.reviewer_email,
-             reviews.reviewer_role, reviews.action, reviews.previous_status,
-             reviews.resulting_status, reviews.created_at
-      from ad_automation_search_term_reviews reviews
-      join ad_automation_search_term_recommendations rec on rec.id = reviews.recommendation_id
-      join ad_automation_search_terms st on st.id = rec.search_term_id
-      where st.google_customer_id = ?
-      order by reviews.id desc
-    `).all(payload.account.customerId) as unknown as StoredReviewEvent[];
-    const reviewEventsByRecommendation = new Map<number, OptimizationReviewEvent[]>();
-    for (const event of storedReviewEvents) {
-      const events = reviewEventsByRecommendation.get(event.recommendation_id) ?? [];
-      events.push({
-        id: String(event.id),
-        reviewerEmail: event.reviewer_email,
-        reviewerRole: event.reviewer_role,
-        action: event.action,
-        previousStatus: event.previous_status,
-        resultingStatus: event.resulting_status,
-        createdAt: event.created_at,
-      });
-      reviewEventsByRecommendation.set(event.recommendation_id, events);
-    }
-
     return {
       ...payload,
       results: payload.results.map((row) => {
@@ -234,19 +200,16 @@ export function persistDashboardToSqlite(payload: OptimizationDashboardPayload):
           reviewStatus: saved.review_status ?? undefined,
           reviewDecision: saved.current_decision === "submit_for_approval" || saved.current_decision === "approver_approved"
             ? "approved"
+            : saved.current_decision === "keep"
+              ? "approved"
             : saved.current_decision === "reject" || saved.current_decision === "approver_rejected"
               ? "rejected"
               : saved.current_decision === "kiv" || saved.current_decision === "return_to_specialist"
                 ? "to_be_determined"
                 : undefined,
-          approverDecision: saved.current_decision === "approver_approved"
-            ? "approved"
-            : saved.current_decision === "approver_rejected"
-              ? "rejected"
-              : saved.current_decision === "return_to_specialist" ? "returned" : undefined,
-          reviewHistory: saved.recommendation_id
-            ? reviewEventsByRecommendation.get(saved.recommendation_id) ?? []
-            : [],
+          approverDecision: saved.current_decision === "approver_approved" || saved.current_decision === "approver_rejected"
+            ? "accepted"
+            : saved.current_decision === "return_to_specialist" ? "rejected" : undefined,
         });
       }),
       changeSets: changeSets.map((changeSet) => ({
@@ -299,28 +262,28 @@ export function saveApproverDecision(input: {
     if (rows.length !== input.recommendationIds.length) throw new Error("One or more recommendations were not found.");
     const accounts = new Set(rows.map((row) => String(row.google_customer_id)));
     if (accounts.size !== 1) throw new Error("A change set can contain recommendations from only one account.");
-    const sourceTimes = rows.map((row) => Date.parse(String(row.source_run_id ?? "")));
-    if (input.decision === "approved" && sourceTimes.some((timestamp) => !Number.isFinite(timestamp) || Date.now() - timestamp > 48 * 60 * 60 * 1000)) {
-      throw new Error("The Google Ads analysis is stale. Refresh the analysis before approval.");
-    }
-    const resultingStatus = input.decision === "approved"
-      ? "approved_for_publishing"
-      : input.decision === "rejected" ? "approver_rejected" : "returned_for_clarification";
-    const currentDecision = input.decision === "approved"
-      ? "approver_approved"
-      : input.decision === "rejected" ? "approver_rejected" : "return_to_specialist";
-    const historyAction = input.decision === "approved"
-      ? "approver_approve"
-      : input.decision === "rejected" ? "approver_reject" : "return_for_clarification";
-    if (rows.every((row) => row.review_status === resultingStatus && row.current_decision === currentDecision)) {
-      const existing = input.decision === "approved" ? database.prepare(`
+    const approvalRows = rows.filter((row) => row.current_decision === "submit_for_approval");
+    const rejectionRows = rows.filter((row) => row.current_decision === "reject");
+    const alreadyAccepted = rows.every((row) =>
+      row.current_decision === "approver_approved" || row.current_decision === "approver_rejected"
+    );
+    const alreadyReturned = rows.every((row) => row.current_decision === "return_to_specialist");
+    if ((input.decision === "accepted" && alreadyAccepted) || (input.decision === "rejected" && alreadyReturned)) {
+      const existing = database.prepare(`
         select change_set_id from ad_automation_search_term_change_set_items
-        where recommendation_id = ? order by id desc limit 1
-      `).get(rows[0].id) as { change_set_id?: number } | undefined : undefined;
+        where recommendation_id in (${placeholders}) order by id desc limit 1
+      `).get(...input.recommendationIds) as { change_set_id?: number } | undefined;
       return { updated: 0, skipped: rows.length, decision: input.decision, changeSetId: existing?.change_set_id ? String(existing.change_set_id) : null };
     }
     if (rows.some((row) => row.review_status !== "ready_for_approval")) {
-      throw new Error("Every selected recommendation must be awaiting approval.");
+      throw new Error("Every selected recommendation must be awaiting final review.");
+    }
+    if (approvalRows.length + rejectionRows.length !== rows.length) {
+      throw new Error("Every selected recommendation must preserve an Approve or Reject proposal.");
+    }
+    const sourceTimes = approvalRows.map((row) => Date.parse(String(row.source_run_id ?? "")));
+    if (input.decision === "accepted" && sourceTimes.some((timestamp) => !Number.isFinite(timestamp) || Date.now() - timestamp > 48 * 60 * 60 * 1000)) {
+      throw new Error("The Google Ads analysis is stale. Refresh the analysis before approval.");
     }
     const update = database.prepare(`
       update ad_automation_search_term_recommendations
@@ -337,13 +300,13 @@ export function saveApproverDecision(input: {
 
     database.exec("begin immediate;");
     let changeSetId: number | bigint | null = null;
-    if (input.decision === "approved") {
-      const idempotencyKey = `${String(rows[0].google_customer_id)}:${rows.map((row) => row.id).join("-")}`;
+    if (input.decision === "accepted" && approvalRows.length > 0) {
+      const idempotencyKey = `${String(rows[0].google_customer_id)}:${approvalRows.map((row) => row.id).join("-")}`;
       const changeSet = database.prepare(`
         insert into ad_automation_search_term_change_sets (
           google_customer_id, approved_by_user_id, approved_by_email, item_count, idempotency_key
         ) values (?, ?, ?, ?, ?)
-      `).run(String(rows[0].google_customer_id), input.approver.id, input.approver.email, rows.length, idempotencyKey);
+      `).run(String(rows[0].google_customer_id), input.approver.id, input.approver.email, approvalRows.length, idempotencyKey);
       changeSetId = changeSet.lastInsertRowid;
       const insertItem = database.prepare(`
         insert into ad_automation_search_term_change_set_items (
@@ -351,7 +314,7 @@ export function saveApproverDecision(input: {
           proposed_action, safety_score, snapshot_json
         ) values (?, ?, ?, ?, ?, ?, ?, ?)
       `);
-      for (const row of rows) {
+      for (const row of approvalRows) {
         insertItem.run(
           changeSetId, row.id, row.search_term, row.campaign_name, row.ad_group_name,
           row.proposed_action, row.safety_score, JSON.stringify(row),
@@ -359,11 +322,22 @@ export function saveApproverDecision(input: {
       }
     }
     for (const row of rows) {
+      const acceptedApproval = input.decision === "accepted" && row.current_decision === "submit_for_approval";
+      const acceptedRejection = input.decision === "accepted" && row.current_decision === "reject";
+      const resultingStatus = acceptedApproval
+        ? "approved_for_publishing"
+        : acceptedRejection ? "approver_rejected" : "returned_for_clarification";
+      const currentDecision = acceptedApproval
+        ? "approver_approved"
+        : acceptedRejection ? "approver_rejected" : "return_to_specialist";
+      const historyAction = acceptedApproval
+        ? "approver_approve"
+        : acceptedRejection ? "approver_reject" : "return_for_clarification";
       const result = update.run(resultingStatus, currentDecision, input.approver.id, row.id);
       if (result.changes !== 1) throw new Error(`Recommendation ${row.id} changed before approval completed.`);
       insertHistory.run(
         row.id, input.approver.id, input.approver.email, input.approver.role,
-        historyAction, resultingStatus, JSON.stringify({ decision: input.decision, changeSetId }),
+        historyAction, resultingStatus, JSON.stringify({ decision: input.decision, proposedDecision: row.current_decision, changeSetId }),
       );
     }
     database.exec("commit;");
@@ -398,7 +372,7 @@ export function saveSpecialistDecision(input: {
   const database = openDatabase();
   try {
     const current = database.prepare(`
-      select id, review_status, current_decision
+      select id, review_status, current_decision, source_action
       from ad_automation_search_term_recommendations
       where id = ?
     `);
@@ -414,15 +388,6 @@ export function saveSpecialistDecision(input: {
         action, previous_status, resulting_status, metadata
       ) values (?, ?, ?, ?, ?, ?, ?, ?)
     `);
-    const resultingStatus = input.decision === "approved"
-      ? "ready_for_approval"
-      : input.decision === "rejected" ? "rejected" : "kiv";
-    const currentDecision = input.decision === "approved"
-      ? "submit_for_approval"
-      : input.decision === "rejected" ? "reject" : "kiv";
-    const action = input.decision === "approved"
-      ? "submit_for_approval"
-      : input.decision === "rejected" ? "reject" : "mark_kiv";
     let updated = 0;
     let skipped = 0;
 
@@ -432,8 +397,16 @@ export function saveSpecialistDecision(input: {
         id: number;
         review_status: string;
         current_decision: string | null;
+        source_action: string | null;
       } | undefined;
       if (!row) throw new Error(`Recommendation ${recommendationId} was not found.`);
+      // Approve and reject are specialist proposals. Both must pass through Final Review
+      // before becoming terminal records. KIV remains in the specialist queue.
+      const resultingStatus = input.decision === "to_be_determined" ? "kiv" : "ready_for_approval";
+      const currentDecision = input.decision === "approved"
+        ? "submit_for_approval" : input.decision === "rejected" ? "reject" : "kiv";
+      const action = input.decision === "approved"
+        ? "submit_for_approval" : input.decision === "rejected" ? "reject" : "mark_kiv";
       if (row.review_status === resultingStatus && row.current_decision === currentDecision) {
         skipped += 1;
         continue;
