@@ -4,6 +4,7 @@ import { DatabaseSync } from "node:sqlite";
 
 import type { OptimizationDashboardPayload, OptimizationResult } from "@/lib/search-term-optimization/types";
 import { safetyBand } from "@/lib/search-term-optimization/scoring";
+import { getSearchTermAccountSettings } from "@/lib/search-term-optimization/account-settings";
 
 type StoredResult = {
   search_term_id: number;
@@ -31,7 +32,7 @@ type StoredChangeSet = {
   approved_at: string;
 };
 
-export type SpecialistDecision = "approved" | "rejected" | "to_be_determined";
+export type SpecialistDecision = "approved" | "rejected";
 export type ApproverDecision = "accepted" | "rejected";
 
 function openDatabase() {
@@ -59,6 +60,14 @@ function ensureSearchTermColumns(database: DatabaseSync) {
     update ad_automation_search_term_recommendations
     set review_status = 'ready_for_approval', updated_at = datetime('now')
     where review_status = 'rejected' and current_decision = 'reject'
+  `);
+  // KIV was removed from the two-stage search-term workflow. Existing KIV rows
+  // return to the first-review queue with no proposed decision.
+  database.exec(`
+    update ad_automation_search_term_recommendations
+    set previous_decision = coalesce(previous_decision, current_decision),
+        review_status = 'pending', current_decision = null, updated_at = datetime('now')
+    where review_status = 'kiv' or current_decision = 'kiv'
   `);
 }
 
@@ -180,12 +189,15 @@ export function persistDashboardToSqlite(payload: OptimizationDashboardPayload):
       order by id desc
       limit 20
     `).all(payload.account.customerId) as unknown as StoredChangeSet[];
+    const settings = getSearchTermAccountSettings(payload.account.customerId, payload.account.lastAnalysisAt);
     return {
       ...payload,
+      account: { ...payload.account, nextRunAt: settings.nextRunAt },
+      settings,
       results: payload.results.map((row) => {
         const saved = byIdentity.get(identity(payload.account.customerId, row));
         if (!saved) return row;
-        return applyStoredContext({
+        return applyAccountSettings(applyStoredContext({
           ...row,
           searchTermId: String(saved.search_term_id),
           qualifiedLeads: saved.qualified_leads,
@@ -204,13 +216,11 @@ export function persistDashboardToSqlite(payload: OptimizationDashboardPayload):
               ? "approved"
             : saved.current_decision === "reject" || saved.current_decision === "approver_rejected"
               ? "rejected"
-              : saved.current_decision === "kiv" || saved.current_decision === "return_to_specialist"
-                ? "to_be_determined"
-                : undefined,
+              : undefined,
           approverDecision: saved.current_decision === "approver_approved" || saved.current_decision === "approver_rejected"
             ? "accepted"
             : saved.current_decision === "return_to_specialist" ? "rejected" : undefined,
-        });
+        }), settings);
       }),
       changeSets: changeSets.map((changeSet) => ({
         id: String(changeSet.id),
@@ -226,6 +236,21 @@ export function persistDashboardToSqlite(payload: OptimizationDashboardPayload):
   } finally {
     database.close();
   }
+}
+
+function applyAccountSettings(row: OptimizationResult, settings: OptimizationDashboardPayload["settings"]): OptimizationResult {
+  const safetyBand = row.safetyScore >= settings.autoSafeScoreThreshold
+    ? "auto-safe" as const
+    : row.safetyScore >= settings.reviewScoreThreshold ? "review-recommended" as const : "no-automatic-action" as const;
+  const critical = (row.clientComplaints ?? 0) > 0 || (row.spamLeads ?? 0) > 0 || row.spend >= settings.highSpendThreshold * 2;
+  const high = row.spend >= settings.highSpendThreshold || row.clicks >= settings.minimumClicksThreshold;
+  const priority = critical ? "critical" as const : high ? "high" as const : row.clicks > 0 || row.spend > 0 ? "medium" as const : "normal" as const;
+  return {
+    ...row,
+    safetyBand,
+    executionEligibility: row.safetyScore >= settings.autoSafeScoreThreshold && row.hardGateFailures.length === 0,
+    priority,
+  };
 }
 
 function applyStoredContext(row: OptimizationResult): OptimizationResult {
@@ -400,13 +425,11 @@ export function saveSpecialistDecision(input: {
         source_action: string | null;
       } | undefined;
       if (!row) throw new Error(`Recommendation ${recommendationId} was not found.`);
-      // Approve and reject are specialist proposals. Both must pass through Final Review
-      // before becoming terminal records. KIV remains in the specialist queue.
-      const resultingStatus = input.decision === "to_be_determined" ? "kiv" : "ready_for_approval";
-      const currentDecision = input.decision === "approved"
-        ? "submit_for_approval" : input.decision === "rejected" ? "reject" : "kiv";
-      const action = input.decision === "approved"
-        ? "submit_for_approval" : input.decision === "rejected" ? "reject" : "mark_kiv";
+      // Approve and reject are proposals. Both must pass through Final Review
+      // before becoming terminal records. Uncertain rows remain pending.
+      const resultingStatus = "ready_for_approval";
+      const currentDecision = input.decision === "approved" ? "submit_for_approval" : "reject";
+      const action = input.decision === "approved" ? "submit_for_approval" : "reject";
       if (row.review_status === resultingStatus && row.current_decision === currentDecision) {
         skipped += 1;
         continue;

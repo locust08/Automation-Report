@@ -8,6 +8,7 @@ import { NextResponse } from "next/server";
 import { getServerAuthSession } from "@/lib/auth/server-session";
 import { ManualRunnerOutputRepository } from "@/lib/search-term-optimization/repository";
 import { persistDashboardToSqlite } from "@/lib/search-term-optimization/sqlite-repository";
+import { recordSearchTermAnalysisCompleted } from "@/lib/search-term-optimization/account-settings";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -21,6 +22,7 @@ type JobStatus = {
   startedAt?: string;
   updatedAt?: string;
   heartbeatAt?: string;
+  finishedAt?: string;
 };
 
 function jobsDirectory() {
@@ -67,7 +69,9 @@ export async function GET(request: Request) {
       return NextResponse.json({ ...status, activityAt });
     }
     const dashboard = await new ManualRunnerOutputRepository().getDashboard(status.accountId);
-    return NextResponse.json({ ...status, dashboard: persistDashboardToSqlite(dashboard) });
+    const persisted = persistDashboardToSqlite(dashboard);
+    const settings = recordSearchTermAnalysisCompleted(status.accountId, status.finishedAt ?? dashboard.account.lastAnalysisAt);
+    return NextResponse.json({ ...status, dashboard: settings ? { ...persisted, settings, account: { ...persisted.account, nextRunAt: settings.nextRunAt } } : persisted });
   } catch (error) {
     return NextResponse.json({ error: error instanceof Error ? error.message : "Unable to read analysis status." }, { status: 404 });
   }

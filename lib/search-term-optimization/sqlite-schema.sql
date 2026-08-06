@@ -1,6 +1,25 @@
 pragma foreign_keys = on;
 pragma journal_mode = wal;
 
+create table if not exists ad_automation_search_term_account_settings (
+  google_customer_id text primary key,
+  schedule_frequency text not null default 'manual'
+    check (schedule_frequency in ('manual', 'weekly', 'biweekly', 'monthly')),
+  auto_safe_score_threshold integer not null default 90
+    check (auto_safe_score_threshold between 90 and 100),
+  review_score_threshold integer not null default 60
+    check (review_score_threshold between 0 and 99),
+  high_spend_threshold real not null default 500
+    check (high_spend_threshold >= 0),
+  minimum_clicks_threshold integer not null default 5
+    check (minimum_clicks_threshold >= 0),
+  last_run_at text,
+  next_run_at text,
+  created_at text not null default (datetime('now')),
+  updated_at text not null default (datetime('now')),
+  check (review_score_threshold < auto_safe_score_threshold)
+);
+
 create table if not exists ad_automation_search_terms (
   id integer primary key autoincrement,
   created_at text not null default (datetime('now')),
@@ -50,9 +69,9 @@ create table if not exists ad_automation_search_term_recommendations (
   existing_negative integer not null default 0 check (existing_negative in (0, 1)),
   previous_decision text,
   review_status text not null default 'pending'
-    check (review_status in ('pending', 'in_review', 'kept', 'excluded', 'rejected', 'kiv', 'feedback_requested', 'ready_for_approval', 'approved_for_publishing', 'approver_rejected', 'returned_for_clarification')),
+    check (review_status in ('pending', 'in_review', 'kept', 'excluded', 'rejected', 'feedback_requested', 'ready_for_approval', 'approved_for_publishing', 'approver_rejected', 'returned_for_clarification')),
   current_decision text
-    check (current_decision is null or current_decision in ('keep', 'exclude', 'reject', 'kiv', 'request_pm_feedback', 'request_client_feedback', 'submit_for_approval', 'approver_approved', 'approver_rejected', 'return_to_specialist')),
+    check (current_decision is null or current_decision in ('keep', 'exclude', 'reject', 'request_pm_feedback', 'request_client_feedback', 'submit_for_approval', 'approver_approved', 'approver_rejected', 'return_to_specialist')),
   assigned_reviewer_user_id text,
   last_reviewed_by_user_id text,
   last_reviewed_at text,
@@ -68,7 +87,7 @@ create table if not exists ad_automation_search_term_reviews (
   reviewer_email text not null,
   reviewer_role text not null default 'pms',
   action text not null default 'start_review'
-    check (action in ('start_review', 'keep', 'exclude', 'reject', 'mark_kiv', 'request_pm_feedback', 'request_client_feedback', 'submit_for_approval', 'reopen', 'approver_approve', 'approver_reject', 'return_for_clarification')),
+    check (action in ('start_review', 'keep', 'exclude', 'reject', 'request_pm_feedback', 'request_client_feedback', 'submit_for_approval', 'reopen', 'approver_approve', 'approver_reject', 'return_for_clarification')),
   comment text,
   previous_status text,
   resulting_status text not null default 'in_review',

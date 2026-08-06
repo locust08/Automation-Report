@@ -133,6 +133,16 @@ export class ManualRunnerOutputRepository implements SearchTermOptimizationRepos
       googleRecommendations: [],
       googleRecommendationsWarning: null,
       changeSets: [],
+      settings: {
+        googleCustomerId: raw.customerId,
+        scheduleFrequency: "manual",
+        autoSafeScoreThreshold: 90,
+        reviewScoreThreshold: 60,
+        highSpendThreshold: 500,
+        minimumClicksThreshold: 5,
+        lastRunAt: generatedAt,
+        nextRunAt: null,
+      },
     };
   }
 }

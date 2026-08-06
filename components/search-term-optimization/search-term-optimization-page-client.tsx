@@ -11,8 +11,7 @@ import {
   ExternalLinkIcon,
   SearchIcon,
   ShieldAlertIcon,
-  CircleHelpIcon,
-  FileUpIcon,
+  FileDownIcon,
   SaveIcon,
   XIcon,
 } from "lucide-react";
@@ -30,8 +29,11 @@ import type {
   OptimizationDashboardPayload,
   OptimizationResult,
   GoogleKeywordRecommendation,
+  SearchTermAccountSettings,
+  AnalysisScheduleFrequency,
 } from "@/lib/search-term-optimization/types";
 import type { LeadQualityValues } from "@/lib/search-term-optimization/lead-quality-repository";
+import { createSearchTermDecisionPdf } from "@/lib/search-term-optimization/pdf-report";
 
 type CategoryFilter =
   | "all"
@@ -44,14 +46,13 @@ type CategoryFilter =
   | "final review"
   | "approved"
   | "rejected"
-  | "to_be_determined"
   | "awaiting_approval"
   | "approved_for_publishing"
   | "approver_rejected"
   | "returned_for_clarification"
   | "unadded/unexcluded";
 
-type ReviewDecision = "approved" | "rejected" | "to_be_determined";
+type ReviewDecision = "approved" | "rejected";
 type ApproverDecision = "accepted" | "rejected";
 type WorkflowMode = "specialist" | "approver";
 
@@ -108,8 +109,21 @@ export function SearchTermOptimizationPageClient({ role }: { role: AuthRole }) {
   const [googleRecommendations, setGoogleRecommendations] = useState<GoogleKeywordRecommendation[]>([]);
   const [googleRecommendationsWarning, setGoogleRecommendationsWarning] = useState<string | null>(null);
   const [leadQualityMessage, setLeadQualityMessage] = useState<string | null>(null);
-  const [leadImportErrors, setLeadImportErrors] = useState<Array<{ row: number; message: string }>>([]);
   const [leadQualitySaving, setLeadQualitySaving] = useState(false);
+
+  const approvedReportCount = data?.results.filter((row) => row.reviewStatus === "approved_for_publishing").length ?? 0;
+  const negativeReportCount = data?.results.filter((row) => row.reviewStatus === "approver_rejected").length ?? 0;
+
+  function downloadDecisionReport() {
+    if (!data) return;
+    const buffer = createSearchTermDecisionPdf(data);
+    const url = URL.createObjectURL(new Blob([buffer], { type: "application/pdf" }));
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `search-term-decisions-${data.account.customerId}-${data.account.reportingPeriod.endDate}.pdf`;
+    link.click();
+    window.setTimeout(() => URL.revokeObjectURL(url), 1_000);
+  }
 
   const load = useCallback(async (accountId?: string) => {
     setLoading(true);
@@ -334,15 +348,13 @@ export function SearchTermOptimizationPageClient({ role }: { role: AuthRole }) {
           : categoryFilter === "negative"
             ? row.reviewStatus === "approver_rejected"
           : categoryFilter === "special review needed"
-            ? (!row.reviewDecision && row.reviewStatus !== "approver_rejected") || row.reviewDecision === "to_be_determined"
+            ? !row.reviewDecision && row.reviewStatus !== "approver_rejected"
           : categoryFilter === "final review"
             ? row.reviewStatus === "ready_for_approval"
-          : categoryFilter === "approved" || categoryFilter === "rejected" || categoryFilter === "to_be_determined"
+          : categoryFilter === "approved" || categoryFilter === "rejected"
             ? categoryFilter === "approved"
               ? row.reviewStatus === "approved_for_publishing"
-              : categoryFilter === "rejected"
-                ? row.reviewStatus === "approver_rejected"
-                : row.reviewDecision === "to_be_determined"
+              : row.reviewStatus === "approver_rejected"
             : categoryFilter === "awaiting_approval"
               ? row.reviewStatus === "ready_for_approval"
               : categoryFilter === "approved_for_publishing"
@@ -354,7 +366,7 @@ export function SearchTermOptimizationPageClient({ role }: { role: AuthRole }) {
                     : !row.reviewDecision && normalizeAction(row.proposedAction) === categoryFilter);
       const matchesCampaign = campaignFilter === "all" || row.campaign === campaignFilter;
       return matchesFilter && matchesCampaign;
-    });
+    }).sort((left, right) => priorityRank(left.priority) - priorityRank(right.priority) || right.spend - left.spend);
   }, [campaignFilter, categoryFilter, data, googleRecommendations]);
 
   const campaignOptions = useMemo(
@@ -453,7 +465,7 @@ export function SearchTermOptimizationPageClient({ role }: { role: AuthRole }) {
           ? {
               ...row,
               reviewDecision: decision,
-              reviewStatus: decision === "to_be_determined" ? "kiv" : "ready_for_approval",
+              reviewStatus: "ready_for_approval",
             }
           : row),
       } : current);
@@ -480,7 +492,11 @@ export function SearchTermOptimizationPageClient({ role }: { role: AuthRole }) {
         ...current,
         ...Object.fromEntries(targets.map((row) => [row.id, decision])),
       }));
-      if (decision === "rejected") setDecisions((current) => ({ ...current, ...Object.fromEntries(targets.map((row) => [row.id, "to_be_determined" as const])) }));
+      if (decision === "rejected") setDecisions((current) => {
+        const next = { ...current };
+        targets.forEach((row) => delete next[row.id]);
+        return next;
+      });
       setData((current) => current ? {
         ...current,
         results: current.results.map((row) => targets.some((target) => target.id === row.id)
@@ -489,7 +505,7 @@ export function SearchTermOptimizationPageClient({ role }: { role: AuthRole }) {
               reviewStatus: decision === "accepted"
                 ? row.reviewDecision === "rejected" ? "approver_rejected" : "approved_for_publishing"
                 : "returned_for_clarification",
-              reviewDecision: decision === "rejected" ? "to_be_determined" : row.reviewDecision,
+              reviewDecision: decision === "rejected" ? undefined : row.reviewDecision,
               approverDecision: decision,
             }
           : row),
@@ -514,29 +530,6 @@ export function SearchTermOptimizationPageClient({ role }: { role: AuthRole }) {
       await load(data?.account.customerId);
     } catch (caught) { setDecisionError(caught instanceof Error ? caught.message : "Unable to update lead quality."); }
     finally { setLeadQualitySaving(false); }
-  }
-
-  async function importLeadQuality(file: File) {
-    setLeadQualitySaving(true); setDecisionError(null); setLeadQualityMessage(null); setLeadImportErrors([]);
-    try {
-      const formData = new FormData(); formData.set("file", file);
-      const response = await fetch("/api/search-term-optimization/lead-quality", { method: "POST", body: formData });
-      const payload = await response.json() as { updated?: number; errors?: Array<{ row: number; message: string }>; error?: string };
-      if (!response.ok && !payload.errors) throw new Error(payload.error ?? "Unable to import lead quality.");
-      setLeadImportErrors(payload.errors ?? []);
-      setLeadQualityMessage(`${payload.updated ?? 0} search terms updated${payload.errors?.length ? `; ${payload.errors.length} rows need attention` : ""}.`);
-      await load(data?.account.customerId);
-    } catch (caught) { setDecisionError(caught instanceof Error ? caught.message : "Unable to import lead quality."); }
-    finally { setLeadQualitySaving(false); }
-  }
-
-  function downloadImportErrors() {
-    const csv = ["row,message", ...leadImportErrors.map((error) => `${error.row},"${error.message.replaceAll('"', '""')}"`)].join("\n");
-    downloadText(csv, "lead-quality-import-errors.csv", "text/csv");
-  }
-
-  function downloadLeadTemplate() {
-    downloadText("customer_id,campaign,ad_group,search_term,qualified_leads,spam_leads,invalid_leads,client_complaints\n", "lead-quality-template.csv", "text/csv");
   }
 
   const loadUnaddedSearchTerms = useCallback(async () => {
@@ -676,6 +669,36 @@ export function SearchTermOptimizationPageClient({ role }: { role: AuthRole }) {
               ))}
             </section>
 
+            <section className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-neutral-200 bg-white p-4 shadow-sm">
+              <div>
+                <h2 className="font-semibold">Search-term decision report</h2>
+                <p className="mt-1 text-sm text-neutral-500">Approved: {approvedReportCount} · Negative: {negativeReportCount}</p>
+              </div>
+              <Button type="button" variant="outline" className="cursor-pointer" onClick={downloadDecisionReport} disabled={approvedReportCount + negativeReportCount === 0}>
+                <FileDownIcon className="size-4" /> Download PDF
+              </Button>
+            </section>
+
+            <section className="rounded-2xl border border-neutral-200 bg-white p-5 shadow-sm">
+              <h2 className="text-lg font-semibold">{data.results[0]?.adGroup || "General"}</h2>
+              {data.results[0]?.destinationUrl ? (
+                <a href={data.results[0].destinationUrl} target="_blank" rel="noreferrer" className="mt-1 inline-flex max-w-full items-center gap-1 truncate text-sm text-red-700 hover:underline">
+                  {data.results[0].destinationUrl}<ExternalLinkIcon className="size-3.5 shrink-0" />
+                </a>
+              ) : null}
+              <GeneralAccountPerformance account={accountPerformance} />
+              <AccountScheduleSettings
+                settings={data.settings}
+                editable={isAdmin}
+                onSaved={(settings) => setData((current) => current ? {
+                  ...current,
+                  settings,
+                  account: { ...current.account, nextRunAt: settings.nextRunAt },
+                } : current)}
+              />
+              <SafetyScoreLegend settings={data.settings} />
+            </section>
+
             <section className="rounded-2xl border border-neutral-200 bg-white p-5 shadow-sm">
               <div className={`grid gap-3 ${isAdmin ? "md:grid-cols-3" : "sm:grid-cols-2"}`}>
                 {isAdmin ? <div><p className="mb-1 text-xs font-semibold uppercase tracking-wide text-neutral-500">Workflow</p><Select value={workflowMode} onValueChange={(value) => setWorkflowMode(value as WorkflowMode)}><SelectTrigger className="w-full cursor-pointer bg-white transition hover:bg-neutral-50"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="specialist">Specialist review</SelectItem><SelectItem value="approver">Approver queue</SelectItem></SelectContent></Select></div> : null}
@@ -683,12 +706,12 @@ export function SearchTermOptimizationPageClient({ role }: { role: AuthRole }) {
                 <div><p className="mb-1 text-xs font-semibold uppercase tracking-wide text-neutral-500">Category</p><Select value={categoryFilter} onValueChange={(value) => setCategoryFilter(value as CategoryFilter)}><SelectTrigger className="w-full cursor-pointer bg-white transition hover:bg-neutral-50"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="approved">Approved</SelectItem><SelectItem value="negative">Negative</SelectItem><SelectItem value="special review needed">Special review needed</SelectItem><SelectItem value="final review">Final review</SelectItem><SelectItem value="all">All tables</SelectItem></SelectContent></Select></div>
               </div>
               {canReview ? <div className="mt-4 flex flex-wrap items-center gap-3 border-t pt-4">
-                <label className="inline-flex cursor-pointer items-center gap-2 rounded-md bg-red-700 px-3 py-2 text-sm font-semibold text-white transition hover:bg-red-800">
-                  <FileUpIcon className="size-4" /> {leadQualitySaving ? "Importing..." : "Import lead-quality CSV"}
-                  <input type="file" accept=".csv,text/csv" className="sr-only" disabled={leadQualitySaving} onChange={(event) => { const file = event.target.files?.[0]; if (file) void importLeadQuality(file); event.currentTarget.value = ""; }} />
-                </label>
-                <Button type="button" variant="outline" className="cursor-pointer" onClick={downloadLeadTemplate}>Download CSV template</Button>
-                {leadImportErrors.length ? <Button type="button" variant="outline" className="cursor-pointer" onClick={downloadImportErrors}>Download import errors</Button> : null}
+                  <div aria-disabled="true" className="inline-flex cursor-not-allowed items-center gap-2 rounded-md border border-neutral-700 px-3 py-2 text-sm font-semibold shadow-sm backdrop-blur-md" style={{ backgroundColor: "rgba(23, 23, 23, 0.88)", color: "rgba(255,255,255,0.88)" }}>
+                    <ConstructionIcon className="size-4 text-amber-300" /> Import lead-quality CSV <span className="text-xs font-normal text-neutral-400">Under development</span>
+                  </div>
+                  <div aria-disabled="true" className="inline-flex cursor-not-allowed items-center gap-2 rounded-md border border-neutral-700 px-3 py-2 text-sm font-semibold shadow-sm backdrop-blur-md" style={{ backgroundColor: "rgba(23, 23, 23, 0.88)", color: "rgba(255,255,255,0.88)" }}>
+                    <ConstructionIcon className="size-4 text-amber-300" /> Download CSV template <span className="text-xs font-normal text-neutral-400">Under development</span>
+                  </div>
                 {leadQualityMessage ? <span className="text-sm text-neutral-600">{leadQualityMessage}</span> : null}
               </div> : null}
               {categoryFilter === "unadded/unexcluded" && recommendationsLoading ? <LoadingDataIndicator label="Loading current Google Ads status..." compact /> : null}
@@ -704,18 +727,16 @@ export function SearchTermOptimizationPageClient({ role }: { role: AuthRole }) {
             <section className="space-y-4">
               {grouped.map(([adGroup, rows]) => (
                 <div key={adGroup} className="overflow-hidden rounded-2xl border border-neutral-200 bg-white shadow-sm">
-                  <div className="border-b bg-neutral-50 px-5 py-4">
+                  {grouped.length > 1 ? <div className="border-b bg-neutral-50 px-5 py-4">
                     <h2 className="text-lg font-semibold">{adGroup}</h2>
                     {rows[0]?.destinationUrl ? (
                       <a href={rows[0].destinationUrl} target="_blank" rel="noreferrer" className="mt-1 inline-flex max-w-full items-center gap-1 truncate text-sm text-red-700 hover:underline">
                         {rows[0].destinationUrl}<ExternalLinkIcon className="size-3.5 shrink-0" />
                       </a>
                     ) : null}
-                    <GeneralAccountPerformance account={accountPerformance} />
-                    <SafetyScoreLegend />
-                  </div>
+                  </div> : null}
                   <div className="space-y-5 p-4">
-                    {((["approved", "rejected", "to_be_determined", "awaiting_approval", "approved_for_publishing", "approver_rejected", "returned_for_clarification"] as CategoryFilter[]).includes(categoryFilter)
+                    {((["approved", "rejected", "awaiting_approval", "approved_for_publishing", "approver_rejected", "returned_for_clarification"] as CategoryFilter[]).includes(categoryFilter)
                       ? [[categoryFilter, rows] as [string, OptimizationResult[]]]
                       : groupRowsByAction(rows, workflowMode)).map(([action, actionRows]) => {
                       const categoryId = `${adGroup}:${action}`;
@@ -784,14 +805,95 @@ function AutomationUnavailableStatus() {
   );
 }
 
-function SafetyScoreLegend() {
+function AccountScheduleSettings({ settings, editable, onSaved }: {
+  settings: SearchTermAccountSettings;
+  editable: boolean;
+  onSaved: (settings: SearchTermAccountSettings) => void;
+}) {
+  const [frequency, setFrequency] = useState<AnalysisScheduleFrequency>(settings.scheduleFrequency);
+  const [autoSafe, setAutoSafe] = useState(String(settings.autoSafeScoreThreshold));
+  const [review, setReview] = useState(String(settings.reviewScoreThreshold));
+  const [highSpend, setHighSpend] = useState(String(settings.highSpendThreshold));
+  const [minimumClicks, setMinimumClicks] = useState(String(settings.minimumClicksThreshold));
+  const [saving, setSaving] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
+
+  useEffect(() => {
+    setFrequency(settings.scheduleFrequency);
+    setAutoSafe(String(settings.autoSafeScoreThreshold));
+    setReview(String(settings.reviewScoreThreshold));
+    setHighSpend(String(settings.highSpendThreshold));
+    setMinimumClicks(String(settings.minimumClicksThreshold));
+  }, [settings]);
+
+  async function save() {
+    setSaving(true);
+    setMessage(null);
+    try {
+      const response = await fetch("/api/search-term-optimization/settings", {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          googleCustomerId: settings.googleCustomerId,
+          scheduleFrequency: frequency,
+          autoSafeScoreThreshold: Number(autoSafe),
+          reviewScoreThreshold: Number(review),
+          highSpendThreshold: Number(highSpend),
+          minimumClicksThreshold: Number(minimumClicks),
+        }),
+      });
+      const payload = await response.json() as SearchTermAccountSettings & { error?: string };
+      if (!response.ok) throw new Error(payload.error ?? "Unable to save account settings.");
+      onSaved(payload);
+      setMessage("Account rules saved.");
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Unable to save account settings.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="mt-4 rounded-xl border border-neutral-200 bg-white p-4 shadow-sm">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <p className="text-sm font-semibold text-neutral-900">Analysis schedule and account thresholds</p>
+          <p className="mt-0.5 text-xs text-neutral-500">{settings.nextRunAt ? `Next analysis ${formatDateTime(settings.nextRunAt)}` : "Scheduled analysis is off"}</p>
+        </div>
+        {!editable ? <Badge variant="outline">Administrator managed</Badge> : null}
+      </div>
+      <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+        <SettingField label="Review frequency">
+          <Select disabled={!editable || saving} value={frequency} onValueChange={(value) => setFrequency(value as AnalysisScheduleFrequency)}>
+            <SelectTrigger className="w-full cursor-pointer bg-white"><SelectValue /></SelectTrigger>
+            <SelectContent><SelectItem value="manual">Manual only</SelectItem><SelectItem value="weekly">Weekly</SelectItem><SelectItem value="biweekly">Biweekly</SelectItem><SelectItem value="monthly">Monthly</SelectItem></SelectContent>
+          </Select>
+        </SettingField>
+        <SettingField label="Auto-safe score"><Input disabled={!editable || saving} type="number" min={90} max={100} value={autoSafe} onChange={(event) => setAutoSafe(event.target.value)} /></SettingField>
+        <SettingField label="Manual-review score"><Input disabled={!editable || saving} type="number" min={0} max={99} value={review} onChange={(event) => setReview(event.target.value)} /></SettingField>
+        <SettingField label="High spend (RM)"><Input disabled={!editable || saving} type="number" min={0} step="0.01" value={highSpend} onChange={(event) => setHighSpend(event.target.value)} /></SettingField>
+        <SettingField label="Minimum paid clicks"><Input disabled={!editable || saving} type="number" min={0} step={1} value={minimumClicks} onChange={(event) => setMinimumClicks(event.target.value)} /></SettingField>
+      </div>
+      {editable ? <div className="mt-4 flex flex-wrap items-center justify-end gap-3 border-t pt-4">
+        {message ? <span className={`text-xs ${message === "Account rules saved." ? "text-emerald-700" : "text-red-700"}`}>{message}</span> : null}
+        <Button type="button" className="cursor-pointer bg-red-700 text-white hover:bg-red-800" disabled={saving} onClick={() => void save()}>{saving ? <Spinner className="size-4" /> : <SaveIcon className="size-4" />}{saving ? "Saving..." : "Save rules"}</Button>
+      </div> : null}
+    </div>
+  );
+}
+
+function SettingField({ label, children }: { label: string; children: React.ReactNode }) {
+  return <label className="block"><span className="mb-1 block text-xs font-semibold uppercase tracking-wide text-neutral-500">{label}</span>{children}</label>;
+}
+
+function SafetyScoreLegend({ settings }: { settings: SearchTermAccountSettings }) {
   return (
     <div className="mt-4 border-t border-neutral-200 pt-3">
       <p className="text-xs font-semibold uppercase tracking-wide text-neutral-500">Score decision guide</p>
       <div className="mt-2 grid gap-2 text-xs sm:grid-cols-3">
-        <div className="flex items-start gap-2 rounded-lg bg-emerald-50 px-3 py-2 text-emerald-900"><span className="mt-1 size-2 shrink-0 rounded-full bg-emerald-600" /><span><strong>90–100</strong> · Approve exclusion</span></div>
-        <div className="flex items-start gap-2 rounded-lg bg-amber-50 px-3 py-2 text-amber-900"><span className="mt-1 size-2 shrink-0 rounded-full bg-amber-500" /><span><strong>60–89</strong> · Review manually</span></div>
-        <div className="flex items-start gap-2 rounded-lg bg-neutral-200/70 px-3 py-2 text-neutral-700"><span className="mt-1 size-2 shrink-0 rounded-full bg-neutral-500" /><span><strong>0–59</strong> · Reject automatic exclusion</span></div>
+        <div className="flex items-start gap-2 rounded-lg bg-emerald-50 px-3 py-2 text-emerald-900"><span className="mt-1 size-2 shrink-0 rounded-full bg-emerald-600" /><span><strong>{settings.autoSafeScoreThreshold}–100</strong> · Approve exclusion</span></div>
+        <div className="flex items-start gap-2 rounded-lg bg-amber-50 px-3 py-2 text-amber-900"><span className="mt-1 size-2 shrink-0 rounded-full bg-amber-500" /><span><strong>{settings.reviewScoreThreshold}–{settings.autoSafeScoreThreshold - 1}</strong> · Review manually</span></div>
+        <div className="flex items-start gap-2 rounded-lg bg-neutral-200/70 px-3 py-2 text-neutral-700"><span className="mt-1 size-2 shrink-0 rounded-full bg-neutral-500" /><span><strong>0–{Math.max(0, settings.reviewScoreThreshold - 1)}</strong> · Reject automatic exclusion</span></div>
       </div>
       <p className="mt-2 text-xs text-neutral-500">Only exclusion recommendations use this guide. A score of 90+ still requires every safety gate to pass.</p>
     </div>
@@ -909,7 +1011,6 @@ function ActionGroupTable({
         </div>
         {canReview && allSelected ? <div className="flex items-center gap-2">
           <DecisionButton label="Approve selected rows" decision="approved" size="category" onClick={() => onDecision(rows, "approved")} />
-          <DecisionButton label="Mark selected rows as to be determined" decision="to_be_determined" size="category" onClick={() => onDecision(rows, "to_be_determined")} />
           <DecisionButton label="Reject selected rows" decision="rejected" size="category" onClick={() => onDecision(rows, "rejected")} />
         </div> : null}
         {canApprove && allSelected ? <div className="flex items-center gap-2">
@@ -950,13 +1051,12 @@ function ActionGroupTable({
 }
 
 function groupRowsByAction(rows: OptimizationResult[], workflowMode: WorkflowMode) {
-  const order = ["approved", "negative", "special review needed", "no action", "to be determined", "final review"];
+  const order = ["approved", "negative", "special review needed", "no action", "final review"];
   const groups = new Map<string, OptimizationResult[]>();
   for (const row of rows) {
     const category = row.reviewStatus === "approved_for_publishing" ? "approved"
       : row.reviewStatus === "approver_rejected" ? "negative"
       : row.reviewStatus === "ready_for_approval" || workflowMode === "approver" ? "final review"
-      : row.reviewDecision === "to_be_determined" ? "to be determined"
       : normalizeAction(row.proposedAction) === "no action" ? "no action"
       : "special review needed";
     groups.set(category, [...(groups.get(category) ?? []), row]);
@@ -971,12 +1071,12 @@ function groupRowsByAction(rows: OptimizationResult[], workflowMode: WorkflowMod
 function ResultRow({ row, selected, decision, approverDecision, showRowActions, onToggle, onDecision, onApproverDecision, canReview, canApprove, approverView, onLeadQualityUpdate, leadQualitySaving }: { row: OptimizationResult; selected: boolean; decision?: ReviewDecision; approverDecision?: ApproverDecision; showRowActions: boolean; onToggle: (id: string, checked: boolean) => void; onDecision: (rows: OptimizationResult[], decision: ReviewDecision) => void; onApproverDecision: (rows: OptimizationResult[], decision: ApproverDecision) => void; canReview: boolean; canApprove: boolean; approverView: boolean; onLeadQualityUpdate: (row: OptimizationResult, values: LeadQualityValues) => Promise<void>; leadQualitySaving: boolean }) {
   const approvedState = row.reviewStatus === "approved_for_publishing" || (!approverView && decision === "approved");
   const negativeState = row.reviewStatus === "approver_rejected" || (!approverView && decision === "rejected");
-  const returnedState = row.reviewStatus === "returned_for_clarification" || decision === "to_be_determined";
+  const returnedState = row.reviewStatus === "returned_for_clarification";
   return (
     <tr className={`align-middle ${approvedState ? "bg-emerald-100/80" : negativeState ? "bg-red-100/80" : returnedState ? "bg-amber-100/80" : "hover:bg-neutral-50/70"}`}>
       {canReview || canApprove ? <td className="px-4 py-4 text-center"><Checkbox checked={selected} onCheckedChange={(checked) => onToggle(row.id, checked === true)} aria-label={`Select ${row.searchTerm}`} className="cursor-pointer" /></td> : null}
       <td className="px-4 py-4 font-semibold">
-        <span>{row.searchTerm}</span>
+        <span className="flex flex-wrap items-center gap-2">{row.searchTerm}<PriorityBadge priority={row.priority} /></span>
         <SearchTermContextDetails key={`${row.id}:${row.qualifiedLeads}:${row.spamLeads}:${row.invalidLeads}:${row.clientComplaints}`} row={row} editable={canReview} saving={leadQualitySaving} onSave={onLeadQualityUpdate} />
       </td>
       <td className="px-4 py-4 text-center tabular-nums">{row.clicks}</td>
@@ -989,7 +1089,6 @@ function ResultRow({ row, selected, decision, approverDecision, showRowActions, 
       {canReview ? <td className="px-4 py-4 text-center">
         {showRowActions ? <div className="flex items-center justify-center gap-1">
           {decision !== "approved" ? <DecisionButton label="Approve" decision="approved" onClick={() => onDecision([row], "approved")} /> : null}
-          {decision !== "to_be_determined" ? <DecisionButton label="To be determined" decision="to_be_determined" onClick={() => onDecision([row], "to_be_determined")} /> : null}
           {decision !== "rejected" ? <DecisionButton label="Reject" decision="rejected" onClick={() => onDecision([row], "rejected")} /> : null}
         </div> : <DecisionStatus decision={decision} />}
       </td> : null}
@@ -998,6 +1097,16 @@ function ResultRow({ row, selected, decision, approverDecision, showRowActions, 
       </td> : null}
     </tr>
   );
+}
+
+function priorityRank(priority?: OptimizationResult["priority"]) {
+  return priority === "critical" ? 0 : priority === "high" ? 1 : priority === "medium" ? 2 : 3;
+}
+
+function PriorityBadge({ priority }: { priority?: OptimizationResult["priority"] }) {
+  const value = priority ?? "normal";
+  const tone = value === "critical" ? "border-red-200 bg-red-50 text-red-800" : value === "high" ? "border-orange-200 bg-orange-50 text-orange-800" : value === "medium" ? "border-amber-200 bg-amber-50 text-amber-800" : "border-neutral-200 bg-neutral-50 text-neutral-600";
+  return <Badge variant="outline" className={`text-[10px] uppercase tracking-wide ${tone}`}>{value}</Badge>;
 }
 
 function SearchTermContextDetails({ row, editable, saving, onSave }: { row: OptimizationResult; editable: boolean; saving: boolean; onSave: (row: OptimizationResult, values: LeadQualityValues) => Promise<void> }) {
@@ -1030,7 +1139,6 @@ function ContextValue({ label, value }: { label: string; value: string | null })
 function DecisionStatus({ decision }: { decision?: ReviewDecision }) {
   if (decision === "approved") return <span className="font-semibold text-emerald-700">Approved</span>;
   if (decision === "rejected") return <span className="font-semibold text-red-700">Rejected</span>;
-  if (decision === "to_be_determined") return <span className="font-semibold text-amber-700">To be determined</span>;
   return <span className="text-neutral-400">Pending</span>;
 }
 
@@ -1069,7 +1177,6 @@ function ApproverDecisionButton({ label, decision, onClick }: { label: string; d
 
 function DecisionButton({ label, decision, size = "row", onClick }: { label: string; decision: ReviewDecision; size?: "row" | "category"; onClick: () => void }) {
   const approved = decision === "approved";
-  const toBeDetermined = decision === "to_be_determined";
   return (
     <Tooltip>
       <TooltipTrigger asChild>
@@ -1078,10 +1185,10 @@ function DecisionButton({ label, decision, size = "row", onClick }: { label: str
           size="icon"
           variant={size === "category" ? "outline" : "ghost"}
           aria-label={label}
-          className={`${size === "category" ? "size-9 border-transparent" : "size-8"} cursor-pointer transition ${approved ? "bg-emerald-600/10 text-emerald-700 hover:bg-emerald-600/20 hover:text-emerald-800" : toBeDetermined ? "bg-amber-500/10 text-amber-700 hover:bg-amber-500/20 hover:text-amber-800" : "bg-red-600/10 text-red-700 hover:bg-red-600/20 hover:text-red-800"}`}
+          className={`${size === "category" ? "size-9 border-transparent" : "size-8"} cursor-pointer transition ${approved ? "bg-emerald-600/10 text-emerald-700 hover:bg-emerald-600/20 hover:text-emerald-800" : "bg-red-600/10 text-red-700 hover:bg-red-600/20 hover:text-red-800"}`}
           onClick={onClick}
         >
-          {approved ? <CheckIcon className="size-4" /> : toBeDetermined ? <CircleHelpIcon className="size-4" /> : <XIcon className="size-4" />}
+          {approved ? <CheckIcon className="size-4" /> : <XIcon className="size-4" />}
         </Button>
       </TooltipTrigger>
       <TooltipContent side="top" sideOffset={8} className="border border-white/15 bg-[#211114] px-3 py-2 text-sm font-medium text-white shadow-xl">
@@ -1108,12 +1215,6 @@ function humanize(value: string) {
 
 function formatDateTime(value: string) {
   return new Intl.DateTimeFormat("en-MY", { dateStyle: "medium", timeStyle: "short" }).format(new Date(value));
-}
-
-function downloadText(content: string, filename: string, type: string) {
-  const url = URL.createObjectURL(new Blob([content], { type }));
-  const link = document.createElement("a"); link.href = url; link.download = filename; link.click();
-  URL.revokeObjectURL(url);
 }
 
 function formatOptionalPercent(value: number | null) { return value === null ? "N/A" : `${value.toFixed(1)}%`; }

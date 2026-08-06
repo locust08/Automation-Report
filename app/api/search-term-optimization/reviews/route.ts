@@ -20,7 +20,7 @@ export async function POST(request: Request) {
     ? [...new Set(body.recommendationIds.map(Number).filter((id) => Number.isSafeInteger(id) && id > 0))]
     : [];
   const decision = body.decision as SpecialistDecision;
-  if (recommendationIds.length === 0 || !["approved", "rejected", "to_be_determined"].includes(decision)) {
+  if (recommendationIds.length === 0 || !["approved", "rejected"].includes(decision)) {
     return NextResponse.json({ error: "Valid recommendation IDs and decision are required." }, { status: 400 });
   }
 

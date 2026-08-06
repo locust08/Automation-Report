@@ -1,6 +1,18 @@
 export type SafetyBand = "auto-safe" | "review-recommended" | "no-automatic-action";
 export type ExecutionStatus = "not-eligible" | "review-required" | "eligible" | "published" | "failed";
 export type VerificationStatus = "not-applicable" | "pending" | "verified" | "failed";
+export type AnalysisScheduleFrequency = "manual" | "weekly" | "biweekly" | "monthly";
+
+export type SearchTermAccountSettings = {
+  googleCustomerId: string;
+  scheduleFrequency: AnalysisScheduleFrequency;
+  autoSafeScoreThreshold: number;
+  reviewScoreThreshold: number;
+  highSpendThreshold: number;
+  minimumClicksThreshold: number;
+  lastRunAt: string | null;
+  nextRunAt: string | null;
+};
 
 export type ScoreBreakdownItem = {
   signal: string;
@@ -46,10 +58,11 @@ export type OptimizationResult = {
   executionEligibility: boolean;
   executionStatus: ExecutionStatus;
   verificationStatus: VerificationStatus;
-  reviewDecision?: "approved" | "rejected" | "to_be_determined";
+  reviewDecision?: "approved" | "rejected";
   reviewStatus?: string;
   recommendationId?: string;
   approverDecision?: "accepted" | "rejected";
+  priority?: "critical" | "high" | "medium" | "normal";
 };
 
 export type OptimizationChangeSet = {
@@ -88,6 +101,7 @@ export type OptimizationDashboardPayload = {
   googleRecommendations: GoogleKeywordRecommendation[];
   googleRecommendationsWarning: string | null;
   changeSets: OptimizationChangeSet[];
+  settings: SearchTermAccountSettings;
 };
 
 export type GoogleKeywordRecommendation = {

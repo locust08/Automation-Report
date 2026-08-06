@@ -62,6 +62,7 @@ try {
         'ad_automation_search_term_reviews'
         ,'ad_automation_search_term_change_sets'
         ,'ad_automation_search_term_change_set_items'
+        ,'ad_automation_search_term_account_settings'
       )
     order by name
   `).all();
