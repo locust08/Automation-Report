@@ -9,6 +9,9 @@ import {
   EyeIcon,
   HouseIcon,
   IdCardIcon,
+  ListChecksIcon,
+  LogOutIcon,
+  SearchCheckIcon,
   SparklesIcon,
   UploadCloudIcon,
 } from "lucide-react";
@@ -57,6 +60,8 @@ export function ReportShell({
     advanced: withQuery("/advanced", activeQuery),
     mediaPlan: withQuery("/dashboard/media-plan", activeQuery),
     metaImport: "/meta-import",
+    billing: "/billing",
+    searchTermOptimization: "/search-term-optimization",
   };
 
   return (
@@ -131,12 +136,27 @@ export function ReportShell({
                       <ClipboardListIcon className="size-5" />
                     </ReportNavLink>
                     <ReportNavLink
+                      href={hrefs.billing}
+                      label="Billing Operations"
+                      active={pathname === "/billing"}
+                    >
+                      <ListChecksIcon className="size-5" />
+                    </ReportNavLink>
+                    <ReportNavLink
                       href={hrefs.metaImport}
                       label="Import Meta CSV"
                       active={pathname === "/meta-import"}
                     >
                       <UploadCloudIcon className="size-5" />
                     </ReportNavLink>
+                    <ReportNavLink
+                      href={hrefs.searchTermOptimization}
+                      label="Search Term Optimization"
+                      active={pathname === "/search-term-optimization"}
+                    >
+                      <SearchCheckIcon className="size-5" />
+                    </ReportNavLink>
+                    <ReportLogoutButton />
                   </nav>
                 </TooltipProvider>
               </div>
@@ -222,6 +242,31 @@ function ReportNavLink({
         className="border border-white/15 bg-[#211114] px-3 py-2 text-sm font-medium text-white shadow-xl"
       >
         {label}
+      </TooltipContent>
+    </Tooltip>
+  );
+}
+
+function ReportLogoutButton() {
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <form action="/api/auth/logout" method="post">
+          <button
+            type="submit"
+            aria-label="Logout"
+            className="inline-flex size-10 items-center justify-center rounded-md bg-white/10 text-white outline-none transition hover:bg-white/20 focus-visible:ring-2 focus-visible:ring-white/90 focus-visible:ring-offset-2 focus-visible:ring-offset-red-900"
+          >
+            <LogOutIcon className="size-5" />
+          </button>
+        </form>
+      </TooltipTrigger>
+      <TooltipContent
+        side="top"
+        sideOffset={8}
+        className="border border-white/15 bg-[#211114] px-3 py-2 text-sm font-medium text-white shadow-xl"
+      >
+        Logout
       </TooltipContent>
     </Tooltip>
   );

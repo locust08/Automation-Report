@@ -9,7 +9,9 @@ import {
   ClipboardListIcon,
   EyeIcon,
   LinkIcon,
+  ListChecksIcon,
   Loader2Icon,
+  LogOutIcon,
   SearchIcon,
   SendIcon,
   SlidersHorizontalIcon,
@@ -106,7 +108,11 @@ const MANUAL_REPORT_OPTIONS: Array<{
   },
 ];
 
-export function HomePageClient() {
+type HomePageClientProps = {
+  displayName?: string;
+};
+
+export function HomePageClient({ displayName }: HomePageClientProps) {
   const router = useRouter();
 
   const searchParams = useSearchParams();
@@ -143,6 +149,8 @@ export function HomePageClient() {
   const advancedHref = `/advanced${reportQueryString ? `?${reportQueryString}` : ""}`;
   const mediaPlanHref = "/dashboard/media-plan";
   const googleManagementHref = `/manage/google?accountId=${encodeURIComponent(accountId.trim())}&accountName=${encodeURIComponent(accountName || `Account ${accountId.trim()}`)}`;
+  const billingHref = "/billing";
+  const searchTermOptimizationHref = "/search-term-optimization";
   const hasAccountSelection = Boolean(accountId.trim());
   const normalizedAccountSearchQuery = accountSearchQuery.trim();
   const resultAccountSuggestions = accountSuggestions.filter(
@@ -375,7 +383,25 @@ export function HomePageClient() {
 
   return (
     <main className="flex min-h-screen items-center justify-center bg-[url('/background.png')] bg-cover bg-center bg-no-repeat px-4 py-8">
-      <div className="w-full max-w-4xl rounded-3xl border border-white/25 bg-black/40 p-6 text-white backdrop-blur-sm sm:p-8">
+      <div className="w-full max-w-4xl space-y-3">
+        {displayName && (
+          <div className="flex items-center justify-between gap-4 rounded-2xl border border-white/25 bg-black/40 px-5 py-3 text-white backdrop-blur-sm">
+            <p className="min-w-0 truncate text-sm font-medium sm:text-base">
+              Welcome, <span className="font-semibold">{displayName}</span>
+            </p>
+            <form action="/api/auth/logout" method="post">
+              <Button
+                type="submit"
+                variant="outline"
+                className="border-white/30 bg-white/10 text-white hover:bg-white/20 hover:text-white"
+              >
+                <LogOutIcon className="size-4" />
+                Logout
+              </Button>
+            </form>
+          </div>
+        )}
+        <div className="rounded-3xl border border-white/25 bg-black/40 p-6 text-white backdrop-blur-sm sm:p-8">
         <h1 className="text-3xl font-semibold sm:text-4xl md:text-5xl">
           Ads Reporting Dashboard
         </h1>
@@ -647,16 +673,34 @@ export function HomePageClient() {
 
         <a
           href={mediaPlanHref}
-          className="mt-5 grid gap-2 rounded-2xl border border-white/25 bg-white/10 p-4 text-white transition hover:bg-white/15"
+          className="mt-5 flex items-center rounded-2xl border border-white/25 bg-white/10 p-4 text-white transition hover:bg-white/15"
         >
           <span className="flex items-center gap-2 text-base font-semibold">
             <ClipboardListIcon className="size-5" />
             Create Media Plan
           </span>
-          <span className="text-sm leading-relaxed text-white/78">
-            Generate Google Search campaign plan and create paused campaign after approval.
-          </span>
         </a>
+
+        <div className="mt-3 grid gap-3 md:grid-cols-2">
+          <a
+            href={billingHref}
+            className="flex items-center rounded-2xl border border-white/25 bg-white/10 p-4 text-white transition hover:bg-white/15"
+          >
+            <span className="flex items-center gap-2 text-base font-semibold">
+              <ListChecksIcon className="size-5" />
+              Daily Billing
+            </span>
+          </a>
+          <a
+            href={searchTermOptimizationHref}
+            className="flex items-center rounded-2xl border border-white/25 bg-white/10 p-4 text-white transition hover:bg-white/15"
+          >
+            <span className="flex items-center gap-2 text-base font-semibold">
+              <SearchIcon className="size-5" />
+              Search Term Optimization
+            </span>
+          </a>
+        </div>
 
         {hasAccountSelection ? (
           <a
@@ -675,6 +719,7 @@ export function HomePageClient() {
             Select an account to open the advanced report
           </span>
         )}
+        </div>
       </div>
 
       {isSendModalOpen ? (
