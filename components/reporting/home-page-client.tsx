@@ -142,6 +142,7 @@ export function HomePageClient() {
   const previewHref = `/preview${reportQueryString ? `?${reportQueryString}` : ""}`;
   const advancedHref = `/advanced${reportQueryString ? `?${reportQueryString}` : ""}`;
   const mediaPlanHref = "/dashboard/media-plan";
+  const googleManagementHref = `/manage/google?accountId=${encodeURIComponent(accountId.trim())}&accountName=${encodeURIComponent(accountName || `Account ${accountId.trim()}`)}`;
   const hasAccountSelection = Boolean(accountId.trim());
   const normalizedAccountSearchQuery = accountSearchQuery.trim();
   const resultAccountSuggestions = accountSuggestions.filter(
@@ -563,7 +564,24 @@ export function HomePageClient() {
               <ArrowRightIcon data-icon="inline-end" />
             </Button>
 
-            <div className="grid gap-3 sm:grid-cols-3">
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+              {hasAccountSelection ? (
+                <Button
+                  asChild
+                  variant="outline"
+                  className="h-auto min-h-12 w-full whitespace-normal border-white/30 bg-white/10 px-4 py-3 text-center leading-snug text-white shadow-none hover:bg-white/20 hover:text-white"
+                >
+                  <a href={googleManagementHref}>
+                    Edit Google Ads
+                    <SlidersHorizontalIcon data-icon="inline-end" />
+                  </a>
+                </Button>
+              ) : (
+                <Button type="button" variant="outline" disabled className="h-auto min-h-12 w-full whitespace-normal border-white/30 bg-white/10 px-4 py-3 text-center leading-snug text-white shadow-none">
+                  Edit Google Ads
+                  <SlidersHorizontalIcon data-icon="inline-end" />
+                </Button>
+              )}
               {hasAccountSelection ? (
                 <Button
                   asChild

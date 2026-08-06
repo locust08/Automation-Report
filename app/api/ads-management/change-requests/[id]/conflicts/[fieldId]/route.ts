@@ -1,0 +1,3 @@
+import { NextResponse } from "next/server";
+import { resolveConflict } from "@/lib/ads-management/service";
+export async function POST(request: Request, { params }: { params: Promise<{ id: string; fieldId: string }> }) { try { const body = await request.json() as { resolution?: string; actorName?: string; newValue?: unknown }; return NextResponse.json(await resolveConflict((await params).id, (await params).fieldId, body.resolution || "", body.actorName || "Unknown user", body.newValue)); } catch (error) { return NextResponse.json({ error: error instanceof Error ? error.message : "Conflict resolution failed." }, { status: 400 }); } }
