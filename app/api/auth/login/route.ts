@@ -33,12 +33,16 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Email and password are required." }, { status: 400 });
     }
 
-    const authUrl = process.env.SUPABASE_ADS_REPORTING_AUTH_URL;
+    const configuredAuthUrl = process.env.SUPABASE_ADS_REPORTING_AUTH_URL?.trim();
+    const supabaseUrl = (process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL)?.trim();
     const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
     const secretKey =
       process.env.SUPABASE_SECRET_KEY || serviceRoleKey || process.env.SUPABASE_SECRET;
+    const authUrl =
+      configuredAuthUrl ||
+      (supabaseUrl ? `${supabaseUrl.replace(/\/$/, "")}/rest/v1/ads_reporting_auth` : "");
 
-    if (!authUrl || !secretKey) {
+    if (!authUrl || !secretKey || !process.env.ADS_REPORTING_JWT_SECRET) {
       return NextResponse.json({ error: "Login is not configured on the server." }, { status: 503 });
     }
 
@@ -48,9 +52,8 @@ export async function POST(request: Request) {
     query.searchParams.set("limit", "1");
 
     const headers: Record<string, string> = { apikey: secretKey };
-
-    if (secretKey === serviceRoleKey) {
-      headers.Authorization = `Bearer ${serviceRoleKey}`;
+    if (secretKey.startsWith("eyJ")) {
+      headers.Authorization = `Bearer ${secretKey}`;
     }
 
     const databaseResponse = await fetch(query, {
@@ -59,7 +62,7 @@ export async function POST(request: Request) {
     });
 
     if (!databaseResponse.ok) {
-      console.error("Auth lookup failed:", await databaseResponse.text());
+      console.error("Auth lookup failed with status", databaseResponse.status);
       return NextResponse.json({ error: "Login is temporarily unavailable." }, { status: 503 });
     }
 
