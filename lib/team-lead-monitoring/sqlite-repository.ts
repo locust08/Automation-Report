@@ -33,8 +33,8 @@ function searchPriority(row: DbRow): MonitoringPriority {
   const clicks = Number(row.clicks);
   const conversions = Number(row.conversions);
   if ((spend >= 500 && conversions === 0) || (Number(row.safety_score) >= 90 && spend >= 100)) return "critical";
-  if (spend >= 100 || (clicks >= 10 && conversions === 0) || Number(row.safety_score) >= 90) return "high";
-  if (spend > 0 || clicks > 0) return "medium";
+  if (spend >= 100 || (clicks >= 10 && conversions === 0)) return "high";
+  if (spend > 0 || clicks > 0 || Number(row.safety_score) >= 90) return "medium";
   return "normal";
 }
 
@@ -44,8 +44,8 @@ function placementPriority(row: DbRow): MonitoringPriority {
   const conversions = Number(row.conversions);
   const confidence = Number(row.confidence);
   if ((spend >= 500 || clicks >= 50) && conversions === 0) return "critical";
-  if (spend >= 100 || (clicks >= 10 && conversions === 0) || (confidence >= 90 && row.recommended_action === "exclude")) return "high";
-  if (spend > 0 || clicks > 0) return "medium";
+  if (spend >= 100 || (clicks >= 10 && conversions === 0)) return "high";
+  if (spend > 0 || clicks > 0 || (confidence >= 90 && row.recommended_action === "exclude")) return "medium";
   return "normal";
 }
 

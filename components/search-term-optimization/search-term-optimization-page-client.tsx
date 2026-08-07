@@ -9,9 +9,9 @@ import {
   CheckCircle2Icon,
   ConstructionIcon,
   ExternalLinkIcon,
+  FileDownIcon,
   SearchIcon,
   ShieldAlertIcon,
-  FileDownIcon,
   SaveIcon,
   XIcon,
 } from "lucide-react";
@@ -25,7 +25,7 @@ import { Spinner } from "@/components/ui/spinner";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { ReportShell } from "@/components/reporting/report-shell";
 import { AccountEscalationNotice } from "@/components/team-lead-monitoring/account-escalation-notice";
-import { AUTH_ROLE_LABELS, type AuthRole } from "@/lib/auth/roles";
+import { AUTH_ROLE_LABELS, isAdminRole, type AuthRole } from "@/lib/auth/roles";
 import type {
   OptimizationDashboardPayload,
   OptimizationResult,
@@ -34,7 +34,6 @@ import type {
   AnalysisScheduleFrequency,
 } from "@/lib/search-term-optimization/types";
 import type { LeadQualityValues } from "@/lib/search-term-optimization/lead-quality-repository";
-import { createSearchTermDecisionPdf } from "@/lib/search-term-optimization/pdf-report";
 
 type CategoryFilter =
   | "all"
@@ -44,7 +43,6 @@ type CategoryFilter =
   | "negative phrase"
   | "no action"
   | "negative"
-  | "final review"
   | "approved"
   | "rejected"
   | "awaiting_approval"
@@ -55,7 +53,6 @@ type CategoryFilter =
 
 type ReviewDecision = "approved" | "rejected";
 type ApproverDecision = "accepted" | "rejected";
-type WorkflowMode = "specialist" | "approver";
 
 type AccountSuggestion = {
   accountName: string;
@@ -73,15 +70,13 @@ const ACCOUNT_SEARCH_CACHE_KEY = "search-term-optimization-account-search-cache"
 const RECENT_ACCOUNT_LIMIT = 5;
 type AccountSearchState = "idle" | "loading" | "success" | "error";
 
-const REVIEW_ROLES: AuthRole[] = ["pms", "specialist", "admin"];
+const REVIEW_ROLES: AuthRole[] = ["pms", "specialist", "admin", "ethan"];
 
 export function SearchTermOptimizationPageClient({ role }: { role: AuthRole }) {
-  const isAdmin = role === "admin";
-  const [workflowMode, setWorkflowMode] = useState<WorkflowMode>(role === "approver" ? "approver" : "specialist");
-  const [categoryFilter, setCategoryFilter] = useState<CategoryFilter>(role === "approver" ? "final review" : "special review needed");
-  const finalReviewActive = workflowMode === "approver" || categoryFilter === "final review";
-  const canReview = REVIEW_ROLES.includes(role) && workflowMode === "specialist" && !finalReviewActive;
-  const canApprove = (role === "approver" || role === "admin") && finalReviewActive;
+  const isAdmin = isAdminRole(role);
+  const [categoryFilter, setCategoryFilter] = useState<CategoryFilter>("special review needed");
+  const canReview = REVIEW_ROLES.includes(role);
+  const canApprove = false;
   const [data, setData] = useState<OptimizationDashboardPayload | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -111,20 +106,6 @@ export function SearchTermOptimizationPageClient({ role }: { role: AuthRole }) {
   const [googleRecommendationsWarning, setGoogleRecommendationsWarning] = useState<string | null>(null);
   const [leadQualityMessage, setLeadQualityMessage] = useState<string | null>(null);
   const [leadQualitySaving, setLeadQualitySaving] = useState(false);
-
-  const approvedReportCount = data?.results.filter((row) => row.reviewStatus === "approved_for_publishing").length ?? 0;
-  const negativeReportCount = data?.results.filter((row) => row.reviewStatus === "approver_rejected").length ?? 0;
-
-  function downloadDecisionReport() {
-    if (!data) return;
-    const buffer = createSearchTermDecisionPdf(data);
-    const url = URL.createObjectURL(new Blob([buffer], { type: "application/pdf" }));
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = `search-term-decisions-${data.account.customerId}-${data.account.reportingPeriod.endDate}.pdf`;
-    link.click();
-    window.setTimeout(() => URL.revokeObjectURL(url), 1_000);
-  }
 
   const load = useCallback(async (accountId?: string) => {
     setLoading(true);
@@ -159,8 +140,12 @@ export function SearchTermOptimizationPageClient({ role }: { role: AuthRole }) {
   }, []);
 
   useEffect(() => {
+    if (isAdmin) {
+      setLoading(false);
+      return;
+    }
     void load();
-  }, [load]);
+  }, [isAdmin, load]);
 
   useEffect(() => {
     const customerId = data?.account.customerId;
@@ -264,6 +249,17 @@ export function SearchTermOptimizationPageClient({ role }: { role: AuthRole }) {
 
   async function runSelectedAccountAnalysis() {
     if (!accountPerformance || analysisLoading) return;
+    setData(null);
+    setDecisions({});
+    setApproverDecisions({});
+    setSelectedIds(new Set());
+    setCategoryPages({});
+    setCampaignFilter("all");
+    setCategoryFilter("special review needed");
+    setRecommendationsLoaded(false);
+    setGoogleRecommendations([]);
+    setGoogleRecommendationsWarning(null);
+    setLeadQualityMessage(null);
     setAnalysisLoading(true);
     setAnalysisStage("Preparing full search-term analysis");
     setAnalysisStartedAt(new Date().toISOString());
@@ -335,11 +331,6 @@ export function SearchTermOptimizationPageClient({ role }: { role: AuthRole }) {
     }
   }
 
-  useEffect(() => {
-    setCategoryFilter(workflowMode === "approver" ? "final review" : "special review needed");
-    setSelectedIds(new Set());
-  }, [workflowMode]);
-
   const visibleResults = useMemo(() => {
     const unaddedKeys = new Set(googleRecommendations.map((row) => `${row.searchTerm.toLowerCase()}|${row.campaign}|${row.adGroup}`));
     return (data?.results ?? []).filter((row) => {
@@ -350,8 +341,6 @@ export function SearchTermOptimizationPageClient({ role }: { role: AuthRole }) {
             ? row.reviewStatus === "approver_rejected"
           : categoryFilter === "special review needed"
             ? !row.reviewDecision && row.reviewStatus !== "approver_rejected"
-          : categoryFilter === "final review"
-            ? row.reviewStatus === "ready_for_approval"
           : categoryFilter === "approved" || categoryFilter === "rejected"
             ? categoryFilter === "approved"
               ? row.reviewStatus === "approved_for_publishing"
@@ -375,6 +364,13 @@ export function SearchTermOptimizationPageClient({ role }: { role: AuthRole }) {
     [data],
   );
 
+  const selectedCampaignPerformance = useMemo(
+    () => campaignFilter === "all"
+      ? null
+      : accountPerformance?.campaigns.find((campaign) => campaign.name === campaignFilter) ?? null,
+    [accountPerformance, campaignFilter],
+  );
+
   const grouped = useMemo(() => {
     const groups = new Map<string, OptimizationResult[]>();
     for (const row of visibleResults) {
@@ -395,7 +391,7 @@ export function SearchTermOptimizationPageClient({ role }: { role: AuthRole }) {
     : [];
 
   const cacheKey = data
-    ? `search-term-review:${role}:${workflowMode}:${data.account.customerId}:${data.account.lastAnalysisAt}`
+    ? `search-term-review:${role}:${data.account.customerId}:${data.account.lastAnalysisAt}`
     : null;
 
   useEffect(() => {
@@ -409,7 +405,9 @@ export function SearchTermOptimizationPageClient({ role }: { role: AuthRole }) {
         categoryPages?: Record<string, number>;
       };
       window.queueMicrotask(() => {
-        if (parsed.categoryFilter) setCategoryFilter(parsed.categoryFilter);
+        if (parsed.categoryFilter) {
+          setCategoryFilter((parsed.categoryFilter as string) === "final review" ? "special review needed" : parsed.categoryFilter);
+        }
         setSelectedIds(new Set(parsed.selectedIds ?? []));
         setCategoryPages(parsed.categoryPages ?? {});
       });
@@ -466,7 +464,7 @@ export function SearchTermOptimizationPageClient({ role }: { role: AuthRole }) {
           ? {
               ...row,
               reviewDecision: decision,
-              reviewStatus: "ready_for_approval",
+              reviewStatus: decision === "approved" ? "approved_for_publishing" : "approver_rejected",
             }
           : row),
       } : current);
@@ -616,6 +614,12 @@ export function SearchTermOptimizationPageClient({ role }: { role: AuthRole }) {
                 {analysisLoading ? <Spinner className="size-4" /> : <SearchIcon className="size-4" />}
                 {analysisLoading ? "Analyzing..." : "Search"}
               </Button>
+              <Button asChild variant="outline" className="cursor-pointer whitespace-nowrap hover:border-red-200 hover:bg-red-50 hover:text-red-700">
+                <a href="/api/search-term-optimization/summary-report" download>
+                  <FileDownIcon className="size-4" />
+                  Summary report
+                </a>
+              </Button>
             </div>
             <p className="mt-2 text-xs text-neutral-500">Select an account, then press Search to retrieve, analyze, and save its latest search terms.</p>
           </div> : null}
@@ -629,9 +633,11 @@ export function SearchTermOptimizationPageClient({ role }: { role: AuthRole }) {
                 </Badge>
               </div>
               <h1 className="text-3xl font-semibold sm:text-5xl">
-                {data?.account.customerName ?? "Search-Term Optimization"}
+                {!analysisLoading && data?.account.customerName
+                  ? data.account.customerName
+                  : accountPerformance?.accountName ?? "Search-Term Optimization"}
               </h1>
-              {data ? (
+              {!analysisLoading && data ? (
                 <div className="mt-3 flex flex-wrap gap-x-5 gap-y-1 text-sm text-neutral-600">
                   <span>CID {data.account.customerId}</span>
                   <span>{data.account.reportingPeriod.startDate}–{data.account.reportingPeriod.endDate}</span>
@@ -643,7 +649,7 @@ export function SearchTermOptimizationPageClient({ role }: { role: AuthRole }) {
           </div>
         </section>
 
-        <AccountEscalationNotice module="search_term" accountId={data?.account.customerId} />
+        {!analysisLoading ? <AccountEscalationNotice module="search_term" accountId={data?.account.customerId} /> : null}
 
         {!analysisLoading && error && !accountPerformance && error.includes("No completed search-term analysis output was found") ? (
           <section className="rounded-2xl border border-neutral-200 bg-white p-5 text-neutral-700 shadow-sm">
@@ -658,7 +664,14 @@ export function SearchTermOptimizationPageClient({ role }: { role: AuthRole }) {
         ) : null}
         {loading || analysisLoading ? <LoadingDataIndicator label={analysisStage ?? "Loading analysis data..."} startedAt={analysisStartedAt} activityAt={analysisActivityAt} /> : null}
 
-        {data ? (
+        {!loading && !analysisLoading && !data && !error && !accountPerformance ? (
+          <section className="rounded-2xl border border-neutral-200 bg-white p-5 text-neutral-700 shadow-sm">
+            <p className="font-semibold">Please select an account to optimize search terms</p>
+            <p className="mt-1 text-sm text-neutral-500">Search for a company or Google Ads CID above, select it, then press Search.</p>
+          </section>
+        ) : null}
+
+        {!analysisLoading && data ? (
           <>
             <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
               {cards.map(([key, label, value]) => (
@@ -672,16 +685,6 @@ export function SearchTermOptimizationPageClient({ role }: { role: AuthRole }) {
               ))}
             </section>
 
-            <section className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-neutral-200 bg-white p-4 shadow-sm">
-              <div>
-                <h2 className="font-semibold">Search-term decision report</h2>
-                <p className="mt-1 text-sm text-neutral-500">Approved: {approvedReportCount} · Negative: {negativeReportCount}</p>
-              </div>
-              <Button type="button" variant="outline" className="cursor-pointer" onClick={downloadDecisionReport} disabled={approvedReportCount + negativeReportCount === 0}>
-                <FileDownIcon className="size-4" /> Download PDF
-              </Button>
-            </section>
-
             <section className="rounded-2xl border border-neutral-200 bg-white p-5 shadow-sm">
               <h2 className="text-lg font-semibold">{data.results[0]?.adGroup || "General"}</h2>
               {data.results[0]?.destinationUrl ? (
@@ -693,30 +696,38 @@ export function SearchTermOptimizationPageClient({ role }: { role: AuthRole }) {
               <AccountScheduleSettings
                 settings={data.settings}
                 editable={isAdmin}
-                onSaved={(settings) => setData((current) => current ? {
-                  ...current,
-                  settings,
-                  account: { ...current.account, nextRunAt: settings.nextRunAt },
-                } : current)}
+                onSaved={(settings) => {
+                  setData((current) => current ? {
+                    ...current,
+                    settings,
+                    account: { ...current.account, nextRunAt: settings.nextRunAt },
+                  } : current);
+                  void load(settings.googleCustomerId);
+                }}
               />
-              <SafetyScoreLegend settings={data.settings} />
             </section>
 
             <section className="rounded-2xl border border-neutral-200 bg-white p-5 shadow-sm">
-              <div className={`grid gap-3 ${isAdmin ? "md:grid-cols-3" : "sm:grid-cols-2"}`}>
-                {isAdmin ? <div><p className="mb-1 text-xs font-semibold uppercase tracking-wide text-neutral-500">Workflow</p><Select value={workflowMode} onValueChange={(value) => setWorkflowMode(value as WorkflowMode)}><SelectTrigger className="w-full cursor-pointer bg-white transition hover:bg-neutral-50"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="specialist">Specialist review</SelectItem><SelectItem value="approver">Approver queue</SelectItem></SelectContent></Select></div> : null}
+              <div className="grid gap-3 sm:grid-cols-2">
                 <div><p className="mb-1 text-xs font-semibold uppercase tracking-wide text-neutral-500">Campaign</p><Select value={campaignFilter} onValueChange={setCampaignFilter}><SelectTrigger className="w-full cursor-pointer bg-white transition hover:bg-neutral-50"><SelectValue placeholder="All campaigns" /></SelectTrigger><SelectContent><SelectItem value="all">All campaigns</SelectItem>{campaignOptions.map((campaign) => <SelectItem key={campaign} value={campaign}>{campaign}</SelectItem>)}</SelectContent></Select></div>
-                <div><p className="mb-1 text-xs font-semibold uppercase tracking-wide text-neutral-500">Category</p><Select value={categoryFilter} onValueChange={(value) => setCategoryFilter(value as CategoryFilter)}><SelectTrigger className="w-full cursor-pointer bg-white transition hover:bg-neutral-50"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="approved">Approved</SelectItem><SelectItem value="negative">Negative</SelectItem><SelectItem value="special review needed">Special review needed</SelectItem><SelectItem value="final review">Final review</SelectItem><SelectItem value="all">All tables</SelectItem></SelectContent></Select></div>
+                <div><p className="mb-1 text-xs font-semibold uppercase tracking-wide text-neutral-500">Category</p><Select value={categoryFilter} onValueChange={(value) => setCategoryFilter(value as CategoryFilter)}><SelectTrigger className="w-full cursor-pointer bg-white transition hover:bg-neutral-50"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="approved">Approved</SelectItem><SelectItem value="rejected">Rejected</SelectItem><SelectItem value="special review needed">Special review needed</SelectItem><SelectItem value="all">All tables</SelectItem></SelectContent></Select></div>
               </div>
-              {canReview ? <div className="mt-4 flex flex-wrap items-center gap-3 border-t pt-4">
-                  <div aria-disabled="true" className="inline-flex cursor-not-allowed items-center gap-2 rounded-md border border-neutral-700 px-3 py-2 text-sm font-semibold shadow-sm backdrop-blur-md" style={{ backgroundColor: "rgba(23, 23, 23, 0.88)", color: "rgba(255,255,255,0.88)" }}>
-                    <ConstructionIcon className="size-4 text-amber-300" /> Import lead-quality CSV <span className="text-xs font-normal text-neutral-400">Under development</span>
-                  </div>
-                  <div aria-disabled="true" className="inline-flex cursor-not-allowed items-center gap-2 rounded-md border border-neutral-700 px-3 py-2 text-sm font-semibold shadow-sm backdrop-blur-md" style={{ backgroundColor: "rgba(23, 23, 23, 0.88)", color: "rgba(255,255,255,0.88)" }}>
-                    <ConstructionIcon className="size-4 text-amber-300" /> Download CSV template <span className="text-xs font-normal text-neutral-400">Under development</span>
-                  </div>
-                {leadQualityMessage ? <span className="text-sm text-neutral-600">{leadQualityMessage}</span> : null}
-              </div> : null}
+              {campaignFilter !== "all" ? (
+                <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-neutral-200 pt-3 text-sm">
+                  <span className="text-xs font-semibold uppercase tracking-wide text-neutral-500">Selected campaign</span>
+                  <Badge variant="outline" className={optimizationTone(selectedCampaignPerformance?.optimizationScore ?? null)}>
+                    Optimization {formatOptionalPercent(selectedCampaignPerformance?.optimizationScore ?? null)}
+                  </Badge>
+                  {selectedCampaignPerformance ? (
+                    <span className="text-xs text-neutral-500">
+                      {selectedCampaignPerformance.conversions.toFixed(2)} conversions · {selectedCampaignPerformance.conversionRate.toFixed(2)}% conversion rate
+                    </span>
+                  ) : null}
+                </div>
+              ) : null}
+              {canReview && leadQualityMessage ? (
+                <p className="mt-4 border-t pt-4 text-sm text-neutral-600">{leadQualityMessage}</p>
+              ) : null}
               {categoryFilter === "unadded/unexcluded" && recommendationsLoading ? <LoadingDataIndicator label="Loading current Google Ads status..." compact /> : null}
               {categoryFilter === "unadded/unexcluded" && googleRecommendationsWarning ? <p className="mt-3 text-sm text-amber-700">{googleRecommendationsWarning}</p> : null}
             </section>
@@ -741,7 +752,7 @@ export function SearchTermOptimizationPageClient({ role }: { role: AuthRole }) {
                   <div className="space-y-5 p-4">
                     {((["approved", "rejected", "awaiting_approval", "approved_for_publishing", "approver_rejected", "returned_for_clarification"] as CategoryFilter[]).includes(categoryFilter)
                       ? [[categoryFilter, rows] as [string, OptimizationResult[]]]
-                      : groupRowsByAction(rows, workflowMode)).map(([action, actionRows]) => {
+                      : groupRowsByAction(rows)).map(([action, actionRows]) => {
                       const categoryId = `${adGroup}:${action}`;
                       return <ActionGroupTable
                         key={`${action}-${campaignFilter}-${categoryFilter}`}
@@ -756,9 +767,9 @@ export function SearchTermOptimizationPageClient({ role }: { role: AuthRole }) {
                         onToggleCategory={toggleCategory}
                         onDecision={decideCategory}
                         onApproverDecision={decideApproval}
-                        canReview={canReview && !["final review", "approved", "negative"].includes(action)}
-                        canApprove={canApprove && action === "final review"}
-                        approverView={finalReviewActive}
+                        canReview={canReview && !["approved", "rejected"].includes(action)}
+                        canApprove={false}
+                        approverView={false}
                         onLeadQualityUpdate={updateLeadQuality}
                         leadQualitySaving={leadQualitySaving}
                       />;
@@ -768,11 +779,6 @@ export function SearchTermOptimizationPageClient({ role }: { role: AuthRole }) {
               ))}
               {grouped.length === 0 ? <p className="rounded-2xl bg-white p-6 text-center text-neutral-500">No results match the selected filter.</p> : null}
             </section>
-
-            {finalReviewActive ? <section className="overflow-hidden rounded-2xl border border-neutral-200 bg-white shadow-sm">
-              <div className="flex items-center justify-between border-b bg-neutral-50 px-5 py-4"><h2 className="text-lg font-semibold">Approved change sets</h2><Badge variant="outline" className="bg-white">{data.changeSets.length} batches</Badge></div>
-              {data.changeSets.length > 0 ? <div className="divide-y">{data.changeSets.map((changeSet) => <div key={changeSet.id} className="grid gap-2 px-5 py-4 text-sm sm:grid-cols-4"><span className="font-semibold">Change set #{changeSet.id}</span><span>{changeSet.itemCount} items</span><span>{humanize(changeSet.status)}</span><span className="text-neutral-500">{changeSet.approvedByEmail} · {formatDateTime(changeSet.approvedAt)}</span></div>)}</div> : <p className="px-5 py-6 text-sm text-neutral-500">No approved change sets yet.</p>}
-            </section> : null}
 
             <section className="relative overflow-hidden rounded-2xl border border-white/30 bg-neutral-900/75 p-5 text-white shadow-xl backdrop-blur-md" aria-label="Automatic action history to be implemented">
               <div className="pointer-events-none absolute inset-0 bg-gradient-to-br from-white/15 via-white/5 to-black/20" />
@@ -813,7 +819,9 @@ function AccountScheduleSettings({ settings, editable, onSaved }: {
   editable: boolean;
   onSaved: (settings: SearchTermAccountSettings) => void;
 }) {
-  const [frequency, setFrequency] = useState<AnalysisScheduleFrequency>(settings.scheduleFrequency);
+  const [frequency, setFrequency] = useState<AnalysisScheduleFrequency>(
+    settings.scheduleFrequency === "manual" ? "monthly" : settings.scheduleFrequency,
+  );
   const [autoSafe, setAutoSafe] = useState(String(settings.autoSafeScoreThreshold));
   const [review, setReview] = useState(String(settings.reviewScoreThreshold));
   const [highSpend, setHighSpend] = useState(String(settings.highSpendThreshold));
@@ -822,7 +830,7 @@ function AccountScheduleSettings({ settings, editable, onSaved }: {
   const [message, setMessage] = useState<string | null>(null);
 
   useEffect(() => {
-    setFrequency(settings.scheduleFrequency);
+    setFrequency(settings.scheduleFrequency === "manual" ? "monthly" : settings.scheduleFrequency);
     setAutoSafe(String(settings.autoSafeScoreThreshold));
     setReview(String(settings.reviewScoreThreshold));
     setHighSpend(String(settings.highSpendThreshold));
@@ -861,19 +869,19 @@ function AccountScheduleSettings({ settings, editable, onSaved }: {
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <p className="text-sm font-semibold text-neutral-900">Analysis schedule and account thresholds</p>
-          <p className="mt-0.5 text-xs text-neutral-500">{settings.nextRunAt ? `Next analysis ${formatDateTime(settings.nextRunAt)}` : "Scheduled analysis is off"}</p>
+          <p className="mt-0.5 text-xs text-neutral-500">{settings.nextRunAt ? `Next analysis ${formatDateTime(settings.nextRunAt)}` : "Monthly analysis is the default schedule"}</p>
         </div>
         {!editable ? <Badge variant="outline">Administrator managed</Badge> : null}
       </div>
       <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
-        <SettingField label="Review frequency">
+        <SettingField label="Review frequency" description="How often this account's search-term analysis runs automatically.">
           <Select disabled={!editable || saving} value={frequency} onValueChange={(value) => setFrequency(value as AnalysisScheduleFrequency)}>
             <SelectTrigger className="w-full cursor-pointer bg-white"><SelectValue /></SelectTrigger>
-            <SelectContent><SelectItem value="manual">Manual only</SelectItem><SelectItem value="weekly">Weekly</SelectItem><SelectItem value="biweekly">Biweekly</SelectItem><SelectItem value="monthly">Monthly</SelectItem></SelectContent>
+            <SelectContent><SelectItem value="weekly">Weekly</SelectItem><SelectItem value="biweekly">Biweekly</SelectItem><SelectItem value="monthly">Monthly</SelectItem></SelectContent>
           </Select>
         </SettingField>
-        <SettingField label="Auto-safe score"><Input disabled={!editable || saving} type="number" min={90} max={100} value={autoSafe} onChange={(event) => setAutoSafe(event.target.value)} /></SettingField>
-        <SettingField label="Manual-review score"><Input disabled={!editable || saving} type="number" min={0} max={99} value={review} onChange={(event) => setReview(event.target.value)} /></SettingField>
+        <SettingField label="Auto-safe score" description="Scores at or above this qualify as auto-safe only after every safety gate passes."><Input disabled={!editable || saving} type="number" min={90} max={100} value={autoSafe} onChange={(event) => setAutoSafe(event.target.value)} /></SettingField>
+        <SettingField label="Manual-review score" description="Scores from this value up to one below auto-safe are sent for human review."><Input disabled={!editable || saving} type="number" min={0} max={99} value={review} onChange={(event) => setReview(event.target.value)} /></SettingField>
         <SettingField label="High spend (RM)"><Input disabled={!editable || saving} type="number" min={0} step="0.01" value={highSpend} onChange={(event) => setHighSpend(event.target.value)} /></SettingField>
         <SettingField label="Minimum paid clicks"><Input disabled={!editable || saving} type="number" min={0} step={1} value={minimumClicks} onChange={(event) => setMinimumClicks(event.target.value)} /></SettingField>
       </div>
@@ -885,23 +893,10 @@ function AccountScheduleSettings({ settings, editable, onSaved }: {
   );
 }
 
-function SettingField({ label, children }: { label: string; children: React.ReactNode }) {
-  return <label className="block"><span className="mb-1 block text-xs font-semibold uppercase tracking-wide text-neutral-500">{label}</span>{children}</label>;
+function SettingField({ label, description, children }: { label: string; description?: string; children: React.ReactNode }) {
+  return <label className="block"><span className="mb-1 block text-xs font-semibold uppercase tracking-wide text-neutral-500">{label}</span>{children}{description ? <span className="mt-1.5 block text-[11px] leading-4 text-neutral-500">{description}</span> : null}</label>;
 }
 
-function SafetyScoreLegend({ settings }: { settings: SearchTermAccountSettings }) {
-  return (
-    <div className="mt-4 border-t border-neutral-200 pt-3">
-      <p className="text-xs font-semibold uppercase tracking-wide text-neutral-500">Score decision guide</p>
-      <div className="mt-2 grid gap-2 text-xs sm:grid-cols-3">
-        <div className="flex items-start gap-2 rounded-lg bg-emerald-50 px-3 py-2 text-emerald-900"><span className="mt-1 size-2 shrink-0 rounded-full bg-emerald-600" /><span><strong>{settings.autoSafeScoreThreshold}–100</strong> · Approve exclusion</span></div>
-        <div className="flex items-start gap-2 rounded-lg bg-amber-50 px-3 py-2 text-amber-900"><span className="mt-1 size-2 shrink-0 rounded-full bg-amber-500" /><span><strong>{settings.reviewScoreThreshold}–{settings.autoSafeScoreThreshold - 1}</strong> · Review manually</span></div>
-        <div className="flex items-start gap-2 rounded-lg bg-neutral-200/70 px-3 py-2 text-neutral-700"><span className="mt-1 size-2 shrink-0 rounded-full bg-neutral-500" /><span><strong>0–{Math.max(0, settings.reviewScoreThreshold - 1)}</strong> · Reject automatic exclusion</span></div>
-      </div>
-      <p className="mt-2 text-xs text-neutral-500">Only exclusion recommendations use this guide. A score of 90+ still requires every safety gate to pass.</p>
-    </div>
-  );
-}
 
 function LoadingDataIndicator({ label, compact = false, startedAt, activityAt }: { label: string; compact?: boolean; startedAt?: string | null; activityAt?: string | null }) {
   const [now, setNow] = useState(() => Date.now());
@@ -1053,13 +1048,14 @@ function ActionGroupTable({
   );
 }
 
-function groupRowsByAction(rows: OptimizationResult[], workflowMode: WorkflowMode) {
-  const order = ["approved", "negative", "special review needed", "no action", "final review"];
+function groupRowsByAction(rows: OptimizationResult[]) {
+  const order = ["approved", "rejected", "special review needed", "no action"];
   const groups = new Map<string, OptimizationResult[]>();
   for (const row of rows) {
     const category = row.reviewStatus === "approved_for_publishing" ? "approved"
-      : row.reviewStatus === "approver_rejected" ? "negative"
-      : row.reviewStatus === "ready_for_approval" || workflowMode === "approver" ? "final review"
+      : row.reviewStatus === "approver_rejected" ? "rejected"
+      : row.reviewStatus === "ready_for_approval" && row.reviewDecision === "approved" ? "approved"
+      : row.reviewStatus === "ready_for_approval" && row.reviewDecision === "rejected" ? "rejected"
       : normalizeAction(row.proposedAction) === "no action" ? "no action"
       : "special review needed";
     groups.set(category, [...(groups.get(category) ?? []), row]);
@@ -1149,7 +1145,7 @@ function ApproverDecisionStatus({ decision, status }: { decision?: ApproverDecis
   if (status === "approved_for_publishing") return <span className="font-semibold text-emerald-700">Approved</span>;
   if (status === "approver_rejected") return <span className="font-semibold text-red-700">Negative</span>;
   if (decision === "rejected" || status === "returned_for_clarification") return <span className="font-semibold text-amber-700">Returned to first review</span>;
-  return <span className="text-neutral-500">Awaiting final review</span>;
+  return <span className="text-neutral-500">Pending</span>;
 }
 
 function ProposalBadge({ decision }: { decision?: ReviewDecision }) {

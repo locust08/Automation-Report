@@ -12,8 +12,8 @@ const settingsRepository = require("../lib/search-term-optimization/account-sett
 
 try {
   const defaults = settingsRepository.getSearchTermAccountSettings("1234567890", "2026-08-01T00:00:00.000Z");
-  assert.equal(defaults.scheduleFrequency, "manual");
-  assert.equal(defaults.nextRunAt, null);
+  assert.equal(defaults.scheduleFrequency, "monthly");
+  assert.ok(defaults.nextRunAt);
 
   const saved = settingsRepository.saveSearchTermAccountSettings({
     googleCustomerId: "1234567890",

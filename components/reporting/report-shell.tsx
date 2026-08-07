@@ -8,6 +8,7 @@ import {
   CalendarDaysIcon,
   ClipboardListIcon,
   EyeIcon,
+  FileCheck2Icon,
   HouseIcon,
   IdCardIcon,
   ListChecksIcon,
@@ -27,6 +28,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { useScreenshotMode } from "@/components/reporting/use-screenshot-mode";
+import { isAdminRole } from "@/lib/auth/roles";
 
 interface ReportShellProps {
   title: string;
@@ -66,7 +68,7 @@ export function ReportShell({
       .catch(() => undefined);
     return () => controller.abort();
   }, []);
-  const isAdmin = currentRole === "admin";
+  const isAdmin = isAdminRole(currentRole);
   const hrefs = {
     home: "/",
     overall: withQuery("/overall", activeQuery),
@@ -79,6 +81,7 @@ export function ReportShell({
     placementOptimization: "/placement-optimization",
     userManagement: "/user-management",
     teamLeadMonitoring: "/team-lead-monitoring",
+    searchTermPmReports: "/search-term-pm-reports",
   };
 
   return (
@@ -173,19 +176,26 @@ export function ReportShell({
                     >
                       <SearchCheckIcon className="size-5" />
                     </ReportNavLink> : null}
-                    {currentRole && ["co", "approver", "pm", "tl", "admin"].includes(currentRole) ? <ReportNavLink
+                    {currentRole && ["co", "approver", "pm", "tl", "admin", "ethan"].includes(currentRole) ? <ReportNavLink
                       href={hrefs.placementOptimization}
                       label="Placement Optimization"
                       active={pathname === "/placement-optimization"}
                     >
                       <PanelsTopLeftIcon className="size-5" />
                     </ReportNavLink> : null}
-                    {currentRole && ["tl", "admin"].includes(currentRole) ? <ReportNavLink
+                    {currentRole && ["tl", "admin", "ethan"].includes(currentRole) ? <ReportNavLink
                       href={hrefs.teamLeadMonitoring}
                       label="Team Lead Monitoring"
                       active={pathname === "/team-lead-monitoring"}
                     >
                       <ShieldAlertIcon className="size-5" />
+                    </ReportNavLink> : null}
+                    {currentRole && ["pm", "admin", "ethan"].includes(currentRole) ? <ReportNavLink
+                      href={hrefs.searchTermPmReports}
+                      label="Search-Term PM Reports"
+                      active={pathname === "/search-term-pm-reports"}
+                    >
+                      <FileCheck2Icon className="size-5" />
                     </ReportNavLink> : null}
                     {isAdmin ? <>
                       <ReportNavLink

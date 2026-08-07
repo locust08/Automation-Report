@@ -19,7 +19,7 @@ export async function GET(request: Request) {
 
 export async function PUT(request: Request) {
   const session = await getServerAuthSession();
-  if (!session || session.role !== "admin") return NextResponse.json({ error: "Administrator access is required." }, { status: 403 });
+  if (!session || !["admin", "ethan"].includes(session.role)) return NextResponse.json({ error: "Administrator access is required." }, { status: 403 });
   try {
     const body = await request.json() as Record<string, unknown>;
     const googleCustomerId = typeof body.googleCustomerId === "string" ? body.googleCustomerId.replace(/\D/g, "") : "";

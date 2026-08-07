@@ -12,6 +12,7 @@ import {
   ListChecksIcon,
   Loader2Icon,
   LogOutIcon,
+  PanelsTopLeftIcon,
   SearchIcon,
   SendIcon,
   SlidersHorizontalIcon,
@@ -151,6 +152,7 @@ export function HomePageClient({ displayName, role }: HomePageClientProps) {
   const mediaPlanHref = "/dashboard/media-plan";
   const billingHref = "/billing";
   const searchTermOptimizationHref = "/search-term-optimization";
+  const placementOptimizationHref = "/placement-optimization";
   const hasAccountSelection = Boolean(accountId.trim());
   const normalizedAccountSearchQuery = accountSearchQuery.trim();
   const resultAccountSuggestions = accountSuggestions.filter(
@@ -664,7 +666,7 @@ export function HomePageClient({ displayName, role }: HomePageClientProps) {
           </span>
         </a>
 
-        <div className="mt-3 grid gap-3 md:grid-cols-2">
+        <div className="mt-3 grid gap-3 md:grid-cols-3">
           <a
             href={billingHref}
             className="flex items-center rounded-2xl border border-white/25 bg-white/10 p-4 text-white transition hover:bg-white/15"
@@ -681,6 +683,15 @@ export function HomePageClient({ displayName, role }: HomePageClientProps) {
               <span className="flex items-center gap-2 text-base font-semibold">
                 <SearchIcon className="size-5" />
                 Search Term Optimization
+              </span>
+            </a> : null}
+          {role && ["co", "approver", "pm", "tl", "admin", "ethan"].includes(role) ? <a
+              href={placementOptimizationHref}
+              className="flex items-center rounded-2xl border border-white/25 bg-white/10 p-4 text-white transition hover:bg-white/15"
+            >
+              <span className="flex items-center gap-2 text-base font-semibold">
+                <PanelsTopLeftIcon className="size-5" />
+                Placement Optimization
               </span>
             </a> : null}
         </div>

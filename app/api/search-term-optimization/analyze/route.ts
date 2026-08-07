@@ -31,7 +31,7 @@ function jobsDirectory() {
 
 export async function POST(request: Request) {
   const session = await getServerAuthSession();
-  if (!session || session.role !== "admin") return NextResponse.json({ error: "Administrator access is required." }, { status: 403 });
+  if (!session || !["admin", "ethan"].includes(session.role)) return NextResponse.json({ error: "Administrator access is required." }, { status: 403 });
   try {
     const body = await request.json() as { accountId?: string };
     const accountId = body.accountId?.replace(/\D/g, "") ?? "";
@@ -55,7 +55,7 @@ export async function POST(request: Request) {
 
 export async function GET(request: Request) {
   const session = await getServerAuthSession();
-  if (!session || session.role !== "admin") return NextResponse.json({ error: "Administrator access is required." }, { status: 403 });
+  if (!session || !["admin", "ethan"].includes(session.role)) return NextResponse.json({ error: "Administrator access is required." }, { status: 403 });
   const jobId = new URL(request.url).searchParams.get("jobId")?.trim() ?? "";
   if (!/^[-\w]+$/.test(jobId)) return NextResponse.json({ error: "A valid analysis job ID is required." }, { status: 400 });
   try {

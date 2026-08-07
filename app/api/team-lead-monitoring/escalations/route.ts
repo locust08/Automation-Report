@@ -22,7 +22,7 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   const session = await getServerAuthSession();
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  if (!["tl", "admin"].includes(session.role)) return NextResponse.json({ error: "Team Lead access is required." }, { status: 403 });
+  if (!["tl", "admin", "ethan"].includes(session.role)) return NextResponse.json({ error: "Team Lead access is required." }, { status: 403 });
   const body = await request.json() as { module?: unknown; sourceId?: unknown; accountId?: unknown; note?: unknown };
   const sourceModule = body.module as MonitoringModule;
   const sourceId = Number(body.sourceId);
@@ -38,7 +38,7 @@ export async function POST(request: Request) {
 export async function PATCH(request: Request) {
   const session = await getServerAuthSession();
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  if (!["tl", "admin"].includes(session.role)) return NextResponse.json({ error: "Team Lead access is required." }, { status: 403 });
+  if (!["tl", "admin", "ethan"].includes(session.role)) return NextResponse.json({ error: "Team Lead access is required." }, { status: 403 });
   const body = await request.json() as { escalationId?: unknown };
   const id = Number(body.escalationId);
   if (!Number.isSafeInteger(id) || id < 1) return NextResponse.json({ error: "A valid escalation ID is required." }, { status: 400 });

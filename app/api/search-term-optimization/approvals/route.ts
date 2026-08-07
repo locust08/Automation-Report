@@ -9,7 +9,7 @@ export const runtime = "nodejs";
 export async function POST(request: Request) {
   const session = await getServerAuthSession();
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  if (session.role !== "approver" && session.role !== "admin") {
+  if (session.role !== "approver" && !["admin", "ethan"].includes(session.role)) {
     return NextResponse.json({ error: "Only an approver can authorize change sets." }, { status: 403 });
   }
 

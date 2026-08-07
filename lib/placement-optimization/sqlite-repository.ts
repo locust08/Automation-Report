@@ -12,6 +12,10 @@ function openDatabase() {
   mkdirSync(dirname(databasePath), { recursive: true });
   const database = new DatabaseSync(databasePath);
   database.exec(readFileSync(resolve("lib/placement-optimization/sqlite-schema.sql"), "utf8"));
+  const placementColumns = database.prepare("PRAGMA table_info(ad_automation_placements)").all() as Array<{ name: string }>;
+  if (!placementColumns.some((column) => column.name === "source_view")) {
+    database.exec("ALTER TABLE ad_automation_placements ADD COLUMN source_view TEXT NOT NULL DEFAULT 'detail_placement_view';");
+  }
   const reviewTable = database.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='ad_automation_placement_reviews'").get() as { sql?: string } | undefined;
   if (reviewTable?.sql?.includes("UNIQUE(recommendation_id")) {
     database.exec(`
@@ -40,9 +44,9 @@ export function persistPlacements(input: { customerId: string; customerName: str
   const db = openDatabase();
   try {
     const upsertPlacement = db.prepare(`
-      INSERT INTO ad_automation_placements (google_customer_id,customer_name,source_resource_name,placement,display_name,placement_type,target_url,campaign_name,ad_group_name,impressions,clicks,spend,conversions,video_views,start_date,end_date,refreshed_at)
-      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-      ON CONFLICT(google_customer_id,source_resource_name,start_date,end_date) DO UPDATE SET customer_name=excluded.customer_name,placement=excluded.placement,display_name=excluded.display_name,placement_type=excluded.placement_type,target_url=excluded.target_url,campaign_name=excluded.campaign_name,ad_group_name=excluded.ad_group_name,impressions=excluded.impressions,clicks=excluded.clicks,spend=excluded.spend,conversions=excluded.conversions,video_views=excluded.video_views,refreshed_at=excluded.refreshed_at
+      INSERT INTO ad_automation_placements (google_customer_id,customer_name,source_resource_name,source_view,placement,display_name,placement_type,target_url,campaign_name,ad_group_name,impressions,clicks,spend,conversions,video_views,start_date,end_date,refreshed_at)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+      ON CONFLICT(google_customer_id,source_resource_name,start_date,end_date) DO UPDATE SET customer_name=excluded.customer_name,source_view=excluded.source_view,placement=excluded.placement,display_name=excluded.display_name,placement_type=excluded.placement_type,target_url=excluded.target_url,campaign_name=excluded.campaign_name,ad_group_name=excluded.ad_group_name,impressions=excluded.impressions,clicks=excluded.clicks,spend=excluded.spend,conversions=excluded.conversions,video_views=excluded.video_views,refreshed_at=excluded.refreshed_at
       RETURNING id
     `);
     const upsertRecommendation = db.prepare(`
@@ -52,7 +56,7 @@ export function persistPlacements(input: { customerId: string; customerName: str
     `);
     db.exec("begin immediate;");
     for (const row of input.rows) {
-      const saved = upsertPlacement.get(input.customerId,input.customerName,row.resourceName,row.placement,row.displayName,row.placementType,row.targetUrl,row.campaignName,row.adGroupName,row.impressions,row.clicks,row.spend,row.conversions,row.videoViews,input.startDate,input.endDate,input.refreshedAt) as { id: number };
+      const saved = upsertPlacement.get(input.customerId,input.customerName,row.resourceName,row.sourceView ?? "detail_placement_view",row.placement,row.displayName,row.placementType,row.targetUrl,row.campaignName,row.adGroupName,row.impressions,row.clicks,row.spend,row.conversions,row.videoViews,input.startDate,input.endDate,input.refreshedAt) as { id: number };
       upsertRecommendation.run(saved.id,row.analysis.classification,row.analysis.recommendedAction,row.analysis.confidence,row.analysis.reason,row.analysis.confirmationRequired ? 1 : 0,row.analysis.aiStatus);
     }
     db.exec("commit;");
@@ -62,13 +66,13 @@ export function persistPlacements(input: { customerId: string; customerName: str
   } finally { db.close(); }
 }
 
-export function loadPlacementDashboard(input: { customerId: string; customerName: string; startDate: string; endDate: string; refreshedAt: string; warnings?: string[] }): PlacementDashboardPayload {
+export function loadPlacementDashboard(input: { customerId: string; customerName: string; startDate: string; endDate: string; refreshedAt: string; warnings?: string[]; performanceMaxCampaignCount?: number }): PlacementDashboardPayload {
   const db = openDatabase();
   try {
     const raw = db.prepare(`
       SELECT rec.id, p.source_resource_name,p.placement,p.display_name,p.placement_type,p.target_url,p.campaign_name,p.ad_group_name,p.impressions,p.clicks,p.spend,p.conversions,p.video_views,rec.classification,rec.recommended_action,rec.confidence,rec.reason,rec.confirmation_required,rec.ai_status,rec.review_status,rec.current_decision
       FROM ad_automation_placement_recommendations rec JOIN ad_automation_placements p ON p.id=rec.placement_id
-      WHERE p.google_customer_id=? AND p.start_date=? AND p.end_date=? ORDER BY p.spend DESC,p.clicks DESC
+      WHERE p.google_customer_id=? AND p.start_date=? AND p.end_date=? AND p.source_view='performance_max_placement_view' ORDER BY p.impressions DESC,p.display_name
     `).all(input.customerId,input.startDate,input.endDate) as Array<Record<string, string | number | null>>;
     const events = db.prepare(`SELECT reviews.* FROM ad_automation_placement_reviews reviews JOIN ad_automation_placement_recommendations rec ON rec.id=reviews.recommendation_id JOIN ad_automation_placements p ON p.id=rec.placement_id WHERE p.google_customer_id=? ORDER BY reviews.id DESC`).all(input.customerId) as Array<Record<string,string|number|null>>;
     const eventsById = new Map<number, PlacementReviewEvent[]>();
@@ -83,7 +87,16 @@ export function loadPlacementDashboard(input: { customerId: string; customerName
     const reportsRaw = db.prepare(`SELECT id,change_set_id,customer_name,item_count,generated_at FROM ad_automation_placement_pm_reports WHERE google_customer_id=? ORDER BY id DESC`).all(input.customerId) as Array<Record<string,string|number>>;
     const reportItemStatement = db.prepare(`SELECT snapshot_json FROM ad_automation_placement_pm_report_items WHERE report_id=? ORDER BY id`);
     const reports: PlacementPmReport[] = reportsRaw.map((report) => ({ id:String(report.id),changeSetId:String(report.change_set_id),accountName:String(report.customer_name),itemCount:Number(report.item_count),generatedAt:String(report.generated_at),items:(reportItemStatement.all(report.id) as Array<{snapshot_json:string}>).map((item) => JSON.parse(item.snapshot_json) as PlacementPmReport["items"][number]) }));
-    return { account:{customerId:input.customerId,customerName:input.customerName,startDate:input.startDate,endDate:input.endDate,refreshedAt:input.refreshedAt},summary:{total:rows.length,needsReview:rows.filter(r=>r.reviewStatus==="pending_optimizer").length,awaitingApproval:rows.filter(r=>r.reviewStatus==="ready_for_approval").length,kept:rows.filter(r=>r.reviewStatus==="kept").length,kiv:rows.filter(r=>r.reviewStatus==="kiv").length,approved:rows.filter(r=>r.reviewStatus==="ready_for_publishing").length,rejected:rows.filter(r=>r.reviewStatus==="approver_rejected").length},rows,changeSets:changeSets.map(c=>({id:String(c.id),status:String(c.status),itemCount:Number(c.item_count),approvedByEmail:String(c.approved_by_email),approvedAt:String(c.approved_at)})),reports,warnings:input.warnings ?? [] };
+    const websiteRows = rows.filter((row) => row.placementType === "WEBSITE");
+    const knownCampaignCount = new Set(
+      rows
+        .map((row) => row.campaignName)
+        .filter((name) => name !== "Unknown Performance Max campaign"),
+    ).size;
+    const campaignCount =
+      input.performanceMaxCampaignCount ??
+      (rows.length > 0 ? Math.max(1, knownCampaignCount) : 0);
+    return { account:{customerId:input.customerId,customerName:input.customerName,startDate:input.startDate,endDate:input.endDate,refreshedAt:input.refreshedAt},summary:{total:rows.length,needsReview:rows.filter(r=>r.reviewStatus==="pending_optimizer").length,awaitingApproval:rows.filter(r=>r.reviewStatus==="ready_for_approval").length,kept:rows.filter(r=>r.reviewStatus==="kept").length,kiv:rows.filter(r=>r.reviewStatus==="kiv").length,approved:rows.filter(r=>r.reviewStatus==="ready_for_publishing").length,rejected:rows.filter(r=>r.reviewStatus==="approver_rejected").length},performanceMax:{available:rows.length>0,campaignCount,totalImpressions:rows.reduce((sum,row)=>sum+row.impressions,0),uniqueSites:new Set(websiteRows.map((row)=>row.placement)).size,topSites:websiteRows.slice(0,5).map(({id,displayName,placement,targetUrl,campaignName,impressions})=>({id,displayName,placement,targetUrl,campaignName,impressions}))},rows,changeSets:changeSets.map(c=>({id:String(c.id),status:String(c.status),itemCount:Number(c.item_count),approvedByEmail:String(c.approved_by_email),approvedAt:String(c.approved_at)})),reports,warnings:input.warnings ?? [] };
   } finally { db.close(); }
 }
 

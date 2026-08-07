@@ -140,6 +140,32 @@ interface GoogleAdsResult {
   customer?: {
     id?: string;
     optimizationScore?: number | string;
+    videoBrandSafetySuitability?: string;
+  };
+  customerNegativeCriterion?: {
+    resourceName?: string;
+    type?: string;
+    contentLabel?: { type?: string };
+    mobileApplication?: { appId?: string; name?: string };
+    mobileAppCategory?: { mobileAppCategoryConstant?: string };
+    negativeKeywordList?: { sharedSet?: string };
+    placement?: { url?: string };
+    placementList?: { sharedSet?: string };
+    youtubeChannel?: { channelId?: string };
+    youtubeVideo?: { videoId?: string };
+  };
+  sharedCriterion?: {
+    resourceName?: string;
+    keyword?: { text?: string; matchType?: string };
+    placement?: { url?: string };
+    youtubeChannel?: { channelId?: string };
+    youtubeVideo?: { videoId?: string };
+  };
+  sharedSet?: {
+    resourceName?: string;
+    name?: string;
+    type?: string;
+    status?: string;
   };
   genderView?: {
     gender?: string;
@@ -161,6 +187,13 @@ interface GoogleAdsResult {
     displayName?: string;
     placementType?: string;
     groupPlacementTargetUrl?: string;
+  };
+  performanceMaxPlacementView?: {
+    resourceName?: string;
+    placement?: string;
+    displayName?: string;
+    placementType?: string;
+    targetUrl?: string;
   };
   groupPlacementView?: {
     targetUrl?: string;
@@ -766,6 +799,263 @@ export interface GooglePlacementPerformanceRow {
   spend: number;
   conversions: number;
   videoViews: number;
+  sourceView?: "detail_placement_view" | "performance_max_placement_view";
+}
+
+export interface GooglePerformanceMaxOverview {
+  hasPerformanceMax: boolean;
+  campaignCount: number;
+  campaigns: Array<{ id: string; name: string }>;
+}
+
+export interface GoogleContentSuitabilityCriterion {
+  resourceName: string;
+  type: string;
+  value: string;
+  label: string | null;
+}
+
+export interface GoogleContentSuitabilityResult {
+  inventoryType: string | null;
+  criteria: GoogleContentSuitabilityCriterion[];
+  sharedCriteria: GoogleContentSuitabilityCriterion[];
+  warnings: string[];
+}
+
+export async function fetchGoogleContentSuitability(
+  input: Omit<GoogleFetchInput, "startDate" | "endDate">,
+): Promise<GoogleContentSuitabilityResult> {
+  const warnings: string[] = [];
+  let inventoryType: string | null = null;
+  const criteria: GoogleContentSuitabilityCriterion[] = [];
+  const sharedCriteria: GoogleContentSuitabilityCriterion[] = [];
+
+  try {
+    const customerResults = await fetchGoogleAdsResults({
+      ...input,
+      query: `
+        SELECT
+          customer.id,
+          customer.video_brand_safety_suitability
+        FROM customer
+        LIMIT 1
+      `,
+    });
+    inventoryType = customerResults[0]?.customer?.videoBrandSafetySuitability ?? null;
+  } catch (error) {
+    warnings.push(
+      `Inventory type is unavailable. ${error instanceof Error ? error.message : "Google Ads did not return this setting."}`,
+    );
+  }
+
+  let negativeResults: GoogleAdsResult[] = [];
+  try {
+    negativeResults = await fetchGoogleAdsResults({
+      ...input,
+      query: `
+        SELECT
+          customer_negative_criterion.resource_name,
+          customer_negative_criterion.type,
+          customer_negative_criterion.content_label.type,
+          customer_negative_criterion.mobile_application.app_id,
+          customer_negative_criterion.mobile_app_category.mobile_app_category_constant,
+          customer_negative_criterion.negative_keyword_list.shared_set,
+          customer_negative_criterion.placement.url,
+          customer_negative_criterion.placement_list.shared_set,
+          customer_negative_criterion.youtube_channel.channel_id,
+          customer_negative_criterion.youtube_video.video_id
+        FROM customer_negative_criterion
+      `,
+    });
+  } catch (error) {
+    warnings.push(
+      `Some account-level exclusions are unavailable. ${error instanceof Error ? error.message : "Google Ads did not return the exclusion list."}`,
+    );
+  }
+
+  const sharedSetNames = new Set<string>();
+  for (const result of negativeResults) {
+    const criterion = result.customerNegativeCriterion;
+    if (!criterion) continue;
+    const type = criterion.type ?? "UNKNOWN";
+    const sharedSet =
+      criterion.negativeKeywordList?.sharedSet ?? criterion.placementList?.sharedSet;
+    if (sharedSet) sharedSetNames.add(sharedSet);
+    const value =
+      criterion.contentLabel?.type ??
+      criterion.mobileApplication?.appId ??
+      criterion.mobileAppCategory?.mobileAppCategoryConstant ??
+      sharedSet ??
+      criterion.placement?.url ??
+      criterion.youtubeChannel?.channelId ??
+      criterion.youtubeVideo?.videoId ??
+      criterion.resourceName ??
+      "Unknown";
+    criteria.push({
+      resourceName: criterion.resourceName ?? `${type}:${value}`,
+      type,
+      value,
+      label: criterion.mobileApplication?.name ?? null,
+    });
+  }
+
+  if (sharedSetNames.size > 0) {
+    const resourceNames = [...sharedSetNames]
+      .map((value) => `'${value.replaceAll("'", "\\'")}'`)
+      .join(", ");
+    try {
+      const sharedResults = await fetchGoogleAdsResults({
+        ...input,
+        query: `
+          SELECT
+            shared_set.resource_name,
+            shared_set.name,
+            shared_set.type,
+            shared_criterion.resource_name,
+            shared_criterion.keyword.text,
+            shared_criterion.keyword.match_type,
+            shared_criterion.placement.url,
+            shared_criterion.youtube_channel.channel_id,
+            shared_criterion.youtube_video.video_id
+          FROM shared_criterion
+          WHERE shared_set.resource_name IN (${resourceNames})
+        `,
+      });
+      for (const result of sharedResults) {
+        const criterion = result.sharedCriterion;
+        const sharedSet = result.sharedSet;
+        if (!criterion || !sharedSet) continue;
+        const value =
+          criterion.keyword?.text ??
+          criterion.placement?.url ??
+          criterion.youtubeChannel?.channelId ??
+          criterion.youtubeVideo?.videoId;
+        if (!value) continue;
+        sharedCriteria.push({
+          resourceName: criterion.resourceName ?? `${sharedSet.resourceName}:${value}`,
+          type: criterion.keyword
+            ? "KEYWORD"
+            : criterion.placement
+              ? "PLACEMENT"
+              : criterion.youtubeChannel
+                ? "YOUTUBE_CHANNEL"
+                : "YOUTUBE_VIDEO",
+          value,
+          label: sharedSet.name ?? null,
+        });
+      }
+    } catch (error) {
+      warnings.push(
+        `Excluded list contents are unavailable. ${error instanceof Error ? error.message : "Google Ads did not return shared criteria."}`,
+      );
+    }
+  }
+
+  return { inventoryType, criteria, sharedCriteria, warnings };
+}
+
+export async function fetchGooglePerformanceMaxOverview(
+  input: GoogleFetchInput,
+): Promise<GooglePerformanceMaxOverview> {
+  const context = await resolveVerifiedGoogleAdsContext({
+    customerId: input.customerId,
+    apiVersion: input.apiVersion,
+    developerToken: input.developerToken,
+    accessToken: input.accessToken,
+    refreshToken: input.refreshToken,
+    clientId: input.clientId,
+    clientSecret: input.clientSecret,
+    loginCustomerId: input.loginCustomerId,
+    accessPath: input.accessPath ?? null,
+    fallbackLoginCustomerId: input.fallbackLoginCustomerId ?? null,
+  });
+  const results = await fetchGoogleAdsResultsWithFallback({
+    customerId: context.customerId,
+    apiVersion: input.apiVersion,
+    developerToken: input.developerToken,
+    accessToken: input.accessToken,
+    refreshToken: input.refreshToken,
+    clientId: input.clientId,
+    clientSecret: input.clientSecret,
+    loginCustomerId: context.loginCustomerId,
+    queries: [
+      `SELECT campaign.id, campaign.name FROM campaign WHERE campaign.advertising_channel_type = 'PERFORMANCE_MAX' AND campaign.status != 'REMOVED' ORDER BY campaign.name`,
+    ],
+  });
+  const campaigns = results.map((result) => ({
+    id: result.campaign?.id ?? "unknown",
+    name: result.campaign?.name?.trim() || "Untitled Performance Max campaign",
+  }));
+  return {
+    hasPerformanceMax: campaigns.length > 0,
+    campaignCount: campaigns.length,
+    campaigns,
+  };
+}
+
+export async function fetchGooglePerformanceMaxPlacementRows(
+  input: GoogleFetchInput,
+): Promise<GooglePlacementPerformanceRow[]> {
+  const context = await resolveVerifiedGoogleAdsContext({
+    customerId: input.customerId,
+    apiVersion: input.apiVersion,
+    developerToken: input.developerToken,
+    accessToken: input.accessToken,
+    refreshToken: input.refreshToken,
+    clientId: input.clientId,
+    clientSecret: input.clientSecret,
+    loginCustomerId: input.loginCustomerId,
+    accessPath: input.accessPath ?? null,
+    fallbackLoginCustomerId: input.fallbackLoginCustomerId ?? null,
+  });
+  const results = await fetchGoogleAdsResultsWithFallback({
+    customerId: context.customerId,
+    apiVersion: input.apiVersion,
+    developerToken: input.developerToken,
+    accessToken: input.accessToken,
+    refreshToken: input.refreshToken,
+    clientId: input.clientId,
+    clientSecret: input.clientSecret,
+    loginCustomerId: context.loginCustomerId,
+    queries: [
+      `
+        SELECT
+          performance_max_placement_view.placement,
+          performance_max_placement_view.display_name,
+          performance_max_placement_view.placement_type,
+          metrics.impressions
+        FROM performance_max_placement_view
+      `,
+    ],
+  });
+  return results.map((result, index) => ({
+    resourceName:
+      result.performanceMaxPlacementView?.resourceName ??
+      `performance-max-placement-${index}`,
+    placement:
+      result.performanceMaxPlacementView?.placement?.trim() ||
+      result.performanceMaxPlacementView?.displayName?.trim() ||
+      "Unknown placement",
+    displayName:
+      result.performanceMaxPlacementView?.displayName?.trim() ||
+      result.performanceMaxPlacementView?.placement?.trim() ||
+      "Unknown placement",
+    placementType:
+      result.performanceMaxPlacementView?.placementType?.trim() || "UNKNOWN",
+    targetUrl:
+      result.performanceMaxPlacementView?.targetUrl?.trim() || null,
+    campaignId: result.campaign?.id ?? "unknown",
+    campaignName:
+      result.campaign?.name?.trim() || "Unknown Performance Max campaign",
+    adGroupId: "performance-max",
+    adGroupName: "Performance Max",
+    impressions: toNumber(result.metrics?.impressions),
+    clicks: 0,
+    spend: 0,
+    conversions: 0,
+    videoViews: 0,
+    sourceView: "performance_max_placement_view",
+  }));
 }
 
 export async function fetchGooglePlacementPerformanceRows(input: GoogleFetchInput): Promise<GooglePlacementPerformanceRow[]> {
@@ -864,6 +1154,7 @@ export async function fetchGooglePlacementPerformanceRows(input: GoogleFetchInpu
     spend: microsToCurrency(result.metrics?.costMicros),
     conversions: toNumber(result.metrics?.conversions),
     videoViews: toNumber(result.metrics?.videoViews),
+    sourceView: "detail_placement_view",
   }));
 }
 
@@ -4866,6 +5157,7 @@ async function executeGoogleAdsStreamRequest(input: {
     const streamError = findStreamBatchError(streamBatches);
     const failureMessage =
       streamError ??
+      parsed.errorMessage ??
       topLevelError ??
       (!parsed.ok
         ? `Google Ads API request failed with status ${parsed.status}. The customer ID may not be accessible.`
@@ -5323,7 +5615,10 @@ function extractGoogleAdsErrorInfo(
   const candidate = topLevel as
     | {
         details?: Array<{
-          errors?: Array<{ errorCode?: Record<string, string | null | undefined> }>;
+          errors?: Array<{
+            errorCode?: Record<string, string | null | undefined>;
+            message?: string;
+          }>;
         }>;
       }
     | undefined;
@@ -5333,10 +5628,17 @@ function extractGoogleAdsErrorInfo(
     .map((item) => item.errorCode ?? {})
     .flatMap((errorCodeRecord) => Object.entries(errorCodeRecord))
     .find(([, value]) => Boolean(value));
+  const detailMessage = candidate?.details
+    ?.flatMap((detail) => detail.errors ?? [])
+    .map((item) => item.message?.trim())
+    .find(Boolean);
 
   return {
     errorCode: detailErrorCode ? `${detailErrorCode[0]}:${detailErrorCode[1]}` : null,
-    errorMessage: errorMessage ?? null,
+    errorMessage:
+      detailMessage && detailMessage !== errorMessage
+        ? `${errorMessage ?? "Google Ads API request failed."} ${detailMessage}`
+        : errorMessage ?? null,
   };
 }
 

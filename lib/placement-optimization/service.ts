@@ -1,6 +1,6 @@
 import { buildDateRange } from "@/lib/reporting/date";
 import { getCredentials, normalizeGoogleAccountId } from "@/lib/reporting/env";
-import { fetchGoogleAccountName, fetchGooglePlacementPerformanceRows, type GooglePlacementPerformanceRow } from "@/lib/reporting/google";
+import { fetchGoogleAccountName, fetchGooglePerformanceMaxOverview, fetchGooglePerformanceMaxPlacementRows, type GooglePlacementPerformanceRow } from "@/lib/reporting/google";
 import { resolveGoogleManagerIdsFromNotion } from "@/lib/reporting/notion";
 import { loadPlacementDashboard, persistPlacements } from "@/lib/placement-optimization/sqlite-repository";
 import type { PlacementDashboardPayload, PlacementDecision } from "@/lib/placement-optimization/types";
@@ -19,10 +19,11 @@ export async function getPlacementOptimizationDashboard(input:{accountId?:string
   const customerName=await fetchGoogleAccountName({customerId,apiVersion:credentials.googleAdsApiVersion,developerToken:credentials.googleDeveloperToken,accessToken:credentials.googleAccessToken,refreshToken:credentials.googleRefreshToken,clientId:credentials.googleClientId,clientSecret:credentials.googleClientSecret,loginCustomerId}) ?? `Google Ads ${customerId}`;
   const refreshedAt=new Date().toISOString();
   try{
-    const rows=await fetchGooglePlacementPerformanceRows({customerId,apiVersion:credentials.googleAdsApiVersion,developerToken:credentials.googleDeveloperToken,accessToken:credentials.googleAccessToken,refreshToken:credentials.googleRefreshToken,clientId:credentials.googleClientId,clientSecret:credentials.googleClientSecret,loginCustomerId,accessPath,fallbackLoginCustomerId:credentials.googleLoginCustomerId,startDate:dateRange.startDate,endDate:dateRange.endDate});
+    const performanceMaxOverview=await fetchGooglePerformanceMaxOverview({customerId,apiVersion:credentials.googleAdsApiVersion,developerToken:credentials.googleDeveloperToken,accessToken:credentials.googleAccessToken,refreshToken:credentials.googleRefreshToken,clientId:credentials.googleClientId,clientSecret:credentials.googleClientSecret,loginCustomerId,accessPath,fallbackLoginCustomerId:credentials.googleLoginCustomerId,startDate:dateRange.startDate,endDate:dateRange.endDate});
+    const rows=await fetchGooglePerformanceMaxPlacementRows({customerId,apiVersion:credentials.googleAdsApiVersion,developerToken:credentials.googleDeveloperToken,accessToken:credentials.googleAccessToken,refreshToken:credentials.googleRefreshToken,clientId:credentials.googleClientId,clientSecret:credentials.googleClientSecret,loginCustomerId,accessPath,fallbackLoginCustomerId:credentials.googleLoginCustomerId,startDate:dateRange.startDate,endDate:dateRange.endDate});
     const analyses=await analyzePlacements(rows,customerName);
     persistPlacements({customerId,customerName,startDate:dateRange.startDate,endDate:dateRange.endDate,refreshedAt,rows:rows.map((row,index)=>({...row,analysis:analyses[index]}))});
-    return loadPlacementDashboard({customerId,customerName,startDate:dateRange.startDate,endDate:dateRange.endDate,refreshedAt,warnings:[...routing.messages,...(rows.length===0?["Google Ads returned no non-Search placement rows for the selected reporting period."]:[])]});
+    return loadPlacementDashboard({customerId,customerName,startDate:dateRange.startDate,endDate:dateRange.endDate,refreshedAt,performanceMaxCampaignCount:performanceMaxOverview.campaignCount,warnings:[...routing.messages,...(rows.length===0?["This account has no Performance Max placement impressions for the selected reporting period."]:[])]});
   }catch(error){
     const cached=loadPlacementDashboard({customerId,customerName,startDate:dateRange.startDate,endDate:dateRange.endDate,refreshedAt,warnings:[...routing.messages,`Live refresh failed; showing cached placement data. ${error instanceof Error?error.message:"Unknown error"}`]});
     if(cached.rows.length>0)return cached; throw error;

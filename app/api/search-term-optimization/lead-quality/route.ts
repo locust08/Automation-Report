@@ -6,7 +6,7 @@ import { parseLeadQualityCsv, SqliteLeadQualityRepository, type LeadQualityValue
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
-const ALLOWED_ROLES = new Set(["pms", "specialist", "admin"]);
+const ALLOWED_ROLES = new Set(["pms", "specialist", "admin", "ethan"]);
 
 export async function PATCH(request: Request) {
   const session = await getServerAuthSession();

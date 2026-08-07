@@ -11,7 +11,7 @@ export async function GET(request: Request) {
   if (!session) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
-  if (session.role !== "admin") return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  if (!["admin", "ethan"].includes(session.role)) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
   const accountId = new URL(request.url).searchParams.get("accountId")?.trim() || undefined;
   try {

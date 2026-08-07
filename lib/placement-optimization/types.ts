@@ -56,8 +56,42 @@ export interface PlacementPmReport {
 export interface PlacementDashboardPayload {
   account: { customerId: string; customerName: string; startDate: string; endDate: string; refreshedAt: string };
   summary: { total: number; needsReview: number; awaitingApproval: number; kept: number; kiv: number; approved: number; rejected: number };
+  performanceMax: {
+    available: boolean;
+    campaignCount: number;
+    totalImpressions: number;
+    uniqueSites: number;
+    topSites: Array<Pick<PlacementOptimizationRow, "id" | "displayName" | "placement" | "targetUrl" | "campaignName" | "impressions">>;
+  };
   rows: PlacementOptimizationRow[];
   changeSets: PlacementChangeSet[];
   reports: PlacementPmReport[];
+  warnings: string[];
+}
+
+export interface ContentSuitabilityItem {
+  id: string;
+  value: string;
+  label: string | null;
+}
+
+export interface ContentSuitabilitySection {
+  key: string;
+  title: string;
+  available: boolean;
+  unavailableReason: string | null;
+  items: ContentSuitabilityItem[];
+}
+
+export interface ContentSuitabilityPayload {
+  account: {
+    customerId: string;
+    customerName: string;
+  };
+  inventoryType: "Maximum" | "Moderate" | "Limited" | "Unknown";
+  sections: ContentSuitabilitySection[];
+  refreshedAt: string;
+  source: "live" | "cache";
+  stale: boolean;
   warnings: string[];
 }

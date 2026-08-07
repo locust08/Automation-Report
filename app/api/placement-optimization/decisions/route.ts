@@ -1,6 +1,23 @@
 import { NextResponse } from "next/server";
 import { getServerAuthSession } from "@/lib/auth/server-session";
+import { isAdminRole } from "@/lib/auth/roles";
 import { saveOptimizerDecision } from "@/lib/placement-optimization/sqlite-repository";
 import type { PlacementDecision } from "@/lib/placement-optimization/types";
-export const dynamic="force-dynamic";export const runtime="nodejs";
-export async function POST(request:Request){const session=await getServerAuthSession();if(!session)return NextResponse.json({error:"Unauthorized"},{status:401});if(session.role!=="co"&&session.role!=="admin")return NextResponse.json({error:"Only a Campaign Optimizer can review placements."},{status:403});const body=await request.json() as {recommendationIds?:unknown;decision?:unknown};const ids=Array.isArray(body.recommendationIds)?[...new Set(body.recommendationIds.map(Number).filter(id=>Number.isSafeInteger(id)&&id>0))]:[];const decision=body.decision as PlacementDecision;if(!ids.length||!["exclude","keep","kiv"].includes(decision))return NextResponse.json({error:"Valid placement IDs and decision are required."},{status:400});try{return NextResponse.json(saveOptimizerDecision({recommendationIds:ids,decision,reviewer:{id:session.sub,email:session.email,role:session.role}}));}catch(error){return NextResponse.json({error:error instanceof Error?error.message:"Unable to save decision."},{status:409});}}
+
+export const dynamic = "force-dynamic";
+export const runtime = "nodejs";
+
+export async function POST(request: Request) {
+  const session = await getServerAuthSession();
+  if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  if (session.role !== "co" && !isAdminRole(session.role)) return NextResponse.json({ error: "Only a Campaign Optimizer can review placements." }, { status: 403 });
+  const body = await request.json() as { recommendationIds?: unknown; decision?: unknown };
+  const ids = Array.isArray(body.recommendationIds) ? [...new Set(body.recommendationIds.map(Number).filter((id) => Number.isSafeInteger(id) && id > 0))] : [];
+  const decision = body.decision as PlacementDecision;
+  if (!ids.length || !["exclude", "keep", "kiv"].includes(decision)) return NextResponse.json({ error: "Valid placement IDs and decision are required." }, { status: 400 });
+  try {
+    return NextResponse.json(saveOptimizerDecision({ recommendationIds: ids, decision, reviewer: { id: session.sub, email: session.email, role: session.role } }));
+  } catch (error) {
+    return NextResponse.json({ error: error instanceof Error ? error.message : "Unable to save decision." }, { status: 409 });
+  }
+}

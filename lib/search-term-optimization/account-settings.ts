@@ -53,9 +53,20 @@ export function getSearchTermAccountSettings(customerId: string, lastRunAt?: str
       values (?, ?)
       on conflict (google_customer_id) do nothing
     `).run(customerId, lastRunAt ?? null);
-    const row = database.prepare(`
+    let row = database.prepare(`
       select * from ad_automation_search_term_account_settings where google_customer_id = ?
     `).get(customerId) as unknown as StoredSettings;
+    if (row.schedule_frequency === "manual") {
+      const anchor = row.last_run_at ? new Date(row.last_run_at) : new Date();
+      database.prepare(`
+        update ad_automation_search_term_account_settings
+        set schedule_frequency = 'monthly', next_run_at = ?, updated_at = datetime('now')
+        where google_customer_id = ?
+      `).run(calculateNextRun("monthly", anchor), customerId);
+      row = database.prepare(`
+        select * from ad_automation_search_term_account_settings where google_customer_id = ?
+      `).get(customerId) as unknown as StoredSettings;
+    }
     return mapSettings(row);
   } finally {
     database.close();

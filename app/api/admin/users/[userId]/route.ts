@@ -14,7 +14,7 @@ export async function PATCH(request: Request, context: { params: Promise<{ userI
   try {
     const { userId } = await context.params;
     const body = (await request.json()) as Record<string, unknown>;
-    if (userId === session.sub && (body.isActive === false || (body.role !== undefined && body.role !== "admin"))) {
+    if (userId === session.sub && (body.isActive === false || (body.role !== undefined && !isAdminRole(body.role)))) {
       return NextResponse.json({ error: "You cannot remove your own administrator access." }, { status: 400 });
     }
     const changes: { fullName?: string; role?: import("@/lib/auth/roles").AuthRole; isActive?: boolean; password?: string } = {};

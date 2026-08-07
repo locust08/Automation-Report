@@ -35,6 +35,19 @@ type StoredChangeSet = {
 export type SpecialistDecision = "approved" | "rejected";
 export type ApproverDecision = "accepted" | "rejected";
 
+export type SearchTermDecisionSummaryRow = {
+  customerId: string;
+  customerName: string;
+  searchTerm: string;
+  campaign: string;
+  outcome: "approved" | "negative";
+  clicks: number;
+  spend: number;
+  conversions: number;
+  classification: string;
+  decidedAt: string | null;
+};
+
 function openDatabase() {
   const databasePath = resolve(process.env.SEARCH_TERM_SQLITE_PATH || "data/search-term-optimization.sqlite");
   mkdirSync(dirname(databasePath), { recursive: true });
@@ -46,20 +59,77 @@ function openDatabase() {
   return database;
 }
 
+export function listSearchTermDecisionSummaryRows(): SearchTermDecisionSummaryRow[] {
+  const database = openDatabase();
+  try {
+    return (database.prepare(`
+      select
+        st.google_customer_id as customerId,
+        coalesce(nullif(st.customer_name, ''), 'Google Ads account') as customerName,
+        st.search_term as searchTerm,
+        st.campaign_name as campaign,
+        case
+          when rec.review_status = 'approved_for_publishing' then 'approved'
+          else 'negative'
+        end as outcome,
+        st.clicks as clicks,
+        st.spend as spend,
+        st.conversions as conversions,
+        rec.classification as classification,
+        rec.last_reviewed_at as decidedAt
+      from ad_automation_search_term_recommendations rec
+      join ad_automation_search_terms st on st.id = rec.search_term_id
+      where rec.review_status in ('approved_for_publishing', 'approver_rejected')
+      order by customerName collate nocase, outcome, rec.last_reviewed_at desc, rec.id desc
+    `).all() as Array<Record<string, string | number | null>>).map((row) => ({
+      customerId: String(row.customerId),
+      customerName: String(row.customerName),
+      searchTerm: String(row.searchTerm),
+      campaign: String(row.campaign),
+      outcome: row.outcome === "approved" ? "approved" : "negative",
+      clicks: Number(row.clicks ?? 0),
+      spend: Number(row.spend ?? 0),
+      conversions: Number(row.conversions ?? 0),
+      classification: String(row.classification ?? "Unclear"),
+      decidedAt: row.decidedAt ? String(row.decidedAt) : null,
+    }));
+  } finally {
+    database.close();
+  }
+}
+
 function ensureSearchTermColumns(database: DatabaseSync) {
   const existing = new Set((database.prepare("pragma table_info(ad_automation_search_terms)").all() as Array<{ name: string }>).map((column) => column.name));
   const columns: Array<[string, string]> = [
     ["source_resource_name", "text"], ["asset_group_name", "text"],
     ["added_excluded_status", "text"], ["data_retrieved_at", "text"],
+    ["reporting_start_date", "text"], ["reporting_end_date", "text"],
   ];
   for (const [name, type] of columns) if (!existing.has(name)) database.exec(`alter table ad_automation_search_terms add column ${name} ${type}`);
   const recommendationColumns = new Set((database.prepare("pragma table_info(ad_automation_search_term_recommendations)").all() as Array<{ name: string }>).map((column) => column.name));
   if (!recommendationColumns.has("source_action")) database.exec("alter table ad_automation_search_term_recommendations add column source_action text");
-  // Legacy specialist rejections were terminal. They now require Final Review.
+  const changeSetColumns = new Set((database.prepare("pragma table_info(ad_automation_search_term_change_sets)").all() as Array<{ name: string }>).map((column) => column.name));
+  const publishingColumns: Array<[string, string]> = [
+    ["published_by_user_id", "text"], ["published_by_email", "text"], ["published_at", "text"],
+    ["verification_status", "text not null default 'pending'"], ["verified_at", "text"], ["verification_details", "text"],
+  ];
+  for (const [name, type] of publishingColumns) if (!changeSetColumns.has(name)) database.exec(`alter table ad_automation_search_term_change_sets add column ${name} ${type}`);
+  // The prototype now uses a single review stage. Migrate proposals left in
+  // the former Final Review queue into their terminal category.
   database.exec(`
     update ad_automation_search_term_recommendations
-    set review_status = 'ready_for_approval', updated_at = datetime('now')
-    where review_status = 'rejected' and current_decision = 'reject'
+    set review_status = case
+          when current_decision in ('submit_for_approval', 'approver_approved') then 'approved_for_publishing'
+          when current_decision in ('reject', 'approver_rejected') then 'approver_rejected'
+          else review_status
+        end,
+        current_decision = case
+          when current_decision in ('submit_for_approval', 'approver_approved') then 'approver_approved'
+          when current_decision in ('reject', 'approver_rejected') then 'approver_rejected'
+          else current_decision
+        end,
+        updated_at = datetime('now')
+    where review_status = 'ready_for_approval'
   `);
   // KIV was removed from the two-stage search-term workflow. Existing KIV rows
   // return to the first-review queue with no proposed decision.
@@ -114,8 +184,8 @@ export function persistDashboardToSqlite(payload: OptimizationDashboardPayload):
         google_customer_id, customer_name, source_run_id, source_resource_name,
         campaign_id, campaign_name, ad_group_id, ad_group_name, asset_group_name, search_term,
         triggering_keyword, match_type, added_excluded_status, destination_url, impressions, clicks, spend,
-        conversions, data_retrieved_at, updated_at
-      ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+        conversions, data_retrieved_at, reporting_start_date, reporting_end_date, updated_at
+      ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
       on conflict do update set
         customer_name = excluded.customer_name,
         source_run_id = excluded.source_run_id,
@@ -132,6 +202,8 @@ export function persistDashboardToSqlite(payload: OptimizationDashboardPayload):
         spend = excluded.spend,
         conversions = excluded.conversions,
         data_retrieved_at = excluded.data_retrieved_at,
+        reporting_start_date = excluded.reporting_start_date,
+        reporting_end_date = excluded.reporting_end_date,
         updated_at = datetime('now')
       returning id
     `);
@@ -159,6 +231,7 @@ export function persistDashboardToSqlite(payload: OptimizationDashboardPayload):
         row.campaignId, row.campaign, row.adGroupId, row.adGroup, row.assetGroup, row.searchTerm,
         row.triggeringKeyword, row.matchType, row.addedExcludedStatus, row.destinationUrl,
         row.impressions, row.clicks, row.spend, row.conversions, row.dataRetrievedAt,
+        payload.account.reportingPeriod.startDate, payload.account.reportingPeriod.endDate,
       ) as { id: number };
       upsertRecommendation.run(
         savedTerm.id, row.classification, row.mismatchCategory, row.explanation,
@@ -277,8 +350,11 @@ export function saveApproverDecision(input: {
     const placeholders = input.recommendationIds.map(() => "?").join(",");
     const rows = database.prepare(`
       select rec.id, rec.review_status, rec.current_decision, rec.proposed_action,
-             rec.safety_score, st.google_customer_id, st.search_term,
-             st.campaign_name, st.ad_group_name, st.source_run_id
+             rec.safety_score, rec.classification, rec.ai_reason,
+             st.google_customer_id, st.customer_name, st.search_term,
+             st.campaign_name, st.ad_group_name, st.source_run_id, st.match_type,
+             st.impressions, st.clicks, st.spend, st.conversions,
+             st.reporting_start_date, st.reporting_end_date
       from ad_automation_search_term_recommendations rec
       join ad_automation_search_terms st on st.id = rec.search_term_id
       where rec.id in (${placeholders})
@@ -425,10 +501,9 @@ export function saveSpecialistDecision(input: {
         source_action: string | null;
       } | undefined;
       if (!row) throw new Error(`Recommendation ${recommendationId} was not found.`);
-      // Approve and reject are proposals. Both must pass through Final Review
-      // before becoming terminal records. Uncertain rows remain pending.
-      const resultingStatus = "ready_for_approval";
-      const currentDecision = input.decision === "approved" ? "submit_for_approval" : "reject";
+      // One-stage prototype: the specialist decision is terminal immediately.
+      const resultingStatus = input.decision === "approved" ? "approved_for_publishing" : "approver_rejected";
+      const currentDecision = input.decision === "approved" ? "approver_approved" : "approver_rejected";
       const action = input.decision === "approved" ? "submit_for_approval" : "reject";
       if (row.review_status === resultingStatus && row.current_decision === currentDecision) {
         skipped += 1;

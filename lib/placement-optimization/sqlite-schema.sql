@@ -3,6 +3,7 @@ CREATE TABLE IF NOT EXISTS ad_automation_placements (
   google_customer_id TEXT NOT NULL,
   customer_name TEXT NOT NULL,
   source_resource_name TEXT NOT NULL,
+  source_view TEXT NOT NULL DEFAULT 'detail_placement_view',
   placement TEXT NOT NULL,
   display_name TEXT NOT NULL,
   placement_type TEXT NOT NULL,
@@ -82,3 +83,10 @@ CREATE TABLE IF NOT EXISTS ad_automation_placement_pm_report_items (
 
 CREATE INDEX IF NOT EXISTS placement_recommendation_status_idx ON ad_automation_placement_recommendations(review_status);
 CREATE INDEX IF NOT EXISTS placement_review_recommendation_idx ON ad_automation_placement_reviews(recommendation_id);
+
+CREATE TABLE IF NOT EXISTS ad_automation_content_suitability_snapshots (
+  google_customer_id TEXT PRIMARY KEY,
+  customer_name TEXT NOT NULL,
+  payload_json TEXT NOT NULL,
+  refreshed_at TEXT NOT NULL
+);

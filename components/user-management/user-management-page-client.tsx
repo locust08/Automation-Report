@@ -1,12 +1,13 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { PencilIcon, SaveIcon, SearchIcon, ShieldCheckIcon, UserPlusIcon, UsersRoundIcon, XIcon } from "lucide-react";
+import { EyeIcon, EyeOffIcon, PencilIcon, SaveIcon, SearchIcon, ShieldCheckIcon, UserPlusIcon, UsersRoundIcon, XIcon } from "lucide-react";
 
 import { ReportShell } from "@/components/reporting/report-shell";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupInput } from "@/components/ui/input-group";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Spinner } from "@/components/ui/spinner";
 import { Switch } from "@/components/ui/switch";
@@ -93,7 +94,7 @@ export function UserManagementPageClient({ currentUserId }: { currentUserId: str
           <form onSubmit={createUser} className="grid gap-4 md:grid-cols-2">
             <LabeledField label="Full name"><Input name="fullName" required placeholder="Full name" /></LabeledField>
             <LabeledField label="Email"><Input name="email" type="email" required placeholder="name@locus-t.com.my" /></LabeledField>
-            <LabeledField label="Password"><Input name="password" type="password" minLength={8} required placeholder="Minimum 8 characters" /></LabeledField>
+            <LabeledField label="Password"><PasswordInput name="password" minLength={8} required placeholder="Minimum 8 characters" autoComplete="new-password" /></LabeledField>
             <LabeledField label="Role"><RoleSelect value={role} onChange={setRole} /></LabeledField>
             <div className="flex items-center justify-between gap-3 border-t border-neutral-200 pt-4 md:col-span-2"><label className="flex h-9 items-center gap-2 text-sm"><Switch checked={isActive} onCheckedChange={setIsActive} className="cursor-pointer" /> Active</label><Button type="submit" disabled={saving} className="ml-auto cursor-pointer bg-red-700 text-white hover:bg-red-800">{saving ? <Spinner /> : <UserPlusIcon />}Create</Button></div>
           </form>
@@ -151,7 +152,7 @@ function ManagedUserRow({ user, currentUser, editing, onEdit, onCancel, onSaved 
         <LabeledField label="Full name"><Input value={fullName} onChange={(event) => setFullName(event.target.value)} /></LabeledField>
         <div><p className="mb-1 text-xs font-semibold uppercase tracking-wide text-neutral-500">Email</p><div className="flex min-h-9 items-center rounded-md border border-neutral-200 bg-white px-3 py-2 text-sm font-medium">{user.email}</div></div>
         <LabeledField label="Role"><RoleSelect value={role} onChange={setRole} disabled={currentUser} /></LabeledField>
-        <LabeledField label="New password"><Input type="password" minLength={8} value={password} onChange={(event) => setPassword(event.target.value)} placeholder="Leave unchanged" /></LabeledField>
+        <LabeledField label="New password"><PasswordInput minLength={8} value={password} onChange={(event) => setPassword(event.target.value)} placeholder="Leave unchanged" autoComplete="new-password" /></LabeledField>
         <div className="flex flex-wrap items-center justify-between gap-4 border-t border-neutral-200 pt-4 md:col-span-2"><label className="flex items-center gap-2 text-sm"><Switch checked={isActive} onCheckedChange={setIsActive} disabled={currentUser} className="cursor-pointer" />Active</label><div className="flex gap-2"><Button type="button" variant="ghost" size="sm" onClick={onCancel} className="cursor-pointer">Cancel</Button><Button type="button" variant="outline" size="sm" onClick={() => void save()} disabled={saving} className="cursor-pointer">{saving ? <Spinner /> : <SaveIcon />}Save changes</Button></div></div>
         {error ? <p className="text-sm text-red-700 md:col-span-2">{error}</p> : null}
       </div>
@@ -161,6 +162,27 @@ function ManagedUserRow({ user, currentUser, editing, onEdit, onCancel, onSaved 
 
 function RoleSelect({ value, onChange, disabled = false }: { value: AuthRole; onChange: (role: AuthRole) => void; disabled?: boolean }) {
   return <Select value={value} onValueChange={(next) => onChange(next as AuthRole)} disabled={disabled}><SelectTrigger className="w-full cursor-pointer"><SelectValue /></SelectTrigger><SelectContent>{AUTH_ROLES.map((item) => <SelectItem key={item} value={item}>{AUTH_ROLE_LABELS[item]} ({item})</SelectItem>)}</SelectContent></Select>;
+}
+
+function PasswordInput(props: React.ComponentProps<typeof InputGroupInput>) {
+  const [visible, setVisible] = useState(false);
+  return (
+    <InputGroup>
+      <InputGroupInput {...props} type={visible ? "text" : "password"} />
+      <InputGroupAddon align="inline-end">
+        <InputGroupButton
+          type="button"
+          size="icon-xs"
+          className="cursor-pointer text-neutral-500 hover:text-neutral-950"
+          onClick={() => setVisible((current) => !current)}
+          aria-label={visible ? "Hide password" : "Show password"}
+          aria-pressed={visible}
+        >
+          {visible ? <EyeOffIcon /> : <EyeIcon />}
+        </InputGroupButton>
+      </InputGroupAddon>
+    </InputGroup>
+  );
 }
 
 function LabeledField({ label, children }: { label: string; children: React.ReactNode }) {

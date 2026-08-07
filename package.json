@@ -14,6 +14,8 @@
     "search-terms:scheduler": "node scripts/run-due-search-term-analyses.mjs",
     "search-terms:scheduler:doppler": "doppler run -- npm run search-terms:scheduler",
     "search-terms:settings:test": "tsx scripts/search-term-account-settings.test.mts",
+    "search-terms:pm-reports:test": "tsx scripts/search-term-pm-reports.test.mts",
+    "search-terms:pm-reports:seed": "tsx scripts/seed-search-term-pm-report-prototype.mts",
     "placements:sqlite:test": "tsx scripts/placement-optimization-sqlite.test.mts",
     "team-lead:sqlite:test": "tsx scripts/team-lead-monitoring-sqlite.test.mts",
     "send:drive-pdf-emails": "node --import jiti/register scripts/send-drive-pdf-report-emails.mjs",

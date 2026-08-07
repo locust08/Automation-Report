@@ -3,7 +3,7 @@ pragma journal_mode = wal;
 
 create table if not exists ad_automation_search_term_account_settings (
   google_customer_id text primary key,
-  schedule_frequency text not null default 'manual'
+  schedule_frequency text not null default 'monthly'
     check (schedule_frequency in ('manual', 'weekly', 'biweekly', 'monthly')),
   auto_safe_score_threshold integer not null default 90
     check (auto_safe_score_threshold between 90 and 100),
@@ -46,6 +46,8 @@ create table if not exists ad_automation_search_terms (
   invalid_leads integer,
   client_complaints integer,
   data_retrieved_at text,
+  reporting_start_date text,
+  reporting_end_date text,
   first_detected_at text not null default (datetime('now')),
   updated_at text not null default (datetime('now'))
 );
@@ -103,6 +105,13 @@ create table if not exists ad_automation_search_term_change_sets (
   approved_by_user_id text not null,
   approved_by_email text not null,
   approved_at text not null default (datetime('now')),
+  published_by_user_id text,
+  published_by_email text,
+  published_at text,
+  verification_status text not null default 'pending'
+    check (verification_status in ('pending', 'verified', 'failed')),
+  verified_at text,
+  verification_details text,
   item_count integer not null check (item_count > 0),
   idempotency_key text not null unique
 );
@@ -122,6 +131,49 @@ create table if not exists ad_automation_search_term_change_set_items (
   unique (change_set_id, recommendation_id)
 );
 
+create table if not exists ad_automation_search_term_pm_reports (
+  id integer primary key autoincrement,
+  change_set_id integer not null unique
+    references ad_automation_search_term_change_sets(id) on delete restrict,
+  google_customer_id text not null,
+  customer_name text not null,
+  reporting_start_date text,
+  reporting_end_date text,
+  published_by_user_id text not null,
+  published_by_email text not null,
+  published_at text not null,
+  verification_status text not null check (verification_status = 'verified'),
+  verified_at text not null,
+  item_count integer not null check (item_count > 0),
+  affected_campaign_count integer not null check (affected_campaign_count > 0),
+  total_spend real not null default 0,
+  total_clicks integer not null default 0,
+  total_conversions real not null default 0,
+  generated_at text not null default (datetime('now')),
+  snapshot_json text not null check (json_valid(snapshot_json))
+);
+
+create table if not exists ad_automation_search_term_pm_report_items (
+  id integer primary key autoincrement,
+  report_id integer not null
+    references ad_automation_search_term_pm_reports(id) on delete restrict,
+  change_set_item_id integer not null
+    references ad_automation_search_term_change_set_items(id) on delete restrict,
+  recommendation_id integer not null,
+  campaign_name text not null,
+  ad_group_name text not null,
+  search_term text not null,
+  optimization_type text not null,
+  negative_match_type text not null,
+  classification text not null,
+  reason text not null,
+  spend real not null default 0,
+  clicks integer not null default 0,
+  conversions real not null default 0,
+  snapshot_json text not null check (json_valid(snapshot_json)),
+  unique (report_id, change_set_item_id)
+);
+
 create unique index if not exists ad_search_terms_identity_idx
   on ad_automation_search_terms (google_customer_id, campaign_name, ad_group_name, search_term);
 create index if not exists ad_search_terms_account_idx
@@ -138,3 +190,7 @@ create index if not exists ad_search_term_change_sets_account_idx
   on ad_automation_search_term_change_sets (google_customer_id, status, created_at desc);
 create index if not exists ad_search_term_change_set_items_recommendation_idx
   on ad_automation_search_term_change_set_items (recommendation_id);
+create index if not exists ad_search_term_pm_reports_account_idx
+  on ad_automation_search_term_pm_reports (google_customer_id, generated_at desc);
+create index if not exists ad_search_term_pm_report_items_report_idx
+  on ad_automation_search_term_pm_report_items (report_id, id);
