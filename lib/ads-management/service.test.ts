@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
-import { mock, test } from "node:test";
-import * as adsGoogle from "@/lib/ads-management/google";
-import * as adsSupabase from "@/lib/ads-management/supabase";
-import { approvePublishVerify, rejectChangeRequest, resolveConflict, submitChangeSetForReview } from "@/lib/ads-management/service";
+import { afterEach, mock, test } from "node:test";
+import { adsManagementServiceDependencies, resolveConflict, submitChangeSetForReview } from "@/lib/ads-management/service";
 import type { AdsChangeSetRecord } from "@/lib/ads-management/types";
+
+afterEach(() => mock.restoreAll());
 
 function makeChangeSet(overrides: Partial<AdsChangeSetRecord> = {}, changeOverrides: Record<string, unknown> = {}) {
   return {
@@ -53,26 +53,26 @@ function makeChangeSet(overrides: Partial<AdsChangeSetRecord> = {}, changeOverri
   } as AdsChangeSetRecord;
 }
 
-test("submitChangeSetForReview marks non-conflicted requests as awaiting approval", async () => {
+test("submitChangeSetForReview marks non-conflicted requests as ready to publish", async () => {
   const draftedSet = makeChangeSet();
-  const finalSet = makeChangeSet({ status: "awaiting_approval" });
+  const finalSet = makeChangeSet({ status: "ready_to_publish" });
 
   let draftCall = 0;
-  mock.method(adsSupabase, "getChangeSet", async (id: string) => {
+  mock.method(adsManagementServiceDependencies, "getChangeSet", async (id: string) => {
     if (id !== "cs-1") throw new Error(`Unexpected change-set id: ${id}`);
     return draftCall++ === 0 ? draftedSet : finalSet;
   }, { times: 2 });
-  const patchChangeSet = mock.method(adsSupabase, "patchChangeSet", async () => undefined);
-  const patchFieldChange = mock.method(adsSupabase, "patchFieldChange", async () => undefined);
-  const addEvent = mock.method(adsSupabase, "addEvent", async () => undefined);
-  mock.method(adsGoogle, "fetchOfficialValues", async () => new Map([["change-1", "Old name"]]));
-  mock.method(adsGoogle, "mutateGoogleChanges", async () => new Map([["change-1", {}]]));
+  const patchChangeSet = mock.method(adsManagementServiceDependencies, "patchChangeSet", async () => undefined);
+  const patchFieldChange = mock.method(adsManagementServiceDependencies, "patchFieldChange", async () => undefined);
+  const addEvent = mock.method(adsManagementServiceDependencies, "addEvent", async () => undefined);
+  mock.method(adsManagementServiceDependencies, "fetchOfficialValues", async () => new Map([["change-1", "Old name"]]));
+  mock.method(adsManagementServiceDependencies, "mutateGoogleChanges", async () => new Map([["change-1", {}]]));
 
   const result = await submitChangeSetForReview("cs-1", "Bob");
 
-  assert.equal(result.status, "awaiting_approval");
+  assert.equal(result.status, "ready_to_publish");
   assert.equal(patchChangeSet.mock.calls.length, 2);
-  assert.equal(patchFieldChange.mock.calls.length, 4);
+  assert.equal(patchFieldChange.mock.calls.length, 3);
   assert.equal(addEvent.mock.calls.length, 1);
 });
 
@@ -84,60 +84,21 @@ test("submitChangeSetForReview detects conflicts when latest Google values chang
   const conflictedSet = makeChangeSet({ status: "conflict_detected" }, { latest_official_value: "Google changed", reviewed_official_value: null, conflict_resolution: null });
 
   const calls: string[] = [];
-  mock.method(adsSupabase, "getChangeSet", async () => {
+  mock.method(adsManagementServiceDependencies, "getChangeSet", async () => {
     const response = calls.length === 0 ? draftedSet : conflictedSet;
     calls.push(response.status);
     return response;
   }, { times: 2 });
-  mock.method(adsSupabase, "patchChangeSet", async () => undefined);
-  mock.method(adsSupabase, "patchFieldChange", async () => undefined);
-  mock.method(adsSupabase, "addEvent", async () => undefined);
-  mock.method(adsGoogle, "fetchOfficialValues", async () => new Map([["change-1", "Google changed"]]));
-  mock.method(adsGoogle, "mutateGoogleChanges", async () => new Map([["change-1", {}]]));
+  mock.method(adsManagementServiceDependencies, "patchChangeSet", async () => undefined);
+  mock.method(adsManagementServiceDependencies, "patchFieldChange", async () => undefined);
+  mock.method(adsManagementServiceDependencies, "addEvent", async () => undefined);
+  mock.method(adsManagementServiceDependencies, "fetchOfficialValues", async () => new Map([["change-1", "Google changed"]]));
+  mock.method(adsManagementServiceDependencies, "mutateGoogleChanges", async () => new Map([["change-1", {}]]));
 
   const result = await submitChangeSetForReview("cs-1", "Bob");
 
   assert.equal(result.status, "conflict_detected");
   assert.equal(calls.join(","), "draft,conflict_detected");
-});
-
-test("approvePublishVerify blocks approval by the same creator", async () => {
-  const draftedSet = makeChangeSet({ status: "awaiting_approval" });
-  mock.method(adsSupabase, "getChangeSet", async () => draftedSet, { times: 1 });
-  mock.method(adsSupabase, "addApproval", async () => undefined);
-  mock.method(adsSupabase, "patchChangeSet", async () => undefined);
-  mock.method(adsSupabase, "patchFieldChange", async () => undefined);
-  mock.method(adsSupabase, "addEvent", async () => undefined);
-  mock.method(adsGoogle, "fetchOfficialValues", async () => new Map([["change-1", "Old name"]]));
-  mock.method(adsGoogle, "mutateGoogleChanges", async () => new Map([["change-1", {}]]));
-
-  await assert.rejects(async () => approvePublishVerify("cs-1", "Alice", "self approval"), /second person/i);
-});
-
-test("rejectChangeRequest rejects request and records cancelled status", async () => {
-  const draftedSet = makeChangeSet({ status: "awaiting_approval" });
-  mock.method(adsSupabase, "getChangeSet", async () => draftedSet, { times: 1 });
-  mock.method(adsSupabase, "addApproval", async () => undefined);
-  mock.method(adsSupabase, "addEvent", async () => undefined);
-  mock.method(adsSupabase, "patchChangeSet", async () => undefined);
-
-  const result = await rejectChangeRequest("cs-1", "Bob", "Needs more review");
-
-  assert.equal(result.status, "cancelled");
-});
-
-test("rejectChangeRequest blocks same-person rejection", async () => {
-  const draftedSet = makeChangeSet({ status: "awaiting_approval" });
-  mock.method(adsSupabase, "getChangeSet", async () => draftedSet, { times: 1 });
-
-  await assert.rejects(async () => rejectChangeRequest("cs-1", "Alice", "self reject"), /second person/i);
-});
-
-test("rejectChangeRequest rejects if request is not awaiting approval", async () => {
-  const draftedSet = makeChangeSet({ status: "draft" });
-  mock.method(adsSupabase, "getChangeSet", async () => draftedSet, { times: 1 });
-
-  await assert.rejects(async () => rejectChangeRequest("cs-1", "Bob", "too late"), /not ready/i);
 });
 
 test("resolveConflict keeps official value when user chooses to keep official", async () => {
@@ -171,7 +132,7 @@ test("resolveConflict keeps official value when user chooses to keep official", 
   });
 
   const updatedSet = makeChangeSet({
-    status: "awaiting_approval",
+    status: "ready_to_publish",
     created_by_name: "Alice",
     ads_field_changes: [
       {
@@ -201,15 +162,15 @@ test("resolveConflict keeps official value when user chooses to keep official", 
   });
 
   let calls = 0;
-  mock.method(adsSupabase, "getChangeSet", async () => {
+  mock.method(adsManagementServiceDependencies, "getChangeSet", async () => {
     calls += 1;
     return calls === 1 ? set : updatedSet;
-  }, { times: 2 });
-  mock.method(adsSupabase, "patchFieldChange", async () => undefined);
-  mock.method(adsSupabase, "patchChangeSet", async () => undefined);
-  mock.method(adsSupabase, "addEvent", async () => undefined);
+  }, { times: 3 });
+  mock.method(adsManagementServiceDependencies, "patchFieldChange", async () => undefined);
+  mock.method(adsManagementServiceDependencies, "patchChangeSet", async () => undefined);
+  mock.method(adsManagementServiceDependencies, "addEvent", async () => undefined);
 
   const result = await resolveConflict("cs-1", "change-1", "keep_official", "Bob");
 
-  assert.equal(result.status, "awaiting_approval");
+  assert.equal(result.status, "ready_to_publish");
 });

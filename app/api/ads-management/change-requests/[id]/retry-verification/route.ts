@@ -1,10 +1,14 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { retryChangeRequestVerification } from "@/lib/ads-management/service";
+import { canEditAds } from "@/lib/auth/permissions";
+import { authSessionFromRequest, sessionDisplayName } from "@/lib/auth/session";
 
-export async function POST(request: Request, { params }: { params: Promise<{ id: string }> }) {
+export async function POST(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
-    const body = await request.json() as { actorName?: string };
-    return NextResponse.json(await retryChangeRequestVerification((await params).id, body.actorName || ""));
+    const session = await authSessionFromRequest(request);
+    if (!session) return NextResponse.json({ error: "Authentication required." }, { status: 401 });
+    if (!canEditAds(session.role)) return NextResponse.json({ error: "Your role cannot retry verification." }, { status: 403 });
+    return NextResponse.json(await retryChangeRequestVerification((await params).id, sessionDisplayName(session)));
   } catch (error) {
     return NextResponse.json({ error: error instanceof Error ? error.message : "Verification retry failed." }, { status: 400 });
   }

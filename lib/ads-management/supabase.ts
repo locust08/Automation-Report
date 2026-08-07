@@ -2,8 +2,8 @@ import type { AdsChangeSetRecord, DraftChangeInput, DraftEditorContext } from "@
 
 function config() {
   const url = process.env.SUPABASE_URL?.trim();
-  const key = process.env.SUPABASE_SECRET_KEY?.trim() || process.env.SUPABASE_SERVICE_ROLE_KEY?.trim();
-  if (!url || !key) throw new Error("Supabase is not configured. Set SUPABASE_URL and SUPABASE_SECRET_KEY (or the legacy SUPABASE_SERVICE_ROLE_KEY).");
+  const key = process.env.SUPABASE_SECRET_KEY?.trim() || process.env.SUPABASE_SERVICE_ROLE_KEY?.trim() || process.env.SUPABASE_SECRET?.trim();
+  if (!url || !key) throw new Error("Supabase is not configured. Set SUPABASE_URL and SUPABASE_SECRET_KEY (or SUPABASE_SECRET / SUPABASE_SERVICE_ROLE_KEY).");
   return { url: url.replace(/\/$/, ""), key };
 }
 
@@ -34,8 +34,8 @@ export async function getChangeSet(id: string): Promise<AdsChangeSetRecord> {
   return rows[0];
 }
 
-export async function createChangeSet(input: { accountId: string; accountName: string; title: string; reason: string; creatorName: string; baselineCapturedAt: string; changes: DraftChangeInput[]; editorContext?: DraftEditorContext }): Promise<AdsChangeSetRecord> {
-  const created = await db<AdsChangeSetRecord[]>("ads_change_sets", { method: "POST", body: JSON.stringify({ account_id: input.accountId, account_name: input.accountName, platform: "google", title: input.title, reason: input.reason, created_by_name: input.creatorName, baseline_captured_at: input.baselineCapturedAt }) });
+export async function createChangeSet(input: { accountId: string; accountName: string; title: string; reason: string; creatorId: string; creatorName: string; baselineCapturedAt: string; changes: DraftChangeInput[]; editorContext?: DraftEditorContext }): Promise<AdsChangeSetRecord> {
+  const created = await db<AdsChangeSetRecord[]>("ads_change_sets", { method: "POST", body: JSON.stringify({ account_id: input.accountId, account_name: input.accountName, platform: "google", title: input.title, reason: input.reason, created_by_id: input.creatorId, created_by_name: input.creatorName, baseline_captured_at: input.baselineCapturedAt }) });
   const changeSet = created[0];
   if (!changeSet) throw new Error("Change request could not be created.");
   await replaceDraftChanges(changeSet.id, changeSet.version, input.changes, input.creatorName, undefined, input.editorContext);
@@ -61,14 +61,39 @@ export async function patchFieldChange(id: string, values: Record<string, unknow
   await db(`ads_field_changes?id=eq.${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify({ ...values, updated_at: new Date().toISOString() }) });
 }
 
-export async function addApproval(changeSetId: string, version: number, approverName: string, comment: string, decision: "approved" | "rejected" | "withdrawn" = "approved") {
-  await db("ads_change_approvals", { method: "POST", body: JSON.stringify({ change_set_id: changeSetId, decision, approver_name: approverName, comment, change_set_version: version }) });
-}
-
 export async function addEvent(changeSetId: string, eventType: string, actorName: string, message: string, metadata: Record<string, unknown> = {}, fieldChangeId?: string) {
   await db("ads_change_events", { method: "POST", body: JSON.stringify({ change_set_id: changeSetId, field_change_id: fieldChangeId ?? null, event_type: eventType, actor_name: actorName, message, metadata }) });
 }
 
 export async function createNotification(changeSetId: string, message: string) {
-  await db("ads_change_notifications", { method: "POST", body: JSON.stringify({ change_set_id: changeSetId, channel: "copy", message, status: "draft" }) });
+  await db("ads_change_notifications", { method: "POST", body: JSON.stringify({ change_set_id: changeSetId, channel: "email", message, status: "draft" }) });
+}
+
+export interface PendingChangeNotification {
+  id: string;
+  change_set_id: string;
+  message: string;
+  ads_change_sets: AdsChangeSetRecord & { ads_field_changes?: AdsChangeSetRecord["ads_field_changes"] };
+}
+
+export async function listPendingChangeNotifications(): Promise<PendingChangeNotification[]> {
+  // Selecting the delivery columns before sending is intentional: if the migration
+  // has not been applied, the cron fails safely before Resend can deliver duplicates.
+  return db("ads_change_notifications?status=eq.draft&select=id,change_set_id,message,recipient_names,recipient_emails,sent_at,last_error_message,ads_change_sets(*,ads_field_changes(*))&order=created_at.asc");
+}
+
+export async function markChangeNotificationsSent(ids: string[], recipientNames: string[], recipientEmails: string[]) {
+  if (!ids.length) return;
+  await db(`ads_change_notifications?id=in.(${ids.map(encodeURIComponent).join(",")})`, {
+    method: "PATCH",
+    body: JSON.stringify({ status: "sent", sent_at: new Date().toISOString(), recipient_names: recipientNames, recipient_emails: recipientEmails, last_error_message: null, updated_at: new Date().toISOString() }),
+  });
+}
+
+export async function markChangeNotificationsFailed(ids: string[], errorMessage: string) {
+  if (!ids.length) return;
+  await db(`ads_change_notifications?id=in.(${ids.map(encodeURIComponent).join(",")})`, {
+    method: "PATCH",
+    body: JSON.stringify({ last_error_message: errorMessage.slice(0, 1000), updated_at: new Date().toISOString() }),
+  });
 }

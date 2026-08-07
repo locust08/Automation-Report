@@ -9,6 +9,7 @@ export type ReportLoadingKind =
   | "keywords"
   | "auction"
   | "insights"
+  | "management"
   | "fallback";
 
 export interface ReportLoadingDefinition {
@@ -169,6 +170,30 @@ const REPORT_LOADING_DEFINITIONS: Record<ReportLoadingKind, ReportLoadingDefinit
     errorTitle: "Unable to get the dashboard ready",
     successTitle: "Dashboard is ready",
     successMessage: "Dashboard data has been prepared successfully.",
+  },
+  management: {
+    kind: "management",
+    title: "Preparing Google Ads management...",
+    description: "Loading the latest campaigns, ad groups, ads, and editable settings...",
+    supportMessages: [
+      "Validating access to the selected Google Ads account.",
+      "Refreshing campaigns, ad groups, ads, and linked budgets.",
+      "Aligning official values with saved change requests.",
+      "Preparing the controlled editing workspace.",
+    ],
+    steps: [
+      "Validating access",
+      "Refreshing Google Ads",
+      "Aligning changes",
+      "Preparing workspace",
+    ],
+    icon: "megaphone",
+    longWaitTitle: "Still preparing Google Ads management...",
+    longWaitMessage:
+      "Google Ads can take longer when the account contains many campaigns, ads, and linked assets.",
+    errorTitle: "Unable to prepare Google Ads management",
+    successTitle: "Google Ads management is ready",
+    successMessage: "The latest supported Google Ads settings are ready to review and edit.",
   },
   download: {
     kind: "download",

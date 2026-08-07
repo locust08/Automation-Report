@@ -1,4 +1,6 @@
 import { jwtVerify, SignJWT, type JWTPayload } from "jose";
+import type { NextRequest } from "next/server";
+import { normalizeAdsRole } from "@/lib/auth/permissions";
 
 export const AUTH_COOKIE_NAME = "ads_reporting_session";
 export const REMEMBER_ME_SECONDS = 60 * 60 * 24 * 30;
@@ -53,8 +55,17 @@ export async function verifyAuthToken(token: string): Promise<AuthSession | null
       return null;
     }
 
-    return payload as AuthSession;
+    return { ...payload, role: normalizeAdsRole(payload.role), fullName: payload.fullName ?? null } as AuthSession;
   } catch {
     return null;
   }
+}
+
+export async function authSessionFromRequest(request: NextRequest): Promise<AuthSession | null> {
+  const token = request.cookies.get(AUTH_COOKIE_NAME)?.value;
+  return token ? verifyAuthToken(token) : null;
+}
+
+export function sessionDisplayName(session: Pick<AuthSession, "email" | "fullName">): string {
+  return session.fullName?.trim() || session.email;
 }

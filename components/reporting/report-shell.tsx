@@ -12,6 +12,7 @@ import {
   ListChecksIcon,
   LogOutIcon,
   SearchCheckIcon,
+  SlidersHorizontalIcon,
   SparklesIcon,
   UploadCloudIcon,
 } from "lucide-react";
@@ -62,6 +63,7 @@ export function ReportShell({
     metaImport: "/meta-import",
     billing: "/billing",
     searchTermOptimization: "/search-term-optimization",
+    googleManagement: withQuery("/manage/google", activeQuery),
   };
 
   return (
@@ -155,6 +157,13 @@ export function ReportShell({
                       active={pathname === "/search-term-optimization"}
                     >
                       <SearchCheckIcon className="size-5" />
+                    </ReportNavLink>
+                    <ReportNavLink
+                      href={hrefs.googleManagement}
+                      label="Google Ads Management"
+                      active={pathname.startsWith("/manage/google")}
+                    >
+                      <SlidersHorizontalIcon className="size-5" />
                     </ReportNavLink>
                     <ReportLogoutButton />
                   </nav>

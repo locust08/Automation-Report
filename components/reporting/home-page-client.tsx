@@ -1,6 +1,7 @@
 "use client";
 
 import { FormEvent, KeyboardEvent, useEffect, useMemo, useRef, useState } from "react";
+import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
   ArrowRightIcon,
@@ -597,10 +598,10 @@ export function HomePageClient({ displayName }: HomePageClientProps) {
                   variant="outline"
                   className="h-auto min-h-12 w-full whitespace-normal border-white/30 bg-white/10 px-4 py-3 text-center leading-snug text-white shadow-none hover:bg-white/20 hover:text-white"
                 >
-                  <a href={googleManagementHref}>
+                  <Link href={googleManagementHref}>
                     Edit Google Ads
                     <SlidersHorizontalIcon data-icon="inline-end" />
-                  </a>
+                  </Link>
                 </Button>
               ) : (
                 <Button type="button" variant="outline" disabled className="h-auto min-h-12 w-full whitespace-normal border-white/30 bg-white/10 px-4 py-3 text-center leading-snug text-white shadow-none">
