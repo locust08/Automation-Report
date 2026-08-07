@@ -1,11 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
-import { createChangeSet, listAccountChangeSets } from "@/lib/ads-management/supabase";
+import { createChangeSet, listAccountChangeSets, listEditableAccountChangeSets } from "@/lib/ads-management/supabase";
 import type { DraftChangeInput, DraftEditorContext } from "@/lib/ads-management/types";
 import { canEditAds } from "@/lib/auth/permissions";
 import { authSessionFromRequest, sessionDisplayName } from "@/lib/auth/session";
 export const dynamic = "force-dynamic";
 export async function GET(request: NextRequest) {
-  try { const session = await authSessionFromRequest(request); if (!session) return NextResponse.json({ error: "Authentication required." }, { status: 401 }); const accountId = new URL(request.url).searchParams.get("accountId")?.trim() || ""; if (!accountId) return NextResponse.json({ error: "accountId is required." }, { status: 400 }); return NextResponse.json({ requests: await listAccountChangeSets(accountId) }); }
+  try { const session = await authSessionFromRequest(request); if (!session) return NextResponse.json({ error: "Authentication required." }, { status: 401 }); const searchParams = new URL(request.url).searchParams; const accountId = searchParams.get("accountId")?.trim() || ""; if (!accountId) return NextResponse.json({ error: "accountId is required." }, { status: 400 }); const requests = searchParams.get("editable") === "true" ? await listEditableAccountChangeSets(accountId, session.sub) : await listAccountChangeSets(accountId); return NextResponse.json({ requests }); }
   catch (error) { return NextResponse.json({ error: message(error) }, { status: 500 }); }
 }
 export async function POST(request: NextRequest) {

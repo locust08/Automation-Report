@@ -28,6 +28,10 @@ export async function listAccountChangeSets(accountId: string): Promise<AdsChang
   return db(`ads_change_sets?account_id=eq.${encodeURIComponent(accountId)}&select=*&order=updated_at.desc`);
 }
 
+export async function listEditableAccountChangeSets(accountId: string, creatorId: string): Promise<AdsChangeSetRecord[]> {
+  return db(`ads_change_sets?account_id=eq.${encodeURIComponent(accountId)}&created_by_id=eq.${encodeURIComponent(creatorId)}&status=in.(draft,validation_failed,conflict_detected)&select=*,ads_field_changes(*),ads_change_events(*)&order=updated_at.desc`);
+}
+
 export async function getChangeSet(id: string): Promise<AdsChangeSetRecord> {
   const rows = await db<AdsChangeSetRecord[]>(`ads_change_sets?id=eq.${encodeURIComponent(id)}&select=*,ads_field_changes(*),ads_change_approvals(*),ads_change_events(*),ads_change_notifications(*)`);
   if (!rows[0]) throw new Error("Change request was not found.");
