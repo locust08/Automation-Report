@@ -72,28 +72,41 @@ export async function POST(request: Request) {
   const config = MANUAL_REPORTS[reportType];
   const workerRequest = buildWorkerManualSendRequest(config, reportType);
   const workerResult = await createCloudflareReportJob(workerRequest);
+  const jobQueued = workerResult.success && Boolean(workerResult.jobId);
+  const skippedAlreadySent = workerResult.skippedAlreadySent ?? 0;
+  const skippedCount = workerResult.skippedTotal ??
+    (workerResult.skippedUnchecked ?? 0) +
+      (workerResult.skippedMissingEmail ?? 0) +
+      skippedAlreadySent;
+  const noNewReports = workerResult.success && !jobQueued;
+  const message = !workerResult.success
+    ? workerResult.error ?? `${config.label} job could not be queued.`
+    : jobQueued
+      ? `${config.label} job queued. PDFs and emails will be processed by Cloudflare; the completion report will be emailed when the job finishes.`
+      : skippedAlreadySent > 0
+        ? `No new ${config.label.toLowerCase()} emails were queued. ${skippedAlreadySent} account${skippedAlreadySent === 1 ? " was" : "s were"} already sent for this reporting period.`
+        : `No new ${config.label.toLowerCase()} emails were queued because no eligible unsent accounts were found.`;
 
   return Response.json({
       success: workerResult.success,
       ok: workerResult.success,
-      message: workerResult.success
-        ? `${config.label} job queued. PDFs and emails will be processed by Cloudflare; the completion report will be emailed when the job finishes.`
-        : workerResult.error ?? `${config.label} job could not be queued.`,
+      message,
       reportType,
       jobId: workerResult.jobId ?? null,
-      status: workerResult.status ?? null,
+      status: workerResult.status ?? (noNewReports ? "skipped" : null),
       createdAt: workerResult.createdAt ?? null,
       reusedActiveJob: Boolean(workerResult.reusedActiveJob),
       reportTypeLabel: config.label,
       totalCheckedAccounts: workerResult.total ?? 0,
       sentCount: 0,
-      skippedCount: workerResult.skippedTotal ?? workerResult.skippedUnchecked ?? 0,
+      skippedCount,
       failedCount: workerResult.success ? 0 : 1,
       testMode: false,
       dryRun: false,
       deliveryMode: "live",
-      actualRecipientBehavior:
-        "Live mode: checked accounts are queued and sent to their Notion recipient email addresses. Ava and the configured notification recipients receive the completion report.",
+      actualRecipientBehavior: jobQueued
+        ? "Live mode: checked accounts are queued and sent to their Notion recipient email addresses. Ava and the configured notification recipients receive the completion report."
+        : "No email job was created. Accounts already delivered for this reporting period remain protected from duplicate sends.",
       confirmationCheckboxProperty: resolveConfirmationCheckboxLabel(reportType),
       checkedCount: workerResult.total ?? 0,
       resolvedAccountCount: workerResult.total ?? 0,
@@ -102,7 +115,7 @@ export async function POST(request: Request) {
       warning: workerResult.success ? null : workerResult.error ?? null,
       details: [],
       result: workerResult,
-    }, { status: workerResult.success ? 202 : 503 });
+    }, { status: workerResult.success ? (jobQueued ? 202 : 200) : 503 });
 }
 
 export async function GET(request: Request) {

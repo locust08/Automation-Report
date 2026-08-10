@@ -1,4 +1,5 @@
 name = "ads-dashboard-monthly-report-automation"
+account_id = "e7c515dde995479daacd82ad79dfc3e8"
 main = "src/index.ts"
 compatibility_date = "2026-04-28"
 compatibility_flags = ["nodejs_compat"]
@@ -23,6 +24,7 @@ REPORT_EMAIL_DELIVERY_MODE = "attachment"
 BROWSER_LAUNCH_SPACING_MS = "20000"
 REPORT_COMPLETION_NOTIFICATION_TO = "waiing@locus-t.com.my"
 REPORT_COMPLETION_NOTIFICATION_CC = "eason@locus-t.com.my,ava@locus-t.com.my"
+REPORT_MANUAL_LIFECYCLE_NOTIFICATION_TO = "jakettm6799@gmail.com"
 
 [[d1_databases]]
 binding = "REPORT_JOBS_DB"

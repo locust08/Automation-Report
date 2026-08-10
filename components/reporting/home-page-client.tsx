@@ -155,6 +155,10 @@ export function HomePageClient({ displayName, role }: HomePageClientProps) {
 
   const workerJobActive = Boolean(workerProgress && !isTerminalWorkerStatus(workerProgress.status));
   const sendControlsLocked = isSending || workerJobActive;
+  const selectedReportAlreadyHandled = Boolean(
+    sendSummary && !sendSummary.jobId && isTerminalWorkerStatus(sendSummary.status ?? "")
+  );
+  const sendActionDisabled = sendControlsLocked || selectedReportAlreadyHandled;
 
   useEffect(() => {
     if (!workerJobActive) return;
@@ -453,6 +457,10 @@ export function HomePageClient({ displayName, role }: HomePageClientProps) {
         targetSource: payload.targetSource,
         warning: payload.warning ?? null,
         details: Array.isArray(payload.details) ? payload.details : [],
+        jobId: payload.jobId ?? null,
+        status: payload.status ?? null,
+        createdAt: payload.createdAt ?? null,
+        reusedActiveJob: Boolean(payload.reusedActiveJob),
       });
       if (payload.jobId) {
         queuedWorkerJob = true;
@@ -839,7 +847,12 @@ export function HomePageClient({ displayName, role }: HomePageClientProps) {
                   <button
                     key={option.value}
                     type="button"
-                    onClick={() => setSelectedReportType(option.value)}
+                    onClick={() => {
+                      setSelectedReportType(option.value);
+                      setSendSummary(null);
+                      setSendError(null);
+                      setWorkerProgress(null);
+                    }}
                     disabled={sendControlsLocked}
                     className={`flex w-full items-center gap-3 rounded-lg border p-3 text-left transition disabled:opacity-60 ${
                       isSelected
@@ -942,7 +955,7 @@ export function HomePageClient({ displayName, role }: HomePageClientProps) {
               <Button
                 type="button"
                 onClick={handleManualSend}
-                disabled={sendControlsLocked}
+                disabled={sendActionDisabled}
                 className="bg-red-600 hover:bg-red-700"
               >
                 {sendControlsLocked ? (
@@ -950,6 +963,8 @@ export function HomePageClient({ displayName, role }: HomePageClientProps) {
                     <Loader2Icon className="animate-spin" />
                     Sending
                   </>
+                ) : selectedReportAlreadyHandled ? (
+                  <>Already handled</>
                 ) : (
                   <>
                     Send Now

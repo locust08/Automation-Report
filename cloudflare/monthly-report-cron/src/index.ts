@@ -23,6 +23,7 @@ interface Env {
   BROWSER_LAUNCH_SPACING_MS?: string;
   REPORT_COMPLETION_NOTIFICATION_TO?: string;
   REPORT_COMPLETION_NOTIFICATION_CC?: string;
+  REPORT_MANUAL_LIFECYCLE_NOTIFICATION_TO?: string;
   ADVANCED_REPORT_ENABLED?: string;
 }
 
@@ -217,6 +218,7 @@ const ADVANCED_REPORT_READY_POLL_MS = 5000;
 const EMAIL_SAFE_PDF_SIZE_BYTES = 35 * 1024 * 1024;
 const DEFAULT_COMPLETION_NOTIFICATION_TO = ["waiing@locus-t.com.my"];
 const DEFAULT_COMPLETION_NOTIFICATION_CC = ["eason@locus-t.com.my", "ava@locus-t.com.my"];
+const DEFAULT_MANUAL_LIFECYCLE_NOTIFICATION_TO = ["jakettm6799@gmail.com"];
 const DEFAULT_FROM_ADDRESS = "LOCUS-T Reports <reports@locus-t.com.my>";
 const DEFAULT_EMAIL_LOGO_URL = "https://www.locus-t.com.my/wp-content/uploads/2024/09/LT-Logo-25.svg";
 
@@ -389,6 +391,7 @@ async function createReportJob(
 ): Promise<Record<string, unknown>> {
   const testMode = Boolean(input.forceTestMode);
   const sendEmail = input.sendEmail !== false;
+  const isManualJob = Boolean(input.manualReportType);
   const scheduledDate = resolveScheduledDate(input.scheduledDate ?? input.scheduledTime);
   const jobReportType = resolveJobReportType(input, scheduledDate);
   const requestedRange = resolveDateRange(input);
@@ -453,6 +456,7 @@ async function createReportJob(
   const skippedTotal = skippedUnchecked + skippedMissingEmail + duplicateResult.skippedAlreadySent;
   const jobMetadata = {
     ...metadata,
+    manualLifecycleNotification: String(isManualJob),
     skippedUnchecked: String(skippedUnchecked),
     skippedMissingEmail: String(skippedMissingEmail),
     skippedAlreadySent: String(duplicateResult.skippedAlreadySent),
@@ -467,6 +471,15 @@ async function createReportJob(
     console.info(
       `[monthly-report-automation] debug summary processed=0 sent=0 skipped=${skippedTotal} failed=0 report_type=${normalizeReportType(input.reportType)} period=${resolved.reportMonthKey} scheduled_date=${scheduledDate}`
     );
+    if (isManualJob) {
+      await sendManualLifecycleNotificationSafely(env, {
+        state: "not_started",
+        reportType: jobReportType,
+        reportMonthLabel: resolved.reportMonthLabel,
+        total: 0,
+        skippedTotal,
+      });
+    }
     return {
       success: true,
       status: "empty",
@@ -574,6 +587,17 @@ async function createReportJob(
   console.info(
     `[monthly-report-automation] debug summary processed=0 sent=0 skipped=${skippedTotal} failed=0 report_type=${normalizeReportType(input.reportType)} period=${resolved.reportMonthKey} scheduled_date=${scheduledDate} queued=${targets.length}`
   );
+
+  if (isManualJob) {
+    await sendManualLifecycleNotificationSafely(env, {
+      state: "started",
+      jobId,
+      reportType: jobReportType,
+      reportMonthLabel: resolved.reportMonthLabel,
+      total: targets.length,
+      skippedTotal,
+    });
+  }
 
   return {
     success: true,
@@ -2022,16 +2046,25 @@ async function sendCompletionNotificationEmail(
   }
 
   const cc = parseEmailList(env.REPORT_COMPLETION_NOTIFICATION_CC, DEFAULT_COMPLETION_NOTIFICATION_CC);
+  const metadata = parseJobMetadata(input.job.metadata_json);
+  const manualLifecycleRecipients = metadata?.manualLifecycleNotification === "true"
+    ? parseEmailList(
+        env.REPORT_MANUAL_LIFECYCLE_NOTIFICATION_TO,
+        DEFAULT_MANUAL_LIFECYCLE_NOTIFICATION_TO
+      )
+    : [];
   const subjectPrefix = input.job.test_mode ? "[TEST] " : "";
   const completedCount = input.items.filter((item) => item.status === "completed").length;
   const failedCount = input.failedItems.length;
   const statusLabel = failedCount > 0 ? `${failedCount} failed` : "all completed";
+  const completionVerb = manualLifecycleRecipients.length > 0 ? "Ended" : "Finished";
   const fromAddress = env.RESEND_FROM_MONTHLY_REPORT?.trim() || DEFAULT_FROM_ADDRESS;
   const body: Record<string, unknown> = {
     from: fromAddress,
     to: recipients,
     cc: cc.length > 0 ? cc : undefined,
-    subject: `${subjectPrefix}[Report Automation] Finished - ${input.job.report_month_label} - ${completedCount}/${input.items.length} completed, ${statusLabel}`,
+    bcc: manualLifecycleRecipients.length > 0 ? manualLifecycleRecipients : undefined,
+    subject: `${subjectPrefix}[Report Automation] ${completionVerb} - ${input.job.report_month_label} - ${completedCount}/${input.items.length} completed, ${statusLabel}`,
     html: buildCompletionNotificationEmailHtml({
       job: input.job,
       items: input.items,
@@ -2062,6 +2095,83 @@ async function sendCompletionNotificationEmail(
   return {
     resendEmailId: payload?.id ?? null,
   };
+}
+
+async function sendManualLifecycleNotificationSafely(
+  env: Env,
+  input: {
+    state: "started" | "not_started";
+    jobId?: string;
+    reportType: string;
+    reportMonthLabel: string;
+    total: number;
+    skippedTotal: number;
+  }
+): Promise<void> {
+  try {
+    const recipients = parseEmailList(
+      env.REPORT_MANUAL_LIFECYCLE_NOTIFICATION_TO,
+      DEFAULT_MANUAL_LIFECYCLE_NOTIFICATION_TO
+    );
+    if (recipients.length === 0) {
+      return;
+    }
+
+    const started = input.state === "started";
+    const fromAddress = env.RESEND_FROM_MONTHLY_REPORT?.trim() || DEFAULT_FROM_ADDRESS;
+    const title = started ? "Manual report job started" : "Manual report job did not start";
+    const explanation = started
+      ? `${input.total} account${input.total === 1 ? "" : "s"} were queued for processing.`
+      : `No eligible unsent accounts were found. ${input.skippedTotal} account${input.skippedTotal === 1 ? " was" : "s were"} skipped.`;
+    const details = [
+      ["Report", formatLifecycleReportType(input.reportType)],
+      ["Report month", input.reportMonthLabel],
+      ["Job ID", input.jobId ?? "Not created"],
+      ["Queued", String(input.total)],
+      ["Skipped", String(input.skippedTotal)],
+    ];
+    const detailRows = details
+      .map(
+        ([label, value]) =>
+          `<tr><td style="padding:8px 12px;border-top:1px solid #e5e7eb;color:#6b7280;font-weight:700;">${escapeHtml(label)}</td><td style="padding:8px 12px;border-top:1px solid #e5e7eb;color:#111827;">${escapeHtml(value)}</td></tr>`
+      )
+      .join("");
+
+    const response = await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${readRequired(env.RESEND_API_KEY, "RESEND_API_KEY")}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        from: fromAddress,
+        to: recipients,
+        subject: `[Report Automation] ${started ? "Started" : "Not started"} - ${formatLifecycleReportType(input.reportType)} - ${input.reportMonthLabel}`,
+        html: `<div style="font-family:Arial,sans-serif;color:#111827;line-height:1.5"><h2>${escapeHtml(title)}</h2><p>${escapeHtml(explanation)}</p><table role="presentation" cellspacing="0" cellpadding="0" style="border-collapse:collapse;min-width:420px;border:1px solid #e5e7eb">${detailRows}</table>${started ? "<p>A separate completion email will be sent when the job ends.</p>" : ""}</div>`,
+      }),
+    });
+    const payload = (await response.json().catch(() => null)) as { error?: { message?: string } } | null;
+    if (!response.ok) {
+      throw new Error(
+        formatResendDeliveryError(
+          payload?.error?.message ?? `Resend lifecycle notification failed with status ${response.status}.`,
+          fromAddress
+        )
+      );
+    }
+  } catch (error) {
+    console.error("[monthly-report-automation] manual lifecycle notification failed", formatError(error));
+  }
+}
+
+function formatLifecycleReportType(reportType: string): string {
+  if (reportType === "monthlyAdvanced") {
+    return "Advanced Report";
+  }
+  if (reportType === "biweeklyOverall") {
+    return "Bi-weekly Report";
+  }
+  return "Monthly Report";
 }
 
 async function refreshJobStatus(env: Env, jobId: string): Promise<void> {
