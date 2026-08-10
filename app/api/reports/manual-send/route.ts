@@ -1,17 +1,13 @@
-import { runMonthlyReportJob } from "@/src/lib/cron/run-monthly-report-job";
-
 export const runtime = "nodejs";
 export const maxDuration = 300;
 
-const DEFAULT_MONTHLY_REPORT_TEST_RECIPIENT = "amirulshahrul1775@gmail.com";
-
 type ManualReportType = "monthly" | "advanced" | "biweekly";
-type DeliveryMode = "test" | "live" | "dryRun";
 
 interface CreateCloudflareReportJobRequest {
   sendEmail: boolean;
   forceTestMode: boolean;
   reportType: "overall" | "advanced";
+  manualReportType: "monthlyOverall" | "monthlyAdvanced" | "biweeklyOverall";
   scheduledDate: string;
   startDate: string;
   endDate: string;
@@ -30,6 +26,8 @@ interface CreateCloudflareReportJobResponse {
   skippedAlreadySent?: number;
   error?: string;
   message?: string;
+  createdAt?: string;
+  reusedActiveJob?: boolean;
 }
 
 const MANUAL_REPORTS: Record<
@@ -75,14 +73,17 @@ export async function POST(request: Request) {
   const workerRequest = buildWorkerManualSendRequest(config, reportType);
   const workerResult = await createCloudflareReportJob(workerRequest);
 
-  if (workerResult) {
-    return Response.json({
+  return Response.json({
       success: workerResult.success,
       ok: workerResult.success,
       message: workerResult.success
         ? `${config.label} job queued. PDFs and emails will be processed by Cloudflare; the completion report will be emailed when the job finishes.`
         : workerResult.error ?? `${config.label} job could not be queued.`,
       reportType,
+      jobId: workerResult.jobId ?? null,
+      status: workerResult.status ?? null,
+      createdAt: workerResult.createdAt ?? null,
+      reusedActiveJob: Boolean(workerResult.reusedActiveJob),
       reportTypeLabel: config.label,
       totalCheckedAccounts: workerResult.total ?? 0,
       sentCount: 0,
@@ -90,7 +91,7 @@ export async function POST(request: Request) {
       failedCount: workerResult.success ? 0 : 1,
       testMode: false,
       dryRun: false,
-      deliveryMode: "live" satisfies DeliveryMode,
+      deliveryMode: "live",
       actualRecipientBehavior:
         "Live mode: checked accounts are queued and sent to their Notion recipient email addresses. Ava and the configured notification recipients receive the completion report.",
       confirmationCheckboxProperty: resolveConfirmationCheckboxLabel(reportType),
@@ -101,59 +102,72 @@ export async function POST(request: Request) {
       warning: workerResult.success ? null : workerResult.error ?? null,
       details: [],
       result: workerResult,
-    }, { status: workerResult.success ? 202 : 502 });
-  }
-
-  const forceTestMode = process.env.NODE_ENV !== "production";
-  const result = await runMonthlyReportJob({
-    scheduleDay: config.scheduleDay,
-    reportType: config.reportType,
-    scheduledDate: resolveCanonicalScheduledDate(config.scheduleDay),
-    dateRange: reportType === "biweekly" ? resolveCurrentMonthFirstHalfRange() : undefined,
-    forceTestMode,
-    updateAccountSendStatus: true,
-  });
-  const deliveryMode = resolveDeliveryMode(result);
-  const message = buildManualSendMessage(config.label, result, deliveryMode);
-
-  return Response.json({
-    success: result.failed === 0,
-    ok: result.failed === 0,
-    message,
-    reportType,
-    reportTypeLabel: config.label,
-    totalCheckedAccounts: result.checkedCount,
-    sentCount: result.emailed,
-    skippedCount: result.skipped,
-    failedCount: result.failed,
-    testMode: result.testMode,
-    dryRun: result.dryRun,
-    deliveryMode,
-    actualRecipientBehavior: buildActualRecipientBehavior(result, deliveryMode),
-    confirmationCheckboxProperty: result.confirmationCheckboxProperty,
-    checkedCount: result.checkedCount,
-    resolvedAccountCount: result.resolvedAccountCount,
-    notionRowsFetched: result.notionRowsFetched,
-    targetSource: result.targetSource,
-    warning: result.warning,
-    details: result.accountResults.map((item) => ({
-      accountName: item.accountName,
-      email: item.email,
-      status: item.status,
-      notes: item.notes,
-    })),
-    result,
-  });
+    }, { status: workerResult.success ? 202 : 503 });
 }
 
-async function createCloudflareReportJob(
-  body: CreateCloudflareReportJobRequest
-): Promise<CreateCloudflareReportJobResponse | null> {
+export async function GET(request: Request) {
+  const url = new URL(request.url);
+  const jobId = url.searchParams.get("jobId")?.trim() ?? "";
+  const reportType = url.searchParams.get("reportType")?.trim() ?? "";
   const workerUrl = readOptionalEnv("MONTHLY_REPORT_WORKER_URL") ?? readOptionalEnv("REPORT_AUTOMATION_WORKER_URL");
   const workerSecret = readOptionalEnv("WORKER_API_SECRET");
 
   if (!workerUrl || !workerSecret) {
-    return null;
+    return Response.json(
+      {
+        success: false,
+        available: false,
+        error: "Live bulk sending is unavailable: MONTHLY_REPORT_WORKER_URL and WORKER_API_SECRET must be configured.",
+      },
+      { status: 503 }
+    );
+  }
+
+  let endpoint: string;
+  if (jobId) {
+    if (!/^[0-9a-f-]{36}$/i.test(jobId)) {
+      return Response.json({ success: false, error: "Invalid report job ID." }, { status: 400 });
+    }
+    endpoint = `${workerUrl.replace(/\/+$/, "")}/report-jobs/${encodeURIComponent(jobId)}`;
+  } else {
+    if (!isManualReportType(reportType)) {
+      return Response.json({ success: false, error: "A valid reportType is required." }, { status: 400 });
+    }
+    const config = MANUAL_REPORTS[reportType];
+    const range = reportType === "biweekly" ? resolveCurrentMonthFirstHalfRange() : resolvePreviousMonthRange();
+    const params = new URLSearchParams({
+      reportType: config.reportType,
+      reportMonthKey: range.reportMonthKey,
+    });
+    endpoint = `${workerUrl.replace(/\/+$/, "")}/report-jobs/active?${params}`;
+  }
+
+  const response = await fetch(endpoint, {
+    headers: { Authorization: `Bearer ${workerSecret}` },
+    cache: "no-store",
+  });
+  const payload = await response.json().catch(() => null);
+  if (!response.ok || !payload) {
+    return Response.json(
+      { success: false, error: `Unable to read Worker status (HTTP ${response.status}).` },
+      { status: response.status || 502 }
+    );
+  }
+  return Response.json({ available: true, ...payload });
+}
+
+async function createCloudflareReportJob(
+  body: CreateCloudflareReportJobRequest
+): Promise<CreateCloudflareReportJobResponse> {
+  const workerUrl = readOptionalEnv("MONTHLY_REPORT_WORKER_URL") ?? readOptionalEnv("REPORT_AUTOMATION_WORKER_URL");
+  const workerSecret = readOptionalEnv("WORKER_API_SECRET");
+
+  if (!workerUrl || !workerSecret) {
+    return {
+      success: false,
+      status: "configuration_error",
+      error: "Live bulk sending is unavailable: MONTHLY_REPORT_WORKER_URL and WORKER_API_SECRET must be configured.",
+    };
   }
 
   const response = await fetch(`${workerUrl.replace(/\/+$/, "")}/report-jobs`, {
@@ -191,6 +205,7 @@ function buildWorkerManualSendRequest(
     sendEmail: true,
     forceTestMode: false,
     reportType: manualReportType === "advanced" ? "advanced" : "overall",
+    manualReportType: config.reportType as CreateCloudflareReportJobRequest["manualReportType"],
     scheduledDate: resolveCanonicalScheduledDate(config.scheduleDay),
     ...range,
   };
@@ -232,61 +247,6 @@ function resolveConfirmationCheckboxLabel(reportType: ManualReportType): string 
 function readOptionalEnv(name: string): string | null {
   const value = process.env[name]?.trim();
   return value ? value : null;
-}
-
-function resolveDeliveryMode(result: Awaited<ReturnType<typeof runMonthlyReportJob>>): DeliveryMode {
-  if (result.dryRun) {
-    return "dryRun";
-  }
-  return result.testMode ? "test" : "live";
-}
-
-function buildManualSendMessage(
-  label: string,
-  result: Awaited<ReturnType<typeof runMonthlyReportJob>>,
-  deliveryMode: DeliveryMode
-): string {
-  if (result.failed > 0) {
-    if (result.processed === 0 && result.warning) {
-      return `${label} failed before sending: ${result.warning}`;
-    }
-    return deliveryMode === "test"
-      ? `Test send failed for ${result.failed} account(s).`
-      : `${label} finished with ${result.failed} failed account(s).`;
-  }
-
-  if (result.checkedCount === 0) {
-    return `No checked accounts found for ${label}.`;
-  }
-
-  if (deliveryMode === "dryRun") {
-    return `${label} dry run finished.`;
-  }
-
-  if (deliveryMode === "test") {
-    return "Test send finished.";
-  }
-
-  return `${label} sending finished.`;
-}
-
-function buildActualRecipientBehavior(
-  result: Awaited<ReturnType<typeof runMonthlyReportJob>>,
-  deliveryMode: DeliveryMode
-): string {
-  if (deliveryMode === "dryRun") {
-    return "Dry run only: PDFs may be generated, but no emails are sent.";
-  }
-
-  if (deliveryMode === "test") {
-    const testRecipient =
-      result.emailResults.find((item) => item.recipientEmail)?.recipientEmail ??
-      (process.env.MONTHLY_REPORT_TEST_RECIPIENT?.trim() ||
-        DEFAULT_MONTHLY_REPORT_TEST_RECIPIENT);
-    return `Test mode: only the first checked account is processed and email is sent to ${testRecipient}.`;
-  }
-
-  return "Live mode: checked accounts are sent to their Notion recipient email addresses.";
 }
 
 function isManualReportType(value: string): value is ManualReportType {

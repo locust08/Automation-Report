@@ -133,6 +133,7 @@ interface CreateJobRequest {
   forceTestMode?: boolean;
   sendEmail?: boolean;
   reportType?: string | null;
+  manualReportType?: "monthlyOverall" | "monthlyAdvanced" | "biweeklyOverall" | null;
   country?: string | null;
   scheduledDate?: string;
   scheduledTime?: string;
@@ -158,6 +159,7 @@ interface ReportQueueMessage {
 interface JobRow {
   id: string;
   status: string;
+  report_type: string;
   report_month_key: string;
   report_month_label: string;
   start_date: string;
@@ -333,6 +335,21 @@ async function handleFetch(request: Request, env: Env): Promise<Response> {
     return jsonResponse(result, 202);
   }
 
+  if (request.method === "GET" && url.pathname === "/report-jobs/active") {
+    if (!isAuthorized(request, env)) {
+      return jsonResponse({ success: false, error: "Unauthorized" }, 401);
+    }
+
+    const reportType = url.searchParams.get("reportType")?.trim() ?? "";
+    const reportMonthKey = url.searchParams.get("reportMonthKey")?.trim() ?? "";
+    if (!isScheduledReportType(reportType) || !/^\d{4}-\d{2}$/.test(reportMonthKey)) {
+      return jsonResponse({ success: false, error: "A valid reportType and reportMonthKey are required." }, 400);
+    }
+
+    const job = await findActiveReportJob(env, reportType, reportMonthKey);
+    return jsonResponse({ success: true, job });
+  }
+
   const jobMatch = url.pathname.match(/^\/report-jobs\/([^/]+)$/);
   if (request.method === "GET" && jobMatch) {
     if (!isAuthorized(request, env)) {
@@ -373,6 +390,22 @@ async function createReportJob(
   const testMode = Boolean(input.forceTestMode);
   const sendEmail = input.sendEmail !== false;
   const scheduledDate = resolveScheduledDate(input.scheduledDate ?? input.scheduledTime);
+  const jobReportType = resolveJobReportType(input, scheduledDate);
+  const requestedRange = resolveDateRange(input);
+  const activeJob = await findActiveReportJob(env, jobReportType, requestedRange.reportMonthKey);
+  if (activeJob) {
+    return {
+      success: true,
+      status: activeJob.status,
+      jobId: activeJob.id,
+      total: activeJob.total_items,
+      reportMonthKey: activeJob.report_month_key,
+      reportMonthLabel: activeJob.report_month_label,
+      createdAt: activeJob.created_at,
+      reusedActiveJob: true,
+      metadata,
+    };
+  }
   if (normalizeReportType(input.reportType) === "advanced" && !isAdvancedReportAutomationEnabled(env)) {
     console.warn(
       `[monthly-report-automation] skipped report_type=advanced scheduled_date=${scheduledDate} reason="ADVANCED_REPORT_ENABLED=false"`
@@ -450,15 +483,17 @@ async function createReportJob(
   const jobId = crypto.randomUUID();
   const jobStatus = targets.length > 0 ? "queued" : "empty";
 
-  await env.REPORT_JOBS_DB.prepare(
+  try {
+    await env.REPORT_JOBS_DB.prepare(
     `INSERT INTO report_jobs (
-      id, status, report_month_key, report_month_label, start_date, end_date,
+      id, status, report_type, report_month_key, report_month_label, start_date, end_date,
       total_items, send_email, test_mode, metadata_json, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   )
     .bind(
       jobId,
       jobStatus,
+      jobReportType,
       resolved.reportMonthKey,
       resolved.reportMonthLabel,
       resolved.startDate,
@@ -471,6 +506,23 @@ async function createReportJob(
       now
     )
     .run();
+  } catch (error) {
+    const concurrentJob = await findActiveReportJob(env, jobReportType, resolved.reportMonthKey);
+    if (!concurrentJob) {
+      throw error;
+    }
+    return {
+      success: true,
+      status: concurrentJob.status,
+      jobId: concurrentJob.id,
+      total: concurrentJob.total_items,
+      reportMonthKey: concurrentJob.report_month_key,
+      reportMonthLabel: concurrentJob.report_month_label,
+      createdAt: concurrentJob.created_at,
+      reusedActiveJob: true,
+      metadata,
+    };
+  }
 
   for (const target of targets) {
     const itemId = crypto.randomUUID();
@@ -533,6 +585,8 @@ async function createReportJob(
     skippedAlreadySent: duplicateResult.skippedAlreadySent,
     reportMonthKey: resolved.reportMonthKey,
     reportMonthLabel: resolved.reportMonthLabel,
+    createdAt: now,
+    reusedActiveJob: false,
     metadata: jobMetadata,
   };
 }
@@ -832,7 +886,8 @@ async function resolveTargets(
     const payload = await resolveTargetsFromVercel(env, {
       forceTestMode: testMode,
       overrideTargets: input.accounts,
-      reportType: input.reportType,
+      reportType: input.manualReportType ?? input.reportType,
+      manual: Boolean(input.manualReportType),
     }).catch((error) => {
       console.error("[monthly-report-automation] Vercel target enrichment failed", formatError(error));
       return { targets: input.accounts ?? [] };
@@ -847,7 +902,8 @@ async function resolveTargets(
 
   const payload = await resolveTargetsFromVercel(env, {
     forceTestMode: testMode,
-    reportType: input.reportType,
+    reportType: input.manualReportType ?? input.reportType,
+    manual: Boolean(input.manualReportType),
   });
   const inputRange = resolveDateRange(input);
 
@@ -866,6 +922,7 @@ async function resolveTargetsFromVercel(
     forceTestMode: boolean;
     overrideTargets?: ReportTarget[];
     reportType?: string | null;
+    manual?: boolean;
   }
 ): Promise<{
   startDate?: string;
@@ -874,16 +931,22 @@ async function resolveTargetsFromVercel(
   reportMonthLabel?: string;
   targets?: ReportTarget[];
 }> {
-  const endpoint =
-    env.VERCEL_REPORT_TARGETS_ENDPOINT?.trim() ||
-    `${trimTrailingSlash(env.VERCEL_APP_BASE_URL)}/api/report-pdf/targets`;
+  const configuredEndpoint = env.VERCEL_REPORT_TARGETS_ENDPOINT?.trim();
+  const endpoint = body.manual
+    ? `${trimTrailingSlash(env.VERCEL_APP_BASE_URL)}/api/report-pdf/manual-targets`
+    : configuredEndpoint || `${trimTrailingSlash(env.VERCEL_APP_BASE_URL)}/api/report-pdf/targets`;
+  const requestBody = {
+    forceTestMode: body.forceTestMode,
+    ...(body.overrideTargets ? { overrideTargets: body.overrideTargets } : {}),
+    reportType: body.reportType,
+  };
   const response = await fetch(endpoint, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${readRequired(env.REPORT_AUTOMATION_SECRET, "REPORT_AUTOMATION_SECRET")}`,
       "Content-Type": "application/json",
     },
-    body: JSON.stringify(body),
+    body: JSON.stringify(requestBody),
   });
 
   const payload = (await response.json().catch(() => null)) as
@@ -2287,6 +2350,39 @@ function inferPlatform(target: ReportTarget): string {
 function normalizeReportType(value: string | null | undefined): "overall" | "advanced" {
   const normalized = value?.trim().toLowerCase() ?? "";
   return normalized.includes("advance") ? "advanced" : "overall";
+}
+
+function isScheduledReportType(value: string): value is "monthlyOverall" | "monthlyAdvanced" | "biweeklyOverall" {
+  return value === "monthlyOverall" || value === "monthlyAdvanced" || value === "biweeklyOverall";
+}
+
+function resolveJobReportType(
+  input: CreateJobRequest,
+  scheduledDate: string
+): "monthlyOverall" | "monthlyAdvanced" | "biweeklyOverall" {
+  if (input.manualReportType && isScheduledReportType(input.manualReportType)) {
+    return input.manualReportType;
+  }
+  if (normalizeReportType(input.reportType) === "advanced") {
+    return "monthlyAdvanced";
+  }
+  return new Date(`${scheduledDate}T00:00:00.000Z`).getUTCDate() === 15
+    ? "biweeklyOverall"
+    : "monthlyOverall";
+}
+
+async function findActiveReportJob(
+  env: Env,
+  reportType: string,
+  reportMonthKey: string
+): Promise<JobRow | null> {
+  return env.REPORT_JOBS_DB.prepare(
+    `SELECT * FROM report_jobs
+     WHERE report_type = ? AND report_month_key = ? AND status IN ('queued', 'processing')
+     ORDER BY created_at DESC LIMIT 1`
+  )
+    .bind(reportType, reportMonthKey)
+    .first<JobRow>();
 }
 
 function isAdvancedReportAutomationEnabled(env: Env): boolean {
