@@ -81,6 +81,19 @@ interface ManualSendSummary {
   targetSource: string;
   warning: string | null;
   details: ManualSendDetail[];
+  jobId?: string | null;
+  status?: string | null;
+  createdAt?: string | null;
+  reusedActiveJob?: boolean;
+}
+
+interface WorkerJobProgress {
+  id: string;
+  status: string;
+  totalItems: number;
+  createdAt: string;
+  updatedAt: string;
+  summary: Record<string, number>;
 }
 
 const MANUAL_REPORT_OPTIONS: Array<{
@@ -136,6 +149,70 @@ export function HomePageClient({ displayName, role }: HomePageClientProps) {
   const [isSending, setIsSending] = useState(false);
   const [sendSummary, setSendSummary] = useState<ManualSendSummary | null>(null);
   const [sendError, setSendError] = useState<string | null>(null);
+  const [workerJobId, setWorkerJobId] = useState<string | null>(null);
+  const [workerProgress, setWorkerProgress] = useState<WorkerJobProgress | null>(null);
+  const [workerClock, setWorkerClock] = useState(Date.now());
+
+  const workerJobActive = Boolean(workerProgress && !isTerminalWorkerStatus(workerProgress.status));
+  const sendControlsLocked = isSending || workerJobActive;
+
+  useEffect(() => {
+    if (!workerJobActive) return;
+    const timer = window.setInterval(() => setWorkerClock(Date.now()), 1_000);
+    return () => window.clearInterval(timer);
+  }, [workerJobActive]);
+
+  useEffect(() => {
+    if (!workerJobId) return;
+    let cancelled = false;
+
+    async function refreshWorkerJob() {
+      try {
+        const response = await fetch(`/api/reports/manual-send?jobId=${encodeURIComponent(workerJobId ?? "")}`, {
+          cache: "no-store",
+        });
+        const payload = await response.json() as {
+          success?: boolean;
+          error?: string;
+          job?: Record<string, unknown>;
+          summary?: Record<string, number>;
+        };
+        if (!response.ok || !payload.job) throw new Error(payload.error ?? "Unable to read Worker progress.");
+        if (cancelled) return;
+        const progress = normalizeWorkerProgress(payload.job, payload.summary);
+        setWorkerProgress(progress);
+        setWorkerClock(Date.now());
+        if (isTerminalWorkerStatus(progress.status)) {
+          setIsSending(false);
+          setWorkerJobId(null);
+        }
+      } catch (error) {
+        if (!cancelled) setSendError(error instanceof Error ? error.message : "Unable to read Worker progress.");
+      }
+    }
+
+    void refreshWorkerJob();
+    const timer = window.setInterval(refreshWorkerJob, 2_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [workerJobId]);
+
+  useEffect(() => {
+    if (workerJobId || isSending) return;
+    let cancelled = false;
+    void fetch(`/api/reports/manual-send?reportType=${encodeURIComponent(selectedReportType)}`, { cache: "no-store" })
+      .then((response) => response.json())
+      .then((payload: { job?: { id?: string } | null }) => {
+        if (!cancelled && payload.job?.id) {
+          setWorkerJobId(payload.job.id);
+          setIsSending(true);
+        }
+      })
+      .catch(() => undefined);
+    return () => { cancelled = true; };
+  }, [selectedReportType, workerJobId, isSending]);
 
   const reportQueryString = useMemo(() => {
     const params = new URLSearchParams();
@@ -339,6 +416,7 @@ export function HomePageClient({ displayName, role }: HomePageClientProps) {
     setSendError(null);
     setSendSummary(null);
 
+    let queuedWorkerJob = false;
     try {
       const response = await fetch("/api/reports/manual-send", {
         method: "POST",
@@ -376,10 +454,22 @@ export function HomePageClient({ displayName, role }: HomePageClientProps) {
         warning: payload.warning ?? null,
         details: Array.isArray(payload.details) ? payload.details : [],
       });
+      if (payload.jobId) {
+        queuedWorkerJob = true;
+        setWorkerJobId(payload.jobId);
+        setWorkerProgress({
+          id: payload.jobId,
+          status: payload.status ?? "queued",
+          totalItems: payload.totalCheckedAccounts,
+          createdAt: payload.createdAt ?? new Date().toISOString(),
+          updatedAt: payload.createdAt ?? new Date().toISOString(),
+          summary: { queued: payload.totalCheckedAccounts },
+        });
+      }
     } catch (error) {
       setSendError(error instanceof Error ? error.message : "Manual send failed.");
     } finally {
-      setIsSending(false);
+      if (!queuedWorkerJob) setIsSending(false);
     }
   }
 
@@ -452,8 +542,8 @@ export function HomePageClient({ displayName, role }: HomePageClientProps) {
                 className="block text-xs font-medium text-amber-200"
                 role="status"
               >
-                Select an account to open or send reports. Create Media Plan is available without
-                one.
+                Select an account to open reports. Bulk Send Report and Create Media Plan are
+                available without one.
               </span>
             ) : null}
 
@@ -646,7 +736,7 @@ export function HomePageClient({ displayName, role }: HomePageClientProps) {
                   setIsSendModalOpen(true);
                   setSendError(null);
                 }}
-                disabled={!hasAccountSelection || isSending}
+                disabled={sendControlsLocked}
                 className="h-auto min-h-12 w-full whitespace-normal border-white/30 bg-white/10 px-4 py-3 text-center leading-snug text-white shadow-none hover:bg-white/20 hover:text-white"
               >
                 Send Report
@@ -732,7 +822,7 @@ export function HomePageClient({ displayName, role }: HomePageClientProps) {
               <button
                 type="button"
                 onClick={() => setIsSendModalOpen(false)}
-                disabled={isSending}
+                disabled={sendControlsLocked}
                 className="rounded-md p-1 text-white/70 transition hover:bg-white/10 hover:text-white disabled:opacity-50"
                 aria-label="Close send report modal"
               >
@@ -750,7 +840,7 @@ export function HomePageClient({ displayName, role }: HomePageClientProps) {
                     key={option.value}
                     type="button"
                     onClick={() => setSelectedReportType(option.value)}
-                    disabled={isSending}
+                    disabled={sendControlsLocked}
                     className={`flex w-full items-center gap-3 rounded-lg border p-3 text-left transition disabled:opacity-60 ${
                       isSelected
                         ? "border-white/35 bg-white/15"
@@ -780,6 +870,10 @@ export function HomePageClient({ displayName, role }: HomePageClientProps) {
               <div className="mt-4 rounded-lg border border-red-300/30 bg-red-950/45 p-3 text-sm text-red-100">
                 {sendError}
               </div>
+            ) : null}
+
+            {workerProgress && sendControlsLocked ? (
+              <WorkerSendProgress progress={workerProgress} now={workerClock} />
             ) : null}
 
             {sendSummary ? (
@@ -840,7 +934,7 @@ export function HomePageClient({ displayName, role }: HomePageClientProps) {
                 type="button"
                 variant="outline"
                 onClick={() => setIsSendModalOpen(false)}
-                disabled={isSending}
+                disabled={sendControlsLocked}
                 className="border-white/25 bg-white/10 text-white shadow-none hover:bg-white/20 hover:text-white"
               >
                 Cancel
@@ -848,10 +942,10 @@ export function HomePageClient({ displayName, role }: HomePageClientProps) {
               <Button
                 type="button"
                 onClick={handleManualSend}
-                disabled={isSending}
+                disabled={sendControlsLocked}
                 className="bg-red-600 hover:bg-red-700"
               >
-                {isSending ? (
+                {sendControlsLocked ? (
                   <>
                     <Loader2Icon className="animate-spin" />
                     Sending
@@ -879,6 +973,71 @@ function formatDeliveryMode(value: ManualSendDeliveryMode): string {
     return "Test delivery";
   }
   return "Live delivery";
+}
+
+function normalizeWorkerProgress(
+  job: Record<string, unknown>,
+  summary: Record<string, number> | undefined
+): WorkerJobProgress {
+  return {
+    id: String(job.id ?? ""),
+    status: String(job.status ?? "queued"),
+    totalItems: Number(job.total_items ?? 0),
+    createdAt: String(job.created_at ?? new Date().toISOString()),
+    updatedAt: String(job.updated_at ?? job.created_at ?? new Date().toISOString()),
+    summary: summary ?? {},
+  };
+}
+
+function isTerminalWorkerStatus(status: string): boolean {
+  return status === "completed" || status === "completed_with_failures" || status === "empty" || status === "skipped";
+}
+
+function formatWorkerDuration(seconds: number): string {
+  const minutes = Math.floor(seconds / 60);
+  const remainder = seconds % 60;
+  return minutes > 0 ? `${minutes}m ${String(remainder).padStart(2, "0")}s` : `${remainder}s`;
+}
+
+function WorkerSendProgress({ progress, now }: { progress: WorkerJobProgress; now: number }) {
+  const elapsedSeconds = Math.max(0, Math.floor((now - Date.parse(progress.createdAt)) / 1_000));
+  const activitySeconds = Math.max(0, Math.floor((now - Date.parse(progress.updatedAt)) / 1_000));
+  const completed = progress.summary.completed ?? 0;
+  const failed = progress.summary.failed ?? 0;
+  const terminal = completed + failed;
+  const percent = progress.totalItems > 0 ? Math.min(100, Math.round((terminal / progress.totalItems) * 100)) : 0;
+  const stage = progress.status === "queued" ? "Worker queued" : "Generating PDFs and sending reports";
+
+  return (
+    <div className="mt-5 overflow-hidden rounded-xl border border-white/20 bg-black/25" role="status" aria-live="polite">
+      <div className="flex items-center gap-3 px-4 py-4">
+        <Loader2Icon className="size-5 animate-spin text-red-300" />
+        <div className="min-w-0 flex-1">
+          <p className="font-semibold">{stage}</p>
+          <p className="mt-1 text-sm text-white/65">Keep this window open; progress also resumes after refresh.</p>
+        </div>
+      </div>
+      <div className="border-t border-white/10 bg-white/5 px-4 py-3">
+        <div className="mb-2 flex flex-wrap items-center justify-between gap-2 text-xs text-white/70">
+          <span>Elapsed {formatWorkerDuration(elapsedSeconds)}</span>
+          <span className={activitySeconds < 30 ? "text-emerald-300" : "text-amber-300"}>
+            {activitySeconds < 30 ? `Worker active · ${activitySeconds}s ago` : `No update for ${activitySeconds}s · checking...`}
+          </span>
+        </div>
+        <div className="h-2.5 overflow-hidden rounded-full bg-white/15">
+          <div className="h-full rounded-full bg-gradient-to-r from-red-700 via-red-500 to-red-300 transition-[width] duration-500" style={{ width: `${percent}%` }} />
+        </div>
+        <div className="mt-3 grid grid-cols-3 gap-2 text-xs sm:grid-cols-6">
+          <SummaryStat label="Queued" value={String(progress.summary.queued ?? 0)} />
+          <SummaryStat label="Processing" value={String(progress.summary.processing ?? 0)} />
+          <SummaryStat label="Retrying" value={String(progress.summary.retrying ?? 0)} />
+          <SummaryStat label="Completed" value={String(completed)} />
+          <SummaryStat label="Failed" value={String(failed)} />
+          <SummaryStat label="Progress" value={`${percent}%`} />
+        </div>
+      </div>
+    </div>
+  );
 }
 
 function formatTargetSource(value: string): string {

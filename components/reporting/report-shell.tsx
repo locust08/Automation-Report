@@ -8,14 +8,12 @@ import {
   CalendarDaysIcon,
   ClipboardListIcon,
   EyeIcon,
-  FileCheck2Icon,
   HouseIcon,
   IdCardIcon,
   ListChecksIcon,
   LogOutIcon,
   PanelsTopLeftIcon,
   SearchCheckIcon,
-  ShieldAlertIcon,
   SparklesIcon,
   UploadCloudIcon,
   UsersRoundIcon,
@@ -80,8 +78,6 @@ export function ReportShell({
     searchTermOptimization: "/search-term-optimization",
     placementOptimization: "/placement-optimization",
     userManagement: "/user-management",
-    teamLeadMonitoring: "/team-lead-monitoring",
-    searchTermPmReports: "/search-term-pm-reports",
   };
 
   return (
@@ -182,20 +178,6 @@ export function ReportShell({
                       active={pathname === "/placement-optimization"}
                     >
                       <PanelsTopLeftIcon className="size-5" />
-                    </ReportNavLink> : null}
-                    {currentRole && ["tl", "admin", "ethan"].includes(currentRole) ? <ReportNavLink
-                      href={hrefs.teamLeadMonitoring}
-                      label="Team Lead Monitoring"
-                      active={pathname === "/team-lead-monitoring"}
-                    >
-                      <ShieldAlertIcon className="size-5" />
-                    </ReportNavLink> : null}
-                    {currentRole && ["pm", "admin", "ethan"].includes(currentRole) ? <ReportNavLink
-                      href={hrefs.searchTermPmReports}
-                      label="Search-Term PM Reports"
-                      active={pathname === "/search-term-pm-reports"}
-                    >
-                      <FileCheck2Icon className="size-5" />
                     </ReportNavLink> : null}
                     {isAdmin ? <>
                       <ReportNavLink

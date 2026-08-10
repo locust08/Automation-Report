@@ -25,7 +25,7 @@ import { Spinner } from "@/components/ui/spinner";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { ReportShell } from "@/components/reporting/report-shell";
 import { AccountEscalationNotice } from "@/components/team-lead-monitoring/account-escalation-notice";
-import { AUTH_ROLE_LABELS, isAdminRole, type AuthRole } from "@/lib/auth/roles";
+import { isAdminRole, type AuthRole } from "@/lib/auth/roles";
 import type {
   OptimizationDashboardPayload,
   OptimizationResult,
@@ -626,12 +626,6 @@ export function SearchTermOptimizationPageClient({ role }: { role: AuthRole }) {
 
           <div className="flex flex-col justify-between gap-5 lg:flex-row lg:items-end">
             <div>
-              <div className="mb-3 flex items-center gap-2">
-                <Badge className="bg-neutral-700 text-white">Manual review mode</Badge>
-                <Badge variant="outline" className={canReview || canApprove ? "border-emerald-200 bg-emerald-50 text-emerald-800" : "border-neutral-200 bg-neutral-100 text-neutral-700"}>
-                  {AUTH_ROLE_LABELS[role]} · {canApprove ? "Approval access" : canReview ? "Review access" : "Read-only"}
-                </Badge>
-              </div>
               <h1 className="text-3xl font-semibold sm:text-5xl">
                 {!analysisLoading && data?.account.customerName
                   ? data.account.customerName

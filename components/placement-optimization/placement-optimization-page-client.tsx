@@ -65,6 +65,8 @@ const ACCOUNT_SEARCH_CACHE_KEY =
   "placement-optimization-pmax-account-search-cache-v1";
 const RECENT_ACCOUNTS_KEY = "placement-optimization-recent-accounts";
 const ACCOUNT_SEARCH_CACHE_TTL_MS = 15 * 60 * 1000;
+const PLACEMENT_OVERVIEW_CACHE_KEY = "placement-optimization-overview-cache-v1";
+const PLACEMENT_OVERVIEW_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 const ACCOUNT_SEARCH_DEBOUNCE_MS = 300;
 const PLACEMENTS_PER_PAGE = 20;
 
@@ -72,6 +74,7 @@ export function PlacementOptimizationPageClient({ role }: { role: AuthRole }) {
   const searchParams = useSearchParams();
   const mode = modeForRole(role);
   const [data, setData] = useState<PlacementDashboardPayload | null>(null);
+  const [hasLivePlacementRows, setHasLivePlacementRows] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [account, setAccount] = useState("");
@@ -95,6 +98,11 @@ export function PlacementOptimizationPageClient({ role }: { role: AuthRole }) {
   const [suitabilityError, setSuitabilityError] = useState<string | null>(null);
   const [page, setPage] = useState(1);
   const load = useCallback(async (accountId?: string, refresh = false) => {
+    const cachedOverview = accountId ? readPlacementOverviewCache(accountId) : null;
+    if (cachedOverview) {
+      setData(cachedOverview);
+      setHasLivePlacementRows(false);
+    }
     setLoading(true);
     setError(null);
     try {
@@ -110,6 +118,8 @@ export function PlacementOptimizationPageClient({ role }: { role: AuthRole }) {
       if (!response.ok)
         throw new Error(payload.error || "Unable to load placements.");
       setData(payload);
+      setHasLivePlacementRows(true);
+      writePlacementOverviewCache(payload);
     } catch (caught) {
       setError(
         caught instanceof Error ? caught.message : "Unable to load placements.",
@@ -378,15 +388,11 @@ export function PlacementOptimizationPageClient({ role }: { role: AuthRole }) {
               {loading ? "Analyzing…" : "Search"}
             </Button>
           </div>
-          <p className="mt-2 text-xs text-neutral-500">Select an account with Performance Max, then press Search to retrieve and cache its placement impressions.</p>
+          <p className="mt-2 text-xs text-neutral-500">Select an account with Performance Max, then press Search to retrieve placements and cache the overview.</p>
           {selectedAccount && !selectedAccount.hasPerformanceMax ? <p className="mt-2 text-sm font-medium text-amber-700">This account has no active Performance Max campaigns.</p> : null}
           {data ? (
             <>
-              <div className="mt-5 flex flex-wrap gap-2">
-                <Badge>Read-only Google Ads</Badge>
-                <Badge variant="outline">SQLite workflow</Badge>
-              </div>
-              <h2 className="mt-2 text-4xl font-semibold">
+              <h2 className="mt-5 text-4xl font-semibold">
                 {data.account.customerName}
               </h2>
               <p className="mt-2 text-neutral-500">
@@ -425,8 +431,9 @@ export function PlacementOptimizationPageClient({ role }: { role: AuthRole }) {
               <h3 className="font-semibold">All placements</h3>
               <p className="text-sm text-neutral-500">Browse Google Ads placements in a focused sidebar, 20 at a time.</p>
             </div>
-            <Button type="button" className="cursor-pointer bg-red-700 hover:bg-red-800" onClick={() => setPlacementsOpen(true)}>
-              View placements
+            <Button type="button" disabled={!hasLivePlacementRows} className="cursor-pointer bg-red-700 hover:bg-red-800 disabled:cursor-wait" onClick={() => setPlacementsOpen(true)}>
+              {!hasLivePlacementRows && loading ? <Spinner className="size-4" /> : null}
+              {hasLivePlacementRows ? "View placements" : loading ? "Loading placements" : "Placements unavailable"}
             </Button>
           </section>
         ) : null}
@@ -450,7 +457,7 @@ export function PlacementOptimizationPageClient({ role }: { role: AuthRole }) {
             {error}
           </p>
         ) : null}
-        {data?.warnings.map((warning) => (
+        {data?.warnings.filter(isUserFacingPlacementWarning).map((warning) => (
           <p
             key={warning}
             className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800"
@@ -816,27 +823,39 @@ function PlacementsSheet({
                   : "minmax(0, 1fr)",
             }}
           >
-            {pageRows.map((row) => (
-              <article
-                key={row.id}
-                className="flex h-[200px] w-full min-w-0 flex-col overflow-hidden rounded-xl border bg-white p-3 shadow-sm transition hover:border-red-200 hover:shadow-md"
-              >
-                <div className="min-w-0">
-                  <p className="line-clamp-2 text-sm font-semibold leading-5">{row.displayName}</p>
-                  <p className="mt-0.5 truncate text-xs text-neutral-500">{row.placement}</p>
+            {pageRows.map((row) => {
+              const href = placementWebsiteUrl(row.targetUrl, row.placement);
+              return (
+                <article
+                  key={row.id}
+                  className="flex h-[200px] w-full min-w-0 flex-col overflow-hidden rounded-xl border bg-white p-3 shadow-sm transition hover:border-red-200 hover:shadow-md"
+                >
+                  <div className="min-w-0">
+                    <p className="line-clamp-2 text-sm font-semibold leading-5">{row.displayName}</p>
+                    {href ? (
+                      <a href={href} target="_blank" rel="noopener noreferrer" className="mt-0.5 flex items-center gap-1 text-xs text-red-700 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-300">
+                        <span className="truncate">{row.placement}</span>
+                        <ExternalLinkIcon className="size-3 shrink-0" />
+                      </a>
+                    ) : (
+                      <p className="mt-0.5 truncate text-xs text-neutral-500">{row.placement}</p>
+                    )}
                   <div className="mt-2 flex flex-wrap items-center gap-1.5 text-xs text-neutral-500">
                     <Badge variant="outline">{humanize(row.placementType)}</Badge>
                   </div>
                 </div>
                 <div className="mt-2 min-h-0 flex-1 overflow-hidden">
-                  <p className="line-clamp-3 break-words text-xs leading-4 text-neutral-500">{row.campaignName}</p>
+                  {row.campaignName !== "Unknown Performance Max campaign" ? (
+                    <p className="line-clamp-3 break-words text-xs leading-4 text-neutral-500">{row.campaignName}</p>
+                  ) : null}
                 </div>
                 <div className="mt-auto border-t pt-2 text-right">
                   <p className="text-lg font-semibold tabular-nums">{row.impressions.toLocaleString()}</p>
                   <p className="text-xs text-neutral-500">impressions</p>
                 </div>
-              </article>
-            ))}
+                </article>
+              );
+            })}
           </div>
           {pageRows.length === 0 ? (
             <p className="p-8 text-center text-sm text-neutral-500">No placements match this type.</p>
@@ -1062,20 +1081,100 @@ function PerformanceMaxOverview({ data }: { data: PlacementDashboardPayload }) {
         <div className="space-y-2">
           {performanceMax.topSites.map((site, index) => {
             const share = total > 0 ? site.impressions * 100 / total : 0;
-            return <div key={site.id} className="grid items-center gap-3 rounded-xl border p-3 sm:grid-cols-[2rem_minmax(0,1fr)_9rem]">
+            const href = placementWebsiteUrl(site.targetUrl, site.placement);
+            const content = <>
               <span className="flex size-7 items-center justify-center rounded-lg bg-red-50 text-xs font-semibold text-red-700">{index + 1}</span>
-              <div className="min-w-0"><p className="truncate font-semibold">{site.displayName}</p><p className="truncate text-xs text-neutral-500">{site.campaignName}</p></div>
+              <div className="min-w-0">
+                <p className="flex items-center gap-1.5 truncate font-semibold">
+                  <span className="truncate">{site.displayName}</span>
+                  {href ? <ExternalLinkIcon className="size-3.5 shrink-0 text-neutral-400" /> : null}
+                </p>
+              </div>
               <div className="text-left sm:text-right">
                 <p className="font-semibold">{site.impressions.toLocaleString()}</p>
                 <p className="text-xs text-neutral-500">{share.toFixed(1)}% <span className="whitespace-nowrap">of total PMax impressions</span></p>
               </div>
-            </div>;
+            </>;
+            return href ? (
+              <a key={site.id} href={href} target="_blank" rel="noopener noreferrer" className="grid items-center gap-3 rounded-xl border p-3 transition hover:border-red-200 hover:bg-red-50/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-300 sm:grid-cols-[2rem_minmax(0,1fr)_9rem]">
+                {content}
+              </a>
+            ) : (
+              <div key={site.id} className="grid items-center gap-3 rounded-xl border p-3 sm:grid-cols-[2rem_minmax(0,1fr)_9rem]">
+                {content}
+              </div>
+            );
           })}
           {performanceMax.topSites.length === 0 ? <p className="rounded-xl border border-dashed p-6 text-center text-sm text-neutral-500">No website placement impressions were returned.</p> : null}
         </div>
       </div>
     </section>
   );
+}
+
+function isUserFacingPlacementWarning(warning: string) {
+  return !warning.startsWith("Notion resolved ");
+}
+
+function placementWebsiteUrl(targetUrl: string | null, placement: string) {
+  for (const candidate of [targetUrl, placement]) {
+    const value = candidate?.trim();
+    if (!value || value.toLowerCase() === "other") continue;
+    try {
+      const url = new URL(/^https?:\/\//i.test(value) ? value : `https://${value}`);
+      if (url.protocol === "http:" || url.protocol === "https:") return url.toString();
+    } catch {
+      // Some Google placement identifiers are not web addresses.
+    }
+  }
+  return null;
+}
+
+type PlacementOverviewCache = {
+  lastAccountId?: string;
+  entries: Record<string, { expiresAt: number; payload: PlacementDashboardPayload }>;
+};
+
+function readPlacementOverviewCache(accountId?: string): PlacementDashboardPayload | null {
+  try {
+    const cache = JSON.parse(window.localStorage.getItem(PLACEMENT_OVERVIEW_CACHE_KEY) ?? "{}") as Partial<PlacementOverviewCache>;
+    const key = accountId ?? cache.lastAccountId;
+    const entry = key && cache.entries?.[key];
+    if (!entry || entry.expiresAt <= Date.now()) return null;
+    return { ...entry.payload, rows: [], changeSets: [], reports: [] };
+  } catch {
+    return null;
+  }
+}
+
+function writePlacementOverviewCache(payload: PlacementDashboardPayload) {
+  try {
+    const stored = JSON.parse(window.localStorage.getItem(PLACEMENT_OVERVIEW_CACHE_KEY) ?? "{}") as Partial<PlacementOverviewCache>;
+    const entries = stored.entries ?? {};
+    const compactPayload: PlacementDashboardPayload = {
+      ...payload,
+      rows: [],
+      changeSets: [],
+      reports: [],
+      warnings: payload.warnings.filter(isUserFacingPlacementWarning),
+    };
+    entries[payload.account.customerId] = {
+      expiresAt: Date.now() + PLACEMENT_OVERVIEW_CACHE_TTL_MS,
+      payload: compactPayload,
+    };
+    const newestEntries = Object.fromEntries(
+      Object.entries(entries)
+        .filter(([, entry]) => entry.expiresAt > Date.now())
+        .sort((left, right) => right[1].expiresAt - left[1].expiresAt)
+        .slice(0, 10),
+    );
+    window.localStorage.setItem(PLACEMENT_OVERVIEW_CACHE_KEY, JSON.stringify({
+      lastAccountId: payload.account.customerId,
+      entries: newestEntries,
+    } satisfies PlacementOverviewCache));
+  } catch {
+    // The live placement response remains available when browser storage is unavailable.
+  }
 }
 
 function readAccountSearchCache(query: string): AccountSuggestion[] | null {
