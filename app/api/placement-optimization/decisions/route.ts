@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { getServerAuthSession } from "@/lib/auth/server-session";
 import { isAdminRole } from "@/lib/auth/roles";
-import { saveOptimizerDecision } from "@/lib/placement-optimization/sqlite-repository";
+import { clearPlacementDecision, saveOptimizerDecision } from "@/lib/placement-optimization/sqlite-repository";
 import type { PlacementDecision } from "@/lib/placement-optimization/types";
 
 export const dynamic = "force-dynamic";
@@ -16,8 +16,35 @@ export async function POST(request: Request) {
   const decision = body.decision as PlacementDecision;
   if (!ids.length || !["exclude", "keep", "kiv"].includes(decision)) return NextResponse.json({ error: "Valid placement IDs and decision are required." }, { status: 400 });
   try {
-    return NextResponse.json(saveOptimizerDecision({ recommendationIds: ids, decision, reviewer: { id: session.sub, email: session.email, role: session.role } }));
+    return NextResponse.json({
+      ...saveOptimizerDecision({ recommendationIds: ids, decision, reviewer: { id: session.sub, email: session.email, role: session.role } }),
+      decision,
+      status: decision === "exclude" ? "ready_for_publishing" : decision === "keep" ? "kept" : "kiv",
+      reviewerEmail: session.email,
+      reviewerRole: session.role,
+      createdAt: new Date().toISOString(),
+    });
   } catch (error) {
     return NextResponse.json({ error: error instanceof Error ? error.message : "Unable to save decision." }, { status: 409 });
+  }
+}
+
+export async function DELETE(request: Request) {
+  const session = await getServerAuthSession();
+  if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  if (session.role !== "co" && session.role !== "approver" && !isAdminRole(session.role)) return NextResponse.json({ error: "Your role cannot remove placement decisions." }, { status: 403 });
+  const body = await request.json() as { recommendationIds?: unknown };
+  const ids = Array.isArray(body.recommendationIds) ? [...new Set(body.recommendationIds.map(Number).filter((id) => Number.isSafeInteger(id) && id > 0))] : [];
+  if (!ids.length) return NextResponse.json({ error: "Valid placement IDs are required." }, { status: 400 });
+  try {
+    return NextResponse.json({
+      ...clearPlacementDecision({ recommendationIds: ids, reviewer: { id: session.sub, email: session.email, role: session.role } }),
+      status: "pending_optimizer",
+      reviewerEmail: session.email,
+      reviewerRole: session.role,
+      createdAt: new Date().toISOString(),
+    });
+  } catch (error) {
+    return NextResponse.json({ error: error instanceof Error ? error.message : "Unable to remove the placement decision." }, { status: 409 });
   }
 }

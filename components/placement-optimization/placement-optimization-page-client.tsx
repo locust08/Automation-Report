@@ -11,6 +11,7 @@ import {
   ShieldCheckIcon,
 } from "lucide-react";
 import { ReportShell } from "@/components/reporting/report-shell";
+import { PlacementDecisionButton } from "@/components/placement-optimization/placement-decision-button";
 import { AccountEscalationNotice } from "@/components/team-lead-monitoring/account-escalation-notice";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -90,6 +91,11 @@ export function PlacementOptimizationPageClient({ role }: { role: AuthRole }) {
   const skipNextSearch = useRef(false);
   const [type, setType] = useState(searchParams.get("type") || "all");
   const [placementsOpen, setPlacementsOpen] = useState(false);
+  const [decisionsOpen, setDecisionsOpen] = useState(false);
+  const [decisionView, setDecisionView] = useState<"content" | "excluded">("content");
+  const [decisionType, setDecisionType] = useState("all");
+  const [decisionPage, setDecisionPage] = useState(1);
+  const [decisionSaving, setDecisionSaving] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [suitabilityOpen, setSuitabilityOpen] = useState(false);
   const [suitability, setSuitability] =
@@ -313,27 +319,119 @@ export function PlacementOptimizationPageClient({ role }: { role: AuthRole }) {
   const types = [
     ...new Set((data?.rows ?? []).map((row) => row.placementType)),
   ].sort();
-  const canOptimizer = (role === "co" || isAdminRole(role)) && mode === "optimizer";
-  const canApprover = (role === "approver" || isAdminRole(role)) && mode === "approver";
+  const canOptimizer = role === "co" || role === "approver" || isAdminRole(role);
+  const canApprover = role === "approver" || isAdminRole(role);
   async function decide(
     endpoint: string,
     decision: PlacementDecision | PlacementApproverDecision,
     ids: string[],
   ) {
     setError(null);
-    const response = await fetch(endpoint, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ recommendationIds: ids, decision }),
-    });
-    const result = (await response.json()) as { error?: string };
-    if (!response.ok) {
-      setError(result.error || "Unable to save decision.");
-      return;
+    setDecisionSaving(true);
+    try {
+      const response = await fetch(endpoint, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ recommendationIds: ids, decision }),
+      });
+      const result = (await response.json()) as {
+        error?: string;
+        status?: string;
+        reviewerEmail?: string;
+        reviewerRole?: string;
+        createdAt?: string;
+      };
+      if (!response.ok) {
+        setError(result.error || "Unable to save decision.");
+        return;
+      }
+      const selectedIds = new Set(ids);
+      setData((current) => current ? {
+        ...current,
+        rows: current.rows.map((row) => selectedIds.has(row.id) ? {
+          ...row,
+          currentDecision: decision,
+          reviewStatus: result.status ?? (decision === "exclude" ? "ready_for_publishing" : decision),
+          reviewHistory: [{
+            id: `local-${result.createdAt ?? Date.now()}`,
+            reviewerEmail: result.reviewerEmail ?? "Current user",
+            reviewerRole: result.reviewerRole ?? role,
+            action: `optimizer_${decision}`,
+            resultingStatus: result.status ?? decision,
+            createdAt: result.createdAt ?? new Date().toISOString(),
+          }, ...row.reviewHistory],
+        } : row),
+      } : current);
+      setSelected(new Set());
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Unable to save decision.");
+    } finally {
+      setDecisionSaving(false);
     }
-    setSelected(new Set());
-    await load(data?.account.customerId);
   }
+  async function removeDecisions(ids: string[]) {
+    setError(null);
+    setDecisionSaving(true);
+    try {
+      const response = await fetch("/api/placement-optimization/decisions", {
+        method: "DELETE",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ recommendationIds: ids }),
+      });
+      const result = (await response.json()) as {
+        error?: string;
+        status?: string;
+        reviewerEmail?: string;
+        reviewerRole?: string;
+        createdAt?: string;
+      };
+      if (!response.ok) {
+        setError(result.error || "Unable to remove the placement decision.");
+        return;
+      }
+      const selectedIds = new Set(ids);
+      setData((current) => current ? {
+        ...current,
+        rows: current.rows.map((row) => selectedIds.has(row.id) ? {
+          ...row,
+          currentDecision: null,
+          reviewStatus: result.status ?? "pending_optimizer",
+          reviewHistory: [{
+            id: `local-${result.createdAt ?? Date.now()}`,
+            reviewerEmail: result.reviewerEmail ?? "Current user",
+            reviewerRole: result.reviewerRole ?? role,
+            action: "decision_removed",
+            resultingStatus: result.status ?? "pending_optimizer",
+            createdAt: result.createdAt ?? new Date().toISOString(),
+          }, ...row.reviewHistory],
+        } : row),
+      } : current);
+      setSelected(new Set());
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Unable to remove the placement decision.");
+    } finally {
+      setDecisionSaving(false);
+    }
+  }
+  const decisionRows = useMemo(() => (data?.rows ?? []).filter((row) => {
+    if (decisionType !== "all" && row.placementType !== decisionType) return false;
+    const excluded = row.reviewStatus === "ready_for_approval" ||
+      row.reviewStatus === "ready_for_publishing" ||
+      row.currentDecision === "exclude" || row.currentDecision === "approved";
+    return decisionView === "excluded" ? excluded : !excluded;
+  }), [data?.rows, decisionType, decisionView]);
+  const decisionPageCount = Math.max(1, Math.ceil(decisionRows.length / PLACEMENTS_PER_PAGE));
+  const decisionPageRows = useMemo(() => decisionRows.slice(
+    (decisionPage - 1) * PLACEMENTS_PER_PAGE,
+    decisionPage * PLACEMENTS_PER_PAGE,
+  ), [decisionPage, decisionRows]);
+  useEffect(() => {
+    if (decisionPage > decisionPageCount) setDecisionPage(decisionPageCount);
+  }, [decisionPage, decisionPageCount]);
+  useEffect(() => {
+    setDecisionPage(1);
+    setSelected(new Set());
+  }, [decisionType, decisionView, data?.account.customerId]);
   const allSelected = pageRows.length > 0 && pageRows.every((row) => selected.has(row.id));
   const toggleAll = (checked: boolean) =>
     setSelected(checked ? new Set(pageRows.map((row) => row.id)) : new Set());
@@ -449,6 +547,37 @@ export function PlacementOptimizationPageClient({ role }: { role: AuthRole }) {
           pageCount={pageCount}
           onPageChange={setPage}
         />
+        {data && role !== "pm" ? (
+          <section className="flex items-center justify-between gap-4 rounded-2xl border bg-white p-5 shadow-sm">
+            <div>
+              <h3 className="font-semibold">Placement decision history</h3>
+              <p className="text-sm text-neutral-500">Review content and record internal exclusion decisions. Google Ads is not changed.</p>
+            </div>
+            <Button type="button" disabled={!hasLivePlacementRows} variant="outline" className="cursor-pointer" onClick={() => setDecisionsOpen(true)}>
+              Manage decisions
+            </Button>
+          </section>
+        ) : null}
+        <PlacementDecisionsSheet
+          open={decisionsOpen}
+          onOpenChange={setDecisionsOpen}
+          rows={decisionRows}
+          pageRows={decisionPageRows}
+          types={types}
+          type={decisionType}
+          onTypeChange={setDecisionType}
+          view={decisionView}
+          onViewChange={setDecisionView}
+          page={decisionPage}
+          pageCount={decisionPageCount}
+          onPageChange={setDecisionPage}
+          selected={selected}
+          onSelectedChange={setSelected}
+          canOptimizer={canOptimizer}
+          saving={decisionSaving}
+          onOptimizerDecision={(decision, ids) => void decide("/api/placement-optimization/decisions", decision, ids)}
+          onRemove={(ids) => void removeDecisions(ids)}
+        />
         {error ? (
           <p
             role="alert"
@@ -468,7 +597,7 @@ export function PlacementOptimizationPageClient({ role }: { role: AuthRole }) {
         {loading ? (
           <PlacementAnalysisLoader />
         ) : mode === "pm" ? (
-          <PmReports data={data} />
+          null
         ) : data ? (
           <section className="hidden overflow-hidden rounded-2xl border bg-white shadow-sm">
             <div className="flex flex-wrap items-center justify-between gap-3 border-b bg-neutral-50 px-5 py-4">
@@ -873,6 +1002,185 @@ function PlacementsSheet({
   );
 }
 
+function PlacementDecisionsSheet({
+  open,
+  onOpenChange,
+  rows,
+  pageRows,
+  types,
+  type,
+  onTypeChange,
+  view,
+  onViewChange,
+  page,
+  pageCount,
+  onPageChange,
+  selected,
+  onSelectedChange,
+  canOptimizer,
+  saving,
+  onOptimizerDecision,
+  onRemove,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  rows: PlacementOptimizationRow[];
+  pageRows: PlacementOptimizationRow[];
+  types: string[];
+  type: string;
+  onTypeChange: (value: string) => void;
+  view: "content" | "excluded";
+  onViewChange: (value: "content" | "excluded") => void;
+  page: number;
+  pageCount: number;
+  onPageChange: (value: number | ((current: number) => number)) => void;
+  selected: Set<string>;
+  onSelectedChange: React.Dispatch<React.SetStateAction<Set<string>>>;
+  canOptimizer: boolean;
+  saving: boolean;
+  onOptimizerDecision: (decision: PlacementDecision, ids: string[]) => void;
+  onRemove: (ids: string[]) => void;
+}) {
+  const { sidebarWidth, resizing, resizeHandleProps } = useResizableSheet(720, 0.65);
+  const selectedIds = [...selected];
+  const allSelected = pageRows.length > 0 && pageRows.every((row) => selected.has(row.id));
+
+  return (
+    <Sheet open={open} onOpenChange={(next) => !saving && onOpenChange(next)}>
+      <SheetContent
+        className={`w-full sm:max-w-none ${resizing ? "select-none transition-none" : "transition-[width] duration-150"}`}
+        style={{ width: sidebarWidth, maxWidth: "65vw" }}
+      >
+        <SheetResizeHandle resizing={resizing} resizeHandleProps={resizeHandleProps} />
+        <SheetHeader className="border-b">
+          <SheetTitle>Placement decision history</SheetTitle>
+          <SheetDescription>
+            Internal review history only. These decisions do not change Google Ads.
+          </SheetDescription>
+        </SheetHeader>
+        <div className="space-y-4 border-b p-5">
+          <div className="grid grid-cols-2 gap-2 rounded-xl bg-neutral-100 p-1">
+            {(["content", "excluded"] as const).map((value) => (
+              <Button
+                key={value}
+                type="button"
+                variant={view === value ? "default" : "ghost"}
+                disabled={saving}
+                className={view === value ? "cursor-pointer bg-red-700 hover:bg-red-800" : "cursor-pointer"}
+                onClick={() => onViewChange(value)}
+              >
+                {value === "content" ? "Content" : "Excluded"}
+              </Button>
+            ))}
+          </div>
+          <Filter label="Placement type">
+            <Select value={type} onValueChange={onTypeChange} disabled={saving}>
+              <SelectTrigger className="cursor-pointer"><SelectValue /></SelectTrigger>
+              <SelectContent className="z-[10001]">
+                <SelectItem value="all">All placement types</SelectItem>
+                {types.map((value) => <SelectItem key={value} value={value}>{humanize(value)}</SelectItem>)}
+              </SelectContent>
+            </Select>
+          </Filter>
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <label className="flex cursor-pointer items-center gap-2 text-sm font-medium">
+              <Checkbox
+                checked={allSelected}
+                disabled={saving || pageRows.length === 0}
+                onCheckedChange={(checked) => onSelectedChange((current) => {
+                  const next = new Set(current);
+                  pageRows.forEach((row) => checked === true ? next.add(row.id) : next.delete(row.id));
+                  return next;
+                })}
+              />
+              Select this page
+            </label>
+            <span className="text-sm text-neutral-500">{selected.size} selected</span>
+          </div>
+          {selected.size > 0 ? (
+            <div className="ml-auto flex w-fit flex-wrap justify-end gap-2">
+              {canOptimizer && view === "content" ? (
+                <>
+                  <PlacementDecisionButton action="exclude" disabled={saving} onClick={() => onOptimizerDecision("exclude", selectedIds)}>Exclude</PlacementDecisionButton>
+                </>
+              ) : null}
+              {view === "excluded" ? (
+                <PlacementDecisionButton action="remove" disabled={saving} onClick={() => onRemove(selectedIds)}>Remove decision</PlacementDecisionButton>
+              ) : null}
+              {saving ? <span className="inline-flex items-center gap-2 text-sm text-neutral-500"><Spinner className="size-4" /> Saving history…</span> : null}
+            </div>
+          ) : null}
+        </div>
+        <div className="min-h-0 flex-1 overflow-y-auto p-4">
+          <div className="space-y-3">
+            {pageRows.map((row) => {
+              const latest = row.reviewHistory[0];
+              const href = placementWebsiteUrl(row.targetUrl, row.placement);
+              return (
+                <article key={row.id} className="rounded-xl border bg-white p-4 shadow-sm">
+                  <div className="flex items-start gap-3">
+                    <Checkbox
+                      checked={selected.has(row.id)}
+                      disabled={saving}
+                      className="mt-1 cursor-pointer"
+                      onCheckedChange={(checked) => onSelectedChange((current) => {
+                        const next = new Set(current);
+                        if (checked === true) next.add(row.id); else next.delete(row.id);
+                        return next;
+                      })}
+                    />
+                    <div className="min-w-0 flex-1">
+                      <div className="flex flex-wrap items-start justify-between gap-2">
+                        <div className="min-w-0">
+                          <p className="font-semibold">{row.displayName}</p>
+                          {href ? <a href={href} target="_blank" rel="noopener noreferrer" className="inline-flex max-w-full items-center gap-1 text-xs text-red-700 hover:underline"><span className="truncate">{row.placement}</span><ExternalLinkIcon className="size-3 shrink-0" /></a> : <p className="truncate text-xs text-neutral-500">{row.placement}</p>}
+                        </div>
+                        <div className="flex flex-wrap gap-1.5">
+                          <Badge variant="outline">{humanize(row.placementType)}</Badge>
+                          <Badge variant="outline">{placementStatusLabel(row.reviewStatus)}</Badge>
+                        </div>
+                      </div>
+                      <div className="mt-3 grid gap-2 text-xs text-neutral-500 sm:grid-cols-3">
+                        <span>{row.impressions.toLocaleString()} impressions</span>
+                        <span>Decision: {row.currentDecision ? humanize(row.currentDecision) : "None"}</span>
+                        <span>{row.reviewHistory.length} history event{row.reviewHistory.length === 1 ? "" : "s"}</span>
+                      </div>
+                      {latest ? (
+                        <Collapsible className="mt-3 rounded-lg bg-neutral-50 px-3 py-2">
+                          <CollapsibleTrigger className="flex w-full cursor-pointer items-center justify-between gap-2 text-left text-xs font-medium">
+                            Latest: {humanize(latest.action)} by {latest.reviewerEmail}
+                            <ChevronDownIcon className="size-4" />
+                          </CollapsibleTrigger>
+                          <CollapsibleContent className="mt-2 space-y-2 border-t pt-2 text-xs text-neutral-500">
+                            {row.reviewHistory.map((event) => (
+                              <div key={event.id} className="flex flex-wrap justify-between gap-2">
+                                <span>{humanize(event.action)} → {humanize(event.resultingStatus)}</span>
+                                <span>{event.reviewerEmail} · {formatDate(event.createdAt)}</span>
+                              </div>
+                            ))}
+                          </CollapsibleContent>
+                        </Collapsible>
+                      ) : null}
+                    </div>
+                  </div>
+                </article>
+              );
+            })}
+            {pageRows.length === 0 ? <p className="rounded-xl border border-dashed p-8 text-center text-sm text-neutral-500">{view === "excluded" ? "No placement exclusion decisions have been recorded." : "No placements match this filter."}</p> : null}
+          </div>
+        </div>
+        <div className="flex items-center justify-between gap-3 border-t bg-neutral-50 p-4 text-sm">
+          <span className="text-neutral-500">Page {page} of {pageCount} · {rows.length} records</span>
+          <div className="flex gap-2">
+            <Button type="button" variant="outline" disabled={saving || page === 1} className="cursor-pointer disabled:cursor-not-allowed" onClick={() => onPageChange((current) => Math.max(1, current - 1))}>Previous</Button>
+            <Button type="button" variant="outline" disabled={saving || page === pageCount} className="cursor-pointer disabled:cursor-not-allowed" onClick={() => onPageChange((current) => Math.min(pageCount, current + 1))}>Next</Button>
+          </div>
+        </div>
+      </SheetContent>
+    </Sheet>
+  );
+}
+
 function ContentSuitabilitySheet({
   open,
   onOpenChange,
@@ -1243,48 +1551,6 @@ function PlacementRow({
     </tr>
   );
 }
-function PmReports({ data }: { data: PlacementDashboardPayload | null }) {
-  return (
-    <section className="space-y-4">
-      {(data?.reports ?? []).map((report) => (
-        <article
-          key={report.id}
-          className="overflow-hidden rounded-2xl border bg-white shadow-sm"
-        >
-          <header className="border-b bg-neutral-50 p-5">
-            <h3 className="font-semibold">
-              PM optimization report #{report.id}
-            </h3>
-            <p className="text-sm text-neutral-500">
-              {report.accountName} · {report.itemCount} exclusions ·{" "}
-              {formatDate(report.generatedAt)}
-            </p>
-          </header>
-          <div className="divide-y">
-            {report.items.map((item, index) => (
-              <div
-                key={`${item.placement}-${index}`}
-                className="grid gap-2 p-4 text-sm md:grid-cols-4"
-              >
-                <strong>{item.displayName}</strong>
-                <span>{humanize(item.placementType)}</span>
-                <span>
-                  {item.campaignName} / {item.adGroupName}
-                </span>
-                <span>{item.reason}</span>
-              </div>
-            ))}
-          </div>
-        </article>
-      ))}
-      {!data?.reports.length ? (
-        <p className="rounded-2xl border bg-white p-8 text-center text-neutral-500">
-          No approved placement reports yet.
-        </p>
-      ) : null}
-    </section>
-  );
-}
 function Filter({
   label,
   children,
@@ -1304,10 +1570,12 @@ function Filter({
 function Action({
   label,
   tone,
+  disabled = false,
   onClick,
 }: {
   label: string;
   tone: "red" | "green" | "amber";
+  disabled?: boolean;
   onClick: () => void;
 }) {
   const style =
@@ -1319,6 +1587,7 @@ function Action({
   return (
     <Button
       size="sm"
+      disabled={disabled}
       className={`cursor-pointer text-white ${style}`}
       onClick={onClick}
     >
@@ -1330,6 +1599,9 @@ function humanize(value: string) {
   return value
     .replaceAll("_", " ")
     .replace(/\b\w/g, (char) => char.toUpperCase());
+}
+function placementStatusLabel(value: string) {
+  return value === "ready_for_publishing" ? "Excluded" : humanize(value);
 }
 function formatDate(value: string) {
   const date = new Date(

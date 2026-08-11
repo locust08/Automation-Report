@@ -3,7 +3,7 @@ import { dirname, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
 import type { GooglePlacementPerformanceRow } from "@/lib/reporting/google";
-import type { PlacementApproverDecision, PlacementDashboardPayload, PlacementDecision, PlacementOptimizationRow, PlacementPmReport, PlacementReviewEvent } from "@/lib/placement-optimization/types";
+import type { PlacementApproverDecision, PlacementDashboardPayload, PlacementDecision, PlacementOptimizationRow, PlacementReviewEvent } from "@/lib/placement-optimization/types";
 
 type Analysis = { classification: string; recommendedAction: PlacementDecision; confidence: number; reason: string; confirmationRequired: boolean; aiStatus: "generated" | "rules_fallback" | "not_required" };
 
@@ -56,7 +56,7 @@ export function persistPlacements(input: { customerId: string; customerName: str
     `);
     db.exec("begin immediate;");
     for (const row of input.rows) {
-      const saved = upsertPlacement.get(input.customerId,input.customerName,row.resourceName,row.sourceView ?? "detail_placement_view",row.placement,row.displayName,row.placementType,row.targetUrl,row.campaignName,row.adGroupName,row.impressions,row.clicks,row.spend,row.conversions,row.videoViews,input.startDate,input.endDate,input.refreshedAt) as { id: number };
+      const saved = upsertPlacement.get(input.customerId,input.customerName,row.resourceName,row.sourceView ?? "performance_max_placement_view",row.placement,row.displayName,row.placementType,row.targetUrl,row.campaignName,row.adGroupName,row.impressions,row.clicks,row.spend,row.conversions,row.videoViews,input.startDate,input.endDate,input.refreshedAt) as { id: number };
       upsertRecommendation.run(saved.id,row.analysis.classification,row.analysis.recommendedAction,row.analysis.confidence,row.analysis.reason,row.analysis.confirmationRequired ? 1 : 0,row.analysis.aiStatus);
     }
     db.exec("commit;");
@@ -83,10 +83,6 @@ export function loadPlacementDashboard(input: { customerId: string; customerName
     const rows: PlacementOptimizationRow[] = raw.map((row) => ({
       id:String(row.id),resourceName:String(row.source_resource_name),placement:String(row.placement),displayName:String(row.display_name),placementType:String(row.placement_type),targetUrl:row.target_url ? String(row.target_url) : null,campaignName:String(row.campaign_name),adGroupName:String(row.ad_group_name),impressions:Number(row.impressions),clicks:Number(row.clicks),spend:Number(row.spend),conversions:Number(row.conversions),videoViews:Number(row.video_views),classification:String(row.classification),recommendedAction:String(row.recommended_action) as PlacementDecision,confidence:Number(row.confidence),reason:String(row.reason),confirmationRequired:Boolean(row.confirmation_required),aiStatus:String(row.ai_status) as PlacementOptimizationRow["aiStatus"],reviewStatus:String(row.review_status),currentDecision:row.current_decision ? String(row.current_decision) : null,reviewHistory:eventsById.get(Number(row.id)) ?? [],
     }));
-    const changeSets = db.prepare(`SELECT id,status,item_count,approved_by_email,approved_at FROM ad_automation_placement_change_sets WHERE google_customer_id=? ORDER BY id DESC`).all(input.customerId) as Array<Record<string,string|number>>;
-    const reportsRaw = db.prepare(`SELECT id,change_set_id,customer_name,item_count,generated_at FROM ad_automation_placement_pm_reports WHERE google_customer_id=? ORDER BY id DESC`).all(input.customerId) as Array<Record<string,string|number>>;
-    const reportItemStatement = db.prepare(`SELECT snapshot_json FROM ad_automation_placement_pm_report_items WHERE report_id=? ORDER BY id`);
-    const reports: PlacementPmReport[] = reportsRaw.map((report) => ({ id:String(report.id),changeSetId:String(report.change_set_id),accountName:String(report.customer_name),itemCount:Number(report.item_count),generatedAt:String(report.generated_at),items:(reportItemStatement.all(report.id) as Array<{snapshot_json:string}>).map((item) => JSON.parse(item.snapshot_json) as PlacementPmReport["items"][number]) }));
     const websiteRows = rows.filter((row) => row.placementType === "WEBSITE");
     const knownCampaignCount = new Set(
       rows
@@ -96,12 +92,12 @@ export function loadPlacementDashboard(input: { customerId: string; customerName
     const campaignCount =
       input.performanceMaxCampaignCount ??
       (rows.length > 0 ? Math.max(1, knownCampaignCount) : 0);
-    return { account:{customerId:input.customerId,customerName:input.customerName,startDate:input.startDate,endDate:input.endDate,refreshedAt:input.refreshedAt},summary:{total:rows.length,needsReview:rows.filter(r=>r.reviewStatus==="pending_optimizer").length,awaitingApproval:rows.filter(r=>r.reviewStatus==="ready_for_approval").length,kept:rows.filter(r=>r.reviewStatus==="kept").length,kiv:rows.filter(r=>r.reviewStatus==="kiv").length,approved:rows.filter(r=>r.reviewStatus==="ready_for_publishing").length,rejected:rows.filter(r=>r.reviewStatus==="approver_rejected").length},performanceMax:{available:rows.length>0,campaignCount,totalImpressions:rows.reduce((sum,row)=>sum+row.impressions,0),uniqueSites:new Set(websiteRows.map((row)=>row.placement)).size,topSites:websiteRows.slice(0,5).map(({id,displayName,placement,targetUrl,campaignName,impressions})=>({id,displayName,placement,targetUrl,campaignName,impressions}))},rows,changeSets:changeSets.map(c=>({id:String(c.id),status:String(c.status),itemCount:Number(c.item_count),approvedByEmail:String(c.approved_by_email),approvedAt:String(c.approved_at)})),reports,warnings:input.warnings ?? [] };
+    return { account:{customerId:input.customerId,customerName:input.customerName,startDate:input.startDate,endDate:input.endDate,refreshedAt:input.refreshedAt},summary:{total:rows.length,needsReview:rows.filter(r=>r.reviewStatus==="pending_optimizer").length,awaitingApproval:rows.filter(r=>r.reviewStatus==="ready_for_approval").length,kept:rows.filter(r=>r.reviewStatus==="kept").length,kiv:rows.filter(r=>r.reviewStatus==="kiv").length,approved:rows.filter(r=>r.reviewStatus==="ready_for_publishing").length,rejected:rows.filter(r=>r.reviewStatus==="approver_rejected").length},performanceMax:{available:rows.length>0,campaignCount,totalImpressions:rows.reduce((sum,row)=>sum+row.impressions,0),uniqueSites:new Set(websiteRows.map((row)=>row.placement)).size,topSites:websiteRows.slice(0,5).map(({id,displayName,placement,targetUrl,campaignName,impressions})=>({id,displayName,placement,targetUrl,campaignName,impressions}))},rows,changeSets:[],reports:[],warnings:input.warnings ?? [] };
   } finally { db.close(); }
 }
 
 export function saveOptimizerDecision(input: { recommendationIds:number[]; decision:PlacementDecision; reviewer:{id:string;email:string;role:string} }) {
-  const status = input.decision === "exclude" ? "ready_for_approval" : input.decision === "keep" ? "kept" : "kiv";
+  const status = input.decision === "exclude" ? "ready_for_publishing" : input.decision === "keep" ? "kept" : "kiv";
   return saveSimpleDecision({ ...input, status, action:`optimizer_${input.decision}` });
 }
 
@@ -117,19 +113,42 @@ function saveSimpleDecision(input:{recommendationIds:number[];decision:string;st
 }
 
 export function savePlacementApproverDecision(input:{recommendationIds:number[];decision:PlacementApproverDecision;reviewer:{id:string;email:string;role:string}}){
-  if(input.decision!=="approved") return saveSimpleDecision({recommendationIds:input.recommendationIds,decision:input.decision,status:input.decision==="rejected"?"approver_rejected":"returned_for_clarification",action:`approver_${input.decision}`,reviewer:input.reviewer});
-  const db=openDatabase(); try{
-    const placeholders=input.recommendationIds.map(()=>"?").join(",");
-    const rows=db.prepare(`SELECT rec.id,rec.review_status,rec.reason,p.* FROM ad_automation_placement_recommendations rec JOIN ad_automation_placements p ON p.id=rec.placement_id WHERE rec.id IN (${placeholders}) ORDER BY rec.id`).all(...input.recommendationIds) as Array<Record<string,string|number|null>>;
-    if(rows.length!==input.recommendationIds.length)throw new Error("One or more placement recommendations were not found.");
-    const accounts=new Set(rows.map(r=>String(r.google_customer_id)));if(accounts.size!==1)throw new Error("A change set can contain only one account.");
-    const key=`${String(rows[0].google_customer_id)}:${rows.map(r=>r.id).join("-")}`; const existing=db.prepare(`SELECT id FROM ad_automation_placement_change_sets WHERE idempotency_key=?`).get(key) as {id:number}|undefined;if(existing)return {updated:0,skipped:rows.length,changeSetId:String(existing.id)};
-    if(rows.some(r=>r.review_status!=="ready_for_approval"))throw new Error("Every selected placement must be awaiting approval.");
-    db.exec("begin immediate;");
-    const change=db.prepare(`INSERT INTO ad_automation_placement_change_sets (google_customer_id,approved_by_user_id,approved_by_email,item_count,idempotency_key) VALUES (?,?,?,?,?)`).run(String(rows[0].google_customer_id),input.reviewer.id,input.reviewer.email,rows.length,key); const changeSetId=Number(change.lastInsertRowid);
-    const report=db.prepare(`INSERT INTO ad_automation_placement_pm_reports (change_set_id,google_customer_id,customer_name,item_count) VALUES (?,?,?,?)`).run(changeSetId,String(rows[0].google_customer_id),String(rows[0].customer_name),rows.length); const reportId=Number(report.lastInsertRowid);
-    const item=db.prepare(`INSERT INTO ad_automation_placement_change_set_items (change_set_id,recommendation_id,snapshot_json) VALUES (?,?,?)`); const reportItem=db.prepare(`INSERT INTO ad_automation_placement_pm_report_items (report_id,snapshot_json) VALUES (?,?)`); const update=db.prepare(`UPDATE ad_automation_placement_recommendations SET review_status='ready_for_publishing',current_decision='approved',updated_at=datetime('now') WHERE id=?`); const history=db.prepare(`INSERT INTO ad_automation_placement_reviews (recommendation_id,reviewer_user_id,reviewer_email,reviewer_role,action,previous_status,resulting_status) VALUES (?,?,?,?,?,?,?)`);
-    for(const row of rows){const snapshot={placement:String(row.placement),displayName:String(row.display_name),placementType:String(row.placement_type),campaignName:String(row.campaign_name),adGroupName:String(row.ad_group_name),spend:Number(row.spend),clicks:Number(row.clicks),conversions:Number(row.conversions),reason:String(row.reason)};const json=JSON.stringify(snapshot);item.run(changeSetId,row.id,json);reportItem.run(reportId,json);update.run(row.id);history.run(row.id,input.reviewer.id,input.reviewer.email,input.reviewer.role,"approver_approved","ready_for_approval","ready_for_publishing");}
-    db.exec("commit;");return{updated:rows.length,skipped:0,changeSetId:String(changeSetId),reportId:String(reportId)};
+  const db=openDatabase();
+  try {
+    const read=db.prepare(`SELECT review_status FROM ad_automation_placement_recommendations WHERE id=?`);
+    for(const id of input.recommendationIds){
+      const row=read.get(id) as {review_status:string}|undefined;
+      if(!row)throw new Error(`Placement recommendation ${id} was not found.`);
+      if(row.review_status!=="ready_for_approval")throw new Error("Every selected placement must be awaiting approval.");
+    }
+  } finally { db.close(); }
+  return saveSimpleDecision({
+    recommendationIds: input.recommendationIds,
+    decision: input.decision,
+    status:
+      input.decision === "approved"
+        ? "ready_for_publishing"
+        : input.decision === "rejected"
+          ? "approver_rejected"
+          : "returned_for_clarification",
+    action: `approver_${input.decision}`,
+    reviewer: input.reviewer,
+  });
+}
+
+export function clearPlacementDecision(input:{recommendationIds:number[];reviewer:{id:string;email:string;role:string}}){
+  const db=openDatabase(); try {
+    const read=db.prepare(`SELECT review_status,current_decision FROM ad_automation_placement_recommendations WHERE id=?`);
+    const update=db.prepare(`UPDATE ad_automation_placement_recommendations SET review_status='pending_optimizer',current_decision=NULL,updated_at=datetime('now') WHERE id=?`);
+    const history=db.prepare(`INSERT INTO ad_automation_placement_reviews (recommendation_id,reviewer_user_id,reviewer_email,reviewer_role,action,previous_status,resulting_status) VALUES (?,?,?,?,?,?,?)`);
+    db.exec("begin immediate;"); let updated=0;
+    for(const id of input.recommendationIds){
+      const previous=read.get(id) as {review_status:string;current_decision:string|null}|undefined;
+      if(!previous)throw new Error(`Placement recommendation ${id} was not found.`);
+      if(previous.current_decision===null&&previous.review_status==="pending_optimizer")continue;
+      update.run(id); updated++;
+      history.run(id,input.reviewer.id,input.reviewer.email,input.reviewer.role,"decision_removed",previous.review_status,"pending_optimizer");
+    }
+    db.exec("commit;"); return {updated,skipped:input.recommendationIds.length-updated};
   }catch(error){try{db.exec("rollback;");}catch{}throw error;}finally{db.close();}
 }
