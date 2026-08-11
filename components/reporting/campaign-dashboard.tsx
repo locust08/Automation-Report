@@ -44,6 +44,7 @@ export function CampaignDashboard({ campaignType }: { campaignType: string }) {
     params.set("startDate", filters.startDate);
     params.set("endDate", filters.endDate);
     params.set("platform", filters.platform);
+    if (filters.source === "meta_csv") params.set("source", "meta_csv");
     return params.toString();
   }, [filters]);
 
@@ -158,7 +159,7 @@ export function CampaignDashboard({ campaignType }: { campaignType: string }) {
         {data && section ? (
           <>
             <ReportWarnings warnings={data.warnings} />
-            <MetricSection section={section} />
+            <MetricSection section={section} dateRange={data.dateRange} />
             {hasComparisonSpend ? (
               <section className="space-y-4 rounded-[2rem] bg-[#e7e7e7] p-4 shadow-sm sm:p-6">
                 <CampaignComparisonTable
@@ -190,28 +191,35 @@ function buildSectionFromComparison(
   previous: CampaignRow,
 ): SummarySection {
   if (platform === "meta") {
+    const awarenessOnly = selected.campaignType.toLowerCase().includes("awareness");
+    const outcomeMetrics = awarenessOnly
+      ? [metric("cpm", "CPM", selected.cpm, previous.cpm, "currency")]
+      : [
+          metric(
+            "results",
+            "Results",
+            selected.results,
+            previous.results,
+            "number",
+          ),
+          metric(
+            "costPerResults",
+            "Cost/Results",
+            selected.costPerResult,
+            previous.costPerResult,
+            "currency",
+          ),
+        ];
+
     return {
       platform,
       title: "Meta",
       logoPath: "/MetaLogo.png",
       metrics: [
-        metric(
-          "results",
-          "Results",
-          selected.results,
-          previous.results,
-          "number",
-        ),
-        metric(
-          "costPerResults",
-          "Cost/Results",
-          selected.costPerResult,
-          previous.costPerResult,
-          "currency",
-        ),
+        ...outcomeMetrics,
         metric("clicks", "Clicks", selected.clicks, previous.clicks, "number"),
         metric("ctr", "CTR (%)", selected.ctr, previous.ctr, "percent"),
-        metric("cpm", "CPM", selected.cpm, previous.cpm, "currency"),
+        ...(awarenessOnly ? [] : [metric("cpm", "CPM", selected.cpm, previous.cpm, "currency")]),
         metric(
           "impressions",
           "Impression",
@@ -340,6 +348,7 @@ function metric(
     key,
     label,
     value: selected,
+    previousValue: previous,
     delta: computeDelta(selected, previous),
     format,
   };

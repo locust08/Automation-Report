@@ -2,7 +2,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
-import { chromium, type Browser, type Page } from "playwright";
+import type { Browser, Page } from "playwright";
 
 import {
   resolveMonthlyReportDateRange,
@@ -11,7 +11,7 @@ import {
 import { parseBooleanEnv } from "@/src/lib/cron/monthly-report-targets";
 import type { MonthlyReportAccount } from "@/src/lib/notion/get-monthly-report-accounts";
 
-const DEFAULT_CONCURRENCY = 3;
+const DEFAULT_CONCURRENCY = 1;
 const PDF_RENDER_TIMEOUT_MS = 180000;
 const TEN_MINUTES_MS = 10 * 60 * 1000;
 const EMAIL_SAFE_PDF_SIZE_BYTES = 35 * 1024 * 1024;
@@ -130,7 +130,9 @@ export async function generateMonthlyReportPdfBatch(input: {
 
     return summarizePdfResults(results, Date.now() - startedAt);
   } finally {
-    await browser.close();
+    await browser.close().catch((error: unknown) => {
+      console.warn(`[monthly-report] pdf browser close failed ${toErrorMessage(error)}`);
+    });
   }
 }
 
@@ -164,12 +166,14 @@ async function generateMonthlyReportPdfWithBrowser(
     return result;
   }
 
-  const page = await browser.newPage({
-    viewport: isAdvancedReportAccount(account) ? { width: 1440, height: 2200 } : { width: 794, height: 1123 },
-    deviceScaleFactor: 1,
-  });
+  let page: Page | null = null;
 
   try {
+    page = await browser.newPage({
+      viewport: isAdvancedReportAccount(account) ? { width: 1440, height: 2200 } : { width: 794, height: 1123 },
+      deviceScaleFactor: 1,
+    });
+
     const pageUrl = isAdvancedReportAccount(account)
       ? buildAdvancedReportUrl(account, input.dateRange)
       : buildPrintReportUrl(account, input.dateRange);
@@ -239,7 +243,7 @@ async function generateMonthlyReportPdfWithBrowser(
     logPdfResult(result);
     return result;
   } finally {
-    await page.close().catch((error: unknown) => {
+    await page?.close().catch((error: unknown) => {
       console.warn(`[monthly-report] pdf page close failed ${toErrorMessage(error)}`);
     });
   }
@@ -463,9 +467,33 @@ async function waitForAdvancedReportReadyMarker(page: Page) {
 
 async function launchPdfBrowser(): Promise<Browser> {
   try {
+    const configuredExecutablePath = process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH?.trim();
+
+    if (configuredExecutablePath) {
+      const { chromium } = await import("playwright");
+      return await chromium.launch({
+        headless: true,
+        executablePath: configuredExecutablePath,
+      });
+    }
+
+    if (process.env.VERCEL) {
+      const [{ chromium }, chromiumPackage] = await Promise.all([
+        import("playwright-core"),
+        import("@sparticuz/chromium"),
+      ]);
+      const executablePath = await chromiumPackage.default.executablePath();
+
+      return (await chromium.launch({
+        args: chromiumPackage.default.args,
+        executablePath,
+        headless: true,
+      })) as unknown as Browser;
+    }
+
+    const { chromium } = await import("playwright");
     return await chromium.launch({
       headless: true,
-      executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH?.trim() || undefined,
     });
   } catch (error) {
     throw new Error(`Browser launch failure: ${toErrorMessage(error)}`);

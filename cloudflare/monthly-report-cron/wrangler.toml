@@ -1,4 +1,5 @@
 name = "ads-dashboard-monthly-report-automation"
+account_id = "e7c515dde995479daacd82ad79dfc3e8"
 main = "src/index.ts"
 compatibility_date = "2026-04-28"
 compatibility_flags = ["nodejs_compat"]
@@ -20,7 +21,7 @@ new_sqlite_classes = ["BrowserLaunchLimiter"]
 
 [vars]
 REPORT_EMAIL_DELIVERY_MODE = "attachment"
-BROWSER_LAUNCH_SPACING_MS = "7000"
+BROWSER_LAUNCH_SPACING_MS = "20000"
 REPORT_COMPLETION_NOTIFICATION_TO = "waiing@locus-t.com.my"
 REPORT_COMPLETION_NOTIFICATION_CC = "eason@locus-t.com.my,ava@locus-t.com.my"
 
@@ -42,7 +43,7 @@ queue = "monthly-report-queue"
 queue = "monthly-report-queue"
 max_batch_size = 1
 max_batch_timeout = 10
-max_concurrency = 8
+max_concurrency = 1
 max_retries = 5
 retry_delay = 60
 dead_letter_queue = "monthly-report-dead-letter-queue"

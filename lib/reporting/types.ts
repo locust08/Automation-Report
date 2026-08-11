@@ -15,6 +15,8 @@ export interface SummaryMetric {
   key: string;
   label: string;
   value: number | null;
+  previousValue?: number | null;
+  displayValue?: string;
   delta: number | null;
   format: MetricFormat;
 }
@@ -132,6 +134,7 @@ export interface OverallReportPayload {
   audienceClickBreakdown: AudienceClickBreakdownResponse;
   warnings: string[];
   diagnostics?: ReportPerformanceDiagnostic[];
+  dataSource?: "meta_api" | "meta_csv";
 }
 
 export interface ReportPerformanceDiagnostic {
@@ -237,7 +240,12 @@ export interface MetaCreativePerformanceRow {
   mediaType: "image" | "video";
   imageUrl: string | null;
   videoUrl: string | null;
+  videoId?: string | null;
+  videoSourceUrl?: string | null;
+  videoPermalinkUrl?: string | null;
   thumbnailUrl: string | null;
+  posterUrl?: string | null;
+  mediaWarning?: string | null;
   campaignId: string | null;
   campaignName: string;
   adSetId: string | null;
@@ -372,12 +380,22 @@ export interface PreviewCreativeAsset {
   title?: string | null;
   body?: string | null;
   description?: string | null;
+  mediaType?: "image" | "video";
   imageUrl?: string | null;
   videoUrl?: string | null;
+  videoId?: string | null;
+  videoSourceUrl?: string | null;
+  videoPermalinkUrl?: string | null;
   thumbnailUrl?: string | null;
+  posterUrl?: string | null;
+  mediaWarning?: string | null;
   linkUrl?: string | null;
   callToActionType?: string | null;
   objectType?: string | null;
+  effectiveObjectStoryId?: string | null;
+  instagramPermalinkUrl?: string | null;
+  effectiveInstagramMediaId?: string | null;
+  facebookPermalinkUrl?: string | null;
 }
 
 export interface PreviewLinkAsset {
@@ -387,6 +405,9 @@ export interface PreviewLinkAsset {
   placementLabel?: string | null;
   device?: "desktop" | "mobile" | null;
   adFormat?: string | null;
+  previewUrl?: string | null;
+  publicPostUrl?: string | null;
+  linkKind?: "publicPost" | "metaPreview" | null;
 }
 
 export interface PreviewImageAsset {
@@ -586,6 +607,7 @@ export interface PreviewReportPayload {
     meta?: MetaPreviewDiagnostics[];
     google: GooglePreviewDiagnostics[];
   };
+  dataSource?: "meta_api" | "meta_csv";
 }
 
 export interface RequestContext {
@@ -596,4 +618,5 @@ export interface RequestContext {
   endDate: string | null;
   campaignType: string | null;
   platform: Platform | null;
+  source: "api" | "meta_csv";
 }

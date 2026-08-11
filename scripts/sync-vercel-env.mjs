@@ -16,6 +16,9 @@ const OPTIONAL_KEYS = [
   ["GOOGLE_ADS_API_VERSION"],
   ["REPORT_COMPANY_NAME"],
   ["REPORT_COMPANY_NAME_MAP"],
+  ["META_IMPORT_DEFAULT_ACCOUNT_ID"],
+  ["META_IMPORT_WORKER_URL"],
+  ["META_IMPORT_WORKER_SECRET"],
 ];
 
 const VALID_TARGETS = new Set(["development", "preview", "production"]);

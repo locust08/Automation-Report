@@ -133,6 +133,7 @@ interface CreateJobRequest {
   forceTestMode?: boolean;
   sendEmail?: boolean;
   reportType?: string | null;
+  manualReportType?: "monthlyOverall" | "monthlyAdvanced" | "biweeklyOverall" | null;
   country?: string | null;
   scheduledDate?: string;
   scheduledTime?: string;
@@ -158,6 +159,7 @@ interface ReportQueueMessage {
 interface JobRow {
   id: string;
   status: string;
+  report_type: string;
   report_month_key: string;
   report_month_label: string;
   start_date: string;
@@ -203,9 +205,12 @@ const PRODUCTION_CRON = "0 4 7,10,15 * *";
 const TEST_RECIPIENT_FALLBACK = "eason@locus-t.com.my";
 const NOTION_API_VERSION = "2026-03-11";
 const BROWSER_LAUNCH_LIMITER_NAME = "global-browser-launch-limiter";
-const DEFAULT_BROWSER_LAUNCH_SPACING_MS = 7000;
+const DEFAULT_BROWSER_LAUNCH_SPACING_MS = 20000;
 const BROWSER_RATE_LIMIT_RETRY_MS = 60000;
 const BROWSER_RATE_LIMIT_RETRY_JITTER_MS = 15000;
+const BROWSER_SESSION_RETRY_ATTEMPTS = 3;
+const BROWSER_SESSION_RETRY_BASE_MS = 20000;
+const BROWSER_SESSION_RETRY_JITTER_MS = 10000;
 const REPORT_ITEM_FINAL_FAILURE_ATTEMPTS = 6;
 const ADVANCED_REPORT_READY_TIMEOUT_MS = 8 * 60 * 1000;
 const ADVANCED_REPORT_READY_POLL_MS = 5000;
@@ -330,6 +335,21 @@ async function handleFetch(request: Request, env: Env): Promise<Response> {
     return jsonResponse(result, 202);
   }
 
+  if (request.method === "GET" && url.pathname === "/report-jobs/active") {
+    if (!isAuthorized(request, env)) {
+      return jsonResponse({ success: false, error: "Unauthorized" }, 401);
+    }
+
+    const reportType = url.searchParams.get("reportType")?.trim() ?? "";
+    const reportMonthKey = url.searchParams.get("reportMonthKey")?.trim() ?? "";
+    if (!isScheduledReportType(reportType) || !/^\d{4}-\d{2}$/.test(reportMonthKey)) {
+      return jsonResponse({ success: false, error: "A valid reportType and reportMonthKey are required." }, 400);
+    }
+
+    const job = await findActiveReportJob(env, reportType, reportMonthKey);
+    return jsonResponse({ success: true, job });
+  }
+
   const jobMatch = url.pathname.match(/^\/report-jobs\/([^/]+)$/);
   if (request.method === "GET" && jobMatch) {
     if (!isAuthorized(request, env)) {
@@ -370,6 +390,22 @@ async function createReportJob(
   const testMode = Boolean(input.forceTestMode);
   const sendEmail = input.sendEmail !== false;
   const scheduledDate = resolveScheduledDate(input.scheduledDate ?? input.scheduledTime);
+  const jobReportType = resolveJobReportType(input, scheduledDate);
+  const requestedRange = resolveDateRange(input);
+  const activeJob = await findActiveReportJob(env, jobReportType, requestedRange.reportMonthKey);
+  if (activeJob) {
+    return {
+      success: true,
+      status: activeJob.status,
+      jobId: activeJob.id,
+      total: activeJob.total_items,
+      reportMonthKey: activeJob.report_month_key,
+      reportMonthLabel: activeJob.report_month_label,
+      createdAt: activeJob.created_at,
+      reusedActiveJob: true,
+      metadata,
+    };
+  }
   if (normalizeReportType(input.reportType) === "advanced" && !isAdvancedReportAutomationEnabled(env)) {
     console.warn(
       `[monthly-report-automation] skipped report_type=advanced scheduled_date=${scheduledDate} reason="ADVANCED_REPORT_ENABLED=false"`
@@ -387,7 +423,7 @@ async function createReportJob(
   }
   const resolved = await resolveTargets(env, input, testMode);
   const expandedTargets = expandAdvancedTargets(resolved.targets);
-  const monthlyEmailTargets = expandedTargets.filter((target) => target.monthlyEmailEnabled !== false);
+  const monthlyEmailTargets = expandedTargets.filter((target) => target.monthlyEmailEnabled === true);
   const skippedUnchecked = expandedTargets.length - monthlyEmailTargets.length;
   const recipientTargets = monthlyEmailTargets.filter((target) => {
     if (!sendEmail || testMode) {
@@ -447,15 +483,17 @@ async function createReportJob(
   const jobId = crypto.randomUUID();
   const jobStatus = targets.length > 0 ? "queued" : "empty";
 
-  await env.REPORT_JOBS_DB.prepare(
+  try {
+    await env.REPORT_JOBS_DB.prepare(
     `INSERT INTO report_jobs (
-      id, status, report_month_key, report_month_label, start_date, end_date,
+      id, status, report_type, report_month_key, report_month_label, start_date, end_date,
       total_items, send_email, test_mode, metadata_json, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   )
     .bind(
       jobId,
       jobStatus,
+      jobReportType,
       resolved.reportMonthKey,
       resolved.reportMonthLabel,
       resolved.startDate,
@@ -468,6 +506,23 @@ async function createReportJob(
       now
     )
     .run();
+  } catch (error) {
+    const concurrentJob = await findActiveReportJob(env, jobReportType, resolved.reportMonthKey);
+    if (!concurrentJob) {
+      throw error;
+    }
+    return {
+      success: true,
+      status: concurrentJob.status,
+      jobId: concurrentJob.id,
+      total: concurrentJob.total_items,
+      reportMonthKey: concurrentJob.report_month_key,
+      reportMonthLabel: concurrentJob.report_month_label,
+      createdAt: concurrentJob.created_at,
+      reusedActiveJob: true,
+      metadata,
+    };
+  }
 
   for (const target of targets) {
     const itemId = crypto.randomUUID();
@@ -530,6 +585,8 @@ async function createReportJob(
     skippedAlreadySent: duplicateResult.skippedAlreadySent,
     reportMonthKey: resolved.reportMonthKey,
     reportMonthLabel: resolved.reportMonthLabel,
+    createdAt: now,
+    reusedActiveJob: false,
     metadata: jobMetadata,
   };
 }
@@ -829,7 +886,8 @@ async function resolveTargets(
     const payload = await resolveTargetsFromVercel(env, {
       forceTestMode: testMode,
       overrideTargets: input.accounts,
-      reportType: input.reportType,
+      reportType: input.manualReportType ?? input.reportType,
+      manual: Boolean(input.manualReportType),
     }).catch((error) => {
       console.error("[monthly-report-automation] Vercel target enrichment failed", formatError(error));
       return { targets: input.accounts ?? [] };
@@ -844,7 +902,8 @@ async function resolveTargets(
 
   const payload = await resolveTargetsFromVercel(env, {
     forceTestMode: testMode,
-    reportType: input.reportType,
+    reportType: input.manualReportType ?? input.reportType,
+    manual: Boolean(input.manualReportType),
   });
   const inputRange = resolveDateRange(input);
 
@@ -863,6 +922,7 @@ async function resolveTargetsFromVercel(
     forceTestMode: boolean;
     overrideTargets?: ReportTarget[];
     reportType?: string | null;
+    manual?: boolean;
   }
 ): Promise<{
   startDate?: string;
@@ -871,16 +931,22 @@ async function resolveTargetsFromVercel(
   reportMonthLabel?: string;
   targets?: ReportTarget[];
 }> {
-  const endpoint =
-    env.VERCEL_REPORT_TARGETS_ENDPOINT?.trim() ||
-    `${trimTrailingSlash(env.VERCEL_APP_BASE_URL)}/api/report-pdf/targets`;
+  const configuredEndpoint = env.VERCEL_REPORT_TARGETS_ENDPOINT?.trim();
+  const endpoint = body.manual
+    ? `${trimTrailingSlash(env.VERCEL_APP_BASE_URL)}/api/report-pdf/manual-targets`
+    : configuredEndpoint || `${trimTrailingSlash(env.VERCEL_APP_BASE_URL)}/api/report-pdf/targets`;
+  const requestBody = {
+    forceTestMode: body.forceTestMode,
+    ...(body.overrideTargets ? { overrideTargets: body.overrideTargets } : {}),
+    reportType: body.reportType,
+  };
   const response = await fetch(endpoint, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${readRequired(env.REPORT_AUTOMATION_SECRET, "REPORT_AUTOMATION_SECRET")}`,
       "Content-Type": "application/json",
     },
-    body: JSON.stringify(body),
+    body: JSON.stringify(requestBody),
   });
 
   const payload = (await response.json().catch(() => null)) as
@@ -946,8 +1012,8 @@ async function enrichTargetsFromNotion(
             ? matchedRows.find((row) => row.ccEmail)?.ccEmail ?? null
             : target.ccEmail ?? matchedRows.find((row) => row.ccEmail)?.ccEmail ?? null,
           monthlyEmailEnabled:
-            target.monthlyEmailEnabled ??
-            resolveNotionMonthlyEmailEnabled(matchedRows, target.reportType ?? requestedReportType),
+            resolveNotionMonthlyEmailEnabled(matchedRows, target.reportType ?? requestedReportType) ??
+            target.monthlyEmailEnabled === true,
         };
       })
     );
@@ -1349,21 +1415,27 @@ function formatDateRange(start: Date, end: Date): {
   };
 }
 
-async function renderWithBrowserRateLimitRetry<T>(operation: () => Promise<T>): Promise<T> {
-  try {
-    return await operation();
-  } catch (error) {
-    if (!isBrowserRateLimitError(error)) {
-      throw error;
-    }
+async function renderWithBrowserRetry<T>(operation: () => Promise<T>): Promise<T> {
+  let lastError: unknown;
 
-    const delayMs = BROWSER_RATE_LIMIT_RETRY_MS + Math.floor(Math.random() * BROWSER_RATE_LIMIT_RETRY_JITTER_MS);
-    console.warn(
-      `[monthly-report-automation] browser launch rate limited; retrying after ${delayMs}ms`
-    );
-    await sleep(delayMs);
-    return operation();
+  for (let attempt = 1; attempt <= BROWSER_SESSION_RETRY_ATTEMPTS; attempt += 1) {
+    try {
+      return await operation();
+    } catch (error) {
+      lastError = error;
+      if (!isRetryableBrowserError(error) || attempt >= BROWSER_SESSION_RETRY_ATTEMPTS) {
+        throw error;
+      }
+
+      const delayMs = resolveBrowserRetryDelayMs(error, attempt);
+      console.warn(
+        `[monthly-report-automation] browser session failed attempt=${attempt} retrying_after_ms=${delayMs} error=${formatError(error)}`
+      );
+      await sleep(delayMs);
+    }
   }
+
+  throw lastError;
 }
 
 async function waitForBrowserLaunchSlot(env: Env): Promise<void> {
@@ -1390,6 +1462,32 @@ function isBrowserRateLimitError(error: unknown): boolean {
   return message.includes("429") || message.includes("rate limit");
 }
 
+function isRetryableBrowserError(error: unknown): boolean {
+  const message = formatError(error).toLowerCase();
+  return (
+    isBrowserRateLimitError(error) ||
+    message.includes("target page, context or browser has been closed") ||
+    message.includes("target closed") ||
+    message.includes("browser has been closed") ||
+    message.includes("chromium crashed") ||
+    message.includes("session evicted") ||
+    message.includes("connection error") ||
+    message.includes("websocket") ||
+    message.includes("unable to create new browser")
+  );
+}
+
+function resolveBrowserRetryDelayMs(error: unknown, attempt: number): number {
+  if (isBrowserRateLimitError(error)) {
+    return BROWSER_RATE_LIMIT_RETRY_MS + Math.floor(Math.random() * BROWSER_RATE_LIMIT_RETRY_JITTER_MS);
+  }
+
+  return (
+    BROWSER_SESSION_RETRY_BASE_MS * attempt +
+    Math.floor(Math.random() * BROWSER_SESSION_RETRY_JITTER_MS)
+  );
+}
+
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -1406,9 +1504,10 @@ function resolveBrowserLaunchSpacingMs(env: Env): number {
 async function renderPdfWithBrowserRun(env: Env, reportUrl: string): Promise<ArrayBuffer> {
   await waitForBrowserLaunchSlot(env);
   const browser = await puppeteer.launch(env.REPORT_BROWSER);
+  let page: Page | null = null;
 
   try {
-    const page = await browser.newPage();
+    page = await browser.newPage();
     await page.setViewport({
       width: 1440,
       height: 2200,
@@ -1469,7 +1568,12 @@ async function renderPdfWithBrowserRun(env: Env, reportUrl: string): Promise<Arr
 
     return toArrayBuffer(pdf);
   } finally {
-    await browser.close();
+    await page?.close().catch((error: unknown) => {
+      console.warn(`[monthly-report-automation] browser page close failed ${formatError(error)}`);
+    });
+    await browser.close().catch((error: unknown) => {
+      console.warn(`[monthly-report-automation] browser close failed ${formatError(error)}`);
+    });
   }
 }
 
@@ -1477,9 +1581,10 @@ async function renderAdvancedPdfWithBrowserRun(env: Env, reportUrl: string): Pro
   await ensureAdvancedReportReady(reportUrl);
   await waitForBrowserLaunchSlot(env);
   const browser = await puppeteer.launch(env.REPORT_BROWSER);
+  let page: Page | null = null;
 
   try {
-    const page = await browser.newPage();
+    page = await browser.newPage();
     await page.setViewport({
       width: 1440,
       height: 2200,
@@ -1570,7 +1675,12 @@ async function renderAdvancedPdfWithBrowserRun(env: Env, reportUrl: string): Pro
 
     return toArrayBuffer(lightweightPdf);
   } finally {
-    await browser.close();
+    await page?.close().catch((error: unknown) => {
+      console.warn(`[monthly-report-automation] browser page close failed ${formatError(error)}`);
+    });
+    await browser.close().catch((error: unknown) => {
+      console.warn(`[monthly-report-automation] browser close failed ${formatError(error)}`);
+    });
   }
 }
 
@@ -1705,7 +1815,7 @@ async function startAdvancedReportGeneration(apiUrl: string): Promise<void> {
 }
 
 async function renderPdfForReportMessage(env: Env, message: ReportQueueMessage): Promise<ArrayBuffer> {
-  return renderWithBrowserRateLimitRetry(async () => {
+  return renderWithBrowserRetry(async () => {
     if (normalizeReportType(message.target.reportType) === "advanced") {
       return renderAdvancedPdfWithBrowserRun(env, buildReportUrl(env, message));
     }
@@ -1848,9 +1958,10 @@ async function sendReportEmail(
 
   const deliveryMode = env.REPORT_EMAIL_DELIVERY_MODE ?? "attachment";
   const attachments: Array<Record<string, string>> = [];
+  const fromAddress = env.RESEND_FROM_MONTHLY_REPORT?.trim() || DEFAULT_FROM_ADDRESS;
 
   const body: Record<string, unknown> = {
-    from: env.RESEND_FROM_MONTHLY_REPORT?.trim() || DEFAULT_FROM_ADDRESS,
+    from: fromAddress,
     to: recipientEmails,
     cc: ccEmails.length > 0 ? ccEmails : undefined,
     subject: buildReportEmailSubject(input.reportType, input.target.clientName, input.reportMonthLabel),
@@ -1884,7 +1995,12 @@ async function sendReportEmail(
   const payload = (await response.json().catch(() => null)) as { id?: string; error?: { message?: string } } | null;
 
   if (!response.ok) {
-    throw new Error(payload?.error?.message ?? `Resend email failed with status ${response.status}.`);
+    throw new Error(
+      formatResendDeliveryError(
+        payload?.error?.message ?? `Resend email failed with status ${response.status}.`,
+        fromAddress
+      )
+    );
   }
 
   return {
@@ -1910,8 +2026,9 @@ async function sendCompletionNotificationEmail(
   const completedCount = input.items.filter((item) => item.status === "completed").length;
   const failedCount = input.failedItems.length;
   const statusLabel = failedCount > 0 ? `${failedCount} failed` : "all completed";
+  const fromAddress = env.RESEND_FROM_MONTHLY_REPORT?.trim() || DEFAULT_FROM_ADDRESS;
   const body: Record<string, unknown> = {
-    from: env.RESEND_FROM_MONTHLY_REPORT?.trim() || DEFAULT_FROM_ADDRESS,
+    from: fromAddress,
     to: recipients,
     cc: cc.length > 0 ? cc : undefined,
     subject: `${subjectPrefix}[Report Automation] Finished - ${input.job.report_month_label} - ${completedCount}/${input.items.length} completed, ${statusLabel}`,
@@ -1934,7 +2051,12 @@ async function sendCompletionNotificationEmail(
   const payload = (await response.json().catch(() => null)) as { id?: string; error?: { message?: string } } | null;
 
   if (!response.ok) {
-    throw new Error(payload?.error?.message ?? `Resend completion notification failed with status ${response.status}.`);
+    throw new Error(
+      formatResendDeliveryError(
+        payload?.error?.message ?? `Resend completion notification failed with status ${response.status}.`,
+        fromAddress
+      )
+    );
   }
 
   return {
@@ -2230,6 +2352,39 @@ function normalizeReportType(value: string | null | undefined): "overall" | "adv
   return normalized.includes("advance") ? "advanced" : "overall";
 }
 
+function isScheduledReportType(value: string): value is "monthlyOverall" | "monthlyAdvanced" | "biweeklyOverall" {
+  return value === "monthlyOverall" || value === "monthlyAdvanced" || value === "biweeklyOverall";
+}
+
+function resolveJobReportType(
+  input: CreateJobRequest,
+  scheduledDate: string
+): "monthlyOverall" | "monthlyAdvanced" | "biweeklyOverall" {
+  if (input.manualReportType && isScheduledReportType(input.manualReportType)) {
+    return input.manualReportType;
+  }
+  if (normalizeReportType(input.reportType) === "advanced") {
+    return "monthlyAdvanced";
+  }
+  return new Date(`${scheduledDate}T00:00:00.000Z`).getUTCDate() === 15
+    ? "biweeklyOverall"
+    : "monthlyOverall";
+}
+
+async function findActiveReportJob(
+  env: Env,
+  reportType: string,
+  reportMonthKey: string
+): Promise<JobRow | null> {
+  return env.REPORT_JOBS_DB.prepare(
+    `SELECT * FROM report_jobs
+     WHERE report_type = ? AND report_month_key = ? AND status IN ('queued', 'processing')
+     ORDER BY created_at DESC LIMIT 1`
+  )
+    .bind(reportType, reportMonthKey)
+    .first<JobRow>();
+}
+
 function isAdvancedReportAutomationEnabled(env: Env): boolean {
   const value = env.ADVANCED_REPORT_ENABLED?.trim().toLowerCase();
   return value !== "false" && value !== "0" && value !== "off" && value !== "no";
@@ -2283,6 +2438,20 @@ function buildEmailLogoUrl(env: Env): string {
   }
 
   return DEFAULT_EMAIL_LOGO_URL;
+}
+
+function formatResendDeliveryError(message: string, fromAddress: string): string {
+  const senderDomain = extractEmailDomain(fromAddress);
+  if (!/domain is not verified|verify a domain|verified domain/i.test(message)) {
+    return message;
+  }
+
+  return `${message} Sender "${fromAddress}" resolves to domain "${senderDomain ?? "unknown"}". Set RESEND_FROM_MONTHLY_REPORT to a Resend-verified sender domain, or add and verify this domain in Resend before running live sends.`;
+}
+
+function extractEmailDomain(value: string): string | null {
+  const match = value.match(/<[^@\s<>]+@([^>\s]+)>|[^@\s<>]+@([^>\s]+)/);
+  return (match?.[1] ?? match?.[2] ?? null)?.toLowerCase() ?? null;
 }
 
 function buildEmailHtml(input: {

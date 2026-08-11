@@ -4,10 +4,12 @@ import Link from "next/link";
 import {
   BarChart3Icon,
   CalendarDaysIcon,
+  ClipboardListIcon,
   EyeIcon,
   HouseIcon,
   IdCardIcon,
   SparklesIcon,
+  UploadCloudIcon,
 } from "lucide-react";
 
 import { useScreenshotMode } from "@/components/reporting/use-screenshot-mode";
@@ -16,6 +18,7 @@ interface ReportShellProps {
   title: string;
   dateLabel: string;
   headerDateControl?: React.ReactNode;
+  headerControlLayout?: "default" | "wide";
   headerBottomControl?: React.ReactNode;
   activeQuery?: string;
   reportReady?: boolean;
@@ -31,6 +34,7 @@ export function ReportShell({
   title,
   dateLabel,
   headerDateControl,
+  headerControlLayout = "default",
   headerBottomControl,
   activeQuery = "",
   reportReady = false,
@@ -43,6 +47,8 @@ export function ReportShell({
     overall: withQuery("/overall", activeQuery),
     preview: withQuery("/preview", activeQuery),
     advanced: withQuery("/advanced", activeQuery),
+    mediaPlan: "/dashboard/media-plan",
+    metaImport: "/meta-import",
   };
 
   return (
@@ -65,7 +71,11 @@ export function ReportShell({
             data-report-export-header-inner="true"
           >
             <div
-              className="grid gap-4 text-white md:grid-cols-[minmax(0,1fr)_auto] md:items-start md:gap-x-8"
+              className={
+                headerControlLayout === "wide"
+                  ? "grid gap-5 text-white lg:grid-cols-[minmax(340px,0.46fr)_minmax(0,1fr)] lg:items-start lg:gap-x-8"
+                  : "grid gap-4 text-white md:grid-cols-[minmax(0,1fr)_auto] md:items-start md:gap-x-8"
+              }
               data-report-export-header-grid="true"
             >
               <div className="min-w-0 space-y-3">
@@ -108,11 +118,31 @@ export function ReportShell({
                   >
                     <SparklesIcon className="size-5" />
                   </Link>
+                  <Link
+                    href={hrefs.mediaPlan}
+                    title="Media Plan"
+                    aria-label="Open Media Plan page"
+                    className="inline-flex size-10 items-center justify-center rounded-md bg-white/10 hover:bg-white/20"
+                  >
+                    <ClipboardListIcon className="size-5" />
+                  </Link>
+                  <Link
+                    href={hrefs.metaImport}
+                    title="Meta CSV Import"
+                    aria-label="Open Meta CSV Import page"
+                    className="inline-flex size-10 items-center justify-center rounded-md bg-white/10 hover:bg-white/20"
+                  >
+                    <UploadCloudIcon className="size-5" />
+                  </Link>
                 </nav>
               </div>
               {headerDateControl ? (
                 <div
-                  className="flex w-full items-start md:w-auto md:max-w-[420px] md:justify-self-end"
+                  className={
+                    headerControlLayout === "wide"
+                      ? "flex w-full items-start lg:w-full lg:max-w-[920px] lg:justify-self-end"
+                      : "flex w-full items-start md:w-auto md:max-w-[420px] md:justify-self-end"
+                  }
                   data-report-export-date-control="true"
                 >
                   {headerDateControl}

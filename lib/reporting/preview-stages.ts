@@ -21,6 +21,28 @@ export function buildPreviewCampaignsStage(payload: PreviewReportPayload): Previ
   };
 }
 
+export function buildPreviewStructureStage(payload: PreviewReportPayload): PreviewReportPayload {
+  return {
+    ...payload,
+    sections: payload.sections.map((section) => ({
+      ...section,
+      campaigns: section.campaigns
+        .filter((campaign) => isActiveStatus(campaign.status))
+        .map((campaign) => ({
+          ...campaign,
+          children: campaign.children
+            .filter((child) => isActiveStatus(child.status))
+            .map((child) => ({
+              ...child,
+              ads: child.ads
+                .filter((ad) => isActiveStatus(ad.status))
+                .map(stripPreviewAdAssets),
+            })),
+        })),
+    })),
+  };
+}
+
 export function buildPreviewAdGroupsStage(
   payload: PreviewReportPayload,
   selection: PreviewStageSelection

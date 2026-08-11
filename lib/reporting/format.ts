@@ -1,6 +1,14 @@
 import { MetricFormat } from "@/lib/reporting/types";
 
-export function formatMetricValue(value: number | null, format: MetricFormat): string {
+export function formatMetricValue(
+  value: number | null,
+  format: MetricFormat,
+  displayValue?: string
+): string {
+  if (displayValue) {
+    return displayValue;
+  }
+
   if (value === null || !Number.isFinite(value)) {
     return "No Data";
   }

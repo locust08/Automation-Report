@@ -7,6 +7,13 @@ function getSingleValue(value: string | string[] | undefined): string | undefine
   return Array.isArray(value) ? value[0] : value;
 }
 
+function getValues(value: string | string[] | undefined): string[] {
+  if (Array.isArray(value)) {
+    return value;
+  }
+  return value ? [value] : [];
+}
+
 function getFirstAccountId(...values: Array<string | undefined>): string | undefined {
   for (const value of values) {
     const accountId = value
@@ -41,6 +48,8 @@ export default async function AdvancedPage({
         initialCountry={getSingleValue(resolvedSearchParams?.country)}
         initialStartDate={getSingleValue(resolvedSearchParams?.startDate)}
         initialEndDate={getSingleValue(resolvedSearchParams?.endDate)}
+        initialCampaignNameFilterMode={getSingleValue(resolvedSearchParams?.campaignNameFilterMode)}
+        initialCampaignNameFilterValues={getValues(resolvedSearchParams?.campaignNameFilterValue)}
       />
     </Suspense>
   );

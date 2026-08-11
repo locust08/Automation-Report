@@ -62,10 +62,48 @@ export function mergeCampaignRows(base: CampaignRow, incoming: CampaignRow): Cam
 
   merged.ctr = safeDivide(merged.clicks * 100, merged.impressions);
   merged.cpm = safeDivide(merged.spend * 1000, merged.impressions);
-  merged.costPerResult = safeDivide(merged.spend, merged.results);
+  merged.costPerResult = safeDivide(
+    merged.spend * resolveCostPerResultScale(base, incoming),
+    merged.results
+  );
   merged.avgCpc = safeDivide(merged.spend, merged.clicks);
 
   return merged;
+}
+
+function resolveCostPerResultScale(base: CampaignRow, incoming: CampaignRow): number {
+  const baseHasResult = base.spend > 0 && base.results > 0 && base.costPerResult > 0;
+  const incomingHasResult = incoming.spend > 0 && incoming.results > 0 && incoming.costPerResult > 0;
+  const baseScale = inferCostPerResultScale(base);
+  const incomingScale = inferCostPerResultScale(incoming);
+
+  if (!baseHasResult) {
+    return incomingScale;
+  }
+
+  if (!incomingHasResult) {
+    return baseScale;
+  }
+
+  return approximatelyEqual(baseScale, incomingScale) ? baseScale : 1;
+}
+
+function inferCostPerResultScale(row: CampaignRow): number {
+  if (row.spend <= 0 || row.results <= 0 || row.costPerResult <= 0) {
+    return 1;
+  }
+
+  const unscaledCost = row.spend / row.results;
+  if (unscaledCost <= 0) {
+    return 1;
+  }
+
+  const observedScale = row.costPerResult / unscaledCost;
+  return approximatelyEqual(observedScale, 1000) ? 1000 : 1;
+}
+
+function approximatelyEqual(left: number, right: number): boolean {
+  return Math.abs(left - right) <= Math.max(0.01, Math.abs(right) * 0.01);
 }
 
 export function buildGroups(rows: CampaignRow[]): CampaignGroup[] {

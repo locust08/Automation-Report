@@ -240,6 +240,16 @@
   }
 }
 
+@keyframes media-plan-progress-float {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-6px);
+  }
+}
+
 @keyframes report-loading-copy-swap {
   0% {
     opacity: 0;
@@ -311,6 +321,15 @@
   }
 }
 
+@keyframes metaStoryProgress {
+  0% {
+    transform: scaleX(0);
+  }
+  100% {
+    transform: scaleX(1);
+  }
+}
+
 @keyframes google-preview-slide-previous {
   0% {
     opacity: 0;
@@ -344,6 +363,10 @@
 
 .report-loading-enter {
   animation: report-loading-enter 0.45s ease-out;
+}
+
+.media-plan-progress-float {
+  animation: report-loading-enter 0.45s ease-out, media-plan-progress-float 4.8s ease-in-out 0.45s infinite;
 }
 
 .report-loading-orbit {
