@@ -1,4 +1,5 @@
 name = "ads-dashboard-monthly-report-automation"
+account_id = "e7c515dde995479daacd82ad79dfc3e8"
 main = "src/index.ts"
 compatibility_date = "2026-04-28"
 compatibility_flags = ["nodejs_compat"]
