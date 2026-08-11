@@ -14,6 +14,7 @@ import {
   LogOutIcon,
   PanelsTopLeftIcon,
   SearchCheckIcon,
+  SlidersHorizontalIcon,
   SparklesIcon,
   UploadCloudIcon,
   UsersRoundIcon,
@@ -77,6 +78,7 @@ export function ReportShell({
     billing: "/billing",
     searchTermOptimization: "/search-term-optimization",
     placementOptimization: "/placement-optimization",
+    googleManagement: withQuery("/manage/google", activeQuery),
     userManagement: "/user-management",
   };
 
@@ -178,6 +180,13 @@ export function ReportShell({
                       active={pathname === "/placement-optimization"}
                     >
                       <PanelsTopLeftIcon className="size-5" />
+                    </ReportNavLink> : null}
+                    {currentRole ? <ReportNavLink
+                      href={hrefs.googleManagement}
+                      label="Google Ads Management"
+                      active={pathname.startsWith("/manage/google")}
+                    >
+                      <SlidersHorizontalIcon className="size-5" />
                     </ReportNavLink> : null}
                     {isAdmin ? <>
                       <ReportNavLink

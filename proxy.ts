@@ -11,8 +11,9 @@ export async function proxy(request: NextRequest) {
   const isBilling = request.nextUrl.pathname.startsWith("/billing");
   const isSearchTermOptimization = request.nextUrl.pathname.startsWith("/search-term-optimization");
   const isUserManagement = request.nextUrl.pathname.startsWith("/user-management");
+  const isGoogleManagement = request.nextUrl.pathname.startsWith("/manage/google");
 
-  if (!session && (isDashboard || isBilling || isSearchTermOptimization || isUserManagement)) {
+  if (!session && (isDashboard || isBilling || isSearchTermOptimization || isUserManagement || isGoogleManagement)) {
     return NextResponse.redirect(new URL("/", request.url));
   }
 
@@ -28,5 +29,5 @@ export async function proxy(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/", "/dashboard/:path*", "/billing/:path*", "/search-term-optimization/:path*", "/user-management/:path*"],
+  matcher: ["/", "/dashboard/:path*", "/billing/:path*", "/search-term-optimization/:path*", "/user-management/:path*", "/manage/google/:path*"],
 };
