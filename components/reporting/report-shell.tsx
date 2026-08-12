@@ -167,27 +167,27 @@ export function ReportShell({
                     >
                       <ListChecksIcon className="size-5" />
                     </ReportNavLink>
-                    {currentRole ? <ReportNavLink
+                    <ReportNavLink
                       href={hrefs.searchTermOptimization}
                       label="Search Term Optimization"
                       active={pathname === "/search-term-optimization"}
                     >
                       <SearchCheckIcon className="size-5" />
-                    </ReportNavLink> : null}
-                    {currentRole && ["co", "approver", "pm", "tl", "admin", "ethan"].includes(currentRole) ? <ReportNavLink
+                    </ReportNavLink>
+                    <ReportNavLink
                       href={hrefs.placementOptimization}
                       label="Placement Optimization"
                       active={pathname === "/placement-optimization"}
                     >
                       <PanelsTopLeftIcon className="size-5" />
-                    </ReportNavLink> : null}
-                    {currentRole ? <ReportNavLink
+                    </ReportNavLink>
+                    <ReportNavLink
                       href={hrefs.googleManagement}
                       label="Google Ads Management"
                       active={pathname.startsWith("/manage/google")}
                     >
                       <SlidersHorizontalIcon className="size-5" />
-                    </ReportNavLink> : null}
+                    </ReportNavLink>
                     {isAdmin ? <>
                       <ReportNavLink
                         href={hrefs.userManagement}

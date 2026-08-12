@@ -692,24 +692,7 @@ export function HomePageClient({ displayName, role }: HomePageClientProps) {
               <ArrowRightIcon data-icon="inline-end" />
             </Button>
 
-            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-              {hasAccountSelection ? (
-                <Button
-                  asChild
-                  variant="outline"
-                  className="h-auto min-h-12 w-full whitespace-normal border-white/30 bg-white/10 px-4 py-3 text-center leading-snug text-white shadow-none hover:bg-white/20 hover:text-white"
-                >
-                  <Link href={googleManagementHref}>
-                    Edit Google Ads
-                    <SlidersHorizontalIcon data-icon="inline-end" />
-                  </Link>
-                </Button>
-              ) : (
-                <Button type="button" variant="outline" disabled className="h-auto min-h-12 w-full whitespace-normal border-white/30 bg-white/10 px-4 py-3 text-center leading-snug text-white shadow-none">
-                  Edit Google Ads
-                  <SlidersHorizontalIcon data-icon="inline-end" />
-                </Button>
-              )}
+            <div className="grid gap-3 sm:grid-cols-2">
               {hasAccountSelection ? (
                 <Button
                   asChild
@@ -755,33 +738,43 @@ export function HomePageClient({ displayName, role }: HomePageClientProps) {
                   <SlidersHorizontalIcon data-icon="inline-end" />
                 </Button>
               )}
-
-              <Button
-                type="button"
-                variant="outline"
-                onClick={() => {
-                  setIsSendModalOpen(true);
-                  setSendError(null);
-                }}
-                disabled={sendControlsLocked}
-                className="h-auto min-h-12 w-full whitespace-normal border-white/30 bg-white/10 px-4 py-3 text-center leading-snug text-white shadow-none hover:bg-white/20 hover:text-white"
-              >
-                Send Report
-                <SendIcon data-icon="inline-end" />
-              </Button>
             </div>
+
+            <Button
+              type="button"
+              onClick={() => {
+                setIsSendModalOpen(true);
+                setSendError(null);
+              }}
+              disabled={sendControlsLocked}
+              className="h-auto min-h-16 w-full whitespace-normal bg-red-600 px-6 py-4 text-center text-base font-semibold leading-snug shadow-lg shadow-red-950/25 hover:bg-red-700"
+            >
+              Send Report
+              <SendIcon data-icon="inline-end" />
+            </Button>
           </div>
         </form>
 
-        <a
-          href={mediaPlanHref}
-          className="mt-5 flex items-center rounded-2xl border border-white/25 bg-white/10 p-4 text-white transition hover:bg-white/15"
-        >
-          <span className="flex items-center gap-2 text-base font-semibold">
-            <ClipboardListIcon className="size-5" />
-            Create Media Plan
-          </span>
-        </a>
+        <div className="mt-5 grid gap-3 sm:grid-cols-2">
+          <a
+            href={mediaPlanHref}
+            className="flex items-center rounded-2xl border border-white/25 bg-white/10 p-4 text-white transition hover:bg-white/15"
+          >
+            <span className="flex items-center gap-2 text-base font-semibold">
+              <ClipboardListIcon className="size-5" />
+              Create Media Plan
+            </span>
+          </a>
+          <Link
+            href={hasAccountSelection ? googleManagementHref : "/manage/google"}
+            className="flex items-center rounded-2xl border border-white/25 bg-white/10 p-4 text-white transition hover:bg-white/15"
+          >
+            <span className="flex items-center gap-2 text-base font-semibold">
+              <SlidersHorizontalIcon className="size-5" />
+              Edit Google Ads
+            </span>
+          </Link>
+        </div>
 
         <div className="mt-3 grid gap-3 md:grid-cols-3">
           <a

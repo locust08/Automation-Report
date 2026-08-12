@@ -6,6 +6,7 @@ import { useSearchParams } from "next/navigation";
 import { XIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { formatFocusedSitelinkAuditValue } from "@/lib/ads-management/sitelink-display";
 import type { AdsChangeSetRecord, AdsFieldChangeRecord } from "@/lib/ads-management/types";
 
@@ -30,27 +31,27 @@ export function AccountHistoryPanel({ accountId, accountName, onResumeRequest }:
   return <div className="space-y-5">
     <section className="rounded-2xl border bg-white p-6 shadow-sm"><p className="text-xs font-semibold uppercase tracking-wide text-blue-700">Google Ads</p><h2 className="mt-1 text-3xl font-semibold">Change history</h2><p className="mt-2 text-sm text-slate-600">Every draft, conflict, publication, verification, retry, and revert for {accountName}.</p></section>
     {error ? <div className="rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700">{error}</div> : null}
-    <section className="grid gap-3 rounded-2xl border bg-white p-4 shadow-sm sm:grid-cols-2"><Input aria-label="Search change history" placeholder="Search title or creator" value={query} onChange={(event) => setQuery(event.target.value)} /><select aria-label="Filter history by status" className="h-10 rounded-md border px-3" value={status} onChange={(event) => setStatus(event.target.value)}><option value="all">All statuses</option>{Array.from(new Set(items.map((item) => item.status))).map((itemStatus) => <option key={itemStatus} value={itemStatus}>{itemStatus.replaceAll("_", " ")}</option>)}</select></section>
+    <section className="grid gap-3 rounded-2xl border bg-white p-4 shadow-sm sm:grid-cols-2"><Input aria-label="Search change history" placeholder="Search title or creator" value={query} onChange={(event) => setQuery(event.target.value)} /><Select value={status} onValueChange={setStatus}><SelectTrigger className="w-full" aria-label="Filter history by status"><SelectValue placeholder="All statuses" /></SelectTrigger><SelectContent><SelectItem value="all">All statuses</SelectItem>{Array.from(new Set(items.map((item) => item.status))).map((itemStatus) => <SelectItem key={itemStatus} value={itemStatus} className="capitalize">{itemStatus.replaceAll("_", " ")}</SelectItem>)}</SelectContent></Select></section>
     <section className="overflow-hidden rounded-2xl border bg-white shadow-sm">
       <div className="overflow-x-auto"><table className="min-w-[680px] w-full text-left text-sm">
         <thead className="bg-slate-50">
         <tr><th className="p-3">Request</th>
-          <th className="p-3">Status</th>
-          <th className="p-3">Changed by</th>
-          <th className="p-3">Updated</th>
+          <th className="p-3 text-center">Status</th>
+          <th className="p-3 text-center">Changed by</th>
+          <th className="p-3 text-center">Updated</th>
         </tr>
         </thead>
         <tbody>{shown.map((item) =>
         { const editable = ["draft", "validation_failed", "conflict_detected"].includes(item.status);
-          return <tr key={item.id} className="border-t align-top hover:bg-blue-50/40">
-          <td className="p-3">
-            <button type="button" className="inline-flex min-h-10 items-center text-left font-medium text-blue-700 hover:underline" onClick={() => setSelectedRequestId(item.id)}>
+          return <tr key={item.id} className="border-t align-middle hover:bg-blue-50/40">
+          <td className="px-3 py-4">
+            <button type="button" className="inline-flex items-center text-left font-medium text-blue-700 hover:underline" onClick={() => setSelectedRequestId(item.id)}>
               {editable ? "View draft: " : "View request: "}{item.title}
             </button>
           </td>
-          <td className="p-3 capitalize">{item.status.replaceAll("_", " ")}</td>
-          <td className="p-3">{item.created_by_name}</td>
-          <td className="whitespace-nowrap p-3">{new Date(item.updated_at).toLocaleString()}</td>
+          <td className="px-3 py-4 text-center capitalize">{item.status.replaceAll("_", " ")}</td>
+          <td className="px-3 py-4 text-center">{item.created_by_name}</td>
+          <td className="whitespace-nowrap px-3 py-4 text-center">{new Date(item.updated_at).toLocaleString()}</td>
           </tr>; })}</tbody>
       </table>
       </div>{loading ? <p className="p-8 text-center text-slate-500">Loading change history…</p> : !shown.length ? <p className="p-8 text-center text-slate-500">No change requests found for this account.</p> : null}</section>

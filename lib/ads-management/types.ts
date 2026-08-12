@@ -75,7 +75,7 @@ export interface ManagedAdGroup {
 export interface ManagedAd {
   id: string; resourceName: string; name: string; status: string; adType: string;
   adStrength: string; actionItems: string[];
-  fields: ManagedFieldValue[]; performanceMetrics?: ManagedPerformanceMetrics;
+  fields: ManagedFieldValue[]; performanceMetrics?: ManagedPerformanceMetrics; performance?: ManagedCampaignPerformancePoint[];
 }
 
 export interface ManagedCampaign {
