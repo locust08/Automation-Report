@@ -237,6 +237,7 @@ export function HomePageClient({ displayName, role }: HomePageClientProps) {
   const searchTermOptimizationHref = "/search-term-optimization";
   const placementOptimizationHref = "/placement-optimization";
   const hasAccountSelection = Boolean(accountId.trim());
+  const hasGoogleAccountSelection = /^\d{10}$/.test(accountId.replace(/\D/g, ""));
   const normalizedAccountSearchQuery = accountSearchQuery.trim();
   const resultAccountSuggestions = accountSuggestions.filter(
     (suggestion) =>
@@ -765,18 +766,6 @@ export function HomePageClient({ displayName, role }: HomePageClientProps) {
               Create Media Plan
             </span>
           </a>
-          <Link
-            href={hasAccountSelection ? googleManagementHref : "/manage/google"}
-            className="flex items-center rounded-2xl border border-white/25 bg-white/10 p-4 text-white transition hover:bg-white/15"
-          >
-            <span className="flex items-center gap-2 text-base font-semibold">
-              <SlidersHorizontalIcon className="size-5" />
-              Edit Google Ads
-            </span>
-          </Link>
-        </div>
-
-        <div className="mt-3 grid gap-3 md:grid-cols-3">
           <a
             href={billingHref}
             className="flex items-center rounded-2xl border border-white/25 bg-white/10 p-4 text-white transition hover:bg-white/15"
@@ -786,7 +775,21 @@ export function HomePageClient({ displayName, role }: HomePageClientProps) {
               Daily Billing
             </span>
           </a>
-          {role ? <a
+        </div>
+
+        <section className="mt-5" aria-labelledby="google-tools-heading">
+          <h2 id="google-tools-heading" className="mb-3 text-sm font-semibold uppercase tracking-[0.18em] text-white/70">Google</h2>
+          <div className={`grid gap-3 ${role === "admin" ? "md:grid-cols-4" : "md:grid-cols-3"}`}>
+            <Link
+              href={hasGoogleAccountSelection ? googleManagementHref : "/manage/google"}
+              className="flex items-center rounded-2xl border border-white/25 bg-white/10 p-4 text-white transition hover:bg-white/15"
+            >
+              <span className="flex items-center gap-2 text-base font-semibold">
+                <SlidersHorizontalIcon className="size-5" />
+                Edit Google Ads
+              </span>
+            </Link>
+            {role ? <a
               href={searchTermOptimizationHref}
               className="flex items-center rounded-2xl border border-white/25 bg-white/10 p-4 text-white transition hover:bg-white/15"
             >
@@ -795,7 +798,7 @@ export function HomePageClient({ displayName, role }: HomePageClientProps) {
                 Search Term Optimization
               </span>
             </a> : null}
-          {role && ["co", "approver", "pm", "tl", "admin", "ethan"].includes(role) ? <a
+            {role && ["co", "approver", "pm", "tl", "admin"].includes(role) ? <a
               href={placementOptimizationHref}
               className="flex items-center rounded-2xl border border-white/25 bg-white/10 p-4 text-white transition hover:bg-white/15"
             >
@@ -804,7 +807,17 @@ export function HomePageClient({ displayName, role }: HomePageClientProps) {
                 Placement Optimization
               </span>
             </a> : null}
-        </div>
+            {role === "admin" ? <a
+              href="/optimization-scheduling"
+              className="flex items-center rounded-2xl border border-white/25 bg-white/10 p-4 text-white transition hover:bg-white/15"
+            >
+              <span className="flex items-center gap-2 text-base font-semibold">
+                <CalendarDaysIcon className="size-5" />
+                Optimization Scheduling
+              </span>
+            </a> : null}
+          </div>
+        </section>
 
         {hasAccountSelection ? (
           <a

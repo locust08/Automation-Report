@@ -30,5 +30,4 @@ test("maps the prototype's short role names to Google Ads permissions", () => {
   assert.equal(normalizeAdsRole("co"), "campaign_optimizer");
   assert.equal(normalizeAdsRole("tl"), "team_lead");
   assert.equal(normalizeAdsRole("pm"), "project_manager");
-  assert.equal(normalizeAdsRole("ethan"), "admin");
 });

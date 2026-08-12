@@ -19,23 +19,22 @@ export async function GET(request: Request) {
 
 export async function PUT(request: Request) {
   const session = await getServerAuthSession();
-  if (!session || !["admin", "ethan"].includes(session.role)) return NextResponse.json({ error: "Administrator access is required." }, { status: 403 });
+  if (!session || session.role !== "admin") return NextResponse.json({ error: "Administrator access is required." }, { status: 403 });
   try {
     const body = await request.json() as Record<string, unknown>;
     const googleCustomerId = typeof body.googleCustomerId === "string" ? body.googleCustomerId.replace(/\D/g, "") : "";
+    const automationEnabled = body.automationEnabled === true;
     const scheduleFrequency = body.scheduleFrequency as AnalysisScheduleFrequency;
     const autoSafeScoreThreshold = Number(body.autoSafeScoreThreshold);
-    const reviewScoreThreshold = Number(body.reviewScoreThreshold);
     const highSpendThreshold = Number(body.highSpendThreshold);
     const minimumClicksThreshold = Number(body.minimumClicksThreshold);
     if (googleCustomerId.length !== 10) throw new Error("A valid Google Ads account is required.");
     if (!FREQUENCIES.includes(scheduleFrequency)) throw new Error("Select a valid schedule frequency.");
     if (!Number.isInteger(autoSafeScoreThreshold) || autoSafeScoreThreshold < 90 || autoSafeScoreThreshold > 100) throw new Error("Auto-safe score must be between 90 and 100.");
-    if (!Number.isInteger(reviewScoreThreshold) || reviewScoreThreshold < 0 || reviewScoreThreshold > 99) throw new Error("Review score must be between 0 and 99.");
     if (!Number.isFinite(highSpendThreshold) || highSpendThreshold < 0) throw new Error("High-spend threshold cannot be negative.");
     if (!Number.isInteger(minimumClicksThreshold) || minimumClicksThreshold < 0) throw new Error("Minimum clicks cannot be negative.");
     return NextResponse.json(await saveSearchTermAccountSettings({
-      googleCustomerId, scheduleFrequency, autoSafeScoreThreshold, reviewScoreThreshold,
+      googleCustomerId, automationEnabled, scheduleFrequency, autoSafeScoreThreshold,
       highSpendThreshold, minimumClicksThreshold,
     }));
   } catch (error) {

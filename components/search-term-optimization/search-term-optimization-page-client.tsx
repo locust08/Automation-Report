@@ -4,7 +4,6 @@ import { KeyboardEvent, useCallback, useEffect, useMemo, useRef, useState } from
 import {
   ChevronLeftIcon,
   ChevronRightIcon,
-  ChevronDownIcon,
   CheckIcon,
   CheckCircle2Icon,
   ConstructionIcon,
@@ -23,9 +22,12 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Spinner } from "@/components/ui/spinner";
+import { Switch } from "@/components/ui/switch";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import { ReportDatePicker, type ReportDateSelection } from "@/components/search-term-optimization/report-date-picker";
 import { ReportShell } from "@/components/reporting/report-shell";
 import { AccountEscalationNotice } from "@/components/team-lead-monitoring/account-escalation-notice";
+import { GoogleAccountSearchField } from "@/components/optimization/google-account-search-field";
 import { isAdminRole, type AuthRole } from "@/lib/auth/roles";
 import type {
   OptimizationDashboardPayload,
@@ -34,10 +36,11 @@ import type {
   SearchTermAccountSettings,
   AnalysisScheduleFrequency,
 } from "@/lib/search-term-optimization/types";
-import type { LeadQualityValues } from "@/lib/search-term-optimization/lead-quality-repository";
 
 type CategoryFilter =
   | "all"
+  | "add keyword"
+  | "add negative keyword"
   | "special review needed"
   | "negative exact"
   | "add exact"
@@ -72,7 +75,7 @@ const RECENT_ACCOUNT_LIMIT = 5;
 const malaysiaToday = () => new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kuala_Lumpur", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
 type AccountSearchState = "idle" | "loading" | "success" | "error";
 
-const REVIEW_ROLES: AuthRole[] = ["pms", "specialist", "admin", "ethan"];
+const REVIEW_ROLES: AuthRole[] = ["pms", "specialist", "admin"];
 
 export function SearchTermOptimizationPageClient({ role }: { role: AuthRole }) {
   const isAdmin = isAdminRole(role);
@@ -99,6 +102,7 @@ export function SearchTermOptimizationPageClient({ role }: { role: AuthRole }) {
   const [analysisStage, setAnalysisStage] = useState<string | null>(null);
   const [analysisStartedAt, setAnalysisStartedAt] = useState<string | null>(null);
   const [analysisActivityAt, setAnalysisActivityAt] = useState<string | null>(null);
+  const [analysisProgress, setAnalysisProgress] = useState({ currentBatch: 0, completedBatches: 0, maxBatches: 10, currentBatchSize: 0, termsProcessed: 0, progressComplete: false });
   const [refreshMessage, setRefreshMessage] = useState<string | null>(null);
   const [accountDropdownOpen, setAccountDropdownOpen] = useState(false);
   const [highlightedAccountIndex, setHighlightedAccountIndex] = useState(-1);
@@ -108,10 +112,8 @@ export function SearchTermOptimizationPageClient({ role }: { role: AuthRole }) {
   const [recommendationsLoaded, setRecommendationsLoaded] = useState(false);
   const [googleRecommendations, setGoogleRecommendations] = useState<GoogleKeywordRecommendation[]>([]);
   const [googleRecommendationsWarning, setGoogleRecommendationsWarning] = useState<string | null>(null);
-  const [leadQualityMessage, setLeadQualityMessage] = useState<string | null>(null);
-  const [leadQualitySaving, setLeadQualitySaving] = useState(false);
   const [reportDialogOpen, setReportDialogOpen] = useState(false);
-  const [reportDate, setReportDate] = useState(malaysiaToday);
+  const [reportDateSelection, setReportDateSelection] = useState<ReportDateSelection>(() => ({ mode: "single", date: malaysiaToday() }));
   const [pendingDecision, setPendingDecision] = useState<{ rows: OptimizationResult[]; decision: ReviewDecision } | null>(null);
 
   const load = useCallback(async (accountId?: string) => {
@@ -202,7 +204,7 @@ export function SearchTermOptimizationPageClient({ role }: { role: AuthRole }) {
       setSuggestions(cached);
       setAccountSearchState("success");
       setAccountSearchError(null);
-      setHighlightedAccountIndex(recentAccounts.length + (cached.length > 0 ? 0 : -1));
+      setHighlightedAccountIndex(cached.length > 0 || recentAccounts.length > 0 ? 0 : -1);
       setAccountDropdownOpen(true);
       return;
     }
@@ -223,7 +225,7 @@ export function SearchTermOptimizationPageClient({ role }: { role: AuthRole }) {
         setSuggestions(accounts);
         writeAccountSearchCache(trimmed, accounts);
         setAccountSearchState("success");
-        setHighlightedAccountIndex(recentAccounts.length + (accounts.length > 0 ? 0 : -1));
+        setHighlightedAccountIndex(accounts.length > 0 || recentAccounts.length > 0 ? 0 : -1);
       } catch (caught) {
         if (controller.signal.aborted || requestId !== accountSearchRequestId.current) return;
         setSuggestions([]);
@@ -238,7 +240,7 @@ export function SearchTermOptimizationPageClient({ role }: { role: AuthRole }) {
   }, [accountQuery, recentAccounts.length]);
 
   const resultSuggestions = suggestions.filter((suggestion) => !recentAccounts.some((recent) => recent.adAccountId === suggestion.adAccountId));
-  const visibleSuggestions = [...recentAccounts, ...resultSuggestions];
+  const visibleSuggestions = [...resultSuggestions, ...recentAccounts];
 
   function selectAccount(account: AccountSuggestion) {
     skipNextAccountSearch.current = true;
@@ -286,12 +288,12 @@ export function SearchTermOptimizationPageClient({ role }: { role: AuthRole }) {
     setRecommendationsLoaded(false);
     setGoogleRecommendations([]);
     setGoogleRecommendationsWarning(null);
-    setLeadQualityMessage(null);
     setRefreshMessage(null);
     setAnalysisLoading(true);
     setAnalysisStage("Preparing smart search-term refresh");
     setAnalysisStartedAt(new Date().toISOString());
     setAnalysisActivityAt(new Date().toISOString());
+    setAnalysisProgress({ currentBatch: 0, completedBatches: 0, maxBatches: 10, currentBatchSize: 0, termsProcessed: 0, progressComplete: false });
     setLoading(true);
     setError(null);
     setAccountDropdownOpen(false);
@@ -328,11 +330,18 @@ export function SearchTermOptimizationPageClient({ role }: { role: AuthRole }) {
           dashboard?: OptimizationDashboardPayload;
           startedAt?: string;
           activityAt?: string;
+          currentBatch?: number;
+          completedBatches?: number;
+          maxBatches?: number;
+          currentBatchSize?: number;
+          termsProcessed?: number;
+          progressComplete?: boolean;
         };
         if (!statusResponse.ok) throw new Error(status.error ?? "Unable to read analysis status.");
         setAnalysisStage(status.stage ?? "Analyzing search terms");
         if (status.startedAt) setAnalysisStartedAt(status.startedAt);
         if (status.activityAt) setAnalysisActivityAt(status.activityAt);
+        setAnalysisProgress(current => ({ currentBatch: status.currentBatch ?? current.currentBatch, completedBatches: status.completedBatches ?? current.completedBatches, maxBatches: status.maxBatches ?? current.maxBatches, currentBatchSize: status.currentBatchSize ?? current.currentBatchSize, termsProcessed: status.termsProcessed ?? current.termsProcessed, progressComplete: status.progressComplete ?? current.progressComplete }));
         if (status.status === "failed") throw new Error(status.error ?? "Search-term refresh failed. The previous saved analysis was kept.");
         if (status.status === "completed" && status.dashboard) { payload = status.dashboard; break; }
       }
@@ -383,7 +392,9 @@ export function SearchTermOptimizationPageClient({ role }: { role: AuthRole }) {
           : categoryFilter === "negative"
             ? row.reviewStatus === "approver_rejected"
           : categoryFilter === "special review needed"
-            ? !row.reviewDecision && row.reviewStatus !== "approver_rejected"
+            ? !row.reviewDecision && row.reviewStatus !== "approver_rejected" && proposedActionCategory(row.proposedAction) === "special review needed"
+          : categoryFilter === "add keyword" || categoryFilter === "add negative keyword"
+            ? !row.reviewDecision && proposedActionCategory(row.proposedAction) === categoryFilter
           : categoryFilter === "approved" || categoryFilter === "rejected"
             ? categoryFilter === "approved"
               ? row.reviewStatus === "approved_for_publishing"
@@ -430,6 +441,8 @@ export function SearchTermOptimizationPageClient({ role }: { role: AuthRole }) {
         ["review", "Needs review", data.summary.needsReview],
         ["no-action", "No action", data.summary.noAction],
         ["failed", "Failed or unverified", data.summary.failedOrUnverified],
+        ["queued", "Remaining queue", data.refresh?.queuedNewTerms ?? 0],
+        ["current", "Current terms", data.refresh?.currentTerms ?? data.results.length],
       ] as Array<[string, string, number]>
     : [];
 
@@ -572,21 +585,6 @@ export function SearchTermOptimizationPageClient({ role }: { role: AuthRole }) {
     }
   }
 
-  async function updateLeadQuality(row: OptimizationResult, values: LeadQualityValues) {
-    if (!row.searchTermId || !canReview) return;
-    setLeadQualitySaving(true); setDecisionError(null);
-    try {
-      const response = await fetch("/api/search-term-optimization/lead-quality", {
-        method: "PATCH", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ searchTermId: row.searchTermId, ...values }),
-      });
-      const payload = await response.json() as { error?: string };
-      if (!response.ok) throw new Error(payload.error ?? "Unable to update lead quality.");
-      setLeadQualityMessage(`Lead quality updated for ${row.searchTerm}.`);
-      await load(data?.account.customerId);
-    } catch (caught) { setDecisionError(caught instanceof Error ? caught.message : "Unable to update lead quality."); }
-    finally { setLeadQualitySaving(false); }
-  }
 
   const loadUnaddedSearchTerms = useCallback(async () => {
     if (recommendationsLoaded || recommendationsLoading || !data) return;
@@ -622,61 +620,23 @@ export function SearchTermOptimizationPageClient({ role }: { role: AuthRole }) {
         <section className="relative rounded-3xl border border-neutral-200 bg-white p-5 shadow-sm sm:p-7">
           {isAdmin ? <div className="mb-5">
             <label className="mb-2 block text-sm font-semibold text-neutral-800">Notion account search</label>
-            <div className="flex max-w-3xl items-start gap-2">
-              <div className="relative min-w-0 flex-1">
-                <SearchIcon className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-neutral-400" />
-                <Input
-                  value={accountQuery}
-                  onChange={(event) => changeAccountQuery(event.target.value)}
-                  onFocus={() => setAccountDropdownOpen(true)}
-                  onBlur={() => setAccountDropdownOpen(false)}
-                  onKeyDown={handleAccountKeyDown}
-                  placeholder="Search company or Google Ads CID"
-                  autoComplete="off"
-                  aria-autocomplete="list"
-                  className="pl-9"
-                />
-                {accountDropdownOpen && (visibleSuggestions.length > 0 || accountSearchState !== "idle") && (
-                <div className="absolute z-20 mt-2 w-full overflow-hidden rounded-xl border bg-white text-neutral-900 shadow-xl">
-                  {recentAccounts.length > 0 ? <p className="border-b bg-neutral-50 px-4 py-2 text-xs font-semibold uppercase tracking-wide text-neutral-500">Recent accounts</p> : null}
-                  {accountSearchState === "error" ? <p className="p-3 text-sm text-red-700">{accountSearchError}</p> : null}
-                  {accountSearchState === "success" && accountQuery.trim().length >= 2 && resultSuggestions.length === 0 ? <p className="p-3 text-sm text-neutral-500">No additional matching accounts.</p> : null}
-                  {visibleSuggestions.map((account, index) => (
-                    <button
-                      key={`${account.adAccountId}-${account.accountName}`}
-                      type="button"
-                      role="option"
-                      aria-selected={index === highlightedAccountIndex}
-                      className={`block w-full cursor-pointer px-4 py-3 text-left text-sm transition ${index === highlightedAccountIndex ? "bg-red-50" : "hover:bg-red-50"}`}
-                      onMouseDown={(event) => event.preventDefault()}
-                      onMouseEnter={() => setHighlightedAccountIndex(index)}
-                      onClick={() => selectAccount(account)}
-                    >
-                      <span className="flex items-center justify-between gap-3"><span className="font-semibold">{account.accountName}</span><Badge variant="outline" className={optimizationTone(account.optimizationScore)}>{formatOptionalPercent(account.optimizationScore)} optimized</Badge></span>
-                      <span className="text-neutral-500">{account.adAccountId}</span>
-                      <AccountCampaignSummary campaigns={account.campaigns} />
-                      {account.warning ? <span className="mt-1 block text-xs text-amber-700">Performance unavailable</span> : null}
-                    </button>
-                  ))}
-                  {accountSearchState === "loading" ? <p className="border-t bg-neutral-50 p-3 text-sm text-neutral-500">Searching accounts…</p> : null}
-                </div>
-                )}
-              </div>
+            <div className="flex max-w-4xl items-start gap-2">
+              <GoogleAccountSearchField value={accountQuery} onChange={changeAccountQuery} onSelect={selectAccount} results={suggestions} recentAccounts={recentAccounts} open={accountDropdownOpen} state={accountSearchState} error={accountSearchError} onFocus={()=>setAccountDropdownOpen(true)} onBlur={()=>setAccountDropdownOpen(false)} onKeyDown={handleAccountKeyDown} highlightedIndex={highlightedAccountIndex} onHighlight={setHighlightedAccountIndex}/>
               <Button
                 type="button"
-                className="cursor-pointer bg-red-600 text-white hover:bg-red-700"
+                className="h-12 cursor-pointer bg-red-600 text-white hover:bg-red-700"
                 disabled={!accountPerformance || analysisLoading}
                 onClick={() => void runSelectedAccountAnalysis()}
               >
                 {analysisLoading ? <Spinner className="size-4" /> : <SearchIcon className="size-4" />}
-                {analysisLoading ? "Analyzing..." : "Search"}
+                {analysisLoading ? "Analyzing..." : "Start analysis"}
               </Button>
-              <Button type="button" variant="outline" className="cursor-pointer whitespace-nowrap hover:border-red-200 hover:bg-red-50 hover:text-red-700" onClick={() => { setReportDate(malaysiaToday()); setReportDialogOpen(true); }}>
+              <Button type="button" variant="outline" className="cursor-pointer whitespace-nowrap hover:border-red-200 hover:bg-red-50 hover:text-red-700" disabled={!data || loading || analysisLoading} onClick={() => { setReportDateSelection({ mode: "single", date: malaysiaToday() }); setReportDialogOpen(true); }}>
                 <FileDownIcon className="size-4" />
                 Summary report
               </Button>
             </div>
-            <p className="mt-2 text-xs text-neutral-500">Select an account, then press Search to retrieve, analyze, and save its latest search terms.</p>
+            <p className="mt-2 text-xs text-neutral-500">Select an account, then start analysis to retrieve, analyze, and save its latest search terms.</p>
           </div> : null}
 
           <div className="flex flex-col justify-between gap-5 lg:flex-row lg:items-end">
@@ -687,11 +647,11 @@ export function SearchTermOptimizationPageClient({ role }: { role: AuthRole }) {
                   : accountPerformance?.accountName ?? "Search-Term Optimization"}
               </h1>
               {!analysisLoading && data ? (
-                <div className="mt-3 flex flex-wrap gap-x-5 gap-y-1 text-sm text-neutral-600">
-                  <span>CID {data.account.customerId}</span>
-                  <span>{data.account.reportingPeriod.startDate}–{data.account.reportingPeriod.endDate}</span>
-                  <span>Last analysis {formatDateTime(data.account.lastAnalysisAt)}</span>
-                  <span>Next run {data.account.nextRunAt ? formatDateTime(data.account.nextRunAt) : "Not scheduled"}</span>
+                <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                  <AccountDetail label="Google Ads account" value={`CID ${data.account.customerId}`} />
+                  <AccountDetail label="Analysis period" value={`${formatDate(data.account.reportingPeriod.startDate)} – ${formatDate(data.account.reportingPeriod.endDate)}`} emphasized />
+                  <AccountDetail label="Analyzed on" value={formatDateTime(data.account.lastAnalysisAt)} />
+                  <AccountDetail label="Next scheduled run" value={data.account.nextRunAt ? formatDateTime(data.account.nextRunAt) : "Not scheduled"} />
                 </div>
               ) : null}
             </div>
@@ -712,7 +672,7 @@ export function SearchTermOptimizationPageClient({ role }: { role: AuthRole }) {
             <p className="mt-1 text-sm">{error}</p>
           </section>
         ) : null}
-        {loading || analysisLoading ? <LoadingDataIndicator label={analysisStage ?? "Loading analysis data..."} startedAt={analysisStartedAt} activityAt={analysisActivityAt} /> : null}
+        {loading || analysisLoading ? <LoadingDataIndicator label={analysisStage ?? "Loading analysis data..."} startedAt={analysisStartedAt} activityAt={analysisActivityAt} progress={analysisProgress} /> : null}
 
         {!loading && !analysisLoading && !data && !error && !accountPerformance ? (
           <section className="rounded-2xl border border-neutral-200 bg-white p-5 text-neutral-700 shadow-sm">
@@ -723,14 +683,14 @@ export function SearchTermOptimizationPageClient({ role }: { role: AuthRole }) {
 
         {!analysisLoading && data ? (
           <>
-            <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
+            <section className="grid grid-cols-[repeat(auto-fit,minmax(260px,1fr))] gap-3">
               {cards.map(([key, label, value]) => (
                 <div
                   key={key}
                   className="flex min-h-[122px] flex-col rounded-2xl border border-neutral-200 bg-white p-4 text-left shadow-sm"
                 >
                   <span className="min-h-10 text-xs font-semibold uppercase leading-5 tracking-wide text-neutral-500">{label}</span>
-                  <span className="mt-auto block pt-2 text-3xl font-semibold leading-none tabular-nums">{value}</span>
+                  <span className="mt-auto block pt-2 text-3xl font-semibold leading-none tabular-nums">{value.toLocaleString("en-MY")}</span>
                 </div>
               ))}
             </section>
@@ -760,7 +720,7 @@ export function SearchTermOptimizationPageClient({ role }: { role: AuthRole }) {
             <section className="rounded-2xl border border-neutral-200 bg-white p-5 shadow-sm">
               <div className="grid gap-3 sm:grid-cols-2">
                 <div><p className="mb-1 text-xs font-semibold uppercase tracking-wide text-neutral-500">Campaign</p><Select value={campaignFilter} onValueChange={setCampaignFilter}><SelectTrigger className="w-full cursor-pointer bg-white transition hover:bg-neutral-50"><SelectValue placeholder="All campaigns" /></SelectTrigger><SelectContent><SelectItem value="all">All campaigns</SelectItem>{campaignOptions.map((campaign) => <SelectItem key={campaign} value={campaign}>{campaign}</SelectItem>)}</SelectContent></Select></div>
-                <div><p className="mb-1 text-xs font-semibold uppercase tracking-wide text-neutral-500">Category</p><Select value={categoryFilter} onValueChange={(value) => setCategoryFilter(value as CategoryFilter)}><SelectTrigger className="w-full cursor-pointer bg-white transition hover:bg-neutral-50"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="approved">Approved</SelectItem><SelectItem value="rejected">Rejected</SelectItem><SelectItem value="special review needed">Special review needed</SelectItem><SelectItem value="all">All tables</SelectItem></SelectContent></Select></div>
+                <div><p className="mb-1 text-xs font-semibold uppercase tracking-wide text-neutral-500">Category</p><Select value={categoryFilter} onValueChange={(value) => setCategoryFilter(value as CategoryFilter)}><SelectTrigger className="w-full cursor-pointer bg-white transition hover:bg-neutral-50"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="add keyword">Add Keyword</SelectItem><SelectItem value="add negative keyword">Add Negative Keyword</SelectItem><SelectItem value="special review needed">Special Review Needed</SelectItem><SelectItem value="approved">Approved</SelectItem><SelectItem value="rejected">Rejected</SelectItem><SelectItem value="all">All tables</SelectItem></SelectContent></Select></div>
               </div>
               {campaignFilter !== "all" ? (
                 <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-neutral-200 pt-3 text-sm">
@@ -774,9 +734,6 @@ export function SearchTermOptimizationPageClient({ role }: { role: AuthRole }) {
                     </span>
                   ) : null}
                 </div>
-              ) : null}
-              {canReview && leadQualityMessage ? (
-                <p className="mt-4 border-t pt-4 text-sm text-neutral-600">{leadQualityMessage}</p>
               ) : null}
               {categoryFilter === "unadded/unexcluded" && recommendationsLoading ? <LoadingDataIndicator label="Loading current Google Ads status..." compact /> : null}
               {categoryFilter === "unadded/unexcluded" && googleRecommendationsWarning ? <p className="mt-3 text-sm text-amber-700">{googleRecommendationsWarning}</p> : null}
@@ -820,8 +777,6 @@ export function SearchTermOptimizationPageClient({ role }: { role: AuthRole }) {
                         canReview={canReview && !decisionSaving && !["approved", "rejected"].includes(action)}
                         canApprove={false}
                         approverView={false}
-                        onLeadQualityUpdate={updateLeadQuality}
-                        leadQualitySaving={leadQualitySaving}
                       />;
                     })}
                   </div>
@@ -844,18 +799,26 @@ export function SearchTermOptimizationPageClient({ role }: { role: AuthRole }) {
         ) : null}
       </div>
       <AlertDialog open={reportDialogOpen} onOpenChange={setReportDialogOpen}>
-        <AlertDialogContent size="sm">
+        <AlertDialogContent className="w-[calc(100%-2rem)] sm:max-w-4xl">
           <AlertDialogHeader>
             <AlertDialogTitle>Generate decision report</AlertDialogTitle>
-            <AlertDialogDescription>Select the Malaysia calendar date whose approved and negative-keyword decisions should be included.</AlertDialogDescription>
+            <AlertDialogDescription>Choose one Malaysia calendar date or a date range for the approved and negative-keyword decisions in the PDF.</AlertDialogDescription>
           </AlertDialogHeader>
-          <div className="space-y-2 py-2">
-            <label htmlFor="search-term-report-date" className="text-sm font-medium text-neutral-800">Decision date</label>
-            <Input id="search-term-report-date" type="date" value={reportDate} max={malaysiaToday()} onChange={(event) => setReportDate(event.target.value)} />
-          </div>
+          <ReportDatePicker value={reportDateSelection} onChange={setReportDateSelection} />
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction disabled={!reportDate} onClick={() => { window.location.href = `/api/search-term-optimization/summary-report?date=${encodeURIComponent(reportDate)}`; }}>Generate report</AlertDialogAction>
+            <AlertDialogAction onClick={() => {
+              const params = new URLSearchParams();
+              if (reportDateSelection.mode === "single") {
+                params.set("date", reportDateSelection.date);
+              } else {
+                params.set("startDate", reportDateSelection.startDate);
+                params.set("endDate", reportDateSelection.endDate);
+              }
+              window.location.href = `/api/search-term-optimization/summary-report?${params.toString()}`;
+            }}>
+              Generate report
+            </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
@@ -912,17 +875,17 @@ function AccountScheduleSettings({ settings, editable, onSaved }: {
   const [frequency, setFrequency] = useState<AnalysisScheduleFrequency>(
     settings.scheduleFrequency === "manual" ? "monthly" : settings.scheduleFrequency,
   );
+  const [automationEnabled, setAutomationEnabled] = useState(settings.automationEnabled);
   const [autoSafe, setAutoSafe] = useState(String(settings.autoSafeScoreThreshold));
-  const [review, setReview] = useState(String(settings.reviewScoreThreshold));
   const [highSpend, setHighSpend] = useState(String(settings.highSpendThreshold));
   const [minimumClicks, setMinimumClicks] = useState(String(settings.minimumClicksThreshold));
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
 
   useEffect(() => {
+    setAutomationEnabled(settings.automationEnabled);
     setFrequency(settings.scheduleFrequency === "manual" ? "monthly" : settings.scheduleFrequency);
     setAutoSafe(String(settings.autoSafeScoreThreshold));
-    setReview(String(settings.reviewScoreThreshold));
     setHighSpend(String(settings.highSpendThreshold));
     setMinimumClicks(String(settings.minimumClicksThreshold));
   }, [settings]);
@@ -936,9 +899,9 @@ function AccountScheduleSettings({ settings, editable, onSaved }: {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           googleCustomerId: settings.googleCustomerId,
+          automationEnabled,
           scheduleFrequency: frequency,
           autoSafeScoreThreshold: Number(autoSafe),
-          reviewScoreThreshold: Number(review),
           highSpendThreshold: Number(highSpend),
           minimumClicksThreshold: Number(minimumClicks),
         }),
@@ -955,27 +918,51 @@ function AccountScheduleSettings({ settings, editable, onSaved }: {
   }
 
   return (
-    <div className="mt-4 rounded-xl border border-neutral-200 bg-white p-4 shadow-sm">
+    <div className="mt-4 space-y-3">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <p className="text-sm font-semibold text-neutral-900">Analysis schedule and account thresholds</p>
+          <p className="text-sm font-semibold text-neutral-900">Account rules</p>
           <p className="mt-0.5 text-xs text-neutral-500">{settings.nextRunAt ? `Next analysis ${formatDateTime(settings.nextRunAt)}` : "Monthly analysis is the default schedule"}</p>
         </div>
         {!editable ? <Badge variant="outline">Administrator managed</Badge> : null}
       </div>
-      <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
-        <SettingField label="Review frequency" description="How often this account's search-term analysis runs automatically.">
-          <Select disabled={!editable || saving} value={frequency} onValueChange={(value) => setFrequency(value as AnalysisScheduleFrequency)}>
-            <SelectTrigger className="w-full cursor-pointer bg-white"><SelectValue /></SelectTrigger>
-            <SelectContent><SelectItem value="weekly">Weekly</SelectItem><SelectItem value="biweekly">Biweekly</SelectItem><SelectItem value="monthly">Monthly</SelectItem></SelectContent>
-          </Select>
-        </SettingField>
-        <SettingField label="Auto-safe score" description="Scores at or above this qualify as auto-safe only after every safety gate passes."><Input disabled={!editable || saving} type="number" min={90} max={100} value={autoSafe} onChange={(event) => setAutoSafe(event.target.value)} /></SettingField>
-        <SettingField label="Manual-review score" description="Scores from this value up to one below auto-safe are sent for human review."><Input disabled={!editable || saving} type="number" min={0} max={99} value={review} onChange={(event) => setReview(event.target.value)} /></SettingField>
-        <SettingField label="High spend (RM)"><Input disabled={!editable || saving} type="number" min={0} step="0.01" value={highSpend} onChange={(event) => setHighSpend(event.target.value)} /></SettingField>
-        <SettingField label="Minimum paid clicks"><Input disabled={!editable || saving} type="number" min={0} step={1} value={minimumClicks} onChange={(event) => setMinimumClicks(event.target.value)} /></SettingField>
+      <div className="grid gap-3 lg:grid-cols-2">
+        <section className="rounded-xl border border-neutral-200 bg-white p-4 shadow-sm" aria-labelledby="automation-rules-heading">
+          <div className="mb-3 flex items-center justify-between gap-3">
+            <div>
+              <h3 id="automation-rules-heading" className="text-sm font-semibold text-neutral-900">Automation</h3>
+              <p className="mt-0.5 text-xs text-neutral-500">{automationEnabled ? "Scheduled analysis is on." : "Scheduled analysis is off."}</p>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="text-xs font-semibold text-neutral-600">{automationEnabled ? "On" : "Off"}</span>
+              <Switch
+                checked={automationEnabled}
+                onCheckedChange={setAutomationEnabled}
+                disabled={!editable || saving}
+                aria-label="Enable scheduled analysis"
+                className="data-[state=checked]:bg-emerald-600 data-[state=unchecked]:bg-red-600"
+              />
+            </div>
+          </div>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <SettingField label="Review frequency" description="How often this account's search-term analysis runs automatically.">
+              <Select disabled={!editable || saving || !automationEnabled} value={frequency} onValueChange={(value) => setFrequency(value as AnalysisScheduleFrequency)}>
+                <SelectTrigger className="w-full cursor-pointer bg-white"><SelectValue /></SelectTrigger>
+                <SelectContent><SelectItem value="weekly">Weekly</SelectItem><SelectItem value="biweekly">Biweekly</SelectItem><SelectItem value="monthly">Monthly</SelectItem></SelectContent>
+              </Select>
+            </SettingField>
+            <SettingField label="Auto-safe score" description="Scores at or above this qualify as auto-safe only after every safety gate passes."><Input disabled={!editable || saving || !automationEnabled} type="number" min={90} max={100} value={autoSafe} onChange={(event) => setAutoSafe(event.target.value)} /></SettingField>
+          </div>
+        </section>
+        <section className="rounded-xl border border-neutral-200 bg-white p-4 shadow-sm" aria-labelledby="priority-rules-heading">
+          <h3 id="priority-rules-heading" className="mb-3 text-sm font-semibold text-neutral-900">Priority</h3>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <SettingField label="High spend (RM)" description="Moves high-spend terms higher. Double the amount is critical."><Input disabled={!editable || saving} type="number" min={0} step="0.01" value={highSpend} onChange={(event) => setHighSpend(event.target.value)} /></SettingField>
+            <SettingField label="Minimum paid clicks" description="Moves terms with this many clicks higher."><Input disabled={!editable || saving} type="number" min={0} step={1} value={minimumClicks} onChange={(event) => setMinimumClicks(event.target.value)} /></SettingField>
+          </div>
+        </section>
       </div>
-      {editable ? <div className="mt-4 flex flex-wrap items-center justify-end gap-3 border-t pt-4">
+      {editable ? <div className="flex flex-wrap items-center justify-end gap-3 pt-1">
         {message ? <span className={`text-xs ${message === "Account rules saved." ? "text-emerald-700" : "text-red-700"}`}>{message}</span> : null}
         <Button type="button" className="cursor-pointer bg-red-700 text-white hover:bg-red-800" disabled={saving} onClick={() => void save()}>{saving ? <Spinner className="size-4" /> : <SaveIcon className="size-4" />}{saving ? "Saving..." : "Save rules"}</Button>
       </div> : null}
@@ -988,7 +975,7 @@ function SettingField({ label, description, children }: { label: string; descrip
 }
 
 
-function LoadingDataIndicator({ label, compact = false, startedAt, activityAt }: { label: string; compact?: boolean; startedAt?: string | null; activityAt?: string | null }) {
+function LoadingDataIndicator({ label, compact = false, startedAt, activityAt, progress }: { label: string; compact?: boolean; startedAt?: string | null; activityAt?: string | null; progress?: {currentBatch:number;completedBatches:number;maxBatches:number;currentBatchSize:number;termsProcessed:number;progressComplete:boolean} }) {
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
     if (compact || !startedAt) return;
@@ -998,6 +985,7 @@ function LoadingDataIndicator({ label, compact = false, startedAt, activityAt }:
   const elapsedSeconds = startedAt ? Math.max(0, Math.floor((now - Date.parse(startedAt)) / 1_000)) : null;
   const activitySeconds = activityAt ? Math.max(0, Math.floor((now - Date.parse(activityAt)) / 1_000)) : null;
   const heartbeatHealthy = activitySeconds === null || activitySeconds < 20;
+  const progressPercent = progress?.progressComplete ? 100 : Math.round(100 * (progress?.completedBatches ?? 0) / Math.max(1, progress?.maxBatches ?? 10));
   if (compact) {
     return (
       <div className="mt-3 flex items-center gap-3 text-sm font-medium text-neutral-600" role="status" aria-live="polite">
@@ -1014,7 +1002,7 @@ function LoadingDataIndicator({ label, compact = false, startedAt, activityAt }:
         </span>
         <div className="min-w-0 flex-1">
           <p className="font-semibold text-neutral-900">Analyzing search terms</p>
-          <p className="mt-0.5 truncate text-sm text-neutral-500">{label}</p>
+          <p className="mt-0.5 truncate text-sm text-neutral-500">{progress?.currentBatch ? `Run ${progress.currentBatch} of ${progress.maxBatches} · analyzing ${progress.currentBatchSize} terms` : label}</p>
         </div>
         <span className="hidden rounded-full bg-neutral-100 px-3 py-1 text-xs font-medium text-neutral-500 sm:inline-flex">Please wait</span>
       </div>
@@ -1022,11 +1010,11 @@ function LoadingDataIndicator({ label, compact = false, startedAt, activityAt }:
         <div className="mb-2 flex items-center justify-between text-xs font-medium text-neutral-500">
           <span>{elapsedSeconds === null ? "Analysis in progress" : `Elapsed ${formatElapsedTime(elapsedSeconds)}`}</span>
           <span className={heartbeatHealthy ? "text-emerald-700" : "text-amber-700"}>
-            {activitySeconds === null ? "Starting worker..." : heartbeatHealthy ? `Worker active · ${activitySeconds}s ago` : `No update for ${activitySeconds}s · checking...`}
+            {activitySeconds === null ? "Starting analysis…" : heartbeatHealthy ? "Analysis is still running" : `No worker update for ${activitySeconds}s · checking status`}
           </span>
         </div>
         <div className="h-2.5 overflow-hidden rounded-full bg-neutral-200 ring-1 ring-inset ring-neutral-300/60">
-          <div className="search-analysis-progress h-full w-1/3 rounded-full bg-gradient-to-r from-red-700 via-red-500 to-red-400 shadow-sm" />
+          <div className="h-full rounded-full bg-gradient-to-r from-red-700 via-red-500 to-red-400 shadow-sm transition-[width] duration-500" style={{width:`${progressPercent}%`}} />
         </div>
       </div>
     </div>
@@ -1040,6 +1028,7 @@ function formatElapsedTime(totalSeconds: number) {
 }
 
 const RESULTS_PER_PAGE = 10;
+type ResultSortKey = "searchTerm" | "matchType" | "clicks" | "spend" | "conversions" | "classification" | "safetyScore";
 
 function ActionGroupTable({
   action,
@@ -1056,8 +1045,6 @@ function ActionGroupTable({
   canReview,
   canApprove,
   approverView,
-  onLeadQualityUpdate,
-  leadQualitySaving,
 }: {
   action: string;
   rows: OptimizationResult[];
@@ -1073,12 +1060,19 @@ function ActionGroupTable({
   canReview: boolean;
   canApprove: boolean;
   approverView: boolean;
-  onLeadQualityUpdate: (row: OptimizationResult, values: LeadQualityValues) => Promise<void>;
-  leadQualitySaving: boolean;
 }) {
+  const [sort, setSort] = useState<{ key: ResultSortKey; direction: "asc" | "desc" }>({ key: "spend", direction: "desc" });
+  const sortedRows = [...rows].sort((left, right) => {
+    const leftValue = left[sort.key] ?? "";
+    const rightValue = right[sort.key] ?? "";
+    const comparison = typeof leftValue === "number" && typeof rightValue === "number"
+      ? leftValue - rightValue
+      : String(leftValue).localeCompare(String(rightValue), undefined, { numeric: true, sensitivity: "base" });
+    return sort.direction === "asc" ? comparison : -comparison;
+  });
   const pageCount = Math.max(1, Math.ceil(rows.length / RESULTS_PER_PAGE));
   const safePage = Math.min(page, pageCount);
-  const pageRows = rows.slice((safePage - 1) * RESULTS_PER_PAGE, safePage * RESULTS_PER_PAGE);
+  const pageRows = sortedRows.slice((safePage - 1) * RESULTS_PER_PAGE, safePage * RESULTS_PER_PAGE);
   const selectedCount = rows.filter((row) => selectedIds.has(row.id)).length;
   const allSelected = rows.length > 0 && selectedCount === rows.length;
 
@@ -1110,13 +1104,22 @@ function ActionGroupTable({
         <table className="min-w-[620px] w-full text-left text-sm">
           <thead className="bg-neutral-50 text-xs uppercase tracking-wide text-neutral-500">
             <tr>
-              {(canReview || canApprove ? ["", "Search term", "Clicks", "Spend", "Conv.", "Classification", "Score", "Decision"] : approverView ? ["Search term", "Clicks", "Spend", "Conv.", "Classification", "Score", "Decision"] : ["Search term", "Clicks", "Spend", "Conv.", "Classification", "Score"]).map((heading, index) => (
-                <th key={`${heading}-${index}`} className={`px-4 py-3 font-semibold ${heading === "Search term" ? "text-left" : "text-center"}`}>{heading}</th>
+              {canReview || canApprove ? <th className="px-4 py-3" /> : null}
+              {([
+                ["searchTerm", "Search term"], ["matchType", "Match type"], ["clicks", "Clicks"], ["spend", "Spend"],
+                ["conversions", "Conv."], ["classification", "Classification"], ["safetyScore", "Score"],
+              ] as Array<[ResultSortKey, string]>).map(([key, label]) => (
+                <th key={key} className={`px-4 py-3 font-semibold ${key === "searchTerm" ? "text-left" : "text-center"}`}>
+                  <button type="button" className="inline-flex cursor-pointer items-center gap-1 hover:text-neutral-900" onClick={() => { setSort((current) => current.key === key ? { key, direction: current.direction === "asc" ? "desc" : "asc" } : { key, direction: key === "searchTerm" || key === "matchType" || key === "classification" ? "asc" : "desc" }); onPageChange(1); }}>
+                    {label}{sort.key === key ? <span aria-hidden="true">{sort.direction === "asc" ? "↑" : "↓"}</span> : null}
+                  </button>
+                </th>
               ))}
+              {canReview || approverView ? <th className="px-4 py-3 text-center font-semibold">Decision</th> : null}
             </tr>
           </thead>
           <tbody className="divide-y">
-            {pageRows.map((row) => <ResultRow key={row.id} row={row} selected={selectedIds.has(row.id)} decision={decisions[row.id]} approverDecision={approverDecisions[row.id]} showRowActions={!allSelected} onToggle={onToggleRow} onDecision={onDecision} onApproverDecision={onApproverDecision} canReview={canReview} canApprove={canApprove} approverView={approverView} onLeadQualityUpdate={onLeadQualityUpdate} leadQualitySaving={leadQualitySaving} />)}
+            {pageRows.map((row) => <ResultRow key={row.id} row={row} selected={selectedIds.has(row.id)} decision={decisions[row.id]} approverDecision={approverDecisions[row.id]} showRowActions={!allSelected} onToggle={onToggleRow} onDecision={onDecision} onApproverDecision={onApproverDecision} canReview={canReview} canApprove={canApprove} approverView={approverView} />)}
           </tbody>
         </table>
       </div>
@@ -1139,15 +1142,14 @@ function ActionGroupTable({
 }
 
 function groupRowsByAction(rows: OptimizationResult[]) {
-  const order = ["approved", "rejected", "special review needed", "no action"];
+  const order = ["add keyword", "add negative keyword", "special review needed", "approved", "rejected", "no action"];
   const groups = new Map<string, OptimizationResult[]>();
   for (const row of rows) {
     const category = row.reviewStatus === "approved_for_publishing" ? "approved"
       : row.reviewStatus === "approver_rejected" ? "rejected"
       : row.reviewStatus === "ready_for_approval" && row.reviewDecision === "approved" ? "approved"
       : row.reviewStatus === "ready_for_approval" && row.reviewDecision === "rejected" ? "rejected"
-      : normalizeAction(row.proposedAction) === "no action" ? "no action"
-      : "special review needed";
+      : proposedActionCategory(row.proposedAction);
     groups.set(category, [...(groups.get(category) ?? []), row]);
   }
   return [...groups.entries()].sort(([left], [right]) => {
@@ -1157,7 +1159,7 @@ function groupRowsByAction(rows: OptimizationResult[]) {
   });
 }
 
-function ResultRow({ row, selected, decision, approverDecision, showRowActions, onToggle, onDecision, onApproverDecision, canReview, canApprove, approverView, onLeadQualityUpdate, leadQualitySaving }: { row: OptimizationResult; selected: boolean; decision?: ReviewDecision; approverDecision?: ApproverDecision; showRowActions: boolean; onToggle: (id: string, checked: boolean) => void; onDecision: (rows: OptimizationResult[], decision: ReviewDecision) => void; onApproverDecision: (rows: OptimizationResult[], decision: ApproverDecision) => void; canReview: boolean; canApprove: boolean; approverView: boolean; onLeadQualityUpdate: (row: OptimizationResult, values: LeadQualityValues) => Promise<void>; leadQualitySaving: boolean }) {
+function ResultRow({ row, selected, decision, approverDecision, showRowActions, onToggle, onDecision, onApproverDecision, canReview, canApprove, approverView }: { row: OptimizationResult; selected: boolean; decision?: ReviewDecision; approverDecision?: ApproverDecision; showRowActions: boolean; onToggle: (id: string, checked: boolean) => void; onDecision: (rows: OptimizationResult[], decision: ReviewDecision) => void; onApproverDecision: (rows: OptimizationResult[], decision: ApproverDecision) => void; canReview: boolean; canApprove: boolean; approverView: boolean }) {
   const approvedState = row.reviewStatus === "approved_for_publishing" || (!approverView && decision === "approved");
   const negativeState = row.reviewStatus === "approver_rejected" || (!approverView && decision === "rejected");
   const returnedState = row.reviewStatus === "returned_for_clarification";
@@ -1166,8 +1168,8 @@ function ResultRow({ row, selected, decision, approverDecision, showRowActions, 
       {canReview || canApprove ? <td className="px-4 py-4 text-center"><Checkbox checked={selected} onCheckedChange={(checked) => onToggle(row.id, checked === true)} aria-label={`Select ${row.searchTerm}`} className="cursor-pointer" /></td> : null}
       <td className="px-4 py-4 font-semibold">
         <span className="flex flex-wrap items-center gap-2">{row.searchTerm}<PriorityBadge priority={row.priority} /></span>
-        <SearchTermContextDetails key={`${row.id}:${row.qualifiedLeads}:${row.spamLeads}:${row.invalidLeads}:${row.clientComplaints}`} row={row} editable={canReview} saving={leadQualitySaving} onSave={onLeadQualityUpdate} />
       </td>
+      <td className="px-4 py-4 text-center"><Badge variant="outline">{row.matchType ? humanize(row.matchType) : "Unknown"}</Badge></td>
       <td className="px-4 py-4 text-center tabular-nums">{row.clicks}</td>
       <td className="px-4 py-4 text-center tabular-nums">RM {row.spend.toFixed(2)}</td>
       <td className="px-4 py-4 text-center tabular-nums">{row.conversions.toFixed(2)}</td>
@@ -1196,33 +1198,6 @@ function PriorityBadge({ priority }: { priority?: OptimizationResult["priority"]
   const value = priority ?? "normal";
   const tone = value === "critical" ? "border-red-200 bg-red-50 text-red-800" : value === "high" ? "border-orange-200 bg-orange-50 text-orange-800" : value === "medium" ? "border-amber-200 bg-amber-50 text-amber-800" : "border-neutral-200 bg-neutral-50 text-neutral-600";
   return <Badge variant="outline" className={`text-[10px] uppercase tracking-wide ${tone}`}>{value}</Badge>;
-}
-
-function SearchTermContextDetails({ row, editable, saving, onSave }: { row: OptimizationResult; editable: boolean; saving: boolean; onSave: (row: OptimizationResult, values: LeadQualityValues) => Promise<void> }) {
-  const [values, setValues] = useState<LeadQualityValues>({ qualifiedLeads: row.qualifiedLeads, spamLeads: row.spamLeads, invalidLeads: row.invalidLeads, clientComplaints: row.clientComplaints });
-  const field = (key: keyof LeadQualityValues, label: string) => <label className="block"><span className="text-[11px] font-semibold uppercase text-neutral-500">{label}</span><Input type="number" min={0} step={1} value={values[key] ?? ""} disabled={!editable || saving} placeholder="Not available" className="mt-1 h-8" onChange={(event) => setValues((current) => ({ ...current, [key]: event.target.value === "" ? null : Number(event.target.value) }))} /></label>;
-  return <details className="group mt-2 min-w-72 text-xs font-normal text-neutral-500">
-    <summary className="flex cursor-pointer list-none items-center gap-1.5 select-none font-medium text-neutral-600 hover:text-neutral-900">View explanation and lead context <ChevronDownIcon className="size-3.5 transition-transform group-open:rotate-180" /></summary>
-    <div className="mt-2 space-y-3 rounded-lg border bg-white p-3 shadow-sm">
-      <div><p className="text-[11px] font-semibold uppercase text-neutral-400">Recommendation explanation</p><p className="mt-1 leading-relaxed text-neutral-700">{row.explanation || "No explanation is available."}</p></div>
-      <dl className="grid gap-x-4 gap-y-2 sm:grid-cols-2">
-        <ContextValue label="Triggering keyword" value={row.triggeringKeyword} />
-        <ContextValue label="Match type" value={row.matchType} />
-        <ContextValue label="Google status" value={row.addedExcludedStatus} />
-        <ContextValue label="Asset group" value={row.assetGroup} />
-        <ContextValue label="First detected" value={row.firstDetectedAt ? formatDateTime(row.firstDetectedAt) : null} />
-        <ContextValue label="Last reviewed" value={row.lastReviewedAt ? formatDateTime(row.lastReviewedAt) : null} />
-        <ContextValue label="Previous decision" value={row.previousDecision ? humanize(row.previousDecision) : null} />
-        <ContextValue label="Retrieved" value={formatDateTime(row.dataRetrievedAt)} />
-      </dl>
-      <div className="grid gap-2 sm:grid-cols-2">{field("qualifiedLeads", "Qualified leads")}{field("spamLeads", "Spam leads")}{field("invalidLeads", "Invalid leads")}{field("clientComplaints", "Client complaints")}</div>
-      {editable ? <Button type="button" size="sm" disabled={saving} className="cursor-pointer bg-red-700 hover:bg-red-800" onClick={() => void onSave(row, values)}><SaveIcon className="size-4" /> Save lead quality</Button> : null}
-    </div>
-  </details>;
-}
-
-function ContextValue({ label, value }: { label: string; value: string | null }) {
-  return <div><dt className="text-[11px] font-semibold uppercase text-neutral-400">{label}</dt><dd className="mt-0.5 text-neutral-700">{value?.trim() || "Not available"}</dd></div>;
 }
 
 function DecisionStatus({ decision }: { decision?: ReviewDecision }) {
@@ -1298,6 +1273,14 @@ function normalizeAction(value: string): CategoryFilter {
   return "all";
 }
 
+function proposedActionCategory(value: string): "add keyword" | "add negative keyword" | "special review needed" | "no action" {
+  const action = normalizeAction(value);
+  if (action === "add exact") return "add keyword";
+  if (action === "negative exact" || action === "negative phrase") return "add negative keyword";
+  if (action === "no action") return "no action";
+  return "special review needed";
+}
+
 function humanize(value: string) {
   return value.replaceAll("_", " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
 }
@@ -1306,12 +1289,25 @@ function formatDateTime(value: string) {
   return new Intl.DateTimeFormat("en-MY", { dateStyle: "medium", timeStyle: "short" }).format(new Date(value));
 }
 
+function formatDate(value: string) {
+  const date = new Date(`${value}T00:00:00`);
+  return Number.isNaN(date.getTime()) ? value : new Intl.DateTimeFormat("en-MY", { day: "numeric", month: "short", year: "numeric" }).format(date);
+}
+
+function AccountDetail({ label, value, emphasized = false }: { label: string; value: string; emphasized?: boolean }) {
+  return <div className={`rounded-xl border px-3.5 py-3 ${emphasized ? "border-red-200 bg-red-50" : "border-neutral-200 bg-neutral-50"}`}>
+    <p className={`text-[11px] font-semibold uppercase tracking-wide ${emphasized ? "text-red-700" : "text-neutral-500"}`}>{label}</p>
+    <p className="mt-1 text-sm font-semibold text-neutral-900">{value}</p>
+  </div>;
+}
+
 function formatOptionalPercent(value: number | null) { return value === null ? "N/A" : `${value.toFixed(1)}%`; }
 function isAccountSuggestion(value: unknown): value is AccountSuggestion {
   if (!value || typeof value !== "object") return false;
   const account = value as Partial<AccountSuggestion>;
   return typeof account.accountName === "string"
     && typeof account.adAccountId === "string"
+    && /^\d{10}$/.test(account.adAccountId.replace(/\D/g, ""))
     && (account.optimizationScore === null || typeof account.optimizationScore === "number")
     && Array.isArray(account.campaigns);
 }
@@ -1347,11 +1343,6 @@ async function fetchAccountSuggestions(query: string, signal?: AbortSignal) {
 function campaignTotals(campaigns: AccountSuggestion["campaigns"]) {
   const totals = campaigns.reduce((current, campaign) => ({ clicks: current.clicks + campaign.clicks, conversions: current.conversions + campaign.conversions }), { clicks: 0, conversions: 0 });
   return { ...totals, conversionRate: totals.clicks > 0 ? totals.conversions / totals.clicks * 100 : 0 };
-}
-function AccountCampaignSummary({ campaigns }: { campaigns: AccountSuggestion["campaigns"] }) {
-  if (campaigns.length === 0) return <span className="mt-2 block text-xs text-neutral-400">Campaign performance unavailable</span>;
-  const totals = campaignTotals(campaigns);
-  return <span className="mt-2 flex items-center justify-between gap-3 text-xs text-neutral-500"><span>All campaigns combined</span><span className="shrink-0 font-medium text-neutral-700">{totals.conversions.toFixed(2)} conversions · {totals.conversionRate.toFixed(2)}% CVR</span></span>;
 }
 function GeneralAccountPerformance({ account }: { account: AccountSuggestion | null }) {
   if (!account) return <div className="mt-3 text-xs text-neutral-400">Loading account performance…</div>;

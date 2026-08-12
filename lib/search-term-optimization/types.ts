@@ -5,9 +5,9 @@ export type AnalysisScheduleFrequency = "manual" | "weekly" | "biweekly" | "mont
 
 export type SearchTermAccountSettings = {
   googleCustomerId: string;
+  automationEnabled: boolean;
   scheduleFrequency: AnalysisScheduleFrequency;
   autoSafeScoreThreshold: number;
-  reviewScoreThreshold: number;
   highSpendThreshold: number;
   minimumClicksThreshold: number;
   lastRunAt: string | null;

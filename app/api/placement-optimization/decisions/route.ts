@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { getServerAuthSession } from "@/lib/auth/server-session";
 import { isAdminRole } from "@/lib/auth/roles";
-import { clearPlacementDecision, saveOptimizerDecision } from "@/lib/placement-optimization/supabase-repository";
+import { clearPlacementDecision, saveOptimizerDecision, savePlacementApproverDecision } from "@/lib/placement-optimization/supabase-repository";
 import type { PlacementDecision } from "@/lib/placement-optimization/types";
 
 export const dynamic = "force-dynamic";
@@ -15,11 +15,23 @@ export async function POST(request: Request) {
   const ids = Array.isArray(body.recommendationIds) ? [...new Set(body.recommendationIds.map(String).filter((id) => /^\d+:\d+$/.test(id)))] : [];
   const decision = body.decision as PlacementDecision;
   if (!ids.length || !["exclude", "keep", "kiv"].includes(decision)) return NextResponse.json({ error: "Valid placement IDs and decision are required." }, { status: 400 });
+  if (ids.length > 100) return NextResponse.json({ error: "Select no more than 100 placements at a time." }, { status: 400 });
   try {
+    if (decision === "exclude") {
+      const result = await savePlacementApproverDecision({ recommendationIds: ids, decision: "approved", reviewer: { id: session.sub, email: session.email, role: session.role } });
+      return NextResponse.json({
+        ...result,
+        decision,
+        status: "published",
+        reviewerEmail: session.email,
+        reviewerRole: session.role,
+        createdAt: new Date().toISOString(),
+      });
+    }
     return NextResponse.json({
       ...await saveOptimizerDecision({ recommendationIds: ids, decision, reviewer: { id: session.sub, email: session.email, role: session.role } }),
       decision,
-      status: decision === "exclude" ? "ready_for_approval" : decision === "keep" ? "kept" : "kiv",
+      status: decision === "keep" ? "kept" : "kiv",
       reviewerEmail: session.email,
       reviewerRole: session.role,
       createdAt: new Date().toISOString(),

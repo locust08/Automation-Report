@@ -1,4 +1,4 @@
-export const AUTH_ROLES = ["pms", "co", "specialist", "approver", "tl", "pm", "admin", "ethan"] as const;
+export const AUTH_ROLES = ["pms", "co", "specialist", "approver", "tl", "pm", "admin"] as const;
 
 export type AuthRole = (typeof AUTH_ROLES)[number];
 
@@ -10,13 +10,12 @@ export const AUTH_ROLE_LABELS: Record<AuthRole, string> = {
   tl: "Team Lead",
   pm: "Project Manager",
   admin: "Administrator",
-  ethan: "Ethan",
 };
 
 export function isAuthRole(value: unknown): value is AuthRole {
   return typeof value === "string" && AUTH_ROLES.includes(value as AuthRole);
 }
 
-export function isAdminRole(value: unknown): value is "admin" | "ethan" {
-  return value === "admin" || value === "ethan";
+export function isAdminRole(value: unknown): value is "admin" {
+  return value === "admin";
 }

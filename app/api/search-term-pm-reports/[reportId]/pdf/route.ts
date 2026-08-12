@@ -10,7 +10,7 @@ export const runtime = "nodejs";
 export async function GET(_request: Request, context: { params: Promise<{ reportId: string }> }) {
   const session = await getServerAuthSession();
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  if (!["pm", "admin", "ethan"].includes(session.role)) return NextResponse.json({ error: "Project Manager access is required." }, { status: 403 });
+  if (!["pm", "admin"].includes(session.role)) return NextResponse.json({ error: "Project Manager access is required." }, { status: 403 });
   const { reportId } = await context.params;
   const report = getSearchTermPmReport(Number(reportId));
   if (!report) return NextResponse.json({ error: "Report not found." }, { status: 404 });

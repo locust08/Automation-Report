@@ -314,7 +314,7 @@ export function persistDashboardToSqlite(payload: OptimizationDashboardPayload):
 function applyAccountSettings(row: OptimizationResult, settings: OptimizationDashboardPayload["settings"]): OptimizationResult {
   const safetyBand = row.safetyScore >= settings.autoSafeScoreThreshold
     ? "auto-safe" as const
-    : row.safetyScore >= settings.reviewScoreThreshold ? "review-recommended" as const : "no-automatic-action" as const;
+    : "review-recommended" as const;
   const critical = (row.clientComplaints ?? 0) > 0 || (row.spamLeads ?? 0) > 0 || row.spend >= settings.highSpendThreshold * 2;
   const high = row.spend >= settings.highSpendThreshold || row.clicks >= settings.minimumClicksThreshold;
   const priority = critical ? "critical" as const : high ? "high" as const : row.clicks > 0 || row.spend > 0 ? "medium" as const : "normal" as const;

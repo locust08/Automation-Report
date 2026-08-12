@@ -26,9 +26,9 @@ function openSettingsDatabase() {
 function mapSettings(row: StoredSettings): SearchTermAccountSettings {
   return {
     googleCustomerId: row.google_customer_id,
+    automationEnabled: false,
     scheduleFrequency: row.schedule_frequency,
     autoSafeScoreThreshold: row.auto_safe_score_threshold,
-    reviewScoreThreshold: row.review_score_threshold,
     highSpendThreshold: row.high_spend_threshold,
     minimumClicksThreshold: row.minimum_clicks_threshold,
     lastRunAt: row.last_run_at,
@@ -74,9 +74,6 @@ export function getSearchTermAccountSettings(customerId: string, lastRunAt?: str
 }
 
 export function saveSearchTermAccountSettings(input: Omit<SearchTermAccountSettings, "lastRunAt" | "nextRunAt">) {
-  if (input.reviewScoreThreshold >= input.autoSafeScoreThreshold) {
-    throw new Error("Review score must be lower than the auto-safe score.");
-  }
   const database = openSettingsDatabase();
   try {
     const existing = database.prepare(`
@@ -87,20 +84,19 @@ export function saveSearchTermAccountSettings(input: Omit<SearchTermAccountSetti
     const nextRunAt = calculateNextRun(input.scheduleFrequency, anchor);
     database.prepare(`
       insert into ad_automation_search_term_account_settings (
-        google_customer_id, schedule_frequency, auto_safe_score_threshold, review_score_threshold,
+        google_customer_id, schedule_frequency, auto_safe_score_threshold,
         high_spend_threshold, minimum_clicks_threshold, next_run_at, updated_at
-      ) values (?, ?, ?, ?, ?, ?, ?, datetime('now'))
+      ) values (?, ?, ?, ?, ?, ?, datetime('now'))
       on conflict (google_customer_id) do update set
         schedule_frequency = excluded.schedule_frequency,
         auto_safe_score_threshold = excluded.auto_safe_score_threshold,
-        review_score_threshold = excluded.review_score_threshold,
         high_spend_threshold = excluded.high_spend_threshold,
         minimum_clicks_threshold = excluded.minimum_clicks_threshold,
         next_run_at = excluded.next_run_at,
         updated_at = datetime('now')
     `).run(
       input.googleCustomerId, input.scheduleFrequency, input.autoSafeScoreThreshold,
-      input.reviewScoreThreshold, input.highSpendThreshold, input.minimumClicksThreshold, nextRunAt,
+      input.highSpendThreshold, input.minimumClicksThreshold, nextRunAt,
     );
     return getSearchTermAccountSettingsFromDatabase(database, input.googleCustomerId);
   } finally {

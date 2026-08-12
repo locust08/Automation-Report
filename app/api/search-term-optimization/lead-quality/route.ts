@@ -7,7 +7,7 @@ import { importLeadQuality, updateLeadQuality } from "@/lib/search-term-optimiza
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
-const ALLOWED_ROLES = new Set(["pms", "specialist", "admin", "ethan"]);
+const ALLOWED_ROLES = new Set(["pms", "specialist", "admin"]);
 
 export async function PATCH(request: Request) {
   const session = await getServerAuthSession();

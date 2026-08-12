@@ -113,7 +113,7 @@ export function TeamLeadMonitoringPageClient({ role }: { role: string }) {
     <div className="space-y-5 text-neutral-950">
       <section className="rounded-3xl border border-neutral-200 bg-white p-5 shadow-sm sm:p-7">
         <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-          <div><div className="mb-2 flex flex-wrap gap-2"><Badge>Team Lead oversight</Badge><Badge tone="green">{role === "admin" || role === "ethan" ? "Administrator" : "Team Lead"} · Monitor access</Badge></div><h2 className="text-3xl font-semibold tracking-tight sm:text-5xl">Optimization operations</h2><p className="mt-2 text-sm text-neutral-500">High-impact risks, workflow progress, and completed activity across Search Terms and Placements.</p></div>
+          <div><div className="mb-2 flex flex-wrap gap-2"><Badge>Team Lead oversight</Badge><Badge tone="green">{role === "admin" ? "Administrator" : "Team Lead"} · Monitor access</Badge></div><h2 className="text-3xl font-semibold tracking-tight sm:text-5xl">Optimization operations</h2><p className="mt-2 text-sm text-neutral-500">High-impact risks, workflow progress, and completed activity across Search Terms and Placements.</p></div>
           <ShieldAlertIcon className="size-14 text-red-600" />
         </div>
       </section>

@@ -11,7 +11,7 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
   const requestedAccountId = new URL(request.url).searchParams.get("accountId")?.trim() || undefined;
-  const accountId = ["admin", "ethan"].includes(session.role) ? requestedAccountId : undefined;
+  const accountId = session.role === "admin" ? requestedAccountId : undefined;
 
   try {
     const dashboard = await getLatestDashboardFromSupabase(accountId);

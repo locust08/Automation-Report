@@ -80,6 +80,7 @@ export function ReportShell({
     placementOptimization: "/placement-optimization",
     googleManagement: withQuery("/manage/google", activeQuery),
     userManagement: "/user-management",
+    optimizationScheduling: "/optimization-scheduling",
   };
 
   return (
@@ -189,6 +190,13 @@ export function ReportShell({
                       <SlidersHorizontalIcon className="size-5" />
                     </ReportNavLink>
                     {isAdmin ? <>
+                      <ReportNavLink
+                        href={hrefs.optimizationScheduling}
+                        label="Optimization Scheduling"
+                        active={pathname === "/optimization-scheduling"}
+                      >
+                        <CalendarDaysIcon className="size-5" />
+                      </ReportNavLink>
                       <ReportNavLink
                         href={hrefs.userManagement}
                         label="User Management"

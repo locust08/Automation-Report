@@ -17,9 +17,9 @@ try {
 
   const saved = settingsRepository.saveSearchTermAccountSettings({
     googleCustomerId: "1234567890",
+    automationEnabled: false,
     scheduleFrequency: "weekly",
     autoSafeScoreThreshold: 92,
-    reviewScoreThreshold: 65,
     highSpendThreshold: 750,
     minimumClicksThreshold: 8,
   });

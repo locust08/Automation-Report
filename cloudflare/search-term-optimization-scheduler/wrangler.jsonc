@@ -1,0 +1,19 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "search-term-optimization-scheduler",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-08-12",
+  "compatibility_flags": ["nodejs_compat"],
+  "triggers": { "crons": ["*/5 * * * *"] },
+  "observability": { "enabled": true, "head_sampling_rate": 1 },
+  "vars": {
+    "GITHUB_OWNER": "",
+    "GITHUB_REPO": "",
+    "GITHUB_WORKFLOW_REF": "main",
+    "VERCEL_APP_BASE_URL": ""
+  },
+  "queues": {
+    "producers": [{ "binding": "OPTIMIZATION_QUEUE", "queue": "search-term-optimization-schedule-queue" }],
+    "consumers": [{ "queue": "search-term-optimization-schedule-queue", "max_batch_size": 1, "max_batch_timeout": 5, "max_concurrency": 1, "max_retries": 3, "retry_delay": 60 }]
+  }
+}

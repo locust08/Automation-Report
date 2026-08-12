@@ -6,7 +6,7 @@ import { getContentSuitability } from "@/lib/placement-optimization/content-suit
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
-const ROLES = new Set(["co", "approver", "pm", "admin", "ethan"]);
+const ROLES = new Set(["co", "approver", "pm", "admin"]);
 
 export async function GET(request: Request) {
   const session = await getServerAuthSession();

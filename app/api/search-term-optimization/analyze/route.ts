@@ -33,14 +33,14 @@ function malaysiaDate(value:string){return new Intl.DateTimeFormat("en-CA",{time
 
 export async function POST(request: Request) {
   const session = await getServerAuthSession();
-  if (!session || !["admin", "ethan"].includes(session.role)) return NextResponse.json({ error: "Administrator access is required." }, { status: 403 });
+  if (!session || session.role !== "admin") return NextResponse.json({ error: "Administrator access is required." }, { status: 403 });
   try {
     const body = await request.json() as { accountId?: string };
     const accountId = body.accountId?.replace(/\D/g, "") ?? "";
     if (accountId.length !== 10) return NextResponse.json({ error: "Select a valid Google Ads account first." }, { status: 400 });
     const existing = await getLatestDashboardFromSupabase(accountId);
-    if (existing?.refresh?.checkedAt && malaysiaDate(existing.refresh.checkedAt) === malaysiaDate(new Date().toISOString())) {
-      return NextResponse.json({ status:"completed", stage:"No new check needed today — loading saved analysis", dashboard:existing, mode:"cached", checkedAt:existing.refresh.checkedAt, newTerms:0, reusedTerms:existing.results.length, currentTerms:existing.results.length });
+    if (existing?.refresh?.checkedAt && malaysiaDate(existing.refresh.checkedAt) === malaysiaDate(new Date().toISOString()) && existing.refresh.queuedNewTerms === 0) {
+      return NextResponse.json({ status:"completed", stage:"No new check needed today — loading saved analysis", dashboard:existing, mode:"cached", checkedAt:existing.refresh.checkedAt, newTerms:0, reusedTerms:existing.results.length, currentTerms:existing.refresh.currentTerms });
     }
     const activeJobs=(await fs.readdir(jobsDirectory()).catch(()=>[])).filter(name=>name.endsWith(".json"));
     for(const name of activeJobs){const job=JSON.parse(await fs.readFile(path.join(jobsDirectory(),name),"utf8")) as JobStatus;if(job.accountId===accountId&&["queued","running"].includes(job.status))return NextResponse.json({jobId:job.jobId,status:job.status,stage:job.stage},{status:202});}
@@ -66,7 +66,7 @@ export async function POST(request: Request) {
 
 export async function GET(request: Request) {
   const session = await getServerAuthSession();
-  if (!session || !["admin", "ethan"].includes(session.role)) return NextResponse.json({ error: "Administrator access is required." }, { status: 403 });
+  if (!session || session.role !== "admin") return NextResponse.json({ error: "Administrator access is required." }, { status: 403 });
   const jobId = new URL(request.url).searchParams.get("jobId")?.trim() ?? "";
   if (!/^[-\w]+$/.test(jobId)) return NextResponse.json({ error: "A valid analysis job ID is required." }, { status: 400 });
   try {

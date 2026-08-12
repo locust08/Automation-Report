@@ -14,6 +14,8 @@
     "search-terms:scheduler": "node scripts/run-due-search-term-analyses.mjs",
     "search-terms:scheduler:doppler": "doppler run -- npm run search-terms:scheduler",
     "search-terms:settings:test": "tsx scripts/search-term-account-settings.test.mts",
+    "search-terms:priority:test": "uv run --project lib/search-term-optimization/python --group ads --group ads-agent python scripts/search-term-priority.test.py",
+    "optimization-scheduling:test": "tsx scripts/optimization-scheduling.test.mts",
     "search-terms:pm-reports:test": "tsx scripts/search-term-pm-reports.test.mts",
     "search-terms:pm-reports:seed": "tsx scripts/seed-search-term-pm-report-prototype.mts",
     "placements:sqlite:test": "tsx scripts/placement-optimization-sqlite.test.mts",
@@ -41,6 +43,8 @@
     "cf:meta-import:deploy": "cd cloudflare/meta-csv-import && doppler run -- npx wrangler deploy",
     "cf:billing:dev": "cd cloudflare/billing-operations-api && doppler run -- npx wrangler dev --port 8788",
     "cf:billing:deploy": "cd cloudflare/billing-operations-api && doppler run -- npx wrangler deploy"
+    ,"cf:optimization:dev": "cd cloudflare/search-term-optimization-scheduler && doppler run -- npx wrangler dev --test-scheduled"
+    ,"cf:optimization:deploy": "cd cloudflare/search-term-optimization-scheduler && doppler run -- npx wrangler deploy"
   },
   "dependencies": {
     "@base-ui/react": "^1.2.0",

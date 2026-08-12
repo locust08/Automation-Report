@@ -20,9 +20,10 @@ export async function GET(request: Request) {
     if (!credentials.googleDeveloperToken) throw new Error("Google Ads developer token is unavailable.");
     const notionDatabaseId = process.env.NOTION_AD_ACCOUNTS_DATABASE_ID?.trim() || credentials.notionDatabaseId;
     const notion = await searchNotionAdAccounts({ query, notionAccessToken: credentials.notionAccessToken, notionDatabaseId, limit: 20 });
+    const googleAccounts = notion.accounts.filter((account) => /^\d{10}$/.test(account.adAccountId.replace(/\D/g, "")));
     const accounts = [] as Array<Record<string, unknown>>;
-    for (let offset = 0; offset < notion.accounts.length; offset += 2) {
-      const chunk = notion.accounts.slice(offset, offset + 2);
+    for (let offset = 0; offset < googleAccounts.length; offset += 2) {
+      const chunk = googleAccounts.slice(offset, offset + 2);
       const enriched = await Promise.all(chunk.map(async (account) => {
         const customerId = account.adAccountId.replace(/\D/g, "");
         const cached = cache.get(customerId);

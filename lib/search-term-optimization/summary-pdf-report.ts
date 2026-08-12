@@ -2,7 +2,7 @@ import { jsPDF } from "jspdf";
 
 import type { SearchTermDecisionSummaryRow } from "./supabase-repository";
 
-export function createAllAccountsDecisionSummaryPdf(rows: SearchTermDecisionSummaryRow[], decisionDate?:string): ArrayBuffer {
+export function createAllAccountsDecisionSummaryPdf(rows: SearchTermDecisionSummaryRow[], decisionLabel?:string): ArrayBuffer {
   const pdf = new jsPDF({ orientation: "landscape", unit: "pt", format: "a4" });
   const width = pdf.internal.pageSize.getWidth();
   const height = pdf.internal.pageSize.getHeight();
@@ -19,7 +19,7 @@ export function createAllAccountsDecisionSummaryPdf(rows: SearchTermDecisionSumm
     pdf.text("All-Account Search-Term Summary", margin, 33);
     pdf.setFont("helvetica", "normal");
     pdf.setFontSize(10);
-    pdf.text(decisionDate ? `Completed decisions for ${formatDate(decisionDate)}` : "Completed Approved and Negative decisions", margin, 52);
+    pdf.text(decisionLabel ? `Completed decisions for ${decisionLabel}` : "Completed Approved and Negative decisions", margin, 52);
     pdf.text(`Generated ${new Date().toLocaleString("en-MY")}`, width - margin, 52, { align: "right" });
     y = 94;
   };
@@ -76,8 +76,6 @@ export function createAllAccountsDecisionSummaryPdf(rows: SearchTermDecisionSumm
   footer();
   return pdf.output("arraybuffer");
 }
-
-function formatDate(value:string){return new Intl.DateTimeFormat("en-MY",{timeZone:"Asia/Kuala_Lumpur",day:"numeric",month:"short",year:"numeric"}).format(new Date(`${value}T00:00:00+08:00`));}
 
 function groupAccounts(rows: SearchTermDecisionSummaryRow[]) {
   const grouped = new Map<string, SearchTermDecisionSummaryRow[]>();

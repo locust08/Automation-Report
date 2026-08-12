@@ -25,7 +25,6 @@ export function normalizeAdsRole(role: string): AdsRole {
     co: "campaign_optimizer",
     tl: "team_lead",
     pm: "project_manager",
-    ethan: "admin",
   };
   if (aliases[normalized]) return aliases[normalized];
   return ADS_ROLES.includes(normalized as AdsRole) ? normalized as AdsRole : "viewer";

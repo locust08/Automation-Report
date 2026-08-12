@@ -14,6 +14,7 @@ import { ReportShell } from "@/components/reporting/report-shell";
 import { PlacementDecisionButton } from "@/components/placement-optimization/placement-decision-button";
 import { AccountEscalationNotice } from "@/components/team-lead-monitoring/account-escalation-notice";
 import { Badge } from "@/components/ui/badge";
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
@@ -21,7 +22,6 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
-import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   Sheet,
@@ -38,6 +38,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Spinner } from "@/components/ui/spinner";
+import { GoogleAccountSearchField } from "@/components/optimization/google-account-search-field";
 import { isAdminRole, type AuthRole } from "@/lib/auth/roles";
 import type {
   PlacementApproverDecision,
@@ -90,12 +91,12 @@ export function PlacementOptimizationPageClient({ role }: { role: AuthRole }) {
   const searchRequestId = useRef(0);
   const skipNextSearch = useRef(false);
   const [type, setType] = useState(searchParams.get("type") || "all");
-  const [placementsOpen, setPlacementsOpen] = useState(false);
   const [decisionsOpen, setDecisionsOpen] = useState(false);
   const [decisionView, setDecisionView] = useState<"content" | "excluded">("content");
   const [decisionType, setDecisionType] = useState("all");
   const [decisionPage, setDecisionPage] = useState(1);
   const [decisionSaving, setDecisionSaving] = useState(false);
+  const [pendingExclusionIds, setPendingExclusionIds] = useState<string[] | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [suitabilityOpen, setSuitabilityOpen] = useState(false);
   const [suitability, setSuitability] =
@@ -258,18 +259,6 @@ export function PlacementOptimizationPageClient({ role }: { role: AuthRole }) {
       window.clearTimeout(timer);
     };
   }, [account]);
-  const visibleSuggestions = useMemo(
-    () => [
-      ...recentAccounts,
-      ...suggestions.filter(
-        (result) =>
-          !recentAccounts.some(
-            (recent) => recent.adAccountId === result.adAccountId,
-          ),
-      ),
-    ],
-    [recentAccounts, suggestions],
-  );
   function chooseAccount(result: AccountSuggestion) {
     skipNextSearch.current = true;
     setSelectedAccount(result);
@@ -321,7 +310,18 @@ export function PlacementOptimizationPageClient({ role }: { role: AuthRole }) {
   ].sort();
   const canOptimizer = role === "co" || role === "approver" || isAdminRole(role);
   const canApprover = role === "approver" || isAdminRole(role);
-  async function decide(
+  function decide(
+    endpoint: string,
+    decision: PlacementDecision | PlacementApproverDecision,
+    ids: string[],
+  ) {
+    if (endpoint === "/api/placement-optimization/decisions" && decision === "exclude") {
+      setPendingExclusionIds(ids);
+      return;
+    }
+    void saveDecision(endpoint, decision, ids);
+  }
+  async function saveDecision(
     endpoint: string,
     decision: PlacementDecision | PlacementApproverDecision,
     ids: string[],
@@ -444,42 +444,11 @@ export function PlacementOptimizationPageClient({ role }: { role: AuthRole }) {
       <div className="space-y-5 text-neutral-950">
         <section className="rounded-2xl border bg-white p-5 shadow-sm">
           <p className="mb-2 text-sm font-semibold">Notion account search</p>
-          <div className="flex max-w-3xl gap-2">
-            <div ref={searchContainerRef} className="relative min-w-0 flex-1">
-              <SearchIcon className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-neutral-400" />
-              <Input
-                value={account}
-                onChange={(event) => {
-                  setAccount(event.target.value);
-                  setDropdownOpen(true);
-                }}
-                onFocus={() => {
-                  if (!selectedAccount) setDropdownOpen(true);
-                }}
-                onKeyDown={(event) => {
-                  if (event.key === "Escape") setDropdownOpen(false);
-                }}
-                placeholder="Search company or Google Ads CID"
-                className="pl-9"
-              />
-              {dropdownOpen && (visibleSuggestions.length > 0 || searchState !== "idle") ? (
-                <div className="absolute z-30 mt-1 max-h-80 w-full overflow-y-auto rounded-xl border bg-white p-1 shadow-xl">
-                  {searchState === "error" ? <p className="p-3 text-sm text-red-700">{searchError}</p> : null}
-                  {searchState === "success" && visibleSuggestions.length === 0 ? <p className="p-3 text-sm text-neutral-500">No matching accounts.</p> : null}
-                  {visibleSuggestions.map((result) => (
-                    <button key={result.adAccountId} type="button" className="block w-full cursor-pointer rounded-lg px-3 py-2 text-left hover:bg-red-50" onClick={() => chooseAccount(result)}>
-                      <span className="flex items-center justify-between gap-3"><strong className="text-sm">{result.accountName}</strong><Badge className={result.hasPerformanceMax ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "border-neutral-200 bg-neutral-50 text-neutral-500"} variant="outline">{result.hasPerformanceMax ? `${result.campaignCount} PMax campaign${result.campaignCount === 1 ? "" : "s"}` : "No Performance Max"}</Badge></span>
-                      <span className="mt-1 block text-xs text-neutral-500">{result.adAccountId}</span>
-                      {result.hasPerformanceMax ? <span className="mt-1 block truncate text-xs text-neutral-500">{result.campaigns.map((campaign) => campaign.name).join(" · ")}</span> : null}
-                    </button>
-                  ))}
-                  {searchState === "loading" ? <p className="mt-1 border-t bg-neutral-50 p-3 text-sm text-neutral-500">Searching accounts…</p> : null}
-                </div>
-              ) : null}
-            </div>
+          <div className="flex max-w-4xl items-start gap-2">
+            <div ref={searchContainerRef} className="min-w-0 flex-1"><GoogleAccountSearchField value={account} onChange={value=>{setAccount(value);setDropdownOpen(true);}} onSelect={chooseAccount} results={suggestions} recentAccounts={recentAccounts} open={dropdownOpen} state={searchState} error={searchError} onFocus={()=>{if(!selectedAccount)setDropdownOpen(true);}} onKeyDown={event=>{if(event.key==="Escape")setDropdownOpen(false);}} renderMeta={result=><span className="mt-2 flex items-center justify-between gap-3"><span className="truncate text-xs text-neutral-500">{result.hasPerformanceMax?result.campaigns.map(campaign=>campaign.name).join(" · "):"No active Performance Max campaigns"}</span><Badge className={result.hasPerformanceMax?"border-emerald-200 bg-emerald-50 text-emerald-700":"border-neutral-200 bg-neutral-50 text-neutral-500"} variant="outline">{result.hasPerformanceMax?`${result.campaignCount} PMax campaign${result.campaignCount===1?"":"s"}`:"No Performance Max"}</Badge></span>}/></div>
             <Button
               disabled={!selectedAccount || !selectedAccount.hasPerformanceMax || loading}
-              className="cursor-pointer bg-red-600 hover:bg-red-700"
+              className="h-12 cursor-pointer bg-red-600 hover:bg-red-700"
               onClick={runAnalysis}
             >
               {loading ? <Spinner className="size-4" /> : <SearchIcon className="size-4" />}
@@ -527,35 +496,14 @@ export function PlacementOptimizationPageClient({ role }: { role: AuthRole }) {
           <section className="flex items-center justify-between gap-4 rounded-2xl border bg-white p-5 shadow-sm">
             <div>
               <h3 className="font-semibold">All placements</h3>
-              <p className="text-sm text-neutral-500">Browse Google Ads placements in a focused sidebar, 20 at a time.</p>
+              <p className="text-sm text-neutral-500">Browse placements and exclude selected websites or videos directly from Google Ads after confirmation.</p>
             </div>
-            <Button type="button" disabled={!hasLivePlacementRows} className="cursor-pointer bg-red-700 hover:bg-red-800 disabled:cursor-wait" onClick={() => setPlacementsOpen(true)}>
-              {!hasLivePlacementRows && loading ? <Spinner className="size-4" /> : null}
-              {hasLivePlacementRows ? "View placements" : loading ? "Loading placements" : "Placements unavailable"}
-            </Button>
-          </section>
-        ) : null}
-        <PlacementsSheet
-          open={placementsOpen}
-          onOpenChange={setPlacementsOpen}
-          rows={rows}
-          pageRows={pageRows}
-          types={types}
-          type={type}
-          onTypeChange={setType}
-          page={page}
-          pageCount={pageCount}
-          onPageChange={setPage}
-        />
-        {data && role !== "pm" ? (
-          <section className="flex items-center justify-between gap-4 rounded-2xl border bg-white p-5 shadow-sm">
-            <div>
-              <h3 className="font-semibold">Placement decision history</h3>
-              <p className="text-sm text-neutral-500">Review content and record internal exclusion decisions. Google Ads is not changed.</p>
+            <div className="flex flex-wrap items-center justify-end gap-2">
+              <Button type="button" disabled={!hasLivePlacementRows} className="cursor-pointer bg-red-700 hover:bg-red-800 disabled:cursor-wait" onClick={() => setDecisionsOpen(true)}>
+                {!hasLivePlacementRows && loading ? <Spinner className="size-4" /> : null}
+                {hasLivePlacementRows ? "View placements" : loading ? "Loading placements" : "Placements unavailable"}
+              </Button>
             </div>
-            <Button type="button" disabled={!hasLivePlacementRows} variant="outline" className="cursor-pointer" onClick={() => setDecisionsOpen(true)}>
-              Manage decisions
-            </Button>
           </section>
         ) : null}
         <PlacementDecisionsSheet
@@ -756,6 +704,41 @@ export function PlacementOptimizationPageClient({ role }: { role: AuthRole }) {
           </section>
         ) : null}
       </div>
+      <AlertDialog open={Boolean(pendingExclusionIds)} onOpenChange={(open) => { if (!open && !decisionSaving) setPendingExclusionIds(null); }}>
+        <AlertDialogContent className="w-[calc(100%-2rem)] sm:max-w-xl">
+          <AlertDialogHeader>
+            <AlertDialogTitle>Exclude these placements?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This will immediately modify Google Ads for {data?.account.customerName ?? "the selected account"} and stop ads from showing on the selected placements.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <div className="rounded-xl border border-red-200 bg-red-50 p-4">
+            <p className="text-sm font-semibold text-neutral-900">{pendingExclusionIds?.length ?? 0} placement{pendingExclusionIds?.length === 1 ? "" : "s"}</p>
+            <p className="mt-1 text-sm text-neutral-600">Creates campaign-level placement exclusions in Google Ads.</p>
+            <div className="mt-3 space-y-1 text-xs text-neutral-600">
+              {(pendingExclusionIds ?? []).slice(0, 3).map((id) => {
+                const row = data?.rows.find((item) => item.id === id);
+                return <p key={id} className="truncate">• {row?.displayName || row?.placement || id}</p>;
+              })}
+              {(pendingExclusionIds?.length ?? 0) > 3 ? <p className="font-medium">+{(pendingExclusionIds?.length ?? 0) - 3} more</p> : null}
+            </div>
+          </div>
+          <AlertDialogFooter className="sm:grid sm:grid-cols-2">
+            <AlertDialogCancel className="w-full" disabled={decisionSaving}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="w-full bg-red-600 text-white hover:bg-red-700"
+              disabled={decisionSaving}
+              onClick={() => {
+                const ids = pendingExclusionIds ?? [];
+                setPendingExclusionIds(null);
+                void saveDecision("/api/placement-optimization/decisions", "exclude", ids);
+              }}
+            >
+              Exclude in Google Ads
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </ReportShell>
   );
 }
@@ -1053,9 +1036,9 @@ function PlacementDecisionsSheet({
       >
         <SheetResizeHandle resizing={resizing} resizeHandleProps={resizeHandleProps} />
         <SheetHeader className="border-b">
-          <SheetTitle>Placement decision history</SheetTitle>
+          <SheetTitle>Google Ads placements</SheetTitle>
           <SheetDescription>
-            Internal review history only. These decisions do not change Google Ads.
+            Exclusions are published directly to Google Ads after confirmation. Keep and Keep in View remain internal decisions.
           </SheetDescription>
         </SheetHeader>
         <div className="space-y-4 border-b p-5">
@@ -1354,7 +1337,7 @@ function SuitabilitySection({ section }: { section: ContentSuitabilitySection })
 function isAccountSuggestion(value: unknown): value is AccountSuggestion {
   if (!value || typeof value !== "object") return false;
   const account = value as Partial<AccountSuggestion>;
-  return typeof account.accountName === "string" && typeof account.adAccountId === "string" && typeof account.hasPerformanceMax === "boolean" && typeof account.campaignCount === "number" && Array.isArray(account.campaigns);
+  return typeof account.accountName === "string" && typeof account.adAccountId === "string" && /^\d{10}$/.test(account.adAccountId.replace(/\D/g, "")) && typeof account.hasPerformanceMax === "boolean" && typeof account.campaignCount === "number" && Array.isArray(account.campaigns);
 }
 
 function PerformanceMaxOverview({ data }: { data: PlacementDashboardPayload }) {

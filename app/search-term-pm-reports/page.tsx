@@ -6,6 +6,6 @@ import { getServerAuthSession } from "@/lib/auth/server-session";
 export default async function SearchTermPmReportsPage() {
   const session = await getServerAuthSession();
   if (!session) redirect("/");
-  if (!["pm", "admin", "ethan"].includes(session.role)) redirect("/dashboard");
+  if (!["pm", "admin"].includes(session.role)) redirect("/dashboard");
   return <SearchTermPmReportsPageClient />;
 }
