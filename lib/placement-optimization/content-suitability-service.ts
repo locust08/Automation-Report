@@ -8,7 +8,7 @@ import { resolveGoogleManagerIdsFromNotion } from "@/lib/reporting/notion";
 import {
   getContentSuitabilitySnapshot,
   saveContentSuitabilitySnapshot,
-} from "@/lib/placement-optimization/content-suitability-repository";
+} from "@/lib/placement-optimization/supabase-content-suitability-repository";
 import type {
   ContentSuitabilityItem,
   ContentSuitabilityPayload,
@@ -78,7 +78,7 @@ export async function getContentSuitability(input: {
   refresh?: boolean;
 }): Promise<ContentSuitabilityPayload> {
   const customerId = normalizeGoogleAccountId(input.accountId);
-  const cached = getContentSuitabilitySnapshot(customerId);
+  const cached = await getContentSuitabilitySnapshot(customerId);
   const cachedAge = cached
     ? Date.now() - new Date(cached.refreshedAt).getTime()
     : Number.POSITIVE_INFINITY;
@@ -187,7 +187,7 @@ export async function getContentSuitability(input: {
       stale: false,
       warnings: [...routing.messages, ...result.warnings],
     };
-    saveContentSuitabilitySnapshot(payload);
+    await saveContentSuitabilitySnapshot(payload);
     return payload;
   } catch (error) {
     if (cached) {

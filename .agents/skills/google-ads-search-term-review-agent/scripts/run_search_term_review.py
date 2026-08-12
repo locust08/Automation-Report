@@ -28,6 +28,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-depth", type=int, default=2, help="Maximum same-domain crawl depth.")
     parser.add_argument("--crawl-concurrency", type=int, default=8, help="Maximum concurrent destination URL crawls.")
     parser.add_argument("--limit-terms", type=int, default=0, help="Limit terms after pull; intended for smoke tests.")
+    parser.add_argument("--exclude-term-keys-file", default="", help="JSON array of stable term keys already analyzed.")
+    parser.add_argument("--max-new-terms", type=int, default=250, help="Maximum newly discovered terms to analyze in one run.")
+    parser.add_argument("--job-status-path", default="", help="Optional job status JSON updated with incremental progress.")
     parser.add_argument("--batch-size", type=int, default=80, help="Terms per agent batch.")
     parser.add_argument("--concurrency", type=int, default=20, help="Maximum concurrent OpenAI reviewer batches.")
     parser.add_argument("--model", default="", help="Override OpenAI model. Defaults to OPENAI_SEARCH_TERM_REVIEW_MODEL or gpt-5.6-sol.")
@@ -80,7 +83,33 @@ def main() -> None:
             campaign_name=args.campaign_name,
         )
 
-    rows = pull.rows[: args.limit_terms] if args.limit_terms and args.limit_terms > 0 else pull.rows
+    def stable_key(row: Any) -> str:
+        return f"{row.campaign_id}|{row.ad_group_id}|{' '.join(row.search_term.strip().lower().split())}"
+
+    excluded_keys: set[str] = set()
+    if args.exclude_term_keys_file:
+        with open(args.exclude_term_keys_file, "r", encoding="utf-8") as handle:
+            excluded_keys = {str(value) for value in json.load(handle)}
+    current_rows = pull.rows
+    new_rows = [row for row in current_rows if stable_key(row) not in excluded_keys]
+    queued_new_terms = max(0, len(new_rows) - max(1, args.max_new_terms))
+    rows = new_rows[: max(1, args.max_new_terms)]
+    if args.limit_terms and args.limit_terms > 0:
+        rows = rows[: args.limit_terms]
+    if args.job_status_path:
+        try:
+            with open(args.job_status_path, "r", encoding="utf-8") as handle:
+                status = json.load(handle)
+            status.update({
+                "stage": f"Analyzing {len(rows)} new search terms" if rows else "No new terms — loading saved analysis",
+                "updatedAt": datetime.now().isoformat(timespec="seconds"),
+            })
+            temporary_status_path = f"{args.job_status_path}.{os.getpid()}.tmp"
+            with open(temporary_status_path, "w", encoding="utf-8") as handle:
+                json.dump(status, handle, indent=2)
+            os.replace(temporary_status_path, args.job_status_path)
+        except (OSError, ValueError):
+            pass
     destination_urls = sorted({row.destination_url for row in rows if row.destination_url})
     site_contexts = build_site_contexts(destination_urls, args)
     reviewed_rows = review_rows_sync(
@@ -118,12 +147,16 @@ def main() -> None:
             "existingAdGroupKeywordMatchesSkipped": pull.existing_ad_group_keyword_matches_skipped,
             "safetySearchTerms": len(pull.safety_search_terms),
             "existingKeywordCriteria": len(pull.keyword_criteria),
-            "activeSearchCampaignsOnly": True,
+            "activeSearchCampaignsOnly": pull.active_search_campaigns_only,
             "activeAdGroupsOnly": True,
             "campaignNameFilter": args.campaign_name or None,
             "mutatingGoogleAdsChanges": False,
             "dryRunAgentFixture": bool(args.dry_run_agent_fixture),
             "negativePhraseSuggestionsRequested": bool(args.suggest_negative_phrases),
+            "currentTerms": len(current_rows),
+            "newTerms": len(new_rows),
+            "analyzedNewTerms": len(rows),
+            "queuedNewTerms": queued_new_terms,
         },
         "reviewer": {
             "model": args.model or os.environ.get("OPENAI_SEARCH_TERM_REVIEW_MODEL", "gpt-5.6-sol"),
@@ -138,6 +171,7 @@ def main() -> None:
             "keywordCriteria": pull.keyword_criteria,
         },
         "allRows": reviewed_rows,
+        "currentSearchTerms": [row.to_dict() for row in current_rows],
         "negativePhraseSuggestionPolicy": {
             "priority": "secondary",
             "suggestionOnly": True,

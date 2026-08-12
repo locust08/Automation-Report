@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { getServerAuthSession } from "@/lib/auth/server-session";
-import { getSearchTermAccountSettings, saveSearchTermAccountSettings } from "@/lib/search-term-optimization/account-settings";
+import { getSearchTermAccountSettings, saveSearchTermAccountSettings } from "@/lib/search-term-optimization/supabase-settings";
 import type { AnalysisScheduleFrequency } from "@/lib/search-term-optimization/types";
 
 export const dynamic = "force-dynamic";
@@ -14,7 +14,7 @@ export async function GET(request: Request) {
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   const accountId = new URL(request.url).searchParams.get("accountId")?.replace(/\D/g, "") ?? "";
   if (accountId.length !== 10) return NextResponse.json({ error: "A valid Google Ads account is required." }, { status: 400 });
-  return NextResponse.json(getSearchTermAccountSettings(accountId));
+  return NextResponse.json(await getSearchTermAccountSettings(accountId));
 }
 
 export async function PUT(request: Request) {
@@ -34,7 +34,7 @@ export async function PUT(request: Request) {
     if (!Number.isInteger(reviewScoreThreshold) || reviewScoreThreshold < 0 || reviewScoreThreshold > 99) throw new Error("Review score must be between 0 and 99.");
     if (!Number.isFinite(highSpendThreshold) || highSpendThreshold < 0) throw new Error("High-spend threshold cannot be negative.");
     if (!Number.isInteger(minimumClicksThreshold) || minimumClicksThreshold < 0) throw new Error("Minimum clicks cannot be negative.");
-    return NextResponse.json(saveSearchTermAccountSettings({
+    return NextResponse.json(await saveSearchTermAccountSettings({
       googleCustomerId, scheduleFrequency, autoSafeScoreThreshold, reviewScoreThreshold,
       highSpendThreshold, minimumClicksThreshold,
     }));

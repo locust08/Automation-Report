@@ -18,7 +18,9 @@ export interface PlacementOptimizationRow {
   displayName: string;
   placementType: string;
   targetUrl: string | null;
+  campaignId?: string;
   campaignName: string;
+  adGroupId?: string | null;
   adGroupName: string;
   impressions: number;
   clicks: number;

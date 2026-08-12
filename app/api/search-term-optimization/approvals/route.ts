@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { getServerAuthSession } from "@/lib/auth/server-session";
-import { saveApproverDecision, type ApproverDecision } from "@/lib/search-term-optimization/sqlite-repository";
+import { saveApproverDecision, type ApproverDecision } from "@/lib/search-term-optimization/supabase-repository";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -15,7 +15,7 @@ export async function POST(request: Request) {
 
   const body = await request.json() as { recommendationIds?: unknown; decision?: unknown };
   const recommendationIds = Array.isArray(body.recommendationIds)
-    ? [...new Set(body.recommendationIds.map(Number).filter((id) => Number.isSafeInteger(id) && id > 0))]
+    ? [...new Set(body.recommendationIds.map(String).filter((id) => /^\d+:\d+$/.test(id)))]
     : [];
   const decision = body.decision as ApproverDecision;
   if (recommendationIds.length === 0 || !["accepted", "rejected"].includes(decision)) {
@@ -23,7 +23,7 @@ export async function POST(request: Request) {
   }
 
   try {
-    return NextResponse.json(saveApproverDecision({
+    return NextResponse.json(await saveApproverDecision({
       recommendationIds,
       decision,
       approver: { id: session.sub, email: session.email, role: session.role },

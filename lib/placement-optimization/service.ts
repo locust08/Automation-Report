@@ -2,7 +2,7 @@ import { buildDateRange } from "@/lib/reporting/date";
 import { getCredentials, normalizeGoogleAccountId } from "@/lib/reporting/env";
 import { fetchGoogleAccountName, fetchGooglePerformanceMaxOverview, fetchGooglePerformanceMaxPlacementRows } from "@/lib/reporting/google";
 import { resolveGoogleManagerIdsFromNotion } from "@/lib/reporting/notion";
-import { loadPlacementDashboard, persistPlacements } from "@/lib/placement-optimization/sqlite-repository";
+import { loadPlacementDashboard, persistPlacements } from "@/lib/placement-optimization/supabase-repository";
 import type { PlacementDashboardPayload } from "@/lib/placement-optimization/types";
 
 const DEFAULT_PROTOTYPE_ACCOUNT = "9858507935";
@@ -22,7 +22,7 @@ export async function getPlacementOptimizationDashboard(input:{accountId?:string
     fetchGooglePerformanceMaxPlacementRows({customerId,apiVersion:credentials.googleAdsApiVersion,developerToken:credentials.googleDeveloperToken,accessToken:credentials.googleAccessToken,refreshToken:credentials.googleRefreshToken,clientId:credentials.googleClientId,clientSecret:credentials.googleClientSecret,loginCustomerId,accessPath,fallbackLoginCustomerId:credentials.googleLoginCustomerId,startDate:dateRange.startDate,endDate:dateRange.endDate}),
   ]);
   const customerName=resolvedCustomerName ?? `Google Ads ${customerId}`;
-  persistPlacements({
+  await persistPlacements({
     customerId,
     customerName,
     startDate: dateRange.startDate,
@@ -40,7 +40,7 @@ export async function getPlacementOptimizationDashboard(input:{accountId?:string
       },
     })),
   });
-  return loadPlacementDashboard({
+  return await loadPlacementDashboard({
     customerId,
     customerName,
     startDate: dateRange.startDate,

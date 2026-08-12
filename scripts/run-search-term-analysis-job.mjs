@@ -9,6 +9,7 @@ const root = process.cwd();
 const jobsDirectory = path.join(root, "tmp", "search-term-analysis-jobs");
 const statusPath = path.join(jobsDirectory, `${jobId}.json`);
 const logPath = path.join(jobsDirectory, `${jobId}.log`);
+const baselinePath = path.join(jobsDirectory, `${jobId}.baseline.json`);
 const startedAt = new Date().toISOString();
 
 let currentStatus = {};
@@ -21,9 +22,9 @@ async function writeStatus(status) {
   await fs.rename(temporaryPath, statusPath);
 }
 
-await writeStatus({ status: "running", stage: "Running Google retrieval, website crawl, and AI review" });
+await writeStatus({ status: "running", stage: "Checking Google Ads and analyzing only newly discovered terms" });
 const heartbeat = setInterval(() => {
-  void writeStatus({ heartbeatAt: new Date().toISOString() });
+  void (async()=>{const disk=JSON.parse(await fs.readFile(statusPath,"utf8").catch(()=>"{}"));await writeStatus({stage:disk.stage??currentStatus.stage,heartbeatAt:new Date().toISOString()});})();
 }, 5_000);
 const output = await fs.open(logPath, "a");
 const runnerEnvironment = {
@@ -42,9 +43,15 @@ const args = [
   accountId,
   "--out-dir", path.join(root, "outputs"),
   "--tmp-dir", path.join(root, "tmp"),
+  "--job-status-path", statusPath,
 ];
+if (await fs.stat(baselinePath).catch(() => null)) args.push("--exclude-term-keys-file", baselinePath);
+args.push("--max-new-terms", process.env.SEARCH_TERM_MAX_NEW_TERMS_PER_JOB || "250");
 
 const child = spawn("uv", args, { cwd: root, env: runnerEnvironment, windowsHide: true, stdio: ["ignore", output.fd, output.fd] });
+const maximumJobMilliseconds = Number(process.env.SEARCH_TERM_ANALYSIS_TIMEOUT_MS || 20 * 60 * 1000);
+let timedOut = false;
+const timeout = setTimeout(() => { timedOut = true; child.kill(); }, maximumJobMilliseconds);
 const exitCode = await new Promise((resolve, reject) => {
   child.once("error", reject);
   child.once("exit", (code) => resolve(code ?? 1));
@@ -53,9 +60,12 @@ const exitCode = await new Promise((resolve, reject) => {
   return 1;
 });
 clearInterval(heartbeat);
+clearTimeout(timeout);
 await output.close();
 
-if (exitCode === 0) {
+if (timedOut) {
+  await writeStatus({ status: "failed", stage: "Analysis timed out", error: `Analysis exceeded ${Math.round(maximumJobMilliseconds / 60000)} minutes. The previous saved analysis was kept.`, finishedAt: new Date().toISOString() });
+} else if (exitCode === 0) {
   await writeStatus({ status: "completed", stage: "Analysis completed", finishedAt: new Date().toISOString() });
 } else {
   const log = await fs.readFile(logPath, "utf8").catch(() => "");
@@ -66,3 +76,5 @@ if (exitCode === 0) {
     finishedAt: new Date().toISOString(),
   });
 }
+
+await fs.unlink(baselinePath).catch(() => undefined);

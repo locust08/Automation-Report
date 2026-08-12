@@ -11,6 +11,7 @@ import httpx
 from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
 
 GOOGLE_ADS_VERSION = "v23"
+MAX_GOOGLE_RESPONSE_BYTES = int(os.environ.get("SEARCH_TERM_MAX_GOOGLE_RESPONSE_BYTES", str(32 * 1024 * 1024)))
 DEFAULT_MCCS = ("3666137525", "4114685827")
 REQUIRED_GOOGLE_ENV = (
     "GOOGLE_ADS_DEVELOPER_TOKEN",
@@ -52,6 +53,7 @@ class PullResult:
     rows: list[SearchTermRecord]
     safety_search_terms: list[SearchTermRecord] = field(default_factory=list)
     keyword_criteria: list[dict[str, Any]] = field(default_factory=list)
+    active_search_campaigns_only: bool = True
 
 
 def strip_dashes(value: str | int | None) -> str:
@@ -158,6 +160,8 @@ class GoogleAdsRestClient:
             res = client.post(endpoint, headers=self._headers(login_customer_id), json=body)
         if res.status_code >= 400:
             raise RuntimeError(f"Google Ads search failed ({res.status_code}): {res.text}")
+        if len(res.content) > MAX_GOOGLE_RESPONSE_BYTES:
+            raise RuntimeError("Google Ads search response exceeded the configured 32 MB safety limit.")
         return res.json()
 
     def search_all(self, login_customer_id: str | None, query: str) -> list[dict[str, Any]]:
@@ -186,11 +190,21 @@ class GoogleAdsRestClient:
         raise RuntimeError("All configured Google Ads access paths failed.\n" + "\n".join(errors))
 
 
-def build_search_terms_query(start_date: str, end_date: str, campaign_name: str = "") -> str:
+def build_search_terms_query(
+    start_date: str,
+    end_date: str,
+    campaign_name: str = "",
+    include_paused_campaigns: bool = False,
+) -> str:
     campaign_filter = ""
     if campaign_name:
         escaped_campaign_name = campaign_name.replace("\\", "\\\\").replace("'", "\\'")
         campaign_filter = f"\n  AND campaign.name = '{escaped_campaign_name}'"
+    campaign_status_filter = (
+        "campaign.status != 'REMOVED'"
+        if include_paused_campaigns
+        else "campaign.status = 'ENABLED'"
+    )
     return f"""
 SELECT
   campaign.id,
@@ -207,7 +221,7 @@ SELECT
   metrics.impressions
 FROM search_term_view
 WHERE segments.date BETWEEN '{start_date}' AND '{end_date}'
-  AND campaign.status = 'ENABLED'
+  AND {campaign_status_filter}
   AND ad_group.status = 'ENABLED'
   AND campaign.advertising_channel_type = 'SEARCH'{campaign_filter}
 ORDER BY ad_group.id, metrics.cost_micros DESC
@@ -423,6 +437,20 @@ def pull_search_terms(customer_id_raw: str, start_date: str, end_date: str, camp
         login_customer_id,
         build_search_terms_query(start_date, end_date, campaign_name=campaign_name),
     )
+    active_search_campaigns_only = True
+    if not raw_rows:
+        # Historical search terms remain useful after a Search campaign is paused.
+        # Prefer enabled campaigns, then fall back to paused (never removed) campaigns.
+        raw_rows = client.search_all(
+            login_customer_id,
+            build_search_terms_query(
+                start_date,
+                end_date,
+                campaign_name=campaign_name,
+                include_paused_campaigns=True,
+            ),
+        )
+        active_search_campaigns_only = False
     aggregated = aggregate_search_term_rows(raw_rows)
     ad_group_ids = unique([row.ad_group_id for row in aggregated])
     campaign_ids = unique([row.campaign_id for row in aggregated])
@@ -455,6 +483,7 @@ def pull_search_terms(customer_id_raw: str, start_date: str, end_date: str, camp
         rows=unreviewed_rows,
         safety_search_terms=aggregated,
         keyword_criteria=keyword_criteria,
+        active_search_campaigns_only=active_search_campaigns_only,
     )
 
 

@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server";
 
 import { getServerAuthSession } from "@/lib/auth/server-session";
-import { parseLeadQualityCsv, SqliteLeadQualityRepository, type LeadQualityValues } from "@/lib/search-term-optimization/lead-quality-repository";
+import { parseLeadQualityCsv, type LeadQualityValues } from "@/lib/search-term-optimization/lead-quality-repository";
+import { importLeadQuality, updateLeadQuality } from "@/lib/search-term-optimization/supabase-repository";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -13,12 +14,11 @@ export async function PATCH(request: Request) {
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   if (!ALLOWED_ROLES.has(session.role)) return NextResponse.json({ error: "Your role cannot edit lead quality." }, { status: 403 });
   const body = await request.json() as { searchTermId?: unknown } & Partial<LeadQualityValues>;
-  const searchTermId = Number(body.searchTermId);
-  if (!Number.isSafeInteger(searchTermId) || searchTermId <= 0) return NextResponse.json({ error: "A valid search-term ID is required." }, { status: 400 });
+  const searchTermId = String(body.searchTermId ?? "");
+  if (!/^\d+:\d+$/.test(searchTermId)) return NextResponse.json({ error: "A valid search-term ID is required." }, { status: 400 });
   try {
     const values = validateValues(body);
-    new SqliteLeadQualityRepository().update(searchTermId, values);
-    return NextResponse.json({ updated: 1 });
+    return NextResponse.json(await updateLeadQuality(searchTermId, values));
   } catch (error) {
     return NextResponse.json({ error: error instanceof Error ? error.message : "Unable to update lead quality." }, { status: 400 });
   }
@@ -35,7 +35,7 @@ export async function POST(request: Request) {
     if (file.size > 2_000_000) return NextResponse.json({ error: "CSV files must be 2 MB or smaller." }, { status: 400 });
     const parsed = parseLeadQualityCsv(await file.text());
     if (parsed.rows.length === 0) return NextResponse.json({ updated: 0, errors: parsed.errors }, { status: 400 });
-    const result = new SqliteLeadQualityRepository().import(parsed.rows);
+    const result = await importLeadQuality(parsed.rows);
     return NextResponse.json({ updated: result.updated, errors: [...parsed.errors, ...result.errors] });
   } catch (error) {
     return NextResponse.json({ error: error instanceof Error ? error.message : "Unable to import lead quality." }, { status: 400 });

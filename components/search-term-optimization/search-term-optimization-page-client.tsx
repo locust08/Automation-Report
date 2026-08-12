@@ -17,6 +17,7 @@ import {
 } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
@@ -68,6 +69,7 @@ const ACCOUNT_SEARCH_CACHE_TTL_MS = 15 * 60 * 1000;
 const RECENT_OPTIMIZATION_ACCOUNTS_KEY = "search-term-optimization-recent-accounts";
 const ACCOUNT_SEARCH_CACHE_KEY = "search-term-optimization-account-search-cache";
 const RECENT_ACCOUNT_LIMIT = 5;
+const malaysiaToday = () => new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kuala_Lumpur", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
 type AccountSearchState = "idle" | "loading" | "success" | "error";
 
 const REVIEW_ROLES: AuthRole[] = ["pms", "specialist", "admin", "ethan"];
@@ -84,6 +86,7 @@ export function SearchTermOptimizationPageClient({ role }: { role: AuthRole }) {
   const [decisions, setDecisions] = useState<Record<string, ReviewDecision>>({});
   const [approverDecisions, setApproverDecisions] = useState<Record<string, ApproverDecision>>({});
   const [decisionError, setDecisionError] = useState<string | null>(null);
+  const [decisionSaving, setDecisionSaving] = useState(false);
   const [categoryPages, setCategoryPages] = useState<Record<string, number>>({});
   const [campaignFilter, setCampaignFilter] = useState("all");
   const [accountQuery, setAccountQuery] = useState("");
@@ -96,6 +99,7 @@ export function SearchTermOptimizationPageClient({ role }: { role: AuthRole }) {
   const [analysisStage, setAnalysisStage] = useState<string | null>(null);
   const [analysisStartedAt, setAnalysisStartedAt] = useState<string | null>(null);
   const [analysisActivityAt, setAnalysisActivityAt] = useState<string | null>(null);
+  const [refreshMessage, setRefreshMessage] = useState<string | null>(null);
   const [accountDropdownOpen, setAccountDropdownOpen] = useState(false);
   const [highlightedAccountIndex, setHighlightedAccountIndex] = useState(-1);
   const accountSearchRequestId = useRef(0);
@@ -106,6 +110,9 @@ export function SearchTermOptimizationPageClient({ role }: { role: AuthRole }) {
   const [googleRecommendationsWarning, setGoogleRecommendationsWarning] = useState<string | null>(null);
   const [leadQualityMessage, setLeadQualityMessage] = useState<string | null>(null);
   const [leadQualitySaving, setLeadQualitySaving] = useState(false);
+  const [reportDialogOpen, setReportDialogOpen] = useState(false);
+  const [reportDate, setReportDate] = useState(malaysiaToday);
+  const [pendingDecision, setPendingDecision] = useState<{ rows: OptimizationResult[]; decision: ReviewDecision } | null>(null);
 
   const load = useCallback(async (accountId?: string) => {
     setLoading(true);
@@ -240,11 +247,31 @@ export function SearchTermOptimizationPageClient({ role }: { role: AuthRole }) {
     setSuggestions([]);
     setAccountDropdownOpen(false);
     setHighlightedAccountIndex(-1);
+    setData(null);
+    setDecisions({});
+    setApproverDecisions({});
+    setSelectedIds(new Set());
+    setRefreshMessage(null);
+    setError(null);
     setRecentAccounts((current) => {
       const next = [account, ...current.filter((recent) => recent.adAccountId !== account.adAccountId)].slice(0, RECENT_ACCOUNT_LIMIT);
       try { window.localStorage.setItem(RECENT_OPTIMIZATION_ACCOUNTS_KEY, JSON.stringify(next)); } catch { /* keep in memory */ }
       return next;
     });
+    void load(account.adAccountId);
+  }
+
+  function changeAccountQuery(value: string) {
+    setAccountQuery(value);
+    setAccountPerformance(null);
+    setData(null);
+    setDecisions({});
+    setApproverDecisions({});
+    setSelectedIds(new Set());
+    setRefreshMessage(null);
+    setError(null);
+    setAccountDropdownOpen(true);
+    setHighlightedAccountIndex(-1);
   }
 
   async function runSelectedAccountAnalysis() {
@@ -260,8 +287,9 @@ export function SearchTermOptimizationPageClient({ role }: { role: AuthRole }) {
     setGoogleRecommendations([]);
     setGoogleRecommendationsWarning(null);
     setLeadQualityMessage(null);
+    setRefreshMessage(null);
     setAnalysisLoading(true);
-    setAnalysisStage("Preparing full search-term analysis");
+    setAnalysisStage("Preparing smart search-term refresh");
     setAnalysisStartedAt(new Date().toISOString());
     setAnalysisActivityAt(new Date().toISOString());
     setLoading(true);
@@ -277,8 +305,17 @@ export function SearchTermOptimizationPageClient({ role }: { role: AuthRole }) {
           accessPath: accountPerformance.accessPath ?? null,
         }),
       });
-      const started = (await response.json()) as { jobId?: string; stage?: string; error?: string };
-      if (!response.ok || !started.jobId) throw new Error(started.error ?? "Unable to start search-term analysis.");
+      const started = (await response.json()) as { jobId?: string; stage?: string; error?: string; status?:string; dashboard?:OptimizationDashboardPayload };
+      if (!response.ok) throw new Error(started.error ?? "Unable to start search-term analysis.");
+      if (started.status === "completed" && started.dashboard) {
+        const cached=started.dashboard;
+        setData(cached);
+        setDecisions(Object.fromEntries(cached.results.filter(row=>row.reviewDecision).map(row=>[row.id,row.reviewDecision as ReviewDecision])));
+        setApproverDecisions(Object.fromEntries(cached.results.filter(row=>row.approverDecision).map(row=>[row.id,row.approverDecision as ApproverDecision])));
+        setRefreshMessage("No new Google Ads check was needed today. Loaded the latest saved Supabase analysis.");
+        return;
+      }
+      if (!started.jobId) throw new Error(started.error ?? "Unable to start search-term analysis.");
       setAnalysisStage(started.stage ?? "Analysis queued");
       let payload: OptimizationDashboardPayload | null = null;
       for (let attempt = 0; attempt < 900; attempt += 1) {
@@ -296,7 +333,7 @@ export function SearchTermOptimizationPageClient({ role }: { role: AuthRole }) {
         setAnalysisStage(status.stage ?? "Analyzing search terms");
         if (status.startedAt) setAnalysisStartedAt(status.startedAt);
         if (status.activityAt) setAnalysisActivityAt(status.activityAt);
-        if (status.status === "failed") throw new Error(status.error ?? "Full search-term analysis failed.");
+        if (status.status === "failed") throw new Error(status.error ?? "Search-term refresh failed. The previous saved analysis was kept.");
         if (status.status === "completed" && status.dashboard) { payload = status.dashboard; break; }
       }
       if (!payload) throw new Error("Search-term analysis timed out before completion.");
@@ -307,8 +344,14 @@ export function SearchTermOptimizationPageClient({ role }: { role: AuthRole }) {
       setRecommendationsLoaded(false);
       setGoogleRecommendations([]);
       setGoogleRecommendationsWarning(null);
+      const refresh=payload.refresh;
+      setRefreshMessage(refresh?.mode==="cached"
+        ? `No new search terms. Reused ${refresh.reusedTerms} saved recommendations and refreshed their metrics.`
+        : refresh?.mode==="incremental"
+          ? `Analyzed ${refresh.newTerms} new search terms and reused ${refresh.reusedTerms} saved recommendations.${refresh.queuedNewTerms?` ${refresh.queuedNewTerms} new terms remain queued.`:""}`
+          : `Completed a full analysis of ${refresh?.currentTerms??payload.results.length} search terms.`);
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Unable to generate search-term analysis.");
+      setError(caught instanceof Error ? caught.message : "Unable to refresh search-term analysis. The previous saved analysis was kept.");
     } finally {
       setAnalysisLoading(false);
       setAnalysisStage(null);
@@ -441,11 +484,23 @@ export function SearchTermOptimizationPageClient({ role }: { role: AuthRole }) {
     });
   }
 
-  async function decideCategory(rows: OptimizationResult[], decision: ReviewDecision) {
-    if (!canReview) return;
+  function decideCategory(rows: OptimizationResult[], decision: ReviewDecision) {
+    if (!canReview || decisionSaving) return;
     const selected = rows.filter((row) => selectedIds.has(row.id));
     const targets = selected.length > 0 ? selected : rows;
+    if (targets.length > 100) {
+      setDecisionError("Select no more than 100 search terms at a time.");
+      return;
+    }
+    setPendingDecision({ rows: targets, decision });
+  }
+
+  async function confirmDecision() {
+    if (!pendingDecision || decisionSaving) return;
+    const { rows: targets, decision } = pendingDecision;
+    setPendingDecision(null);
     setDecisionError(null);
+    setDecisionSaving(true);
     try {
       const response = await fetch("/api/search-term-optimization/reviews", {
         method: "POST",
@@ -471,6 +526,8 @@ export function SearchTermOptimizationPageClient({ role }: { role: AuthRole }) {
       setSelectedIds(new Set());
     } catch (caught) {
       setDecisionError(caught instanceof Error ? caught.message : "Unable to save the review decision.");
+    } finally {
+      setDecisionSaving(false);
     }
   }
 
@@ -570,7 +627,7 @@ export function SearchTermOptimizationPageClient({ role }: { role: AuthRole }) {
                 <SearchIcon className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-neutral-400" />
                 <Input
                   value={accountQuery}
-                  onChange={(event) => { setAccountQuery(event.target.value); setAccountPerformance(null); setAccountDropdownOpen(true); setHighlightedAccountIndex(-1); }}
+                  onChange={(event) => changeAccountQuery(event.target.value)}
                   onFocus={() => setAccountDropdownOpen(true)}
                   onBlur={() => setAccountDropdownOpen(false)}
                   onKeyDown={handleAccountKeyDown}
@@ -582,7 +639,6 @@ export function SearchTermOptimizationPageClient({ role }: { role: AuthRole }) {
                 {accountDropdownOpen && (visibleSuggestions.length > 0 || accountSearchState !== "idle") && (
                 <div className="absolute z-20 mt-2 w-full overflow-hidden rounded-xl border bg-white text-neutral-900 shadow-xl">
                   {recentAccounts.length > 0 ? <p className="border-b bg-neutral-50 px-4 py-2 text-xs font-semibold uppercase tracking-wide text-neutral-500">Recent accounts</p> : null}
-                  {accountSearchState === "loading" ? <p className="p-3 text-sm text-neutral-500">Searching accounts…</p> : null}
                   {accountSearchState === "error" ? <p className="p-3 text-sm text-red-700">{accountSearchError}</p> : null}
                   {accountSearchState === "success" && accountQuery.trim().length >= 2 && resultSuggestions.length === 0 ? <p className="p-3 text-sm text-neutral-500">No additional matching accounts.</p> : null}
                   {visibleSuggestions.map((account, index) => (
@@ -602,6 +658,7 @@ export function SearchTermOptimizationPageClient({ role }: { role: AuthRole }) {
                       {account.warning ? <span className="mt-1 block text-xs text-amber-700">Performance unavailable</span> : null}
                     </button>
                   ))}
+                  {accountSearchState === "loading" ? <p className="border-t bg-neutral-50 p-3 text-sm text-neutral-500">Searching accounts…</p> : null}
                 </div>
                 )}
               </div>
@@ -614,11 +671,9 @@ export function SearchTermOptimizationPageClient({ role }: { role: AuthRole }) {
                 {analysisLoading ? <Spinner className="size-4" /> : <SearchIcon className="size-4" />}
                 {analysisLoading ? "Analyzing..." : "Search"}
               </Button>
-              <Button asChild variant="outline" className="cursor-pointer whitespace-nowrap hover:border-red-200 hover:bg-red-50 hover:text-red-700">
-                <a href="/api/search-term-optimization/summary-report" download>
-                  <FileDownIcon className="size-4" />
-                  Summary report
-                </a>
+              <Button type="button" variant="outline" className="cursor-pointer whitespace-nowrap hover:border-red-200 hover:bg-red-50 hover:text-red-700" onClick={() => { setReportDate(malaysiaToday()); setReportDialogOpen(true); }}>
+                <FileDownIcon className="size-4" />
+                Summary report
               </Button>
             </div>
             <p className="mt-2 text-xs text-neutral-500">Select an account, then press Search to retrieve, analyze, and save its latest search terms.</p>
@@ -643,6 +698,7 @@ export function SearchTermOptimizationPageClient({ role }: { role: AuthRole }) {
           </div>
         </section>
 
+        {!analysisLoading && refreshMessage ? <div className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-800">{refreshMessage}</div> : null}
         {!analysisLoading ? <AccountEscalationNotice module="search_term" accountId={data?.account.customerId} /> : null}
 
         {!analysisLoading && error && !accountPerformance && error.includes("No completed search-term analysis output was found") ? (
@@ -761,7 +817,7 @@ export function SearchTermOptimizationPageClient({ role }: { role: AuthRole }) {
                         onToggleCategory={toggleCategory}
                         onDecision={decideCategory}
                         onApproverDecision={decideApproval}
-                        canReview={canReview && !["approved", "rejected"].includes(action)}
+                        canReview={canReview && !decisionSaving && !["approved", "rejected"].includes(action)}
                         canApprove={false}
                         approverView={false}
                         onLeadQualityUpdate={updateLeadQuality}
@@ -787,6 +843,46 @@ export function SearchTermOptimizationPageClient({ role }: { role: AuthRole }) {
           </>
         ) : null}
       </div>
+      <AlertDialog open={reportDialogOpen} onOpenChange={setReportDialogOpen}>
+        <AlertDialogContent size="sm">
+          <AlertDialogHeader>
+            <AlertDialogTitle>Generate decision report</AlertDialogTitle>
+            <AlertDialogDescription>Select the Malaysia calendar date whose approved and negative-keyword decisions should be included.</AlertDialogDescription>
+          </AlertDialogHeader>
+          <div className="space-y-2 py-2">
+            <label htmlFor="search-term-report-date" className="text-sm font-medium text-neutral-800">Decision date</label>
+            <Input id="search-term-report-date" type="date" value={reportDate} max={malaysiaToday()} onChange={(event) => setReportDate(event.target.value)} />
+          </div>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction disabled={!reportDate} onClick={() => { window.location.href = `/api/search-term-optimization/summary-report?date=${encodeURIComponent(reportDate)}`; }}>Generate report</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+      <AlertDialog open={Boolean(pendingDecision)} onOpenChange={(open) => { if (!open && !decisionSaving) setPendingDecision(null); }}>
+        <AlertDialogContent className="w-[calc(100%-2rem)] sm:max-w-xl">
+          <AlertDialogHeader>
+            <AlertDialogTitle>{pendingDecision?.decision === "approved" ? "Add as keywords?" : "Add as negative keywords?"}</AlertDialogTitle>
+            <AlertDialogDescription>
+              This will immediately modify Google Ads for {data?.account.customerName ?? "the selected account"}.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <div className={`rounded-xl border p-4 ${pendingDecision?.decision === "approved" ? "border-emerald-200 bg-emerald-50" : "border-red-200 bg-red-50"}`}>
+            <p className="text-sm font-semibold text-neutral-900">{pendingDecision?.rows.length ?? 0} search term{pendingDecision?.rows.length === 1 ? "" : "s"}</p>
+            <p className="mt-1 text-sm text-neutral-600">{pendingDecision?.decision === "approved" ? "Creates enabled exact-match keywords." : "Creates enabled exact-match negative keywords."}</p>
+            <div className="mt-3 space-y-1 text-xs text-neutral-600">
+              {pendingDecision?.rows.slice(0, 3).map((row) => <p key={row.id} className="truncate">• {row.searchTerm} <span className="text-neutral-400">· {row.adGroup}</span></p>)}
+              {(pendingDecision?.rows.length ?? 0) > 3 ? <p className="font-medium">+{(pendingDecision?.rows.length ?? 0) - 3} more</p> : null}
+            </div>
+          </div>
+          <AlertDialogFooter className="sm:grid sm:grid-cols-2">
+            <AlertDialogCancel className="w-full" disabled={decisionSaving}>Cancel</AlertDialogCancel>
+            <AlertDialogAction className={`w-full ${pendingDecision?.decision === "approved" ? "bg-emerald-600 text-white hover:bg-emerald-700" : "bg-red-600 text-white hover:bg-red-700"}`} disabled={decisionSaving} onClick={() => void confirmDecision()}>
+              {pendingDecision?.decision === "approved" ? "Add keywords" : "Add negative keywords"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </ReportShell>
   );
 }
@@ -1002,8 +1098,8 @@ function ActionGroupTable({
           {selectedCount > 0 ? <span className="text-xs font-medium text-neutral-500">{selectedCount} selected</span> : null}
         </div>
         {canReview && allSelected ? <div className="flex items-center gap-2">
-          <DecisionButton label="Approve selected rows" decision="approved" size="category" onClick={() => onDecision(rows, "approved")} />
-          <DecisionButton label="Reject selected rows" decision="rejected" size="category" onClick={() => onDecision(rows, "rejected")} />
+          <DecisionButton label="Add selected as keywords" decision="approved" size="category" onClick={() => onDecision(rows, "approved")} />
+          <DecisionButton label="Add selected as negative keywords" decision="rejected" size="category" onClick={() => onDecision(rows, "rejected")} />
         </div> : null}
         {canApprove && allSelected ? <div className="flex items-center gap-2">
           <ApproverDecisionButton label="Accept selected decisions" decision="accepted" onClick={() => onApproverDecision(rows, "accepted")} />
@@ -1081,8 +1177,8 @@ function ResultRow({ row, selected, decision, approverDecision, showRowActions, 
       </td>
       {canReview ? <td className="px-4 py-4 text-center">
         {showRowActions ? <div className="flex items-center justify-center gap-1">
-          {decision !== "approved" ? <DecisionButton label="Approve" decision="approved" onClick={() => onDecision([row], "approved")} /> : null}
-          {decision !== "rejected" ? <DecisionButton label="Reject" decision="rejected" onClick={() => onDecision([row], "rejected")} /> : null}
+          {decision !== "approved" ? <DecisionButton label="Add as keyword" decision="approved" onClick={() => onDecision([row], "approved")} /> : null}
+          {decision !== "rejected" ? <DecisionButton label="Add as negative keyword" decision="rejected" onClick={() => onDecision([row], "rejected")} /> : null}
         </div> : <DecisionStatus decision={decision} />}
       </td> : null}
       {approverView ? <td className="px-4 py-4 text-center">
@@ -1130,8 +1226,8 @@ function ContextValue({ label, value }: { label: string; value: string | null })
 }
 
 function DecisionStatus({ decision }: { decision?: ReviewDecision }) {
-  if (decision === "approved") return <span className="font-semibold text-emerald-700">Approved</span>;
-  if (decision === "rejected") return <span className="font-semibold text-red-700">Rejected</span>;
+  if (decision === "approved") return <span className="font-semibold text-emerald-700">Keyword added</span>;
+  if (decision === "rejected") return <span className="font-semibold text-red-700">Negative keyword added</span>;
   return <span className="text-neutral-400">Pending</span>;
 }
 

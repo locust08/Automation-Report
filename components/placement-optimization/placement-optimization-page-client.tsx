@@ -464,7 +464,6 @@ export function PlacementOptimizationPageClient({ role }: { role: AuthRole }) {
               />
               {dropdownOpen && (visibleSuggestions.length > 0 || searchState !== "idle") ? (
                 <div className="absolute z-30 mt-1 max-h-80 w-full overflow-y-auto rounded-xl border bg-white p-1 shadow-xl">
-                  {searchState === "loading" ? <p className="p-3 text-sm text-neutral-500">Searching accounts…</p> : null}
                   {searchState === "error" ? <p className="p-3 text-sm text-red-700">{searchError}</p> : null}
                   {searchState === "success" && visibleSuggestions.length === 0 ? <p className="p-3 text-sm text-neutral-500">No matching accounts.</p> : null}
                   {visibleSuggestions.map((result) => (
@@ -474,6 +473,7 @@ export function PlacementOptimizationPageClient({ role }: { role: AuthRole }) {
                       {result.hasPerformanceMax ? <span className="mt-1 block truncate text-xs text-neutral-500">{result.campaigns.map((campaign) => campaign.name).join(" · ")}</span> : null}
                     </button>
                   ))}
+                  {searchState === "loading" ? <p className="mt-1 border-t bg-neutral-50 p-3 text-sm text-neutral-500">Searching accounts…</p> : null}
                 </div>
               ) : null}
             </div>

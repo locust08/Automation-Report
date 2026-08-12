@@ -102,6 +102,14 @@ export type OptimizationDashboardPayload = {
   googleRecommendationsWarning: string | null;
   changeSets: OptimizationChangeSet[];
   settings: SearchTermAccountSettings;
+  refresh?: {
+    mode: "cached" | "incremental" | "full";
+    checkedAt: string;
+    currentTerms: number;
+    reusedTerms: number;
+    newTerms: number;
+    queuedNewTerms: number;
+  };
 };
 
 export type GoogleKeywordRecommendation = {

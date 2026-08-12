@@ -63,6 +63,20 @@ type RawOutput = {
   siteContexts: Record<string, { primaryPage?: { text?: string } }>;
   safetyCorpus?: { keywordCriteria?: RawCriterion[] };
   allRows: RawRow[];
+  currentSearchTerms?: RawCurrentSearchTerm[];
+};
+
+export type RawCurrentSearchTerm = {
+  campaign_id: string;
+  campaign_name: string;
+  ad_group_id: string;
+  ad_group_name: string;
+  search_term: string;
+  destination_url?: string;
+  cost: number;
+  impressions: number;
+  clicks: number;
+  conversions: number;
 };
 
 export type GenerateSearchTermAnalysisInput = {
@@ -560,6 +574,22 @@ async function readLatestManualRunnerOutput(accountId?: string): Promise<RawOutp
   }
 
   return JSON.parse(await fs.readFile(path.join(directory, filenames[0]), "utf8")) as RawOutput;
+}
+
+export async function readLatestCurrentSearchTerms(accountId: string) {
+  const raw = await readLatestManualRunnerOutput(accountId);
+  return {
+    generatedAt: normalizeTimestamp(raw.generatedAt),
+    reportingPeriod: raw.dateRange,
+    rows: raw.currentSearchTerms ?? [],
+    source: raw.source as RawOutput["source"] & { currentTerms?: number; newTerms?: number; analyzedNewTerms?: number; queuedNewTerms?: number },
+  };
+}
+
+export async function deleteLatestManualRunnerOutput(accountId:string){
+  const directory=path.join(process.cwd(),"tmp");const normalized=accountId.replace(/\D/g,"");
+  const filenames=(await fs.readdir(directory)).filter(name=>name.startsWith(`google_ads_search_term_review_agent_${normalized}_`)&&name.endsWith(".json")).sort().reverse();
+  if(filenames[0])await fs.unlink(path.join(directory,filenames[0])).catch(()=>undefined);
 }
 
 function normalizeText(value: string) {
