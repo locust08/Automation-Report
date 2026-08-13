@@ -60,6 +60,7 @@ type AccountSuggestion = {
   accessPath?: string | null;
 };
 type AccountSearchState = "idle" | "loading" | "success" | "error";
+type PlacementJob = { id:string; status:"queued"|"running"|"completed"|"failed"|"cancelled"; stage:string; processed_rows:number; total_rows:number|null; error:string|null; started_at:string };
 const ACCOUNT_SEARCH_CACHE_KEY =
   "placement-optimization-pmax-account-search-cache-v1";
 const RECENT_ACCOUNTS_KEY = "placement-optimization-recent-accounts";
@@ -77,6 +78,8 @@ export function PlacementOptimizationPageClient({ role, embedded = false, extern
   const [loading, setLoading] = useState(false);
   const [loadStartedAt, setLoadStartedAt] = useState<number | null>(null);
   const [loadCompletedAt, setLoadCompletedAt] = useState<string | null>(null);
+  const [analysisJob, setAnalysisJob] = useState<PlacementJob | null>(null);
+  const [remoteRowTotal, setRemoteRowTotal] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [account, setAccount] = useState("");
   const [selectedAccount, setSelectedAccount] =
@@ -309,8 +312,13 @@ export function PlacementOptimizationPageClient({ role, embedded = false, extern
   function runAnalysis() {
     if (!selectedAccount || loading) return;
     setDropdownOpen(false);
-    void load(selectedAccount.adAccountId, true);
+    void startPlacementAnalysis(selectedAccount.adAccountId);
   }
+  async function startPlacementAnalysis(accountId:string){setError(null);setLoadCompletedAt(null);try{const response=await fetch("/api/placement-optimization/analyze",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({accountId})});const job=await response.json() as PlacementJob&{error?:string};if(!response.ok)throw new Error(job.error??"Unable to start placement analysis.");setAnalysisJob(job);}catch(caught){setError(caught instanceof Error?caught.message:"Unable to start placement analysis.");}}
+  useEffect(()=>{if(!analysisJob||!["queued","running"].includes(analysisJob.status))return;const timer=window.setInterval(async()=>{try{const response=await fetch(`/api/placement-optimization/analyze?jobId=${encodeURIComponent(analysisJob.id)}`,{cache:"no-store"});const job=await response.json() as PlacementJob&{error?:string};if(!response.ok)throw new Error(job.error??"Unable to read placement progress.");setAnalysisJob(job);if(job.status==="completed"){setLoadCompletedAt(new Date().toISOString());if(selectedAccount)void load(selectedAccount.adAccountId);}else if(job.status==="failed")setError(job.error??"Placement analysis failed.");}catch(caught){setError(caught instanceof Error?caught.message:"Unable to read placement progress.");}},2000);return()=>window.clearInterval(timer);},[analysisJob,load,selectedAccount]);
+  async function cancelPlacementAnalysis(){if(!analysisJob)return;await fetch(`/api/placement-optimization/analyze?jobId=${encodeURIComponent(analysisJob.id)}`,{method:"DELETE"});setAnalysisJob(current=>current?{...current,status:"cancelled",stage:"Cancellation requested"}:null);}
+  const loadRowsPage=useCallback(async(pageNumber:number)=>{if(!data)return;const params=new URLSearchParams({accountId:data.account.customerId,startDate:data.account.startDate,endDate:data.account.endDate,page:String(pageNumber),pageSize:String(PLACEMENTS_PER_PAGE),campaignType:decisionCampaignType,placementType:decisionType});const response=await fetch(`/api/placement-optimization/rows?${params}`,{cache:"no-store"});const payload=await response.json() as {rows?:PlacementOptimizationRow[];total?:number;error?:string};if(!response.ok)throw new Error(payload.error??"Unable to load placements.");setData(current=>current?{...current,rows:payload.rows??[]}:current);setRemoteRowTotal(payload.total??0);setHasLivePlacementRows(true);},[data,decisionCampaignType,decisionType]);
+  useEffect(()=>{if(!decisionsOpen)return;void loadRowsPage(decisionPage).catch(caught=>setError(caught instanceof Error?caught.message:"Unable to load placements."));},[decisionPage,decisionsOpen,loadRowsPage]);
   const rows = useMemo(
     () =>
       data?.rows.filter(
@@ -450,11 +458,8 @@ export function PlacementOptimizationPageClient({ role, embedded = false, extern
       row.currentDecision === "exclude" || row.currentDecision === "approved";
     return decisionView === "excluded" ? excluded : !excluded;
   }), [data?.rows, decisionCampaignType, decisionType, decisionView]);
-  const decisionPageCount = Math.max(1, Math.ceil(decisionRows.length / PLACEMENTS_PER_PAGE));
-  const decisionPageRows = useMemo(() => decisionRows.slice(
-    (decisionPage - 1) * PLACEMENTS_PER_PAGE,
-    decisionPage * PLACEMENTS_PER_PAGE,
-  ), [decisionPage, decisionRows]);
+  const decisionPageCount = Math.max(1, Math.ceil(remoteRowTotal / PLACEMENTS_PER_PAGE));
+  const decisionPageRows = decisionRows;
   useEffect(() => {
     if (decisionPage > decisionPageCount) setDecisionPage(decisionPageCount);
   }, [decisionPage, decisionPageCount]);
@@ -474,6 +479,7 @@ export function PlacementOptimizationPageClient({ role, embedded = false, extern
     >
       <div className="space-y-5 text-neutral-950">
         {loading ? <PlacementAnalysisLoader startedAt={loadStartedAt} onCancel={cancelLoad} /> : null}
+        {analysisJob && ["queued","running"].includes(analysisJob.status) ? <PlacementJobProgress job={analysisJob} onCancel={()=>void cancelPlacementAnalysis()} /> : null}
         {!loading && data && loadCompletedAt ? (
           <section role="status" className="flex items-center gap-3 rounded-2xl border border-emerald-200 bg-emerald-50 px-5 py-4 text-emerald-900 shadow-sm">
             <CheckCircle2Icon className="size-5 shrink-0 text-emerald-700" />
@@ -521,7 +527,7 @@ export function PlacementOptimizationPageClient({ role, embedded = false, extern
           <section className="rounded-2xl border bg-white p-5 shadow-sm">
             <h2 className="text-3xl font-semibold">{data.account.customerName}</h2>
             <PlacementAccountDetails account={data.account} />
-            <Button type="button" variant="outline" className="mt-4 cursor-pointer hover:border-red-200 hover:bg-red-50 hover:text-red-700" onClick={() => { setSuitabilityOpen(true); if (!suitability && !suitabilityLoading) void loadSuitability(); }}><ShieldCheckIcon className="size-4" />Content suitability</Button>
+            <div className="mt-4 flex flex-wrap gap-2"><Button type="button" disabled={!externalAccount||Boolean(analysisJob&&["queued","running"].includes(analysisJob.status))} className="cursor-pointer bg-red-700 hover:bg-red-800" onClick={()=>externalAccount&&void startPlacementAnalysis(externalAccount.adAccountId)}><SearchIcon className="size-4" />Start analysis</Button><Button type="button" variant="outline" className="cursor-pointer hover:border-red-200 hover:bg-red-50 hover:text-red-700" onClick={() => { setSuitabilityOpen(true); if (!suitability && !suitabilityLoading) void loadSuitability(); }}><ShieldCheckIcon className="size-4" />Content suitability</Button></div>
           </section>
         ) : null}
         <ContentSuitabilitySheet
@@ -812,6 +818,13 @@ function PlacementAnalysisLoader({ startedAt, onCancel }: { startedAt: number | 
       </div>
     </section>
   );
+}
+
+function PlacementJobProgress({job,onCancel}:{job:PlacementJob;onCancel:()=>void}){
+  const [elapsedSeconds,setElapsedSeconds]=useState(0);
+  useEffect(()=>{const start=new Date(job.started_at).getTime();const update=()=>setElapsedSeconds(Math.max(0,Math.floor((Date.now()-start)/1000)));update();const timer=window.setInterval(update,1000);return()=>window.clearInterval(timer);},[job.started_at]);
+  const progress=job.total_rows?Math.min(100,Math.round(job.processed_rows/job.total_rows*100)):null;
+  return <section role="status" className="overflow-hidden rounded-2xl border border-red-100 bg-white shadow-sm"><div className="flex items-center gap-3 p-5"><span className="flex size-10 items-center justify-center rounded-xl bg-red-50 text-red-700"><Spinner className="size-5" /></span><div className="min-w-0 flex-1"><p className="font-semibold">Placement analysis is running in the background</p><p className="text-sm text-neutral-500">{job.stage}{job.total_rows?` · ${job.processed_rows.toLocaleString()} of ${job.total_rows.toLocaleString()} saved`:""}</p></div><Button type="button" variant="outline" className="shrink-0 cursor-pointer" onClick={onCancel}>Cancel</Button></div><div className="border-t bg-neutral-50 px-5 py-3"><div className="mb-2 flex justify-between text-xs text-neutral-500"><span>{progress===null?"Preparing data":`${progress}% complete`}</span><span>Elapsed: {formatElapsedTime(elapsedSeconds)}</span></div><div className="h-2 overflow-hidden rounded-full bg-neutral-200"><div className="h-full rounded-full bg-gradient-to-r from-red-700 to-red-400 transition-all" style={{width:`${progress??15}%`}} /></div></div></section>;
 }
 
 function useResizableSheet(initialWidth = 720, maximumViewportFraction = 1) {
