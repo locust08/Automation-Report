@@ -20,6 +20,7 @@ export interface PlacementOptimizationRow {
   targetUrl: string | null;
   campaignId?: string;
   campaignName: string;
+  campaignType: string;
   adGroupId?: string | null;
   adGroupName: string;
   impressions: number;
@@ -64,6 +65,23 @@ export interface PlacementDashboardPayload {
     totalImpressions: number;
     uniqueSites: number;
     topSites: Array<Pick<PlacementOptimizationRow, "id" | "displayName" | "placement" | "targetUrl" | "campaignName" | "impressions">>;
+  };
+  campaignTypes: Array<{
+    channelType: string;
+    label: string;
+    campaignCount: number;
+    placementCount: number;
+    impressions: number;
+    spend: number;
+    available: boolean;
+  }>;
+  placementOverview: {
+    campaignCount: number;
+    placementCount: number;
+    totalImpressions: number;
+    totalSpend: number;
+    uniqueSites: number;
+    topSites: Array<Pick<PlacementOptimizationRow, "id" | "displayName" | "placement" | "targetUrl" | "campaignName" | "campaignType" | "impressions">>;
   };
   rows: PlacementOptimizationRow[];
   changeSets: PlacementChangeSet[];

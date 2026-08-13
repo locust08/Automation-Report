@@ -6,7 +6,7 @@ compatibility_flags = ["nodejs_compat"]
 
 # Cloudflare cron uses UTC. 04:00 UTC = 12:00 PM Malaysia time.
 [triggers]
-crons = ["0 4 7,10,15 * *"]
+crons = ["0 4 7,10,15 * *", "*/10 * * * *"]
 
 [browser]
 binding = "REPORT_BROWSER"

@@ -792,6 +792,7 @@ export interface GooglePlacementPerformanceRow {
   targetUrl: string | null;
   campaignId: string;
   campaignName: string;
+  campaignType?: string;
   adGroupId: string;
   adGroupName: string;
   impressions: number;
@@ -800,6 +801,32 @@ export interface GooglePlacementPerformanceRow {
   conversions: number;
   videoViews: number;
   sourceView?: "detail_placement_view" | "performance_max_placement_view";
+}
+
+export interface GoogleCampaignTypeOverview {
+  channelType: string;
+  campaignCount: number;
+}
+
+export async function fetchGoogleCampaignTypeOverview(input: GoogleFetchInput): Promise<GoogleCampaignTypeOverview[]> {
+  const context = await resolveVerifiedGoogleAdsContext({
+    customerId: input.customerId, apiVersion: input.apiVersion, developerToken: input.developerToken,
+    accessToken: input.accessToken, refreshToken: input.refreshToken, clientId: input.clientId,
+    clientSecret: input.clientSecret, loginCustomerId: input.loginCustomerId,
+    accessPath: input.accessPath ?? null, fallbackLoginCustomerId: input.fallbackLoginCustomerId ?? null,
+  });
+  const results = await fetchGoogleAdsResultsWithFallback({
+    customerId: context.customerId, apiVersion: input.apiVersion, developerToken: input.developerToken,
+    accessToken: input.accessToken, refreshToken: input.refreshToken, clientId: input.clientId,
+    clientSecret: input.clientSecret, loginCustomerId: context.loginCustomerId,
+    queries: [`SELECT campaign.id, campaign.advertising_channel_type FROM campaign WHERE campaign.status != 'REMOVED'`],
+  });
+  const counts = new Map<string, number>();
+  for (const row of results) {
+    const type = row.campaign?.advertisingChannelType?.trim() || "UNKNOWN";
+    counts.set(type, (counts.get(type) ?? 0) + 1);
+  }
+  return [...counts.entries()].map(([channelType, campaignCount]) => ({ channelType, campaignCount }));
 }
 
 export interface GooglePerformanceMaxOverview {
@@ -1025,6 +1052,8 @@ export async function fetchGooglePerformanceMaxPlacementRows(
           performance_max_placement_view.placement_type,
           metrics.impressions
         FROM performance_max_placement_view
+        WHERE segments.date BETWEEN '${input.startDate}' AND '${input.endDate}'
+          AND metrics.impressions > 0
       `,
     ],
   });
@@ -1047,6 +1076,7 @@ export async function fetchGooglePerformanceMaxPlacementRows(
     campaignId: result.campaign?.id ?? "unknown",
     campaignName:
       result.campaign?.name?.trim() || "Unknown Performance Max campaign",
+    campaignType: "PERFORMANCE_MAX",
     adGroupId: "performance-max",
     adGroupName: "Performance Max",
     impressions: toNumber(result.metrics?.impressions),
@@ -1089,6 +1119,7 @@ export async function fetchGooglePlacementPerformanceRows(input: GoogleFetchInpu
         detail_placement_view.group_placement_target_url,
         campaign.id,
         campaign.name,
+        campaign.advertising_channel_type,
         ad_group.id,
         ad_group.name,
         metrics.impressions,
@@ -1099,6 +1130,7 @@ export async function fetchGooglePlacementPerformanceRows(input: GoogleFetchInpu
       FROM detail_placement_view
       WHERE segments.date BETWEEN '${input.startDate}' AND '${input.endDate}'
         AND campaign.status != 'REMOVED'
+        AND metrics.impressions > 0
       ORDER BY metrics.cost_micros DESC
     `, `
       SELECT
@@ -1109,6 +1141,7 @@ export async function fetchGooglePlacementPerformanceRows(input: GoogleFetchInpu
         detail_placement_view.group_placement_target_url,
         campaign.id,
         campaign.name,
+        campaign.advertising_channel_type,
         ad_group.id,
         ad_group.name,
         metrics.impressions,
@@ -1118,6 +1151,7 @@ export async function fetchGooglePlacementPerformanceRows(input: GoogleFetchInpu
       FROM detail_placement_view
       WHERE segments.date BETWEEN '${input.startDate}' AND '${input.endDate}'
         AND campaign.status != 'REMOVED'
+        AND metrics.impressions > 0
       ORDER BY metrics.cost_micros DESC
     `, `
       SELECT
@@ -1127,6 +1161,7 @@ export async function fetchGooglePlacementPerformanceRows(input: GoogleFetchInpu
         detail_placement_view.placement_type,
         campaign.id,
         campaign.name,
+        campaign.advertising_channel_type,
         ad_group.id,
         ad_group.name,
         metrics.impressions,
@@ -1136,6 +1171,7 @@ export async function fetchGooglePlacementPerformanceRows(input: GoogleFetchInpu
       FROM detail_placement_view
       WHERE segments.date BETWEEN '${input.startDate}' AND '${input.endDate}'
         AND campaign.status != 'REMOVED'
+        AND metrics.impressions > 0
       ORDER BY metrics.cost_micros DESC
     `],
   });
@@ -1147,6 +1183,7 @@ export async function fetchGooglePlacementPerformanceRows(input: GoogleFetchInpu
     targetUrl: result.detailPlacementView?.groupPlacementTargetUrl?.trim() || null,
     campaignId: result.campaign?.id ?? "unknown",
     campaignName: result.campaign?.name?.trim() || "Unknown campaign",
+    campaignType: result.campaign?.advertisingChannelType?.trim() || "UNKNOWN",
     adGroupId: result.adGroup?.id ?? "unknown",
     adGroupName: result.adGroup?.name?.trim() || "Unknown ad group",
     impressions: toNumber(result.metrics?.impressions),

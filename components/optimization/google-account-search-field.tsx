@@ -47,9 +47,10 @@ export function GoogleAccountSearchField<T extends GoogleAccountSearchItem>({
   onHighlight,
   renderMeta,
 }: GoogleAccountSearchFieldProps<T>) {
-  const recentIds = new Set(recentAccounts.map((account) => account.adAccountId));
-  const liveResults = results.filter((account) => !recentIds.has(account.adAccountId));
-  const hasOptions = liveResults.length > 0 || recentAccounts.length > 0;
+  const resultIds = new Set(results.map((account) => account.adAccountId));
+  const liveResults = results;
+  const visibleRecentAccounts = recentAccounts.filter((account) => !resultIds.has(account.adAccountId));
+  const hasOptions = liveResults.length > 0 || visibleRecentAccounts.length > 0;
 
   return (
     <div className="relative min-w-0 flex-1">
@@ -90,12 +91,12 @@ export function GoogleAccountSearchField<T extends GoogleAccountSearchItem>({
             <p className="p-3 text-sm text-neutral-500">No additional matching accounts.</p>
           ) : null}
 
-          {recentAccounts.length > 0 ? (
+          {visibleRecentAccounts.length > 0 ? (
             <div className={liveResults.length > 0 ? "mt-2 border-t border-neutral-200 pt-1" : ""}>
               <p className="px-3 py-2 text-xs font-semibold uppercase tracking-wide text-neutral-500">
                 Recent accounts
               </p>
-              {recentAccounts.map((account, index) => (
+              {visibleRecentAccounts.map((account, index) => (
                 <AccountOption
                   key={`recent-${account.adAccountId}`}
                   account={account}

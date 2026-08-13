@@ -1,55 +1,59 @@
 import { NextResponse } from "next/server";
 
 import { getServerAuthSession } from "@/lib/auth/server-session";
-import { getCredentials } from "@/lib/reporting/env";
-import { fetchGoogleOptimizationOverview, type GoogleOptimizationOverview } from "@/lib/reporting/google";
-import { searchNotionAdAccounts } from "@/lib/reporting/notion";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
-const cache = new Map<string, { expiresAt: number; overview: GoogleOptimizationOverview }>();
+type AccountSearchPayload = {
+  success?: boolean;
+  accounts?: Array<{
+    accountName: string;
+    adAccountId: string;
+    accessPath?: string | null;
+    platform?: string | null;
+  }>;
+  error?: string;
+};
 
 export async function GET(request: Request) {
   const session = await getServerAuthSession();
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
   const query = new URL(request.url).searchParams.get("q")?.trim() ?? "";
   if (query.length < 2) return NextResponse.json({ accounts: [] });
-  try {
-    const credentials = getCredentials();
-    if (!credentials.googleDeveloperToken) throw new Error("Google Ads developer token is unavailable.");
-    const notionDatabaseId = process.env.NOTION_AD_ACCOUNTS_DATABASE_ID?.trim() || credentials.notionDatabaseId;
-    const notion = await searchNotionAdAccounts({ query, notionAccessToken: credentials.notionAccessToken, notionDatabaseId, limit: 20 });
-    const googleAccounts = notion.accounts.filter((account) => /^\d{10}$/.test(account.adAccountId.replace(/\D/g, "")));
-    const accounts = [] as Array<Record<string, unknown>>;
-    for (let offset = 0; offset < googleAccounts.length; offset += 2) {
-      const chunk = googleAccounts.slice(offset, offset + 2);
-      const enriched = await Promise.all(chunk.map(async (account) => {
-        const customerId = account.adAccountId.replace(/\D/g, "");
-        const cached = cache.get(customerId);
-        let overview: GoogleOptimizationOverview;
-        try {
-          if (cached && cached.expiresAt > Date.now()) overview = cached.overview;
-          else {
-            overview = await fetchGoogleOptimizationOverview({
-              customerId, apiVersion: credentials.googleAdsApiVersion, developerToken: credentials.googleDeveloperToken!,
-              accessToken: credentials.googleAccessToken, refreshToken: credentials.googleRefreshToken,
-              clientId: credentials.googleClientId, clientSecret: credentials.googleClientSecret,
-              loginCustomerId: credentials.googleLoginCustomerId, accessPath: account.accessPath,
-              fallbackLoginCustomerId: credentials.googleLoginCustomerId, startDate: "", endDate: "",
-            });
-            cache.set(customerId, { expiresAt: Date.now() + 15 * 60 * 1000, overview });
-          }
-          return { ...account, optimizationScore: overview.optimizationScore, campaigns: overview.campaigns };
-        } catch (error) {
-          return { ...account, optimizationScore: null, campaigns: [], warning: error instanceof Error ? error.message : "Google performance is unavailable." };
-        }
-      }));
-      accounts.push(...enriched);
-    }
-    accounts.sort((left, right) => (Number(left.optimizationScore ?? Number.POSITIVE_INFINITY) - Number(right.optimizationScore ?? Number.POSITIVE_INFINITY)) || String(left.accountName).localeCompare(String(right.accountName)));
-    return NextResponse.json({ accounts: accounts.slice(0, 20) });
-  } catch (error) {
-    return NextResponse.json({ error: error instanceof Error ? error.message : "Unable to retrieve account priorities." }, { status: 500 });
+
+  const workerUrl = process.env.MONTHLY_REPORT_WORKER_URL?.trim()
+    || process.env.REPORT_AUTOMATION_WORKER_URL?.trim();
+  const workerSecret = process.env.WORKER_API_SECRET?.trim();
+  if (!workerUrl || !workerSecret) {
+    return NextResponse.json(
+      { error: "Account directory is unavailable: Worker URL or API secret is not configured." },
+      { status: 503 }
+    );
   }
+
+  try {
+    const url = new URL("/ad-accounts/search", ensureTrailingSlash(workerUrl));
+    url.searchParams.set("q", query);
+    const response = await fetch(url, {
+      headers: { Authorization: `Bearer ${workerSecret}` },
+      cache: "no-store",
+      signal: AbortSignal.timeout(10_000),
+    });
+    const payload = await response.json().catch(() => null) as AccountSearchPayload | null;
+    if (!response.ok || !payload?.success) {
+      throw new Error(payload?.error || `Account directory returned HTTP ${response.status}.`);
+    }
+    return NextResponse.json({ accounts: payload.accounts ?? [] });
+  } catch (error) {
+    return NextResponse.json(
+      { error: error instanceof Error ? error.message : "Unable to search the account directory." },
+      { status: 502 }
+    );
+  }
+}
+
+function ensureTrailingSlash(value: string): string {
+  return value.endsWith("/") ? value : `${value}/`;
 }

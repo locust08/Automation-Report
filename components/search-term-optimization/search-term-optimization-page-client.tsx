@@ -1,6 +1,6 @@
 "use client";
 
-import { KeyboardEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { KeyboardEvent, type ComponentProps, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ChevronLeftIcon,
   ChevronRightIcon,
@@ -77,7 +77,7 @@ type AccountSearchState = "idle" | "loading" | "success" | "error";
 
 const REVIEW_ROLES: AuthRole[] = ["pms", "specialist", "admin"];
 
-export function SearchTermOptimizationPageClient({ role }: { role: AuthRole }) {
+export function SearchTermOptimizationPageClient({ role, embedded = false, externalAccount }: { role: AuthRole; embedded?: boolean; externalAccount?: { accountName: string; adAccountId: string; accessPath?: string | null } | null }) {
   const isAdmin = isAdminRole(role);
   const [categoryFilter, setCategoryFilter] = useState<CategoryFilter>("special review needed");
   const canReview = REVIEW_ROLES.includes(role);
@@ -147,6 +147,20 @@ export function SearchTermOptimizationPageClient({ role }: { role: AuthRole }) {
       setLoading(false);
     }
   }, []);
+
+  useEffect(() => {
+    if (!embedded || !externalAccount) return;
+    skipNextAccountSearch.current = true;
+    setAccountPerformance({
+      accountName: externalAccount.accountName,
+      adAccountId: externalAccount.adAccountId,
+      accessPath: externalAccount.accessPath,
+      optimizationScore: null,
+      campaigns: [],
+    });
+    setAccountQuery(`${externalAccount.accountName} | ${externalAccount.adAccountId}`);
+    void load(externalAccount.adAccountId);
+  }, [embedded, externalAccount, load]);
 
   useEffect(() => {
     if (isAdmin) {
@@ -609,7 +623,8 @@ export function SearchTermOptimizationPageClient({ role }: { role: AuthRole }) {
   }, [categoryFilter, loadUnaddedSearchTerms]);
 
   return (
-    <ReportShell
+    <OptimizationPageFrame
+      embedded={embedded}
       title="Search Term Optimization"
       dateLabel="Automation to be implemented"
       headerDateControl={<AutomationUnavailableStatus />}
@@ -618,7 +633,7 @@ export function SearchTermOptimizationPageClient({ role }: { role: AuthRole }) {
     >
       <div className="space-y-5 text-neutral-950">
         <section className="relative rounded-3xl border border-neutral-200 bg-white p-5 shadow-sm sm:p-7">
-          {isAdmin ? <div className="mb-5">
+          {isAdmin && !embedded ? <div className="mb-5">
             <label className="mb-2 block text-sm font-semibold text-neutral-800">Notion account search</label>
             <div className="flex max-w-4xl items-start gap-2">
               <GoogleAccountSearchField value={accountQuery} onChange={changeAccountQuery} onSelect={selectAccount} results={suggestions} recentAccounts={recentAccounts} open={accountDropdownOpen} state={accountSearchState} error={accountSearchError} onFocus={()=>setAccountDropdownOpen(true)} onBlur={()=>setAccountDropdownOpen(false)} onKeyDown={handleAccountKeyDown} highlightedIndex={highlightedAccountIndex} onHighlight={setHighlightedAccountIndex}/>
@@ -638,6 +653,17 @@ export function SearchTermOptimizationPageClient({ role }: { role: AuthRole }) {
             </div>
             <p className="mt-2 text-xs text-neutral-500">Select an account, then start analysis to retrieve, analyze, and save its latest search terms.</p>
           </div> : null}
+          {isAdmin && embedded && externalAccount ? (
+            <div className="mb-5 flex flex-wrap gap-2">
+              <Button type="button" className="h-11 cursor-pointer bg-red-600 text-white hover:bg-red-700" disabled={analysisLoading} onClick={() => void runSelectedAccountAnalysis()}>
+                {analysisLoading ? <Spinner className="size-4" /> : <SearchIcon className="size-4" />}
+                {analysisLoading ? "Analyzing..." : "Start analysis"}
+              </Button>
+              <Button type="button" variant="outline" className="h-11 cursor-pointer whitespace-nowrap hover:border-red-200 hover:bg-red-50 hover:text-red-700" disabled={!data || loading || analysisLoading} onClick={() => { setReportDateSelection({ mode: "single", date: malaysiaToday() }); setReportDialogOpen(true); }}>
+                <FileDownIcon className="size-4" />Summary report
+              </Button>
+            </div>
+          ) : null}
 
           <div className="flex flex-col justify-between gap-5 lg:flex-row lg:items-end">
             <div>
@@ -846,8 +872,12 @@ export function SearchTermOptimizationPageClient({ role }: { role: AuthRole }) {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-    </ReportShell>
+    </OptimizationPageFrame>
   );
+}
+
+function OptimizationPageFrame({ embedded, children, ...shellProps }: ComponentProps<typeof ReportShell> & { embedded: boolean }) {
+  return embedded ? <>{children}</> : <ReportShell {...shellProps}>{children}</ReportShell>;
 }
 
 function AutomationUnavailableStatus() {
@@ -1010,7 +1040,11 @@ function LoadingDataIndicator({ label, compact = false, startedAt, activityAt, p
         <div className="mb-2 flex items-center justify-between text-xs font-medium text-neutral-500">
           <span>{elapsedSeconds === null ? "Analysis in progress" : `Elapsed ${formatElapsedTime(elapsedSeconds)}`}</span>
           <span className={heartbeatHealthy ? "text-emerald-700" : "text-amber-700"}>
-            {activitySeconds === null ? "Starting analysis…" : heartbeatHealthy ? "Analysis is still running" : `No worker update for ${activitySeconds}s · checking status`}
+            {activitySeconds === null
+              ? "Waiting for worker ping…"
+              : heartbeatHealthy
+                ? `Worker ping: ${activitySeconds}s ago`
+                : `Worker ping: ${activitySeconds}s ago · checking status`}
           </span>
         </div>
         <div className="h-2.5 overflow-hidden rounded-full bg-neutral-200 ring-1 ring-inset ring-neutral-300/60">

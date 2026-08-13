@@ -12,7 +12,6 @@ import {
   IdCardIcon,
   ListChecksIcon,
   LogOutIcon,
-  PanelsTopLeftIcon,
   SearchCheckIcon,
   SlidersHorizontalIcon,
   SparklesIcon,
@@ -76,8 +75,7 @@ export function ReportShell({
     mediaPlan: withQuery("/dashboard/media-plan", activeQuery),
     metaImport: "/meta-import",
     billing: "/billing",
-    searchTermOptimization: "/search-term-optimization",
-    placementOptimization: "/placement-optimization",
+    googleOptimization: "/google-optimization",
     googleManagement: withQuery("/manage/google", activeQuery),
     userManagement: "/user-management",
     optimizationScheduling: "/optimization-scheduling",
@@ -169,20 +167,6 @@ export function ReportShell({
                       <ListChecksIcon className="size-5" />
                     </ReportNavLink>
                     <ReportNavLink
-                      href={hrefs.searchTermOptimization}
-                      label="Search Term Optimization"
-                      active={pathname === "/search-term-optimization"}
-                    >
-                      <SearchCheckIcon className="size-5" />
-                    </ReportNavLink>
-                    <ReportNavLink
-                      href={hrefs.placementOptimization}
-                      label="Placement Optimization"
-                      active={pathname === "/placement-optimization"}
-                    >
-                      <PanelsTopLeftIcon className="size-5" />
-                    </ReportNavLink>
-                    <ReportNavLink
                       href={hrefs.googleManagement}
                       label="Google Ads Management"
                       active={pathname.startsWith("/manage/google")}
@@ -190,6 +174,13 @@ export function ReportShell({
                       <SlidersHorizontalIcon className="size-5" />
                     </ReportNavLink>
                     {isAdmin ? <>
+                      <ReportNavLink
+                        href={hrefs.googleOptimization}
+                        label="Google Optimization"
+                        active={pathname === "/google-optimization" || pathname === "/search-term-optimization" || pathname === "/placement-optimization"}
+                      >
+                        <SearchCheckIcon className="size-5" />
+                      </ReportNavLink>
                       <ReportNavLink
                         href={hrefs.optimizationScheduling}
                         label="Optimization Scheduling"

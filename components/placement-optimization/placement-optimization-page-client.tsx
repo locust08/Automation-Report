@@ -1,8 +1,9 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { type ComponentProps, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import {
+  CheckCircle2Icon,
   ChevronDownIcon,
   ExternalLinkIcon,
   Globe2Icon,
@@ -57,10 +58,6 @@ type AccountSuggestion = {
   accountName: string;
   adAccountId: string;
   accessPath?: string | null;
-  hasPerformanceMax: boolean;
-  campaignCount: number;
-  campaigns: Array<{ id: string; name: string }>;
-  warning?: string;
 };
 type AccountSearchState = "idle" | "loading" | "success" | "error";
 const ACCOUNT_SEARCH_CACHE_KEY =
@@ -72,12 +69,14 @@ const PLACEMENT_OVERVIEW_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 const ACCOUNT_SEARCH_DEBOUNCE_MS = 300;
 const PLACEMENTS_PER_PAGE = 20;
 
-export function PlacementOptimizationPageClient({ role }: { role: AuthRole }) {
+export function PlacementOptimizationPageClient({ role, embedded = false, externalAccount }: { role: AuthRole; embedded?: boolean; externalAccount?: { accountName: string; adAccountId: string } | null }) {
   const searchParams = useSearchParams();
   const mode = modeForRole(role);
   const [data, setData] = useState<PlacementDashboardPayload | null>(null);
   const [hasLivePlacementRows, setHasLivePlacementRows] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [loadStartedAt, setLoadStartedAt] = useState<number | null>(null);
+  const [loadCompletedAt, setLoadCompletedAt] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [account, setAccount] = useState("");
   const [selectedAccount, setSelectedAccount] =
@@ -89,11 +88,13 @@ export function PlacementOptimizationPageClient({ role }: { role: AuthRole }) {
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const searchContainerRef = useRef<HTMLDivElement>(null);
   const searchRequestId = useRef(0);
+  const placementLoadController = useRef<AbortController | null>(null);
   const skipNextSearch = useRef(false);
   const [type, setType] = useState(searchParams.get("type") || "all");
   const [decisionsOpen, setDecisionsOpen] = useState(false);
   const [decisionView, setDecisionView] = useState<"content" | "excluded">("content");
   const [decisionType, setDecisionType] = useState("all");
+  const [decisionCampaignType, setDecisionCampaignType] = useState("all");
   const [decisionPage, setDecisionPage] = useState(1);
   const [decisionSaving, setDecisionSaving] = useState(false);
   const [pendingExclusionIds, setPendingExclusionIds] = useState<string[] | null>(null);
@@ -105,12 +106,17 @@ export function PlacementOptimizationPageClient({ role }: { role: AuthRole }) {
   const [suitabilityError, setSuitabilityError] = useState<string | null>(null);
   const [page, setPage] = useState(1);
   const load = useCallback(async (accountId?: string, refresh = false) => {
+    placementLoadController.current?.abort();
+    const controller = new AbortController();
+    placementLoadController.current = controller;
     const cachedOverview = accountId ? readPlacementOverviewCache(accountId) : null;
     if (cachedOverview) {
       setData(cachedOverview);
       setHasLivePlacementRows(false);
     }
     setLoading(true);
+    setLoadStartedAt(Date.now());
+    setLoadCompletedAt(null);
     setError(null);
     try {
       const params = new URLSearchParams();
@@ -118,6 +124,7 @@ export function PlacementOptimizationPageClient({ role }: { role: AuthRole }) {
       if (refresh) params.set("refresh", "1");
       const response = await fetch(`/api/placement-optimization?${params}`, {
         cache: "no-store",
+        signal: controller.signal,
       });
       const payload = (await response.json()) as PlacementDashboardPayload & {
         error?: string;
@@ -126,15 +133,36 @@ export function PlacementOptimizationPageClient({ role }: { role: AuthRole }) {
         throw new Error(payload.error || "Unable to load placements.");
       setData(payload);
       setHasLivePlacementRows(true);
+      setLoadCompletedAt(new Date().toISOString());
       writePlacementOverviewCache(payload);
     } catch (caught) {
+      if (controller.signal.aborted) return;
       setError(
         caught instanceof Error ? caught.message : "Unable to load placements.",
       );
     } finally {
-      setLoading(false);
+      if (placementLoadController.current === controller) {
+        placementLoadController.current = null;
+        setLoading(false);
+      }
     }
   }, []);
+  const cancelLoad = useCallback(() => {
+    placementLoadController.current?.abort();
+    placementLoadController.current = null;
+    setLoading(false);
+    setLoadStartedAt(null);
+  }, []);
+  useEffect(() => {
+    if (!embedded || !externalAccount) return;
+    skipNextSearch.current = true;
+    setSelectedAccount({
+      accountName: externalAccount.accountName,
+      adAccountId: externalAccount.adAccountId,
+    });
+    setAccount(`${externalAccount.accountName} | ${externalAccount.adAccountId}`);
+    void load(externalAccount.adAccountId);
+  }, [embedded, externalAccount, load]);
   const loadSuitability = useCallback(
     async (refresh = false) => {
       const customerId = data?.account.customerId;
@@ -279,7 +307,7 @@ export function PlacementOptimizationPageClient({ role }: { role: AuthRole }) {
     });
   }
   function runAnalysis() {
-    if (!selectedAccount || !selectedAccount.hasPerformanceMax || loading) return;
+    if (!selectedAccount || loading) return;
     setDropdownOpen(false);
     void load(selectedAccount.adAccountId, true);
   }
@@ -308,6 +336,7 @@ export function PlacementOptimizationPageClient({ role }: { role: AuthRole }) {
   const types = [
     ...new Set((data?.rows ?? []).map((row) => row.placementType)),
   ].sort();
+  const campaignTypes = [...new Set((data?.rows ?? []).map((row) => row.campaignType || "PERFORMANCE_MAX"))].sort();
   const canOptimizer = role === "co" || role === "approver" || isAdminRole(role);
   const canApprover = role === "approver" || isAdminRole(role);
   function decide(
@@ -415,11 +444,12 @@ export function PlacementOptimizationPageClient({ role }: { role: AuthRole }) {
   }
   const decisionRows = useMemo(() => (data?.rows ?? []).filter((row) => {
     if (decisionType !== "all" && row.placementType !== decisionType) return false;
+    if (decisionCampaignType !== "all" && row.campaignType !== decisionCampaignType) return false;
     const excluded = row.reviewStatus === "ready_for_approval" ||
       row.reviewStatus === "ready_for_publishing" ||
       row.currentDecision === "exclude" || row.currentDecision === "approved";
     return decisionView === "excluded" ? excluded : !excluded;
-  }), [data?.rows, decisionType, decisionView]);
+  }), [data?.rows, decisionCampaignType, decisionType, decisionView]);
   const decisionPageCount = Math.max(1, Math.ceil(decisionRows.length / PLACEMENTS_PER_PAGE));
   const decisionPageRows = useMemo(() => decisionRows.slice(
     (decisionPage - 1) * PLACEMENTS_PER_PAGE,
@@ -431,23 +461,34 @@ export function PlacementOptimizationPageClient({ role }: { role: AuthRole }) {
   useEffect(() => {
     setDecisionPage(1);
     setSelected(new Set());
-  }, [decisionType, decisionView, data?.account.customerId]);
+  }, [decisionCampaignType, decisionType, decisionView, data?.account.customerId]);
   const allSelected = pageRows.length > 0 && pageRows.every((row) => selected.has(row.id));
   const toggleAll = (checked: boolean) =>
     setSelected(checked ? new Set(pageRows.map((row) => row.id)) : new Set());
   return (
-    <ReportShell
+    <OptimizationPageFrame
+      embedded={embedded}
       title="Placement Optimization"
       dateLabel="Campaign Optimizer"
       reportReady={!loading}
     >
       <div className="space-y-5 text-neutral-950">
-        <section className="rounded-2xl border bg-white p-5 shadow-sm">
+        {loading ? <PlacementAnalysisLoader startedAt={loadStartedAt} onCancel={cancelLoad} /> : null}
+        {!loading && data && loadCompletedAt ? (
+          <section role="status" className="flex items-center gap-3 rounded-2xl border border-emerald-200 bg-emerald-50 px-5 py-4 text-emerald-900 shadow-sm">
+            <CheckCircle2Icon className="size-5 shrink-0 text-emerald-700" />
+            <div>
+              <p className="font-semibold">Placements loaded</p>
+              <p className="text-sm text-emerald-800">{data.rows.length.toLocaleString()} placement{data.rows.length === 1 ? "" : "s"} loaded at {formatDate(loadCompletedAt)}.</p>
+            </div>
+          </section>
+        ) : null}
+        {!embedded ? <section className="rounded-2xl border bg-white p-5 shadow-sm">
           <p className="mb-2 text-sm font-semibold">Notion account search</p>
           <div className="flex max-w-4xl items-start gap-2">
-            <div ref={searchContainerRef} className="min-w-0 flex-1"><GoogleAccountSearchField value={account} onChange={value=>{setAccount(value);setDropdownOpen(true);}} onSelect={chooseAccount} results={suggestions} recentAccounts={recentAccounts} open={dropdownOpen} state={searchState} error={searchError} onFocus={()=>{if(!selectedAccount)setDropdownOpen(true);}} onKeyDown={event=>{if(event.key==="Escape")setDropdownOpen(false);}} renderMeta={result=><span className="mt-2 flex items-center justify-between gap-3"><span className="truncate text-xs text-neutral-500">{result.hasPerformanceMax?result.campaigns.map(campaign=>campaign.name).join(" · "):"No active Performance Max campaigns"}</span><Badge className={result.hasPerformanceMax?"border-emerald-200 bg-emerald-50 text-emerald-700":"border-neutral-200 bg-neutral-50 text-neutral-500"} variant="outline">{result.hasPerformanceMax?`${result.campaignCount} PMax campaign${result.campaignCount===1?"":"s"}`:"No Performance Max"}</Badge></span>}/></div>
+            <div ref={searchContainerRef} className="min-w-0 flex-1"><GoogleAccountSearchField value={account} onChange={value=>{setAccount(value);setDropdownOpen(true);}} onSelect={chooseAccount} results={suggestions} recentAccounts={recentAccounts} open={dropdownOpen} state={searchState} error={searchError} onFocus={()=>{if(!selectedAccount)setDropdownOpen(true);}} onKeyDown={event=>{if(event.key==="Escape")setDropdownOpen(false);}} /></div>
             <Button
-              disabled={!selectedAccount || !selectedAccount.hasPerformanceMax || loading}
+              disabled={!selectedAccount || loading}
               className="h-12 cursor-pointer bg-red-600 hover:bg-red-700"
               onClick={runAnalysis}
             >
@@ -455,18 +496,13 @@ export function PlacementOptimizationPageClient({ role }: { role: AuthRole }) {
               {loading ? "Analyzing…" : "Search"}
             </Button>
           </div>
-          <p className="mt-2 text-xs text-neutral-500">Select an account with Performance Max, then press Search to retrieve placements and cache the overview.</p>
-          {selectedAccount && !selectedAccount.hasPerformanceMax ? <p className="mt-2 text-sm font-medium text-amber-700">This account has no active Performance Max campaigns.</p> : null}
+          <p className="mt-2 text-xs text-neutral-500">Select an account, then press Search to retrieve campaign types and placements.</p>
           {data ? (
             <>
               <h2 className="mt-5 text-4xl font-semibold">
                 {data.account.customerName}
               </h2>
-              <p className="mt-2 text-neutral-500">
-                CID {data.account.customerId} · {data.account.startDate}–
-                {data.account.endDate} · Refreshed{" "}
-                {formatDate(data.account.refreshedAt)}
-              </p>
+              <PlacementAccountDetails account={data.account} />
               <Button
                 type="button"
                 variant="outline"
@@ -481,7 +517,13 @@ export function PlacementOptimizationPageClient({ role }: { role: AuthRole }) {
               </Button>
             </>
           ) : null}
-        </section>
+        </section> : data ? (
+          <section className="rounded-2xl border bg-white p-5 shadow-sm">
+            <h2 className="text-3xl font-semibold">{data.account.customerName}</h2>
+            <PlacementAccountDetails account={data.account} />
+            <Button type="button" variant="outline" className="mt-4 cursor-pointer hover:border-red-200 hover:bg-red-50 hover:text-red-700" onClick={() => { setSuitabilityOpen(true); if (!suitability && !suitabilityLoading) void loadSuitability(); }}><ShieldCheckIcon className="size-4" />Content suitability</Button>
+          </section>
+        ) : null}
         <ContentSuitabilitySheet
           open={suitabilityOpen}
           onOpenChange={setSuitabilityOpen}
@@ -491,7 +533,7 @@ export function PlacementOptimizationPageClient({ role }: { role: AuthRole }) {
           onRefresh={() => void loadSuitability(true)}
         />
         <AccountEscalationNotice module="placement" accountId={data?.account.customerId} />
-        {data ? <PerformanceMaxOverview data={data} /> : null}
+        {data ? <PlacementOverview data={data} /> : null}
         {data ? (
           <section className="flex items-center justify-between gap-4 rounded-2xl border bg-white p-5 shadow-sm">
             <div>
@@ -499,9 +541,8 @@ export function PlacementOptimizationPageClient({ role }: { role: AuthRole }) {
               <p className="text-sm text-neutral-500">Browse placements and exclude selected websites or videos directly from Google Ads after confirmation.</p>
             </div>
             <div className="flex flex-wrap items-center justify-end gap-2">
-              <Button type="button" disabled={!hasLivePlacementRows} className="cursor-pointer bg-red-700 hover:bg-red-800 disabled:cursor-wait" onClick={() => setDecisionsOpen(true)}>
-                {!hasLivePlacementRows && loading ? <Spinner className="size-4" /> : null}
-                {hasLivePlacementRows ? "View placements" : loading ? "Loading placements" : "Placements unavailable"}
+              <Button type="button" disabled={!data.placementOverview.placementCount} className="cursor-pointer bg-red-700 hover:bg-red-800" onClick={() => {setDecisionPage(1);setDecisionsOpen(true);}}>
+                {data.placementOverview.placementCount ? "View placements" : "No saved placements"}
               </Button>
             </div>
           </section>
@@ -512,8 +553,11 @@ export function PlacementOptimizationPageClient({ role }: { role: AuthRole }) {
           rows={decisionRows}
           pageRows={decisionPageRows}
           types={types}
+          campaignTypes={campaignTypes}
           type={decisionType}
+          campaignType={decisionCampaignType}
           onTypeChange={setDecisionType}
+          onCampaignTypeChange={setDecisionCampaignType}
           view={decisionView}
           onViewChange={setDecisionView}
           page={decisionPage}
@@ -542,11 +586,9 @@ export function PlacementOptimizationPageClient({ role }: { role: AuthRole }) {
             {warning}
           </p>
         ))}
-        {loading ? (
-          <PlacementAnalysisLoader />
-        ) : mode === "pm" ? (
+        {!loading && mode === "pm" ? (
           null
-        ) : data ? (
+        ) : !loading && data ? (
           <section className="hidden overflow-hidden rounded-2xl border bg-white shadow-sm">
             <div className="flex flex-wrap items-center justify-between gap-3 border-b bg-neutral-50 px-5 py-4">
               <div className="flex items-center gap-3">
@@ -739,20 +781,34 @@ export function PlacementOptimizationPageClient({ role }: { role: AuthRole }) {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-    </ReportShell>
+    </OptimizationPageFrame>
   );
 }
 
-function PlacementAnalysisLoader() {
+function OptimizationPageFrame({ embedded, children, ...shellProps }: ComponentProps<typeof ReportShell> & { embedded: boolean }) {
+  return embedded ? <>{children}</> : <ReportShell {...shellProps}>{children}</ReportShell>;
+}
+
+function PlacementAnalysisLoader({ startedAt, onCancel }: { startedAt: number | null; onCancel: () => void }) {
+  const [elapsedSeconds, setElapsedSeconds] = useState(0);
+  useEffect(() => {
+    if (!startedAt) return;
+    const update = () => setElapsedSeconds(Math.max(0, Math.floor((Date.now() - startedAt) / 1000)));
+    update();
+    const timer = window.setInterval(update, 1000);
+    return () => window.clearInterval(timer);
+  }, [startedAt]);
+  const takingLonger = elapsedSeconds >= 30;
   return (
     <section role="status" className="overflow-hidden rounded-2xl border border-red-100 bg-white shadow-sm">
       <div className="flex items-center gap-3 p-5">
         <span className="flex size-10 items-center justify-center rounded-xl bg-red-50 text-red-700"><Spinner className="size-5" /></span>
-        <div><p className="font-semibold">Loading Performance Max placements</p><p className="text-sm text-neutral-500">Retrieving placement sites and impressions, applying review rules, and updating the local cache.</p></div>
+        <div className="min-w-0 flex-1"><p className="font-semibold">{takingLonger ? "Still loading campaign placements" : "Loading campaign placements"}</p><p className="text-sm text-neutral-500">{takingLonger ? "This account has more data than usual, but the request is still running." : "Retrieving campaign types, placement sites, and performance metrics."}</p></div>
+        <Button type="button" variant="outline" className="shrink-0 cursor-pointer" onClick={onCancel}>Cancel</Button>
       </div>
       <div className="border-t bg-neutral-50 px-5 py-3">
-        <div className="mb-2 flex justify-between text-xs text-neutral-500"><span>Analysis in progress</span><span>Processing</span></div>
-        <div className="h-2 overflow-hidden rounded-full bg-neutral-200"><div className="h-full w-2/3 animate-pulse rounded-full bg-gradient-to-r from-red-700 to-red-400" /></div>
+        <div className="mb-2 flex justify-between text-xs text-neutral-500"><span>Request in progress</span><span>Elapsed: {formatElapsedTime(elapsedSeconds)}</span></div>
+        <div className="h-2 overflow-hidden rounded-full bg-neutral-200"><div className="h-full w-1/3 animate-pulse rounded-full bg-gradient-to-r from-red-700 to-red-400" /></div>
       </div>
     </section>
   );
@@ -876,8 +932,11 @@ function PlacementsSheet({
   rows,
   pageRows,
   types,
+  campaignTypes,
   type,
+  campaignType,
   onTypeChange,
+  onCampaignTypeChange,
   page,
   pageCount,
   onPageChange,
@@ -887,8 +946,11 @@ function PlacementsSheet({
   rows: PlacementOptimizationRow[];
   pageRows: PlacementOptimizationRow[];
   types: string[];
+  campaignTypes: string[];
   type: string;
+  campaignType: string;
   onTypeChange: (value: string) => void;
+  onCampaignTypeChange: (value: string) => void;
   page: number;
   pageCount: number;
   onPageChange: (value: number | ((current: number) => number)) => void;
@@ -924,6 +986,15 @@ function PlacementsSheet({
               </SelectContent>
             </Select>
           </Filter>
+          <Filter label="Campaign type">
+            <Select value={campaignType} onValueChange={onCampaignTypeChange}>
+              <SelectTrigger className="cursor-pointer"><SelectValue /></SelectTrigger>
+              <SelectContent className="z-[10001]">
+                <SelectItem value="all">All campaign types</SelectItem>
+                {campaignTypes.map((value) => <SelectItem key={value} value={value}>{campaignTypeLabel(value)}</SelectItem>)}
+              </SelectContent>
+            </Select>
+          </Filter>
         </div>
         <div className="min-h-0 flex-1 overflow-y-auto">
           <div
@@ -953,7 +1024,7 @@ function PlacementsSheet({
                       <p className="mt-0.5 truncate text-xs text-neutral-500">{row.placement}</p>
                     )}
                   <div className="mt-2 flex flex-wrap items-center gap-1.5 text-xs text-neutral-500">
-                    <Badge variant="outline">{humanize(row.placementType)}</Badge>
+                    <div className="flex flex-wrap gap-1"><Badge variant="outline">{campaignTypeLabel(row.campaignType)}</Badge><Badge variant="outline">{humanize(row.placementType)}</Badge></div>
                   </div>
                 </div>
                 <div className="mt-2 min-h-0 flex-1 overflow-hidden">
@@ -991,8 +1062,11 @@ function PlacementDecisionsSheet({
   rows,
   pageRows,
   types,
+  campaignTypes,
   type,
+  campaignType,
   onTypeChange,
+  onCampaignTypeChange,
   view,
   onViewChange,
   page,
@@ -1010,8 +1084,11 @@ function PlacementDecisionsSheet({
   rows: PlacementOptimizationRow[];
   pageRows: PlacementOptimizationRow[];
   types: string[];
+  campaignTypes: string[];
   type: string;
+  campaignType: string;
   onTypeChange: (value: string) => void;
+  onCampaignTypeChange: (value: string) => void;
   view: "content" | "excluded";
   onViewChange: (value: "content" | "excluded") => void;
   page: number;
@@ -1062,6 +1139,15 @@ function PlacementDecisionsSheet({
               <SelectContent className="z-[10001]">
                 <SelectItem value="all">All placement types</SelectItem>
                 {types.map((value) => <SelectItem key={value} value={value}>{humanize(value)}</SelectItem>)}
+              </SelectContent>
+            </Select>
+          </Filter>
+          <Filter label="Campaign type">
+            <Select value={campaignType} onValueChange={onCampaignTypeChange} disabled={saving}>
+              <SelectTrigger className="cursor-pointer"><SelectValue /></SelectTrigger>
+              <SelectContent className="z-[10001]">
+                <SelectItem value="all">All campaign types</SelectItem>
+                {campaignTypes.map((value) => <SelectItem key={value} value={value}>{campaignTypeLabel(value)}</SelectItem>)}
               </SelectContent>
             </Select>
           </Filter>
@@ -1119,6 +1205,7 @@ function PlacementDecisionsSheet({
                           {href ? <a href={href} target="_blank" rel="noopener noreferrer" className="inline-flex max-w-full items-center gap-1 text-xs text-red-700 hover:underline"><span className="truncate">{row.placement}</span><ExternalLinkIcon className="size-3 shrink-0" /></a> : <p className="truncate text-xs text-neutral-500">{row.placement}</p>}
                         </div>
                         <div className="flex flex-wrap gap-1.5">
+                          <Badge variant="outline">{campaignTypeLabel(row.campaignType)}</Badge>
                           <Badge variant="outline">{humanize(row.placementType)}</Badge>
                           <Badge variant="outline">{placementStatusLabel(row.reviewStatus)}</Badge>
                         </div>
@@ -1337,40 +1424,69 @@ function SuitabilitySection({ section }: { section: ContentSuitabilitySection })
 function isAccountSuggestion(value: unknown): value is AccountSuggestion {
   if (!value || typeof value !== "object") return false;
   const account = value as Partial<AccountSuggestion>;
-  return typeof account.accountName === "string" && typeof account.adAccountId === "string" && /^\d{10}$/.test(account.adAccountId.replace(/\D/g, "")) && typeof account.hasPerformanceMax === "boolean" && typeof account.campaignCount === "number" && Array.isArray(account.campaigns);
+  return typeof account.accountName === "string" && typeof account.adAccountId === "string" && /^\d{10}$/.test(account.adAccountId.replace(/\D/g, ""));
 }
 
-function PerformanceMaxOverview({ data }: { data: PlacementDashboardPayload }) {
-  const performanceMax = data.performanceMax ?? {
-    available: data.rows.length > 0,
-    campaignCount: new Set(data.rows.map((row) => row.campaignName)).size,
+function PlacementAccountDetails({ account }: { account: PlacementDashboardPayload["account"] }) {
+  return (
+    <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+      <PlacementAccountDetail label="Google Ads account" value={`CID ${account.customerId}`} />
+      <PlacementAccountDetail
+        label="Analysis period"
+        value={`${formatReportingDate(account.startDate)} – ${formatReportingDate(account.endDate)}`}
+        emphasized
+      />
+      <PlacementAccountDetail label="Refreshed on" value={formatDate(account.refreshedAt)} />
+    </div>
+  );
+}
+
+function PlacementAccountDetail({ label, value, emphasized = false }: { label: string; value: string; emphasized?: boolean }) {
+  return (
+    <div className={`rounded-xl border px-3.5 py-3 ${emphasized ? "border-red-200 bg-red-50" : "border-neutral-200 bg-neutral-50"}`}>
+      <p className={`text-[11px] font-semibold uppercase tracking-wide ${emphasized ? "text-red-700" : "text-neutral-500"}`}>{label}</p>
+      <p className="mt-1 text-sm font-semibold text-neutral-900">{value}</p>
+    </div>
+  );
+}
+
+function PlacementOverview({ data }: { data: PlacementDashboardPayload }) {
+  const overview = data.placementOverview ?? {
+    campaignCount: data.performanceMax?.campaignCount ?? new Set(data.rows.map((row) => row.campaignName)).size,
+    placementCount: data.rows.length,
     totalImpressions: data.rows.reduce((sum, row) => sum + row.impressions, 0),
+    totalSpend: data.rows.reduce((sum, row) => sum + row.spend, 0),
     uniqueSites: new Set(data.rows.filter((row) => row.placementType === "WEBSITE").map((row) => row.placement)).size,
     topSites: data.rows.filter((row) => row.placementType === "WEBSITE").sort((left, right) => right.impressions - left.impressions).slice(0, 5),
   };
-  const total = performanceMax.totalImpressions;
+  const campaignTypes = data.campaignTypes ?? [{channelType:"PERFORMANCE_MAX",label:"Performance Max",campaignCount:data.performanceMax?.campaignCount??0,placementCount:data.rows.length,impressions:overview.totalImpressions,spend:overview.totalSpend,available:data.rows.length>0}];
+  const total = overview.totalImpressions;
   return (
     <section className="overflow-hidden rounded-2xl border bg-white shadow-sm">
       <header className="flex flex-wrap items-start justify-between gap-3 border-b bg-neutral-50 px-5 py-4">
         <div>
-          <div className="flex items-center gap-2"><Globe2Icon className="size-5 text-red-700" /><h3 className="text-lg font-semibold">Performance Max placement overview</h3></div>
-          <p className="mt-1 text-sm text-neutral-500">Website placements ranked by the impressions available in Google Ads&apos; Performance Max placement report.</p>
+          <div className="flex items-center gap-2"><Globe2Icon className="size-5 text-red-700" /><h3 className="text-lg font-semibold">Campaign placement overview</h3></div>
+          <p className="mt-1 text-sm text-neutral-500">Campaign types and placements returned by Google Ads for the selected account.</p>
         </div>
-        <Badge className={performanceMax.available ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "border-neutral-200 bg-neutral-100 text-neutral-500"} variant="outline">
-          {performanceMax.available ? "Performance Max detected" : "No Performance Max data"}
+        <Badge className={overview.placementCount ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "border-neutral-200 bg-neutral-100 text-neutral-500"} variant="outline">
+          {overview.placementCount ? `${overview.placementCount} placements` : "No placement data"}
         </Badge>
       </header>
-      <div className="grid gap-3 border-b p-5 sm:grid-cols-3">
+      <div className="grid gap-3 border-b p-5 sm:grid-cols-2 lg:grid-cols-4">
         {[
-          ["PMax campaigns", performanceMax.campaignCount.toLocaleString()],
+          ["Campaigns", overview.campaignCount.toLocaleString()],
+          ["Placements", overview.placementCount.toLocaleString()],
           ["Total impressions", total.toLocaleString()],
-          ["Unique sites", performanceMax.uniqueSites.toLocaleString()],
+          ["Unique sites", overview.uniqueSites.toLocaleString()],
         ].map(([label, value]) => <div key={label} className="rounded-xl border bg-white p-4"><p className="text-xs font-semibold uppercase text-neutral-500">{label}</p><p className="mt-2 text-2xl font-semibold">{value}</p></div>)}
       </div>
+      <div className="grid gap-3 border-b p-5 sm:grid-cols-2 xl:grid-cols-3">
+        {campaignTypes.map((item)=><div key={item.channelType} className="rounded-xl border bg-white p-4"><div className="flex items-start justify-between gap-3"><div><p className="font-semibold">{item.label}</p><p className="mt-1 text-xs text-neutral-500">{item.campaignCount} campaign{item.campaignCount===1?"":"s"}</p></div><Badge variant="outline">{item.placementCount} placements</Badge></div><p className="mt-3 text-sm text-neutral-600">{item.available?`${item.impressions.toLocaleString()} impressions · ${item.spend.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})} spend`:"No placement data for this period"}</p></div>)}
+      </div>
       <div className="p-5">
-        <div className="mb-3 flex items-center justify-between"><h4 className="font-semibold">Top 5 sites</h4><span className="text-xs text-neutral-500">Share of all PMax placement impressions</span></div>
+        <div className="mb-3 flex items-center justify-between"><h4 className="font-semibold">Top 5 sites</h4><span className="text-xs text-neutral-500">Share of all placement impressions</span></div>
         <div className="space-y-2">
-          {performanceMax.topSites.map((site, index) => {
+          {overview.topSites.map((site, index) => {
             const share = total > 0 ? site.impressions * 100 / total : 0;
             const href = placementWebsiteUrl(site.targetUrl, site.placement);
             const content = <>
@@ -1383,7 +1499,7 @@ function PerformanceMaxOverview({ data }: { data: PlacementDashboardPayload }) {
               </div>
               <div className="text-left sm:text-right">
                 <p className="font-semibold">{site.impressions.toLocaleString()}</p>
-                <p className="text-xs text-neutral-500">{share.toFixed(1)}% <span className="whitespace-nowrap">of total PMax impressions</span></p>
+                <p className="text-xs text-neutral-500">{share.toFixed(1)}% <span className="whitespace-nowrap">of total impressions</span></p>
               </div>
             </>;
             return href ? (
@@ -1396,11 +1512,19 @@ function PerformanceMaxOverview({ data }: { data: PlacementDashboardPayload }) {
               </div>
             );
           })}
-          {performanceMax.topSites.length === 0 ? <p className="rounded-xl border border-dashed p-6 text-center text-sm text-neutral-500">No website placement impressions were returned.</p> : null}
+          {overview.topSites.length === 0 ? <p className="rounded-xl border border-dashed p-6 text-center text-sm text-neutral-500">No website placement impressions were returned.</p> : null}
         </div>
       </div>
     </section>
   );
+}
+
+function campaignTypeLabel(value?: string) {
+  if (!value) return "Performance Max";
+  if (value === "VIDEO") return "Video / YouTube";
+  if (value === "PERFORMANCE_MAX") return "Performance Max";
+  if (value === "DEMAND_GEN" || value === "DISCOVERY") return "Demand Gen";
+  return humanize(value);
 }
 
 function isUserFacingPlacementWarning(warning: string) {
@@ -1527,6 +1651,7 @@ function PlacementRow({
         ) : null}
       </td>
       <td className="px-4 py-4">
+        <Badge variant="outline">{campaignTypeLabel(row.campaignType)}</Badge>
         <Badge variant="outline">{humanize(row.placementType)}</Badge>
       </td>
       <td className="px-4 py-4">{row.campaignName}</td>
@@ -1585,6 +1710,21 @@ function humanize(value: string) {
 }
 function placementStatusLabel(value: string) {
   return value === "ready_for_publishing" ? "Excluded" : humanize(value);
+}
+function formatReportingDate(value: string) {
+  const date = new Date(`${value}T00:00:00`);
+  return Number.isNaN(date.getTime())
+    ? value
+    : new Intl.DateTimeFormat("en-MY", {
+        day: "numeric",
+        month: "short",
+        year: "numeric",
+      }).format(date);
+}
+function formatElapsedTime(totalSeconds: number) {
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return minutes > 0 ? `${minutes}m ${seconds}s` : `${seconds}s`;
 }
 function formatDate(value: string) {
   const date = new Date(

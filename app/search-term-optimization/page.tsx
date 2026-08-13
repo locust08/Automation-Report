@@ -1,15 +1,12 @@
-import { Suspense } from "react";
 import { redirect } from "next/navigation";
 
-import { SearchTermOptimizationPageClient } from "@/components/search-term-optimization/search-term-optimization-page-client";
-import { getServerAuthSession } from "@/lib/auth/server-session";
-
-export default async function SearchTermOptimizationPage() {
-  const session = await getServerAuthSession();
-  if (!session) redirect("/");
-  return (
-    <Suspense fallback={<div className="min-h-screen bg-[#f0f0f0] p-8">Loading optimization dashboard…</div>}>
-      <SearchTermOptimizationPageClient role={session.role} />
-    </Suspense>
-  );
+export default async function SearchTermOptimizationRedirect({ searchParams }: { searchParams: Promise<Record<string, string | string[] | undefined>> }) {
+  const params = new URLSearchParams();
+  for (const [key, value] of Object.entries(await searchParams)) {
+    if (Array.isArray(value)) value.forEach((item) => params.append(key, item));
+    else if (value !== undefined) params.set(key, value);
+  }
+  if (!params.has("googleAccountId") && params.has("accountId")) params.set("googleAccountId", params.get("accountId")!);
+  params.set("tab", "search-terms");
+  redirect(`/google-optimization?${params.toString()}`);
 }

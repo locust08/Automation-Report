@@ -22,6 +22,7 @@
 __pycache__/
 *.py[cod]
 **/.venv/
+**/.wrangler/state/v3/d1/
 
 # next.js
 /.next/
