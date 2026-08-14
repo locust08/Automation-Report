@@ -52,13 +52,15 @@ export async function POST(request: Request) {
     await claimDailySlot({customerId:accountId,accountName:existing?.account.customerName??"",source:"manual"});
     claimedAccountId=accountId;
     await createDurableAnalysisJob({id:jobId,customerId:accountId,accountName:existing?.account.customerName??"",source:"manual"});
-    await fs.mkdir(jobsDirectory(), { recursive: true });
-    const retentionCutoff=Date.now()-7*24*60*60*1000;
-    for(const name of await fs.readdir(jobsDirectory())){const file=path.join(jobsDirectory(),name);const stat=await fs.stat(file).catch(()=>null);if(stat&&stat.mtimeMs<retentionCutoff)await fs.unlink(file).catch(()=>undefined);}
-    await fs.writeFile(path.join(jobsDirectory(), `${jobId}.json`), JSON.stringify({
-      jobId, accountId, status: "queued", stage: "Checking Google Ads for new search terms", startedAt: new Date().toISOString(),
-    }, null, 2), "utf8");
-    await fs.writeFile(path.join(jobsDirectory(), `${jobId}.baseline.json`),JSON.stringify((existing?.results??[]).map(stableSearchTermKey)),"utf8");
+    if (!process.env.VERCEL) {
+      await fs.mkdir(jobsDirectory(), { recursive: true });
+      const retentionCutoff=Date.now()-7*24*60*60*1000;
+      for(const name of await fs.readdir(jobsDirectory())){const file=path.join(jobsDirectory(),name);const stat=await fs.stat(file).catch(()=>null);if(stat&&stat.mtimeMs<retentionCutoff)await fs.unlink(file).catch(()=>undefined);}
+      await fs.writeFile(path.join(jobsDirectory(), `${jobId}.json`), JSON.stringify({
+        jobId, accountId, status: "queued", stage: "Checking Google Ads for new search terms", startedAt: new Date().toISOString(),
+      }, null, 2), "utf8");
+      await fs.writeFile(path.join(jobsDirectory(), `${jobId}.baseline.json`),JSON.stringify((existing?.results??[]).map(stableSearchTermKey)),"utf8");
+    }
     const workerUrl=process.env.SEARCH_TERM_ANALYSIS_WORKER_URL?.replace(/\/$/,"");const workerSecret=process.env.WORKER_API_SECRET;
     if(workerUrl&&workerSecret){const queued=await fetch(`${workerUrl}/search-term-analysis/jobs`,{method:"POST",headers:{Authorization:`Bearer ${workerSecret}`,"Content-Type":"application/json"},body:JSON.stringify({runId:jobId,scheduleId:"",googleCustomerId:accountId,accountName:existing?.account.customerName??"",startDate:"",endDate:"",scheduledFor:new Date().toISOString(),scheduled:false})});if(!queued.ok)throw new Error(`Unable to queue analysis worker (${queued.status}).`);return NextResponse.json({jobId,status:"queued",stage:"Queued for background analysis"},{status:202});}
     if (process.env.VERCEL) throw new Error("Search-term background Worker is not configured for this Vercel environment.");
