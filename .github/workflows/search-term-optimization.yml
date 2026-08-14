@@ -22,7 +22,8 @@ jobs:
       - run: npm ci
       - name: Mark running
         run: curl --fail-with-body -X POST "${{ inputs.callback_url }}" -H "Authorization: Bearer $WORKER_API_SECRET" -H "Content-Type: application/json" --data "{\"runId\":\"${{ inputs.run_id }}\",\"status\":\"running\",\"scheduled\":${{ inputs.scheduled }}}"
-        env: { WORKER_API_SECRET: "${{ secrets.WORKER_API_SECRET }}" }
+        env:
+          WORKER_API_SECRET: ${{ secrets.WORKER_API_SECRET }}
       - name: Analyze prioritized terms
         run: node scripts/run-search-term-analysis-job.mjs "${{ inputs.run_id }}" "${{ inputs.account_id }}" "${{ inputs.start_date }}" "${{ inputs.end_date }}"
         env:
@@ -58,4 +59,5 @@ jobs:
           TERMS=$(jq -r '.termsProcessed // 0' "$STATUS_FILE" 2>/dev/null || echo 0)
           BATCHES=$(jq -r '.completedBatches // 0' "$STATUS_FILE" 2>/dev/null || echo 0)
           curl --fail-with-body -X POST "${{ inputs.callback_url }}" -H "Authorization: Bearer $WORKER_API_SECRET" -H "Content-Type: application/json" --data "{\"runId\":\"${{ inputs.run_id }}\",\"status\":\"$STATUS\",\"scheduled\":${{ inputs.scheduled }},\"termsProcessed\":$TERMS,\"batchesCompleted\":$BATCHES}"
-        env: { WORKER_API_SECRET: "${{ secrets.WORKER_API_SECRET }}" }
+        env:
+          WORKER_API_SECRET: ${{ secrets.WORKER_API_SECRET }}
