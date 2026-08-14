@@ -2,6 +2,7 @@
 
 import { DragEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
+import posthog from "posthog-js";
 import {
   AlertCircleIcon,
   BarChart3Icon,
@@ -142,6 +143,13 @@ export function MetaImportPageClient({
       const payload = (await response.json()) as MetaImportCommitResult & { error?: string };
       if (!response.ok) throw new Error(payload.error || payload.errors?.join(" ") || "CSV import failed.");
       setResult(payload);
+      posthog.capture("meta_import_completed", {
+        reporting_level: preview.reportingLevel,
+        rows_created: payload.rowsCreated,
+        rows_updated: payload.rowsUpdated,
+        rows_skipped: payload.rowsSkipped,
+        invalid_rows: payload.invalidRows,
+      });
       await loadHistory(accountId);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "CSV import failed.");

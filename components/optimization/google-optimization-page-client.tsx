@@ -119,10 +119,15 @@ export function GoogleOptimizationPageClient({ role }: { role: AuthRole }) {
     router.replace(`${pathname}?${params.toString()}`, { scroll: false });
   }
 
+  const matchingRecentAccounts=useMemo(()=>{
+    if(selectedAccount&&query.trim()===`${selectedAccount.accountName} | ${selectedAccount.adAccountId}`)return recentAccounts;
+    return recentAccounts.filter(account=>matchesAccountWords(account,query));
+  },[query,recentAccounts,selectedAccount]);
+
   const selectableAccounts = useMemo(() => {
     const resultIds = new Set(results.map((account) => normalizeId(account.adAccountId)));
-    return [...results, ...recentAccounts.filter((account) => !resultIds.has(normalizeId(account.adAccountId)))];
-  }, [recentAccounts, results]);
+    return [...results, ...matchingRecentAccounts.filter((account) => !resultIds.has(normalizeId(account.adAccountId)))];
+  }, [matchingRecentAccounts, results]);
 
   function handleSearchKeyDown(event: KeyboardEvent<HTMLInputElement>) {
     if (event.key === "Escape") {
@@ -159,7 +164,7 @@ export function GoogleOptimizationPageClient({ role }: { role: AuthRole }) {
               onChange={(value) => { setQuery(value); setOpen(true); setHighlightedIndex(-1); }}
               onSelect={selectAccount}
               results={results}
-              recentAccounts={recentAccounts}
+              recentAccounts={matchingRecentAccounts}
               open={open}
               state={searchState}
               error={searchError}
@@ -192,6 +197,7 @@ export function GoogleOptimizationPageClient({ role }: { role: AuthRole }) {
 }
 
 function normalizeId(value: string) { return value.replace(/\D/g, ""); }
+function matchesAccountWords(account:Account,query:string){const normalize=(value:string)=>value.normalize("NFKD").replace(/[\u0300-\u036f]/g,"").toLowerCase().replace(/[^a-z0-9]+/g," ").trim();const tokens=normalize(query).split(" ").filter(Boolean);const haystack=normalize(`${account.accountName} ${account.adAccountId}`);return tokens.every(token=>haystack.includes(token));}
 function isAccount(value: unknown): value is Account {
   if (!value || typeof value !== "object") return false;
   const account = value as Partial<Account>;

@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import posthog from "posthog-js";
 import { EyeIcon, EyeOffIcon, PencilIcon, SaveIcon, SearchIcon, ShieldCheckIcon, UserPlusIcon, UsersRoundIcon, XIcon } from "lucide-react";
 
 import { ReportShell } from "@/components/reporting/report-shell";
@@ -74,6 +75,10 @@ export function UserManagementPageClient({ currentUserId }: { currentUserId: str
       setRole("specialist");
       setIsActive(true);
       setNotice("User created successfully.");
+      posthog.capture("user_created", {
+        role,
+        is_active: isActive,
+      });
       await loadUsers();
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Unable to create user.");
@@ -135,7 +140,13 @@ function ManagedUserRow({ user, currentUser, editing, onEdit, onCancel, onSaved 
       const response = await fetch(`/api/admin/users/${encodeURIComponent(user.userId)}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ fullName, role, isActive, password }) });
       const payload = (await response.json()) as { user?: ManagedUser; error?: string };
       if (!response.ok || !payload.user) throw new Error(payload.error ?? "Unable to update user.");
-      setPassword(""); onSaved(payload.user);
+      setPassword("");
+      posthog.capture("user_updated", {
+        role,
+        is_active: isActive,
+        password_changed: Boolean(password),
+      });
+      onSaved(payload.user);
     } catch (caught) { setError(caught instanceof Error ? caught.message : "Unable to update user."); }
     finally { setSaving(false); }
   }

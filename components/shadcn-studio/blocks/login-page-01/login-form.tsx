@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { EyeIcon, EyeOffIcon } from "lucide-react";
 import { useRouter } from "next/navigation";
+import posthog from "posthog-js";
 
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -106,6 +107,22 @@ const LoginForm = () => {
         setIsSubmitting(false);
         return;
       }
+
+      try {
+        const sessionResponse = await fetch("/api/auth/session", { cache: "no-store" });
+        if (sessionResponse.ok) {
+          const { user } = (await sessionResponse.json()) as {
+            user?: { id?: unknown; email?: unknown; fullName?: unknown; role?: unknown };
+          };
+          if (typeof user?.id === "string" && user.id) {
+            posthog.identify(user.id, {
+              ...(typeof user.email === "string" ? { email: user.email } : {}),
+              ...(typeof user.fullName === "string" ? { name: user.fullName } : {}),
+              ...(typeof user.role === "string" ? { role: user.role } : {}),
+            });
+          }
+        }
+      } catch {}
 
       window.localStorage.removeItem(LOCKOUT_STORAGE_KEY);
       router.replace("/dashboard");

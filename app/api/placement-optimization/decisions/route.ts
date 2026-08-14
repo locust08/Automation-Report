@@ -12,7 +12,7 @@ export async function POST(request: Request) {
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   if (session.role !== "co" && !isAdminRole(session.role)) return NextResponse.json({ error: "Only a Campaign Optimizer can review placements." }, { status: 403 });
   const body = await request.json() as { recommendationIds?: unknown; decision?: unknown };
-  const ids = Array.isArray(body.recommendationIds) ? [...new Set(body.recommendationIds.map(String).filter((id) => /^\d+:\d+$/.test(id)))] : [];
+  const ids = Array.isArray(body.recommendationIds) ? [...new Set(body.recommendationIds.map(String).filter((id) => /^(?:\d+:\d+|v2:\d+)$/.test(id)))] : [];
   const decision = body.decision as PlacementDecision;
   if (!ids.length || !["exclude", "keep", "kiv"].includes(decision)) return NextResponse.json({ error: "Valid placement IDs and decision are required." }, { status: 400 });
   if (ids.length > 100) return NextResponse.json({ error: "Select no more than 100 placements at a time." }, { status: 400 });
@@ -46,7 +46,7 @@ export async function DELETE(request: Request) {
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   if (session.role !== "co" && session.role !== "approver" && !isAdminRole(session.role)) return NextResponse.json({ error: "Your role cannot remove placement decisions." }, { status: 403 });
   const body = await request.json() as { recommendationIds?: unknown };
-  const ids = Array.isArray(body.recommendationIds) ? [...new Set(body.recommendationIds.map(String).filter((id) => /^\d+:\d+$/.test(id)))] : [];
+  const ids = Array.isArray(body.recommendationIds) ? [...new Set(body.recommendationIds.map(String).filter((id) => /^(?:\d+:\d+|v2:\d+)$/.test(id)))] : [];
   if (!ids.length) return NextResponse.json({ error: "Valid placement IDs are required." }, { status: 400 });
   try {
     return NextResponse.json({

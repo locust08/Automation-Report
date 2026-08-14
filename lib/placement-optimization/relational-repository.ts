@@ -1,6 +1,8 @@
 import type { GoogleCampaignTypeOverview, GooglePlacementPerformanceRow } from "@/lib/reporting/google";
 import { jsonBody, qs, supabaseRest } from "@/lib/optimization/supabase-rest";
 import type { PlacementDashboardPayload, PlacementOptimizationRow } from "@/lib/placement-optimization/types";
+import type { PlacementApproverDecision, PlacementDecision } from "@/lib/placement-optimization/types";
+import { publishPlacementExclusions } from "@/lib/optimization/google-ads-mutations";
 
 export type PlacementJobStatus = {
   id: string;
@@ -8,12 +10,17 @@ export type PlacementJobStatus = {
   customer_name: string | null;
   reporting_start_date: string;
   reporting_end_date: string;
-  status: "queued" | "running" | "completed" | "failed" | "cancelled";
+  status: "queued" | "running" | "partial" | "completed" | "failed" | "cancelled";
   stage: string;
   processed_rows: number;
   total_rows: number | null;
   error: string | null;
   cancellation_requested: boolean;
+  r2_object_key: string | null;
+  next_offset: number;
+  imported_rows: number;
+  import_all_requested: boolean;
+  source_expires_at: string | null;
   started_at: string;
   updated_at: string;
   finished_at: string | null;
@@ -57,7 +64,7 @@ export async function getPlacementJob(jobId: string) {
 }
 
 export async function getActivePlacementJob(customerId: string) {
-  const rows = await supabaseRest<PlacementJobStatus[]>(`ad_automation_placement_jobs?google_customer_id=eq.${qs(customerId)}&status=in.(queued,running)&select=*&order=started_at.desc&limit=1`);
+  const rows = await supabaseRest<PlacementJobStatus[]>(`ad_automation_placement_jobs?google_customer_id=eq.${qs(customerId)}&status=in.(queued,running,partial)&select=*&order=started_at.desc&limit=1`);
   return rows[0] ?? null;
 }
 
@@ -119,12 +126,15 @@ export class PlacementJobCancelledError extends Error {
 
 export async function loadPlacementSummary(input: { customerId: string; customerName: string; startDate: string; endDate: string; campaignTypeOverview?: GoogleCampaignTypeOverview[]; warnings?: string[] }): Promise<PlacementDashboardPayload> {
   const run = await getLatestPlacementRun(input.customerId, input.startDate, input.endDate);
-  const campaignTypes = run?.campaign_types ?? (input.campaignTypeOverview ?? []).map((item) => ({
+  const storedTypes = new Map((run?.campaign_types ?? []).map((item) => [item.channelType, item]));
+  const campaignTypes = (input.campaignTypeOverview ?? []).map((item) => storedTypes.get(item.channelType) ?? ({
     channelType: item.channelType, label: campaignTypeLabel(item.channelType), campaignCount: item.campaignCount,
     placementCount: 0, impressions: 0, spend: 0, available: false,
   }));
+  for (const item of storedTypes.values()) if (!campaignTypes.some((candidate) => candidate.channelType === item.channelType)) campaignTypes.push(item);
   const placementCount = run?.placement_count ?? 0;
   return {
+    placementStorage: { status: "available" },
     account: { customerId: input.customerId, customerName: run?.customer_name ?? input.customerName, startDate: input.startDate, endDate: input.endDate, refreshedAt: run?.analyzed_at ?? new Date().toISOString() },
     summary: { total: placementCount, needsReview: placementCount, awaitingApproval: 0, kept: 0, kiv: 0, approved: 0, rejected: 0 },
     performanceMax: { available: campaignTypes.some((item) => item.channelType === "PERFORMANCE_MAX" && item.available), campaignCount: campaignTypes.find((item) => item.channelType === "PERFORMANCE_MAX")?.campaignCount ?? 0, totalImpressions: campaignTypes.find((item) => item.channelType === "PERFORMANCE_MAX")?.impressions ?? 0, uniqueSites: run?.unique_sites ?? 0, topSites: (run?.top_sites ?? []).map(({ campaignType: _campaignType, ...site }) => site) },
@@ -164,5 +174,14 @@ function hydrateRow(row: StoredPlacementRow): PlacementOptimizationRow {
     confirmationRequired: row.confirmation_required, aiStatus: row.ai_status, reviewStatus: row.review_status,
     currentDecision: row.current_decision, reviewHistory: row.reviewed_at ? [{ id: `v2-review:${row.id}`, reviewerEmail: row.reviewer_email ?? "", reviewerRole: row.reviewer_role ?? "", action: row.current_decision ?? row.review_status, resultingStatus: row.review_status, createdAt: row.reviewed_at }] : [], };
 }
+
+type Reviewer={id:string;email:string;role:string};
+function relationalIds(ids:string[]){const parsed=ids.map(id=>Number(id.replace(/^v2:/,""))).filter(Number.isSafeInteger);if(parsed.length!==ids.length)throw new Error("Invalid relational placement reference.");return parsed;}
+async function relationalRows(ids:string[]){const parsed=relationalIds(ids);const rows=await supabaseRest<StoredPlacementRow[]>(`ad_automation_placement_rows_v2?id=in.(${parsed.join(",")})&select=*`);if(rows.length!==parsed.length)throw new Error("One or more placements were not found.");return rows;}
+async function patchRelational(ids:string[],values:Record<string,unknown>){const parsed=relationalIds(ids);await supabaseRest(`ad_automation_placement_rows_v2?id=in.(${parsed.join(",")})`,{method:"PATCH",headers:{Prefer:"return=minimal"},body:JSON.stringify(values)});return{updated:parsed.length,skipped:0};}
+export async function saveRelationalOptimizerDecision(input:{recommendationIds:string[];decision:PlacementDecision;reviewer:Reviewer}){const now=new Date().toISOString();return patchRelational(input.recommendationIds,{review_status:input.decision==="exclude"?"ready_for_approval":input.decision==="keep"?"kept":"kiv",current_decision:input.decision,reviewer_email:input.reviewer.email,reviewer_role:input.reviewer.role,reviewed_at:now});}
+export async function saveRelationalApproverDecision(input:{recommendationIds:string[];decision:PlacementApproverDecision;reviewer:Reviewer}){const rows=await relationalRows(input.recommendationIds);if(input.decision==="approved"){const runIds=[...new Set(rows.map(row=>row.run_id))];if(runIds.length!==1)throw new Error("Selected placements must belong to one analysis run.");const runs=await supabaseRest<Array<{google_customer_id:string}>>(`ad_automation_placement_runs_v2?id=eq.${runIds[0]}&select=google_customer_id&limit=1`);if(!runs[0])throw new Error("Placement analysis run was not found.");await publishPlacementExclusions(runs[0].google_customer_id,rows.filter(row=>row.campaign_id).map(row=>({campaignId:row.campaign_id!,placement:row.placement,placementType:row.placement_type})));}
+  return patchRelational(input.recommendationIds,{review_status:input.decision==="approved"?"published":input.decision==="rejected"?"approver_rejected":"returned_for_clarification",current_decision:input.decision==="approved"?"exclude":input.decision,reviewer_email:input.reviewer.email,reviewer_role:input.reviewer.role,reviewed_at:new Date().toISOString()});}
+export async function clearRelationalPlacementDecision(input:{recommendationIds:string[];reviewer:Reviewer}){return patchRelational(input.recommendationIds,{review_status:"pending_optimizer",current_decision:null,reviewer_email:input.reviewer.email,reviewer_role:input.reviewer.role,reviewed_at:new Date().toISOString()});}
 
 function campaignTypeLabel(value: string) { if (value === "VIDEO") return "Video / YouTube"; if (value === "PERFORMANCE_MAX") return "Performance Max"; if (value === "DEMAND_GEN" || value === "DISCOVERY") return "Demand Gen"; return value.toLowerCase().split("_").map((part) => part.charAt(0).toUpperCase() + part.slice(1)).join(" "); }

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import posthog from "posthog-js";
 import { CalendarClockIcon, PlusIcon, SaveIcon, Trash2Icon } from "lucide-react";
 import { ReportShell } from "@/components/reporting/report-shell";
 import { GoogleAccountSearchField } from "@/components/optimization/google-account-search-field";
@@ -24,7 +25,7 @@ export function OptimizationSchedulingPageClient(){
   const overCapacityDays=useMemo(()=>[...usage].filter(([,count])=>count>4).map(([day])=>day),[usage]);
   function patch(index:number,changes:Partial<OptimizationSchedule>){setSchedules(current=>current.map((s,i)=>i===index?{...s,...changes}:s));}
   function add(){if(!selected)return;if(schedules.some(s=>s.googleCustomerId===selected.adAccountId.replace(/\D/g,""))){setMessage("That account already has a schedule.");return;}setSchedules(s=>[...s,emptySchedule(selected)]);setSelected(null);setQuery("");setAccounts([]);setMessage(null);}
-  async function save(){setSaving(true);setMessage(null);try{const r=await fetch("/api/optimization-scheduling",{method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify({schedules})});const p=await r.json();if(!r.ok)throw new Error(p.error);setSchedules(p.schedules);setMessage("All schedules saved.");}catch(e){setMessage(e instanceof Error?e.message:"Unable to save schedules.");}finally{setSaving(false);}}
+  async function save(){setSaving(true);setMessage(null);try{const r=await fetch("/api/optimization-scheduling",{method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify({schedules})});const p=await r.json();if(!r.ok)throw new Error(p.error);setSchedules(p.schedules);setMessage("All schedules saved.");posthog.capture("optimization_schedules_saved",{schedule_count:p.schedules.length,enabled_schedule_count:p.schedules.filter((schedule:OptimizationSchedule)=>schedule.enabled).length});}catch(e){setMessage(e instanceof Error?e.message:"Unable to save schedules.");}finally{setSaving(false);}}
   return <ReportShell title="Optimization Scheduling" dateLabel="Malaysia time · maximum 4 accounts per day" reportReady={!loading}>
     <div className="space-y-5 text-neutral-950">
       <section className="rounded-2xl border border-neutral-200 bg-white p-5 shadow-sm">

@@ -60,7 +60,7 @@ type AccountSuggestion = {
   accessPath?: string | null;
 };
 type AccountSearchState = "idle" | "loading" | "success" | "error";
-type PlacementJob = { id:string; status:"queued"|"running"|"completed"|"failed"|"cancelled"; stage:string; processed_rows:number; total_rows:number|null; error:string|null; started_at:string };
+type PlacementJob = { id:string; status:"queued"|"running"|"partial"|"completed"|"failed"|"cancelled"; stage:string; processed_rows:number; total_rows:number|null; error:string|null; started_at:string };
 const ACCOUNT_SEARCH_CACHE_KEY =
   "placement-optimization-pmax-account-search-cache-v1";
 const RECENT_ACCOUNTS_KEY = "placement-optimization-recent-accounts";
@@ -138,6 +138,10 @@ export function PlacementOptimizationPageClient({ role, embedded = false, extern
       setHasLivePlacementRows(true);
       setLoadCompletedAt(new Date().toISOString());
       writePlacementOverviewCache(payload);
+      if (accountId) {
+        const jobResponse=await fetch(`/api/placement-optimization/analyze?accountId=${encodeURIComponent(accountId)}`,{cache:"no-store",signal:controller.signal});
+        if(jobResponse.ok){const jobPayload=await jobResponse.json() as {job:PlacementJob|null};setAnalysisJob(jobPayload.job);}
+      }
     } catch (caught) {
       if (controller.signal.aborted) return;
       setError(
@@ -315,9 +319,12 @@ export function PlacementOptimizationPageClient({ role, embedded = false, extern
     void startPlacementAnalysis(selectedAccount.adAccountId);
   }
   async function startPlacementAnalysis(accountId:string){setError(null);setLoadCompletedAt(null);try{const response=await fetch("/api/placement-optimization/analyze",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({accountId})});const job=await response.json() as PlacementJob&{error?:string};if(!response.ok)throw new Error(job.error??"Unable to start placement analysis.");setAnalysisJob(job);}catch(caught){setError(caught instanceof Error?caught.message:"Unable to start placement analysis.");}}
-  useEffect(()=>{if(!analysisJob||!["queued","running"].includes(analysisJob.status))return;const timer=window.setInterval(async()=>{try{const response=await fetch(`/api/placement-optimization/analyze?jobId=${encodeURIComponent(analysisJob.id)}`,{cache:"no-store"});const job=await response.json() as PlacementJob&{error?:string};if(!response.ok)throw new Error(job.error??"Unable to read placement progress.");setAnalysisJob(job);if(job.status==="completed"){setLoadCompletedAt(new Date().toISOString());if(selectedAccount)void load(selectedAccount.adAccountId);}else if(job.status==="failed")setError(job.error??"Placement analysis failed.");}catch(caught){setError(caught instanceof Error?caught.message:"Unable to read placement progress.");}},2000);return()=>window.clearInterval(timer);},[analysisJob,load,selectedAccount]);
+  useEffect(()=>{if(!analysisJob||!["queued","running"].includes(analysisJob.status))return;const timer=window.setInterval(async()=>{try{const response=await fetch(`/api/placement-optimization/analyze?jobId=${encodeURIComponent(analysisJob.id)}`,{cache:"no-store"});const job=await response.json() as PlacementJob&{error?:string};if(!response.ok)throw new Error(job.error??"Unable to read placement progress.");const hasNewBatch=job.processed_rows>analysisJob.processed_rows;setAnalysisJob(job);if(hasNewBatch||job.status==="completed"){setLoadCompletedAt(new Date().toISOString());if(selectedAccount)void load(selectedAccount.adAccountId);}else if(job.status==="failed")setError(job.error??"Placement analysis failed.");}catch(caught){setError(caught instanceof Error?caught.message:"Unable to read placement progress.");}},2000);return()=>window.clearInterval(timer);},[analysisJob,load,selectedAccount]);
   async function cancelPlacementAnalysis(){if(!analysisJob)return;await fetch(`/api/placement-optimization/analyze?jobId=${encodeURIComponent(analysisJob.id)}`,{method:"DELETE"});setAnalysisJob(current=>current?{...current,status:"cancelled",stage:"Cancellation requested"}:null);}
-  const loadRowsPage=useCallback(async(pageNumber:number)=>{if(!data)return;const params=new URLSearchParams({accountId:data.account.customerId,startDate:data.account.startDate,endDate:data.account.endDate,page:String(pageNumber),pageSize:String(PLACEMENTS_PER_PAGE),campaignType:decisionCampaignType,placementType:decisionType});const response=await fetch(`/api/placement-optimization/rows?${params}`,{cache:"no-store"});const payload=await response.json() as {rows?:PlacementOptimizationRow[];total?:number;error?:string};if(!response.ok)throw new Error(payload.error??"Unable to load placements.");setData(current=>current?{...current,rows:payload.rows??[]}:current);setRemoteRowTotal(payload.total??0);setHasLivePlacementRows(true);},[data,decisionCampaignType,decisionType]);
+  const customerId=data?.account.customerId;
+  const accountStartDate=data?.account.startDate;
+  const accountEndDate=data?.account.endDate;
+  const loadRowsPage=useCallback(async(pageNumber:number)=>{if(!customerId||!accountStartDate||!accountEndDate)return;const params=new URLSearchParams({accountId:customerId,startDate:accountStartDate,endDate:accountEndDate,page:String(pageNumber),pageSize:String(PLACEMENTS_PER_PAGE),campaignType:decisionCampaignType,placementType:decisionType});const response=await fetch(`/api/placement-optimization/rows?${params}`,{cache:"no-store"});const payload=await response.json() as {rows?:PlacementOptimizationRow[];total?:number;error?:string};if(!response.ok)throw new Error(payload.error??"Unable to load placements.");setData(current=>current?{...current,rows:payload.rows??[]}:current);setRemoteRowTotal(payload.total??0);setHasLivePlacementRows(true);},[accountEndDate,accountStartDate,customerId,decisionCampaignType,decisionType]);
   useEffect(()=>{if(!decisionsOpen)return;void loadRowsPage(decisionPage).catch(caught=>setError(caught instanceof Error?caught.message:"Unable to load placements."));},[decisionPage,decisionsOpen,loadRowsPage]);
   const rows = useMemo(
     () =>
@@ -459,6 +466,7 @@ export function PlacementOptimizationPageClient({ role, embedded = false, extern
     return decisionView === "excluded" ? excluded : !excluded;
   }), [data?.rows, decisionCampaignType, decisionType, decisionView]);
   const decisionPageCount = Math.max(1, Math.ceil(remoteRowTotal / PLACEMENTS_PER_PAGE));
+  const placementStorageAvailable = data?.placementStorage?.status !== "unavailable";
   const decisionPageRows = decisionRows;
   useEffect(() => {
     if (decisionPage > decisionPageCount) setDecisionPage(decisionPageCount);
@@ -484,8 +492,8 @@ export function PlacementOptimizationPageClient({ role, embedded = false, extern
           <section role="status" className="flex items-center gap-3 rounded-2xl border border-emerald-200 bg-emerald-50 px-5 py-4 text-emerald-900 shadow-sm">
             <CheckCircle2Icon className="size-5 shrink-0 text-emerald-700" />
             <div>
-              <p className="font-semibold">Placements loaded</p>
-              <p className="text-sm text-emerald-800">{data.rows.length.toLocaleString()} placement{data.rows.length === 1 ? "" : "s"} loaded at {formatDate(loadCompletedAt)}.</p>
+              <p className="font-semibold">Placement summary loaded</p>
+              <p className="text-sm text-emerald-800">{data.placementOverview.placementCount.toLocaleString()} saved placement{data.placementOverview.placementCount === 1 ? " is" : "s are"} available · loaded at {formatDate(loadCompletedAt)}.</p>
             </div>
           </section>
         ) : null}
@@ -494,7 +502,7 @@ export function PlacementOptimizationPageClient({ role, embedded = false, extern
           <div className="flex max-w-4xl items-start gap-2">
             <div ref={searchContainerRef} className="min-w-0 flex-1"><GoogleAccountSearchField value={account} onChange={value=>{setAccount(value);setDropdownOpen(true);}} onSelect={chooseAccount} results={suggestions} recentAccounts={recentAccounts} open={dropdownOpen} state={searchState} error={searchError} onFocus={()=>{if(!selectedAccount)setDropdownOpen(true);}} onKeyDown={event=>{if(event.key==="Escape")setDropdownOpen(false);}} /></div>
             <Button
-              disabled={!selectedAccount || loading}
+              disabled={!selectedAccount || loading || !placementStorageAvailable}
               className="h-12 cursor-pointer bg-red-600 hover:bg-red-700"
               onClick={runAnalysis}
             >
@@ -527,7 +535,7 @@ export function PlacementOptimizationPageClient({ role, embedded = false, extern
           <section className="rounded-2xl border bg-white p-5 shadow-sm">
             <h2 className="text-3xl font-semibold">{data.account.customerName}</h2>
             <PlacementAccountDetails account={data.account} />
-            <div className="mt-4 flex flex-wrap gap-2"><Button type="button" disabled={!externalAccount||Boolean(analysisJob&&["queued","running"].includes(analysisJob.status))} className="cursor-pointer bg-red-700 hover:bg-red-800" onClick={()=>externalAccount&&void startPlacementAnalysis(externalAccount.adAccountId)}><SearchIcon className="size-4" />Start analysis</Button><Button type="button" variant="outline" className="cursor-pointer hover:border-red-200 hover:bg-red-50 hover:text-red-700" onClick={() => { setSuitabilityOpen(true); if (!suitability && !suitabilityLoading) void loadSuitability(); }}><ShieldCheckIcon className="size-4" />Content suitability</Button></div>
+            <div className="mt-4 flex flex-wrap items-center gap-2"><Button type="button" disabled={!externalAccount||!placementStorageAvailable||Boolean(analysisJob&&["queued","running","partial"].includes(analysisJob.status))} className="cursor-pointer bg-red-700 hover:bg-red-800" onClick={()=>externalAccount&&void startPlacementAnalysis(externalAccount.adAccountId)}><SearchIcon className="size-4" />Start placement import</Button><Button type="button" variant="outline" className="ml-auto cursor-pointer hover:border-red-200 hover:bg-red-50 hover:text-red-700" onClick={() => { setSuitabilityOpen(true); if (!suitability && !suitabilityLoading) void loadSuitability(); }}><ShieldCheckIcon className="size-4" />Content suitability</Button></div>
           </section>
         ) : null}
         <ContentSuitabilitySheet
@@ -539,6 +547,12 @@ export function PlacementOptimizationPageClient({ role, embedded = false, extern
           onRefresh={() => void loadSuitability(true)}
         />
         <AccountEscalationNotice module="placement" accountId={data?.account.customerId} />
+        {data?.placementStorage?.status === "unavailable" ? (
+          <section role="alert" className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-amber-200 bg-amber-50 p-5 text-amber-950 shadow-sm">
+            <div><p className="font-semibold">Placement storage is temporarily unavailable</p><p className="mt-1 text-sm text-amber-800">{data.placementStorage.message ?? "Saved placement results cannot be loaded right now."} Campaign counts are still shown from Google Ads.</p></div>
+            <Button type="button" variant="outline" disabled={loading} onClick={()=>void load(data.account.customerId)}>{loading?<Spinner className="size-4"/>:null}Retry</Button>
+          </section>
+        ) : null}
         {data ? <PlacementOverview data={data} /> : null}
         {data ? (
           <section className="flex items-center justify-between gap-4 rounded-2xl border bg-white p-5 shadow-sm">
@@ -547,8 +561,8 @@ export function PlacementOptimizationPageClient({ role, embedded = false, extern
               <p className="text-sm text-neutral-500">Browse placements and exclude selected websites or videos directly from Google Ads after confirmation.</p>
             </div>
             <div className="flex flex-wrap items-center justify-end gap-2">
-              <Button type="button" disabled={!data.placementOverview.placementCount} className="cursor-pointer bg-red-700 hover:bg-red-800" onClick={() => {setDecisionPage(1);setDecisionsOpen(true);}}>
-                {data.placementOverview.placementCount ? "View placements" : "No saved placements"}
+              <Button type="button" disabled={!placementStorageAvailable||!data.placementOverview.placementCount} className="cursor-pointer bg-red-700 hover:bg-red-800" onClick={() => {setDecisionPage(1);setDecisionsOpen(true);}}>
+                {!placementStorageAvailable?"Temporarily unavailable":data.placementOverview.placementCount ? "View placements" : "No saved placements"}
               </Button>
             </div>
           </section>
@@ -929,11 +943,9 @@ function SheetResizeHandle({
       title="Drag left or right to resize. Double-click to reset."
       {...resizeHandleProps}
       style={{ top: 0, bottom: 0, height: "100%", zIndex: 10000 }}
-      className={`group absolute inset-y-0 -left-2 z-[10000] hidden w-8 touch-none cursor-ew-resize border-0 bg-transparent p-0 outline-none focus-visible:bg-red-600/15 sm:block ${
-        resizing ? "bg-red-600/15" : "hover:bg-red-600/10"
-      }`}
+      className="group absolute inset-y-0 -left-2 z-[10000] hidden w-8 touch-none cursor-ew-resize border-0 bg-transparent p-0 outline-none sm:block"
     >
-      <span className="absolute left-3 top-1/2 h-24 w-1.5 -translate-y-1/2 rounded-full bg-neutral-400 shadow transition-all group-hover:h-32 group-hover:bg-red-600 group-focus-visible:h-32 group-focus-visible:bg-red-600" />
+      <span className={`absolute left-3 top-1/2 w-1.5 -translate-y-1/2 rounded-full shadow transition-all duration-150 group-hover:h-32 group-hover:bg-red-600 group-focus-visible:h-32 group-focus-visible:bg-red-600 ${resizing ? "h-32 bg-red-600" : "h-24 bg-neutral-400"}`} />
       <span className="sr-only">Drag to resize sidebar</span>
     </button>
   );
@@ -1146,24 +1158,26 @@ function PlacementDecisionsSheet({
               </Button>
             ))}
           </div>
-          <Filter label="Placement type">
-            <Select value={type} onValueChange={onTypeChange} disabled={saving}>
-              <SelectTrigger className="cursor-pointer"><SelectValue /></SelectTrigger>
-              <SelectContent className="z-[10001]">
-                <SelectItem value="all">All placement types</SelectItem>
-                {types.map((value) => <SelectItem key={value} value={value}>{humanize(value)}</SelectItem>)}
-              </SelectContent>
-            </Select>
-          </Filter>
-          <Filter label="Campaign type">
-            <Select value={campaignType} onValueChange={onCampaignTypeChange} disabled={saving}>
-              <SelectTrigger className="cursor-pointer"><SelectValue /></SelectTrigger>
-              <SelectContent className="z-[10001]">
-                <SelectItem value="all">All campaign types</SelectItem>
-                {campaignTypes.map((value) => <SelectItem key={value} value={value}>{campaignTypeLabel(value)}</SelectItem>)}
-              </SelectContent>
-            </Select>
-          </Filter>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <Filter label="Placement type">
+              <Select value={type} onValueChange={onTypeChange} disabled={saving}>
+                <SelectTrigger className="w-full cursor-pointer"><SelectValue /></SelectTrigger>
+                <SelectContent className="z-[10001]">
+                  <SelectItem value="all">All placement types</SelectItem>
+                  {types.map((value) => <SelectItem key={value} value={value}>{humanize(value)}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </Filter>
+            <Filter label="Campaign type">
+              <Select value={campaignType} onValueChange={onCampaignTypeChange} disabled={saving}>
+                <SelectTrigger className="w-full cursor-pointer"><SelectValue /></SelectTrigger>
+                <SelectContent className="z-[10001]">
+                  <SelectItem value="all">All campaign types</SelectItem>
+                  {campaignTypes.map((value) => <SelectItem key={value} value={value}>{campaignTypeLabel(value)}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </Filter>
+          </div>
           <div className="flex flex-wrap items-center justify-between gap-3">
             <label className="flex cursor-pointer items-center gap-2 text-sm font-medium">
               <Checkbox
@@ -1464,6 +1478,7 @@ function PlacementAccountDetail({ label, value, emphasized = false }: { label: s
 }
 
 function PlacementOverview({ data }: { data: PlacementDashboardPayload }) {
+  const storageUnavailable = data.placementStorage?.status === "unavailable";
   const overview = data.placementOverview ?? {
     campaignCount: data.performanceMax?.campaignCount ?? new Set(data.rows.map((row) => row.campaignName)).size,
     placementCount: data.rows.length,
@@ -1482,19 +1497,19 @@ function PlacementOverview({ data }: { data: PlacementDashboardPayload }) {
           <p className="mt-1 text-sm text-neutral-500">Campaign types and placements returned by Google Ads for the selected account.</p>
         </div>
         <Badge className={overview.placementCount ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "border-neutral-200 bg-neutral-100 text-neutral-500"} variant="outline">
-          {overview.placementCount ? `${overview.placementCount} placements` : "No placement data"}
+          {storageUnavailable ? "Placement data unavailable" : overview.placementCount ? `${overview.placementCount} placements` : "No placement data"}
         </Badge>
       </header>
       <div className="grid gap-3 border-b p-5 sm:grid-cols-2 lg:grid-cols-4">
         {[
           ["Campaigns", overview.campaignCount.toLocaleString()],
-          ["Placements", overview.placementCount.toLocaleString()],
-          ["Total impressions", total.toLocaleString()],
-          ["Unique sites", overview.uniqueSites.toLocaleString()],
+          ["Placements", storageUnavailable ? "Temporarily unavailable" : overview.placementCount.toLocaleString()],
+          ["Total impressions", storageUnavailable ? "Temporarily unavailable" : total.toLocaleString()],
+          ["Unique sites", storageUnavailable ? "Temporarily unavailable" : overview.uniqueSites.toLocaleString()],
         ].map(([label, value]) => <div key={label} className="rounded-xl border bg-white p-4"><p className="text-xs font-semibold uppercase text-neutral-500">{label}</p><p className="mt-2 text-2xl font-semibold">{value}</p></div>)}
       </div>
       <div className="grid gap-3 border-b p-5 sm:grid-cols-2 xl:grid-cols-3">
-        {campaignTypes.map((item)=><div key={item.channelType} className="rounded-xl border bg-white p-4"><div className="flex items-start justify-between gap-3"><div><p className="font-semibold">{item.label}</p><p className="mt-1 text-xs text-neutral-500">{item.campaignCount} campaign{item.campaignCount===1?"":"s"}</p></div><Badge variant="outline">{item.placementCount} placements</Badge></div><p className="mt-3 text-sm text-neutral-600">{item.available?`${item.impressions.toLocaleString()} impressions · ${item.spend.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})} spend`:"No placement data for this period"}</p></div>)}
+        {campaignTypes.map((item)=><div key={item.channelType} className="rounded-xl border bg-white p-4"><div className="flex items-start justify-between gap-3"><div><p className="font-semibold">{item.label}</p><p className="mt-1 text-xs text-neutral-500">{item.campaignCount} campaign{item.campaignCount===1?"":"s"}</p></div><Badge variant="outline">{storageUnavailable?"Unavailable":`${item.placementCount} placements`}</Badge></div><p className="mt-3 text-sm text-neutral-600">{storageUnavailable?"Placement data is temporarily unavailable":item.available?`${item.impressions.toLocaleString()} impressions · ${item.spend.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})} spend`:"No placement data for this period"}</p></div>)}
       </div>
       <div className="p-5">
         <div className="mb-3 flex items-center justify-between"><h4 className="font-semibold">Top 5 sites</h4><span className="text-xs text-neutral-500">Share of all placement impressions</span></div>

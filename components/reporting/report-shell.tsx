@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
+import posthog from "posthog-js";
 import {
   BarChart3Icon,
   CalendarDaysIcon,
@@ -291,7 +292,7 @@ function ReportLogoutButton() {
   return (
     <Tooltip>
       <TooltipTrigger asChild>
-        <form action="/api/auth/logout" method="post">
+        <form action="/api/auth/logout" method="post" onSubmit={() => posthog.reset()}>
           <button
             type="submit"
             aria-label="Logout"

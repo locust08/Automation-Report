@@ -1,4 +1,20 @@
 type QueryValue = string | number | boolean | null | Record<string, unknown> | unknown[];
+// Local analysis workers and dashboard polling can briefly contend for the
+// same Supabase project. Four seconds produced false outage states even while
+// PostgREST was healthy, so keep the request bounded but allow normal jitter.
+const READ_TIMEOUT_MS = Math.max(4_000, Number(process.env.SUPABASE_READ_TIMEOUT_MS || 10_000));
+
+export class SupabaseUnavailableError extends Error {
+  readonly code = "PLACEMENT_STORAGE_UNAVAILABLE";
+  constructor() {
+    super("Placement storage is temporarily unavailable. Please try again shortly.");
+    this.name = "SupabaseUnavailableError";
+  }
+}
+
+export function isSupabaseUnavailableError(error: unknown): error is SupabaseUnavailableError {
+  return error instanceof SupabaseUnavailableError;
+}
 
 function config() {
   const url = process.env.SUPABASE_URL?.trim();
@@ -16,10 +32,29 @@ export async function supabaseRest<T>(path: string, init?: RequestInit): Promise
   headers.set("Authorization", `Bearer ${key}`);
   headers.set("Content-Type", "application/json");
   if (!headers.has("Prefer")) headers.set("Prefer", "return=representation");
-  const response = await fetch(`${url}/rest/v1/${path}`, { ...init, headers, cache: "no-store" });
-  const body = await response.text();
-  if (!response.ok) throw new Error(`Supabase optimization request failed (${response.status}): ${body.slice(0, 800)}`);
-  return (body ? JSON.parse(body) : null) as T;
+  const method = (init?.method ?? "GET").toUpperCase();
+  const attempts = method === "GET" || method === "HEAD" ? 2 : 1;
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    try {
+      const response = await fetch(`${url}/rest/v1/${path}`, { ...init, headers, cache: "no-store", signal: AbortSignal.timeout(READ_TIMEOUT_MS) });
+      const body = await response.text();
+      const unavailable = [502, 503, 504].includes(response.status) || body.includes('"code":"PGRST002"');
+      if (unavailable) {
+        if (attempt + 1 < attempts) { await new Promise((resolve) => setTimeout(resolve, 750)); continue; }
+        throw new SupabaseUnavailableError();
+      }
+      if (!response.ok) throw new Error(`Supabase optimization request failed (${response.status}): ${body.slice(0, 800)}`);
+      return (body ? JSON.parse(body) : null) as T;
+    } catch (error) {
+      if (isSupabaseUnavailableError(error)) throw error;
+      if (error instanceof DOMException && error.name === "TimeoutError" || error instanceof TypeError) {
+        if (attempt + 1 < attempts) { await new Promise((resolve) => setTimeout(resolve, 750)); continue; }
+        throw new SupabaseUnavailableError();
+      }
+      throw error;
+    }
+  }
+  throw new SupabaseUnavailableError();
 }
 
 export function qs(value: string) {

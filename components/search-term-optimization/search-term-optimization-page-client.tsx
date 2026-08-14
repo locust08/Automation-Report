@@ -84,7 +84,7 @@ export function SearchTermOptimizationPageClient({ role, embedded = false, exter
   const canApprove = false;
   const [data, setData] = useState<OptimizationDashboardPayload | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(() => !isAdminRole(role));
   const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
   const [decisions, setDecisions] = useState<Record<string, ReviewDecision>>({});
   const [approverDecisions, setApproverDecisions] = useState<Record<string, ApproverDecision>>({});
@@ -102,7 +102,11 @@ export function SearchTermOptimizationPageClient({ role, embedded = false, exter
   const [analysisStage, setAnalysisStage] = useState<string | null>(null);
   const [analysisStartedAt, setAnalysisStartedAt] = useState<string | null>(null);
   const [analysisActivityAt, setAnalysisActivityAt] = useState<string | null>(null);
+  const [activeAnalysisJobId,setActiveAnalysisJobId]=useState<string|null>(null);
+  const [analysisStopping,setAnalysisStopping]=useState(false);
+  const [retryAnalysisJobId,setRetryAnalysisJobId]=useState<string|null>(null);
   const [analysisProgress, setAnalysisProgress] = useState({ currentBatch: 0, completedBatches: 0, maxBatches: 10, currentBatchSize: 0, termsProcessed: 0, progressComplete: false });
+  const [dailyCapacity,setDailyCapacity]=useState<{total:number;used:number;reserved:number;claiming:number;available:number;allocatedAccountIds:string[]}|null>(null);
   const [refreshMessage, setRefreshMessage] = useState<string | null>(null);
   const [accountDropdownOpen, setAccountDropdownOpen] = useState(false);
   const [highlightedAccountIndex, setHighlightedAccountIndex] = useState(-1);
@@ -115,6 +119,10 @@ export function SearchTermOptimizationPageClient({ role, embedded = false, exter
   const [reportDialogOpen, setReportDialogOpen] = useState(false);
   const [reportDateSelection, setReportDateSelection] = useState<ReportDateSelection>(() => ({ mode: "single", date: malaysiaToday() }));
   const [pendingDecision, setPendingDecision] = useState<{ rows: OptimizationResult[]; decision: ReviewDecision } | null>(null);
+
+  const loadDailyCapacity=useCallback(async()=>{try{const response=await fetch("/api/search-term-optimization/capacity",{cache:"no-store"});if(response.ok)setDailyCapacity(await response.json());}catch{/* Analysis remains usable when the capacity badge cannot refresh. */}},[]);
+  useEffect(()=>{void loadDailyCapacity();},[loadDailyCapacity]);
+  const dailyCapacityReached=Boolean(dailyCapacity?.available===0&&accountPerformance&&!dailyCapacity.allocatedAccountIds.includes(accountPerformance.adAccountId.replace(/\D/g,"")));
 
   const load = useCallback(async (accountId?: string) => {
     setLoading(true);
@@ -148,6 +156,8 @@ export function SearchTermOptimizationPageClient({ role, embedded = false, exter
     }
   }, []);
 
+  useEffect(()=>{if(!analysisLoading&&accountPerformance&&error?.startsWith("Analysis was stopped"))void load(accountPerformance.adAccountId);},[accountPerformance,analysisLoading,error,load]);
+
   useEffect(() => {
     if (!embedded || !externalAccount) return;
     skipNextAccountSearch.current = true;
@@ -159,6 +169,15 @@ export function SearchTermOptimizationPageClient({ role, embedded = false, exter
       campaigns: [],
     });
     setAccountQuery(`${externalAccount.accountName} | ${externalAccount.adAccountId}`);
+    setData(null);
+    setError(null);
+    setRefreshMessage(null);
+    setRetryAnalysisJobId(null);
+    setActiveAnalysisJobId(null);
+    setAnalysisStage(null);
+    setAnalysisStartedAt(null);
+    setAnalysisActivityAt(null);
+    setAnalysisProgress({ currentBatch: 0, completedBatches: 0, maxBatches: 10, currentBatchSize: 0, termsProcessed: 0, progressComplete: false });
     void load(externalAccount.adAccountId);
   }, [embedded, externalAccount, load]);
 
@@ -274,7 +293,6 @@ export function SearchTermOptimizationPageClient({ role, embedded = false, exter
       try { window.localStorage.setItem(RECENT_OPTIMIZATION_ACCOUNTS_KEY, JSON.stringify(next)); } catch { /* keep in memory */ }
       return next;
     });
-    void load(account.adAccountId);
   }
 
   function changeAccountQuery(value: string) {
@@ -323,6 +341,7 @@ export function SearchTermOptimizationPageClient({ role, embedded = false, exter
       });
       const started = (await response.json()) as { jobId?: string; stage?: string; error?: string; status?:string; dashboard?:OptimizationDashboardPayload };
       if (!response.ok) throw new Error(started.error ?? "Unable to start search-term analysis.");
+      void loadDailyCapacity();
       if (started.status === "completed" && started.dashboard) {
         const cached=started.dashboard;
         setData(cached);
@@ -332,13 +351,16 @@ export function SearchTermOptimizationPageClient({ role, embedded = false, exter
         return;
       }
       if (!started.jobId) throw new Error(started.error ?? "Unable to start search-term analysis.");
+      setActiveAnalysisJobId(started.jobId);
       setAnalysisStage(started.stage ?? "Analysis queued");
       let payload: OptimizationDashboardPayload | null = null;
-      for (let attempt = 0; attempt < 900; attempt += 1) {
+      let terminalMessage:string|null=null;
+      let noTermsFound=false;
+      for (let attempt = 0; attempt < 7_200; attempt += 1) {
         await new Promise((resolve) => window.setTimeout(resolve, 2_000));
         const statusResponse = await fetch(`/api/search-term-optimization/analyze?jobId=${encodeURIComponent(started.jobId)}`, { cache: "no-store" });
         const status = (await statusResponse.json()) as {
-          status?: "queued" | "running" | "completed" | "failed";
+          status?: "queued" | "running" | "needs_retry" | "stopping" | "stopped" | "completed" | "failed";
           stage?: string;
           error?: string;
           dashboard?: OptimizationDashboardPayload;
@@ -349,6 +371,7 @@ export function SearchTermOptimizationPageClient({ role, embedded = false, exter
           maxBatches?: number;
           currentBatchSize?: number;
           termsProcessed?: number;
+          totalTerms?: number;
           progressComplete?: boolean;
         };
         if (!statusResponse.ok) throw new Error(status.error ?? "Unable to read analysis status.");
@@ -356,11 +379,18 @@ export function SearchTermOptimizationPageClient({ role, embedded = false, exter
         if (status.startedAt) setAnalysisStartedAt(status.startedAt);
         if (status.activityAt) setAnalysisActivityAt(status.activityAt);
         setAnalysisProgress(current => ({ currentBatch: status.currentBatch ?? current.currentBatch, completedBatches: status.completedBatches ?? current.completedBatches, maxBatches: status.maxBatches ?? current.maxBatches, currentBatchSize: status.currentBatchSize ?? current.currentBatchSize, termsProcessed: status.termsProcessed ?? current.termsProcessed, progressComplete: status.progressComplete ?? current.progressComplete }));
+        if(status.dashboard){setData(status.dashboard);setDecisions(Object.fromEntries(status.dashboard.results.filter(row=>row.reviewDecision).map(row=>[row.id,row.reviewDecision as ReviewDecision])));setApproverDecisions(Object.fromEntries(status.dashboard.results.filter(row=>row.approverDecision).map(row=>[row.id,row.approverDecision as ApproverDecision])));}
         if (status.status === "failed") throw new Error(status.error ?? "Search-term refresh failed. The previous saved analysis was kept.");
+        if (status.status === "needs_retry") {setRetryAnalysisJobId(started.jobId);if(status.dashboard){payload=status.dashboard;terminalMessage="Analysis paused for retry. Completed runs are shown below.";break;}throw new Error(status.error ?? "This analysis needs retry. Completed runs were kept.");}
+        if (status.status === "stopped") {if(status.dashboard){payload=status.dashboard;terminalMessage="Analysis stopped. Completed runs are shown below.";break;}throw new Error("Analysis was stopped before a run could be saved.");}
+        if (status.status === "completed" && status.totalTerms === 0) { noTermsFound=true; terminalMessage="No search terms were detected. Daily analysis capacity was not used."; break; }
         if (status.status === "completed" && status.dashboard) { payload = status.dashboard; break; }
       }
-      if (!payload) throw new Error("Search-term analysis timed out before completion.");
+      if(noTermsFound){setData(null);setRefreshMessage(terminalMessage);void loadDailyCapacity();return;}
+      if (!payload) throw new Error("Search-term analysis exceeded four hours. Its saved progress was kept.");
       setData(payload);
+      if(payload.source.label.includes("progressive"))setRefreshMessage(`Loaded the first ${payload.results.length} of ${payload.refresh?.reusedTerms??payload.summary.totalReviewed} saved recommendations.${payload.refresh?.queuedNewTerms?` ${payload.refresh.queuedNewTerms} terms remain unreviewed.`:""}`);
+      void loadDailyCapacity();
       setDecisions(Object.fromEntries(payload.results.filter((row) => row.reviewDecision).map((row) => [row.id, row.reviewDecision as ReviewDecision])));
       setApproverDecisions(Object.fromEntries(payload.results.filter((row) => row.approverDecision).map((row) => [row.id, row.approverDecision as ApproverDecision])));
       setSelectedIds(new Set());
@@ -368,19 +398,26 @@ export function SearchTermOptimizationPageClient({ role, embedded = false, exter
       setGoogleRecommendations([]);
       setGoogleRecommendationsWarning(null);
       const refresh=payload.refresh;
-      setRefreshMessage(refresh?.mode==="cached"
-        ? `No new search terms. Reused ${refresh.reusedTerms} saved recommendations and refreshed their metrics.`
+      setRefreshMessage(terminalMessage??(refresh?.mode==="cached"
+        ? payload.source.label.includes("progressive")
+          ? `Loaded the first ${payload.results.length} of ${refresh.reusedTerms} saved recommendations. ${refresh.queuedNewTerms} terms remain unreviewed.`
+          : `No new search terms. Reused ${refresh.reusedTerms} saved recommendations and refreshed their metrics.`
         : refresh?.mode==="incremental"
           ? `Analyzed ${refresh.newTerms} new search terms and reused ${refresh.reusedTerms} saved recommendations.${refresh.queuedNewTerms?` ${refresh.queuedNewTerms} new terms remain queued.`:""}`
-          : `Completed a full analysis of ${refresh?.currentTerms??payload.results.length} search terms.`);
+          : `Completed a full analysis of ${refresh?.currentTerms??payload.results.length} search terms.`));
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Unable to refresh search-term analysis. The previous saved analysis was kept.");
     } finally {
       setAnalysisLoading(false);
       setAnalysisStage(null);
       setLoading(false);
+      setActiveAnalysisJobId(null);
+      setAnalysisStopping(false);
     }
   }
+
+  async function stopSearchTermAnalysis(){if(!activeAnalysisJobId||analysisStopping)return;setAnalysisStopping(true);try{const response=await fetch(`/api/search-term-optimization/analyze?jobId=${encodeURIComponent(activeAnalysisJobId)}`,{method:"DELETE"});const payload=await response.json() as {status?:string;stage?:string;error?:string};if(!response.ok)throw new Error(payload.error??"Unable to stop the analysis.");setAnalysisStage(payload.stage??"Stopping after the current run");if(payload.status==="stopped"){setAnalysisLoading(false);setLoading(false);setActiveAnalysisJobId(null);setRefreshMessage("Analysis stopped. Completed runs were kept.");}}catch(caught){setError(caught instanceof Error?caught.message:"Unable to stop the analysis.");setAnalysisStopping(false);}}
+  async function retrySearchTermAnalysis(){if(!retryAnalysisJobId)return;setError(null);const response=await fetch("/api/search-term-optimization/analyze",{method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify({jobId:retryAnalysisJobId,action:"retry"})});if(!response.ok){const payload=await response.json().catch(()=>({})) as {error?:string};setError(payload.error??"Unable to retry this analysis.");return;}setRetryAnalysisJobId(null);setRefreshMessage("The failed run was queued again from its cached search terms.");}
 
   function handleAccountKeyDown(event: KeyboardEvent<HTMLInputElement>) {
     if (event.key === "Escape") { setAccountDropdownOpen(false); setHighlightedAccountIndex(-1); return; }
@@ -632,6 +669,7 @@ export function SearchTermOptimizationPageClient({ role, embedded = false, exter
       reportReady={!loading && !analysisLoading && !error}
     >
       <div className="space-y-5 text-neutral-950">
+        {dailyCapacity ? <section className="rounded-2xl border border-neutral-200 bg-white p-4 shadow-sm"><div className="mb-4"><p className="font-semibold text-neutral-950">Daily analysis limit</p><p className="mt-1 text-sm text-neutral-500">Overall account-analysis attempts for today · maximum {dailyCapacity.total} accounts</p></div><div className="grid grid-cols-2 gap-3 sm:grid-cols-4"><CapacityStat label="Total attempts" value={dailyCapacity.total}/><CapacityStat label="Used" value={dailyCapacity.used+dailyCapacity.claiming}/><CapacityStat label="Reserved" value={dailyCapacity.reserved}/><CapacityStat label="Available" value={dailyCapacity.available}/></div></section> : null}
         <section className="relative rounded-3xl border border-neutral-200 bg-white p-5 shadow-sm sm:p-7">
           {isAdmin && !embedded ? <div className="mb-5">
             <label className="mb-2 block text-sm font-semibold text-neutral-800">Notion account search</label>
@@ -640,11 +678,11 @@ export function SearchTermOptimizationPageClient({ role, embedded = false, exter
               <Button
                 type="button"
                 className="h-12 cursor-pointer bg-red-600 text-white hover:bg-red-700"
-                disabled={!accountPerformance || analysisLoading}
+                disabled={!accountPerformance || analysisLoading || dailyCapacityReached}
                 onClick={() => void runSelectedAccountAnalysis()}
               >
                 {analysisLoading ? <Spinner className="size-4" /> : <SearchIcon className="size-4" />}
-                {analysisLoading ? "Analyzing..." : "Start analysis"}
+                {analysisLoading ? "Analyzing..." : dailyCapacityReached ? "Max analysis reached today" : "Start analysis"}
               </Button>
               <Button type="button" variant="outline" className="cursor-pointer whitespace-nowrap hover:border-red-200 hover:bg-red-50 hover:text-red-700" disabled={!data || loading || analysisLoading} onClick={() => { setReportDateSelection({ mode: "single", date: malaysiaToday() }); setReportDialogOpen(true); }}>
                 <FileDownIcon className="size-4" />
@@ -655,9 +693,9 @@ export function SearchTermOptimizationPageClient({ role, embedded = false, exter
           </div> : null}
           {isAdmin && embedded && externalAccount ? (
             <div className="mb-5 flex flex-wrap gap-2">
-              <Button type="button" className="h-11 cursor-pointer bg-red-600 text-white hover:bg-red-700" disabled={analysisLoading} onClick={() => void runSelectedAccountAnalysis()}>
+              <Button type="button" className="h-11 cursor-pointer bg-red-600 text-white hover:bg-red-700" disabled={analysisLoading||dailyCapacityReached} onClick={() => void runSelectedAccountAnalysis()}>
                 {analysisLoading ? <Spinner className="size-4" /> : <SearchIcon className="size-4" />}
-                {analysisLoading ? "Analyzing..." : "Start analysis"}
+                {analysisLoading ? "Analyzing..." : dailyCapacityReached ? "Max analysis reached today" : "Start analysis"}
               </Button>
               <Button type="button" variant="outline" className="h-11 cursor-pointer whitespace-nowrap hover:border-red-200 hover:bg-red-50 hover:text-red-700" disabled={!data || loading || analysisLoading} onClick={() => { setReportDateSelection({ mode: "single", date: malaysiaToday() }); setReportDialogOpen(true); }}>
                 <FileDownIcon className="size-4" />Summary report
@@ -696,9 +734,10 @@ export function SearchTermOptimizationPageClient({ role, embedded = false, exter
           <section className="rounded-2xl border border-red-200 bg-red-50 p-5 text-red-800">
             <p className="font-semibold">Optimization dashboard unavailable</p>
             <p className="mt-1 text-sm">{error}</p>
+            {retryAnalysisJobId?<Button type="button" variant="outline" className="mt-3 cursor-pointer bg-white" onClick={()=>void retrySearchTermAnalysis()}>Retry failed run</Button>:null}
           </section>
         ) : null}
-        {loading || analysisLoading ? <LoadingDataIndicator label={analysisStage ?? "Loading analysis data..."} startedAt={analysisStartedAt} activityAt={analysisActivityAt} progress={analysisProgress} /> : null}
+        {loading || analysisLoading ? <LoadingDataIndicator label={analysisStage ?? "Loading analysis data..."} startedAt={analysisStartedAt} activityAt={analysisActivityAt} progress={analysisProgress} onStop={activeAnalysisJobId?()=>void stopSearchTermAnalysis():undefined} stopping={analysisStopping} /> : null}
 
         {!loading && !analysisLoading && !data && !error && !accountPerformance ? (
           <section className="rounded-2xl border border-neutral-200 bg-white p-5 text-neutral-700 shadow-sm">
@@ -707,7 +746,14 @@ export function SearchTermOptimizationPageClient({ role, embedded = false, exter
           </section>
         ) : null}
 
-        {!analysisLoading && data ? (
+        {!loading && !analysisLoading && !data && !error && accountPerformance ? (
+          <section className="rounded-2xl border border-neutral-200 bg-white p-5 text-neutral-700 shadow-sm">
+            <p className="font-semibold">Search-term analysis is not available yet</p>
+            <p className="mt-1 text-sm text-neutral-500">Press Start analysis to retrieve and analyze this account&apos;s search terms.</p>
+          </section>
+        ) : null}
+
+        {data ? (
           <>
             <section className="grid grid-cols-[repeat(auto-fit,minmax(260px,1fr))] gap-3">
               {cards.map(([key, label, value]) => (
@@ -1005,7 +1051,7 @@ function SettingField({ label, description, children }: { label: string; descrip
 }
 
 
-function LoadingDataIndicator({ label, compact = false, startedAt, activityAt, progress }: { label: string; compact?: boolean; startedAt?: string | null; activityAt?: string | null; progress?: {currentBatch:number;completedBatches:number;maxBatches:number;currentBatchSize:number;termsProcessed:number;progressComplete:boolean} }) {
+function LoadingDataIndicator({ label, compact = false, startedAt, activityAt, progress,onStop,stopping=false }: { label: string; compact?: boolean; startedAt?: string | null; activityAt?: string | null; progress?: {currentBatch:number;completedBatches:number;maxBatches:number;currentBatchSize:number;termsProcessed:number;progressComplete:boolean};onStop?:()=>void;stopping?:boolean }) {
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
     if (compact || !startedAt) return;
@@ -1034,7 +1080,7 @@ function LoadingDataIndicator({ label, compact = false, startedAt, activityAt, p
           <p className="font-semibold text-neutral-900">Analyzing search terms</p>
           <p className="mt-0.5 truncate text-sm text-neutral-500">{progress?.currentBatch ? `Run ${progress.currentBatch} of ${progress.maxBatches} · analyzing ${progress.currentBatchSize} terms` : label}</p>
         </div>
-        <span className="hidden rounded-full bg-neutral-100 px-3 py-1 text-xs font-medium text-neutral-500 sm:inline-flex">Please wait</span>
+        {onStop?<Button type="button" variant="outline" disabled={stopping} className="shrink-0 cursor-pointer" onClick={onStop}>{stopping?<><Spinner className="size-4"/>Stopping…</>:"Stop analysis"}</Button>:<span className="hidden rounded-full bg-neutral-100 px-3 py-1 text-xs font-medium text-neutral-500 sm:inline-flex">Please wait</span>}
       </div>
       <div className="border-t border-neutral-100 bg-neutral-50 px-5 py-3 sm:px-6">
         <div className="mb-2 flex items-center justify-between text-xs font-medium text-neutral-500">
@@ -1306,6 +1352,8 @@ function normalizeAction(value: string): CategoryFilter {
   if (["all", "special review needed", "negative exact", "add exact", "negative phrase", "no action"].includes(normalized)) return normalized as CategoryFilter;
   return "all";
 }
+
+function CapacityStat({label,value}:{label:string;value:number}){return <div className="rounded-xl border border-neutral-200 bg-neutral-50 px-4 py-3"><p className="text-xs font-semibold uppercase tracking-wide text-neutral-500">{label}</p><p className="mt-1 text-2xl font-semibold tabular-nums text-neutral-950">{value}</p></div>}
 
 function proposedActionCategory(value: string): "add keyword" | "add negative keyword" | "special review needed" | "no action" {
   const action = normalizeAction(value);

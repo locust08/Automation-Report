@@ -57,6 +57,7 @@ export interface PlacementPmReport {
 }
 
 export interface PlacementDashboardPayload {
+  placementStorage: { status: "available" | "unavailable"; message?: string };
   account: { customerId: string; customerName: string; startDate: string; endDate: string; refreshedAt: string };
   summary: { total: number; needsReview: number; awaitingApproval: number; kept: number; kiv: number; approved: number; rejected: number };
   performanceMax: {

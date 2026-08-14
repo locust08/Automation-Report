@@ -17,7 +17,7 @@ export async function POST(request: Request) {
 
   const body = await request.json() as { recommendationIds?: unknown; decision?: unknown };
   const recommendationIds = Array.isArray(body.recommendationIds)
-    ? [...new Set(body.recommendationIds.map(String).filter((id) => /^\d+:\d+$/.test(id)))]
+    ? [...new Set(body.recommendationIds.map(String).filter((id) => /^(?:\d+:\d+|rel:\d+)$/.test(id)))]
     : [];
   const decision = body.decision as SpecialistDecision;
   if (recommendationIds.length === 0 || !["approved", "rejected"].includes(decision)) {

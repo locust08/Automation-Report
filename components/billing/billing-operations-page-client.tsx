@@ -3,6 +3,7 @@
 import { FormEvent, useCallback, useEffect, useState } from "react";
 import Image from "next/image";
 import { useRouter, useSearchParams } from "next/navigation";
+import posthog from "posthog-js";
 import {
   AlertTriangleIcon,
   Building2Icon,
@@ -202,6 +203,11 @@ function CompanyCard({ company, picOptions, onItemUpdated, onPicUpdated }: { com
       });
       if (!response.ok) throw new Error("Unable to assign PIC.");
       onPicUpdated(company.companyId, picOptions.find((option) => option.key === picKey)?.name ?? null);
+      posthog.capture("billing_pic_assigned", {
+        platform_count: company.platforms.length,
+        account_count: company.accountIds.length,
+        assignment_cleared: !picKey,
+      });
     } catch (error) {
       setPicError(error instanceof Error ? error.message : "Unable to assign PIC.");
     } finally { setAssigning(false); }
@@ -256,6 +262,11 @@ function ChecklistItem({ item, onUpdated }: { item: BillingChecklistItem; onUpda
       const payload = (await response.json().catch(() => null)) as { message?: string } | null;
       if (!response.ok) throw new Error(payload?.message ?? "Unable to save.");
       onUpdated(item.itemKey, input);
+      posthog.capture("billing_checklist_item_updated", {
+        section_key: item.sectionKey,
+        update_type: typeof input.checked === "boolean" ? "completion" : "remark",
+        checked: input.checked,
+      });
     } catch (error) {
       if (typeof input.checked === "boolean") setChecked(item.checked);
       setMessage(error instanceof Error ? error.message : "Unable to save.");

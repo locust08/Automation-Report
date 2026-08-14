@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
+import posthog from "posthog-js";
 import { AlertTriangleIcon, CheckCircle2Icon, CopyIcon, Loader2Icon, XIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -58,6 +59,14 @@ export function ChangeRequestPageClient({ id, currentUser, embedded = false, ope
       if (!response.ok) throw new Error(payload.error);
       polling = false;
       setData(payload);
+      if (url.endsWith("/submit")) {
+        posthog.capture("ads_change_request_submitted", {
+          change_count: (payload.ads_field_changes ?? []).length,
+          recommendation_only: (payload.ads_field_changes ?? []).every(
+            (change: AdsFieldChangeRecord) => change.field_key === "recommendation.apply"
+          ),
+        });
+      }
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Action failed.");
     } finally {

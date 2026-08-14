@@ -10,6 +10,8 @@ export type SpecialistDecision="approved"|"rejected"; export type ApproverDecisi
 export type SearchTermDecisionSummaryRow={customerId:string;customerName:string;searchTerm:string;campaign:string;outcome:"approved"|"negative";clicks:number;spend:number;conversions:number;classification:string;decidedAt:string|null};
 type Run={id:number;google_customer_id:string;customer_name:string|null;reporting_start_date:string;reporting_end_date:string;analyzed_at:string;recommendations:OptimizationResult[];last_checked_at?:string|null;source_fingerprint?:string|null;current_term_count?:number;reused_term_count?:number;new_term_count?:number;queued_new_term_count?:number;refresh_status?:string|null};
 type Decision={id:number;analysis_run_id:number;recommendation_key:string;item_key?:string|null;decision:string|null;status:string;reviewer_user_id:string|null;reviewer_email:string|null;reviewer_role:string|null;reviewed_at:string|null;metadata:Record<string,unknown>};
+type DurableJob={id:string;google_customer_id:string;account_name:string;reporting_start_date:string|null;reporting_end_date:string|null;total_terms:number;terms_processed:number;status:string;started_at:string|null;updated_at:string};
+type DurableRow={id:number;result_json:OptimizationResult;review_status:string|null;review_decision:string|null;updated_at:string};
 
 export function stableSearchTermKey(row:Pick<OptimizationResult,"campaignId"|"adGroupId"|"searchTerm">){return `${row.campaignId??""}|${row.adGroupId??""}|${normalize(row.searchTerm)}`;}
 function rawKey(row:RawCurrentSearchTerm){return `${row.campaign_id}|${row.ad_group_id}|${normalize(row.search_term)}`;}
@@ -26,10 +28,34 @@ export async function persistDashboardToSupabase(payload:OptimizationDashboardPa
 
 export async function getLatestDashboardFromSupabase(customerId?:string):Promise<OptimizationDashboardPayload|null>{
  const normalizedId=customerId?.replace(/\D/g,"");
+ const relational=await getLatestRelationalDashboard(normalizedId);
+ if(relational)return relational;
  const filter=normalizedId?`${accountFilter(normalizedId)}&`:"";
  const runs=await supabaseRest<Run[]>(`ad_automation_search_term_analysis_runs?${filter}select=*&order=analyzed_at.desc&limit=1`);
  if(!runs[0])return null;
  return dashboardForRun(runs[0]);
+}
+
+async function getLatestRelationalDashboard(customerId?:string):Promise<OptimizationDashboardPayload|null>{
+ if(!customerId)return null;
+ const jobs=await supabaseRest<DurableJob[]>(`ad_automation_search_term_analysis_jobs?google_customer_id=eq.${qs(customerId)}&select=id,google_customer_id,account_name,reporting_start_date,reporting_end_date,total_terms,terms_processed,status,started_at,updated_at&order=created_at.desc&limit=20`);
+ let job:DurableJob|undefined;let stored:DurableRow[]=[];
+ for(const candidate of jobs){const candidateRows=await loadDurableRows(candidate.id);if(candidateRows.length){job=candidate;stored=candidateRows;break;}}
+ if(!job||!stored.length)return null;
+ const settings=await getSearchTermAccountSettings(customerId,job.started_at??job.updated_at);
+ const allResults=stored.map(item=>({...item.result_json,id:`rel:${item.id}`,recommendationId:`rel:${item.id}`,searchTermId:`rel:${item.id}`,reviewStatus:item.review_status??item.result_json.reviewStatus,reviewDecision:(item.review_decision as "approved"|"rejected"|null)??item.result_json.reviewDecision,lastReviewedAt:item.updated_at}));
+ const results=allResults.slice(0,250);
+ const analyzedAt=job.started_at??job.updated_at;
+ return {account:{customerId,customerName:job.account_name||`Google Ads ${customerId}`,reportingPeriod:{startDate:job.reporting_start_date??analyzedAt.slice(0,10),endDate:job.reporting_end_date??analyzedAt.slice(0,10)},lastAnalysisAt:analyzedAt,nextRunAt:settings.nextRunAt,automationEnabled:settings.automationEnabled},source:{label:"Supabase progressive reviewed search terms",fresh:true,termsReviewed:allResults.length,mutatingGoogleAdsChanges:false},summary:summary(allResults),results,history:results.filter(row=>row.verificationStatus==="verified"),googleRecommendations:[],googleRecommendationsWarning:null,changeSets:[],settings,refresh:{mode:"cached",checkedAt:job.updated_at,currentTerms:job.total_terms,reusedTerms:allResults.length,newTerms:0,queuedNewTerms:Math.max(0,job.total_terms-allResults.length)}};
+}
+
+async function loadDurableRows(jobId:string){
+ const rows:DurableRow[]=[];
+ for(let offset=0;offset<2500;offset+=250){
+  const page=await supabaseRest<DurableRow[]>(`ad_automation_search_term_analysis_rows?job_id=eq.${jobId}&select=id,result_json,review_status,review_decision,updated_at&order=batch_number.asc,id.asc&offset=${offset}&limit=250`);
+  rows.push(...page);if(page.length<250)break;
+ }
+ return rows;
 }
 
 export async function mergeIncrementalDashboard(input:{cached:OptimizationDashboardPayload|null;newlyAnalyzed:OptimizationDashboardPayload;currentRows:RawCurrentSearchTerm[];checkedAt:string;queuedNewTerms:number}):Promise<OptimizationDashboardPayload>{
@@ -61,6 +87,7 @@ function numberOr(fallback:number|null,value:unknown){return value==null?fallbac
 async function loadItems(ids:string[]){const parsed=ids.map(ref);if(new Set(parsed.map(p=>p.runId)).size!==1)throw new Error("Selected recommendations must belong to one analysis run.");const runs=await supabaseRest<Run[]>(`ad_automation_search_term_analysis_runs?id=eq.${parsed[0].runId}&select=*`);if(!runs[0])throw new Error("Analysis run was not found.");return {run:runs[0],items:parsed.map(p=>({key:p.key,row:runs[0].recommendations[p.index]})).filter(x=>x.row)};}
 async function save(ids:string[],status:string,decision:string,reviewer:{id:string;email:string;role:string},metadata:Record<string,unknown>={}){const {run,items}=await loadItems(ids);await supabaseRest("ad_automation_search_term_decisions?on_conflict=analysis_run_id,recommendation_key",{method:"POST",headers:{Prefer:"resolution=merge-duplicates,return=minimal"},body:jsonBody(items.map(i=>({analysis_run_id:run.id,recommendation_key:i.key,item_key:stableSearchTermKey(i.row),status,decision,reviewer_user_id:reviewer.id,reviewer_email:reviewer.email,reviewer_role:reviewer.role,reviewed_at:new Date().toISOString(),metadata,updated_at:new Date().toISOString()})))});return {updated:items.length,skipped:ids.length-items.length,decision};}
 export async function saveSpecialistDecision(input:{recommendationIds:string[];decision:SpecialistDecision;reviewer:{id:string;email:string;role:string}}){
+ if(input.recommendationIds.every(id=>id.startsWith("rel:")))return saveRelationalDecision(input.recommendationIds,input.decision,input.reviewer);
  const {run,items}=await loadItems(input.recommendationIds);
  const action=input.decision==="approved"?"add exact":"negative exact";
  const keys=items.map(({key})=>key);
@@ -72,7 +99,17 @@ export async function saveSpecialistDecision(input:{recommendationIds:string[];d
  const saved=pendingIds.length?await save(pendingIds,input.decision==="approved"?"approved_for_publishing":"approver_rejected",input.decision==="approved"?"approver_approved":"approver_rejected",input.reviewer,{publishedCount:publication.published,publishedAction:action,googleResourceNames:publication.resourceNames}):{updated:0,skipped:0,decision:input.decision};
  return {...saved,published:publication.published,alreadyPublished:completed.size,deduplicated:publication.deduplicated,action};
 }
-export async function saveApproverDecision(input:{recommendationIds:string[];decision:ApproverDecision;approver:{id:string;email:string;role:string}}){if(input.decision==="rejected")return save(input.recommendationIds,"returned_for_clarification","return_to_specialist",input.approver);const {run,items}=await loadItems(input.recommendationIds);const actionable=items.map(i=>i.row).filter(r=>["negative exact","negative phrase","add exact"].includes(r.proposedAction));await publishSearchTermOptimizations(run.google_customer_id,actionable.map(r=>({campaignId:r.campaignId,adGroupId:r.adGroupId,searchTerm:r.searchTerm,action:r.proposedAction})));return save(input.recommendationIds,"approved_for_publishing","approver_approved",input.approver,{publishedCount:actionable.length});}
+export async function saveApproverDecision(input:{recommendationIds:string[];decision:ApproverDecision;approver:{id:string;email:string;role:string}}){if(input.recommendationIds.every(id=>id.startsWith("rel:")))return saveRelationalDecision(input.recommendationIds,input.decision,input.approver);if(input.decision==="rejected")return save(input.recommendationIds,"returned_for_clarification","return_to_specialist",input.approver);const {run,items}=await loadItems(input.recommendationIds);const actionable=items.map(i=>i.row).filter(r=>["negative exact","negative phrase","add exact"].includes(r.proposedAction));await publishSearchTermOptimizations(run.google_customer_id,actionable.map(r=>({campaignId:r.campaignId,adGroupId:r.adGroupId,searchTerm:r.searchTerm,action:r.proposedAction})));return save(input.recommendationIds,"approved_for_publishing","approver_approved",input.approver,{publishedCount:actionable.length});}
+async function saveRelationalDecision(ids:string[],decision:SpecialistDecision|ApproverDecision,reviewer:{id:string;email:string;role:string}){
+ const rowIds=ids.map(id=>Number(id.slice(4))).filter(Number.isInteger);if(!rowIds.length)return{updated:0,skipped:ids.length,decision};
+ const rows=await supabaseRest<Array<DurableRow&{job_id:string}>>(`ad_automation_search_term_analysis_rows?id=in.(${rowIds.join(",")})&select=id,job_id,result_json,review_status,review_decision,updated_at`);
+ const jobs=await supabaseRest<DurableJob[]>(`ad_automation_search_term_analysis_jobs?id=eq.${qs(rows[0]?.job_id??"")}&select=*`);if(!jobs[0])throw new Error("Analysis job was not found.");
+ const action=decision==="approved"?"add exact":decision==="rejected"?"negative exact":null;
+ if(action)await publishSearchTermOptimizations(jobs[0].google_customer_id,rows.map(item=>item.result_json).map(row=>({campaignId:row.campaignId,adGroupId:row.adGroupId,searchTerm:row.searchTerm,action})));
+ const reviewStatus=decision==="accepted"?"approved_for_publishing":decision==="rejected"?"approver_rejected":"approved_for_publishing";
+ await supabaseRest(`ad_automation_search_term_analysis_rows?id=in.(${rowIds.join(",")})`,{method:"PATCH",body:jsonBody({review_status:reviewStatus,review_decision:decision,updated_at:new Date().toISOString()})});
+ return{updated:rows.length,skipped:ids.length-rows.length,decision,reviewer:reviewer.email};
+}
 export async function updateLeadQuality(searchTermId:string,values:LeadQualityValues){const p=ref(searchTermId);const current=await supabaseRest<Decision[]>(`ad_automation_search_term_decisions?analysis_run_id=eq.${p.runId}&recommendation_key=eq.${p.key}&select=*`);const existing=current[0];await supabaseRest("ad_automation_search_term_decisions?on_conflict=analysis_run_id,recommendation_key",{method:"POST",headers:{Prefer:"resolution=merge-duplicates,return=minimal"},body:jsonBody({analysis_run_id:p.runId,recommendation_key:p.key,status:existing?.status??"pending",decision:existing?.decision??null,metadata:{...(existing?.metadata??{}),qualifiedLeads:values.qualifiedLeads,spamLeads:values.spamLeads,invalidLeads:values.invalidLeads,clientComplaints:values.clientComplaints},updated_at:new Date().toISOString()})});return {updated:1};}
 export async function importLeadQuality(rows:LeadQualityImportRow[]){let updated=0;const errors:Array<{row:number;message:string}>=[];for(const item of rows){const runs=await supabaseRest<Run[]>(`ad_automation_search_term_analysis_runs?google_customer_id=eq.${qs(item.customerId.replace(/\D/g,""))}&select=*&order=analyzed_at.desc&limit=1`);const index=runs[0]?.recommendations.findIndex(r=>r.campaign.trim().toLowerCase()===item.campaign.trim().toLowerCase()&&r.adGroup.trim().toLowerCase()===item.adGroup.trim().toLowerCase()&&r.searchTerm.trim().toLowerCase()===item.searchTerm.trim().toLowerCase())??-1;if(index<0){errors.push({row:item.rowNumber,message:"No matching search term was found."});continue;}await updateLeadQuality(`${runs[0].id}:${index}`,item);updated++;}return {updated,errors};}
 export async function listSearchTermDecisionSummaryRows(filter?:{date?:string;startDate?:string;endDate?:string}):Promise<SearchTermDecisionSummaryRow[]>{

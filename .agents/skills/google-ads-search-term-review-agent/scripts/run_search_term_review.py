@@ -8,7 +8,7 @@ import os
 from datetime import datetime
 from typing import Any
 
-from google_ads_pull import build_fixture_pull_result, default_date_range, pull_search_terms, strip_dashes
+from google_ads_pull import PullResult, SearchTermRecord, build_fixture_pull_result, default_date_range, pull_search_terms, strip_dashes
 from phrase_candidates import build_negative_phrase_candidates
 from render_outputs import action_counts, write_outputs
 from review_agent import review_rows_sync
@@ -31,6 +31,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--exclude-term-keys-file", default="", help="JSON array of stable term keys already analyzed.")
     parser.add_argument("--max-new-terms", type=int, default=250, help="Maximum newly discovered terms to analyze in one run.")
     parser.add_argument("--job-status-path", default="", help="Optional job status JSON updated with incremental progress.")
+    parser.add_argument("--snapshot-file", default="", help="Normalized Google search-term snapshot; avoids fetching Google Ads again.")
     parser.add_argument("--batch-size", type=int, default=80, help="Terms per agent batch.")
     parser.add_argument("--concurrency", type=int, default=20, help="Maximum concurrent OpenAI reviewer batches.")
     parser.add_argument("--model", default="", help="Override OpenAI model. Defaults to OPENAI_SEARCH_TERM_REVIEW_MODEL or gpt-5.6-sol.")
@@ -73,7 +74,13 @@ def build_site_contexts(destination_urls: list[str], args: argparse.Namespace) -
 
 def main() -> None:
     args = parse_args()
-    if args.dry_run_agent_fixture:
+    if args.snapshot_file:
+        with open(args.snapshot_file, "r", encoding="utf-8") as handle:
+            snapshot = json.load(handle)["pull"]
+        snapshot["rows"] = [SearchTermRecord(**row) for row in snapshot.get("rows", [])]
+        snapshot["safety_search_terms"] = [SearchTermRecord(**row) for row in snapshot.get("safety_search_terms", [])]
+        pull = PullResult(**snapshot)
+    elif args.dry_run_agent_fixture:
         pull = build_fixture_pull_result(args.customer_id, args.start_date, args.end_date)
     else:
         pull = pull_search_terms(

@@ -1,12 +1,13 @@
 import { NextResponse, type NextRequest } from "next/server";
 
-import { getCurrentAuthSession } from "@/lib/auth/current-session";
-import { AUTH_COOKIE_NAME } from "@/lib/auth/session";
+import { AUTH_COOKIE_NAME, verifyAuthToken } from "@/lib/auth/session";
 
 export async function proxy(request: NextRequest) {
   const token = request.cookies.get(AUTH_COOKIE_NAME)?.value;
-  const session = token ? await getCurrentAuthSession(token) : null;
   const isLoginPage = request.nextUrl.pathname === "/";
+  // Navigation must not block on a remote profile lookup. The profile and role
+  // were validated when this signed session was created.
+  const session = token ? await verifyAuthToken(token) : null;
   const isDashboard = request.nextUrl.pathname.startsWith("/dashboard");
   const isBilling = request.nextUrl.pathname.startsWith("/billing");
   const isSearchTermOptimization = request.nextUrl.pathname.startsWith("/search-term-optimization");

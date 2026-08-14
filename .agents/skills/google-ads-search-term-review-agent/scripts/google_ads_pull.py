@@ -150,6 +150,7 @@ class GoogleAdsRestClient:
         retry=retry_if_exception_type((httpx.HTTPError, RuntimeError)),
         wait=wait_exponential(multiplier=1, min=1, max=10),
         stop=stop_after_attempt(3),
+        reraise=True,
     )
     def search_page(self, login_customer_id: str | None, query: str, page_token: str = "") -> dict[str, Any]:
         body: dict[str, Any] = {"query": query}

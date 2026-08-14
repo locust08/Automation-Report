@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
+import posthog from "posthog-js";
 
 import { MediaPlanEditor } from "@/components/media-plan/MediaPlanEditor";
 import { MediaPlanForm } from "@/components/media-plan/MediaPlanForm";
@@ -223,6 +224,10 @@ export function MediaPlanPageClient() {
       clearStagedAssetFiles();
       setCurrentPlan(completedPayload.plan);
       setPlanSource("generated");
+      posthog.capture("media_plan_generated", {
+        campaign_type: formData.campaignType,
+        ad_group_count: completedPayload.plan.adGroups.length,
+      });
       setOpenAiMeta(completedPayload.openAi);
       setClientRequestId(createClientRequestId());
       setEdited(false);
@@ -496,6 +501,12 @@ export function MediaPlanPageClient() {
       setEdited(false);
       resetPlanHistory();
       clearStagedAssetFiles();
+      posthog.capture("media_plan_campaign_created", {
+        campaign_type: formData.campaignType,
+        ad_group_count: payload.createdAdGroups,
+        ad_count: payload.createdAds,
+        duplicate_approval: payload.duplicateApproval,
+      });
       setApprovalProgress((current) =>
         current?.status === "completed"
           ? current

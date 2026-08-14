@@ -34,18 +34,19 @@ export async function GET(request: Request) {
   }
 
   try {
-    const url = new URL("/ad-accounts/search", ensureTrailingSlash(workerUrl));
-    url.searchParams.set("q", query);
-    const response = await fetch(url, {
-      headers: { Authorization: `Bearer ${workerSecret}` },
-      cache: "no-store",
-      signal: AbortSignal.timeout(10_000),
-    });
-    const payload = await response.json().catch(() => null) as AccountSearchPayload | null;
-    if (!response.ok || !payload?.success) {
-      throw new Error(payload?.error || `Account directory returned HTTP ${response.status}.`);
-    }
-    return NextResponse.json({ accounts: payload.accounts ?? [] });
+    const tokens=searchTokens(query);
+    const searches=[query,...tokens].filter((value,index,all)=>all.indexOf(value)===index).slice(0,7);
+    const responses=await Promise.all(searches.map(async value=>{
+      const url = new URL("/ad-accounts/search", ensureTrailingSlash(workerUrl));url.searchParams.set("q",value);
+      const response=await fetch(url,{headers:{Authorization:`Bearer ${workerSecret}`},cache:"no-store",signal:AbortSignal.timeout(10_000)});
+      const payload=await response.json().catch(()=>null) as AccountSearchPayload|null;
+      if(!response.ok||!payload?.success)throw new Error(payload?.error||`Account directory returned HTTP ${response.status}.`);
+      return payload.accounts??[];
+    }));
+    const unique=new Map<string,NonNullable<AccountSearchPayload["accounts"]>[number]>();
+    for(const account of responses.flat())unique.set(account.adAccountId.replace(/\D/g,""),account);
+    const accounts=[...unique.values()].filter(account=>matchesEveryToken(account,tokens));
+    return NextResponse.json({ accounts });
   } catch (error) {
     return NextResponse.json(
       { error: error instanceof Error ? error.message : "Unable to search the account directory." },
@@ -53,6 +54,10 @@ export async function GET(request: Request) {
     );
   }
 }
+
+function searchTokens(value:string){return normalizeSearch(value).split(" ").filter(token=>token.length>0);}
+function normalizeSearch(value:string){return value.normalize("NFKD").replace(/[\u0300-\u036f]/g,"").toLowerCase().replace(/[^a-z0-9]+/g," ").trim();}
+function matchesEveryToken(account:NonNullable<AccountSearchPayload["accounts"]>[number],tokens:string[]){const haystack=normalizeSearch(`${account.accountName} ${account.adAccountId}`);return tokens.every(token=>haystack.includes(token));}
 
 function ensureTrailingSlash(value: string): string {
   return value.endsWith("/") ? value : `${value}/`;
