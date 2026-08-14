@@ -114,7 +114,7 @@ export async function sendMonthlyReportEmail(
     });
 
     if (response.error) {
-      throw new Error(response.error.message || "Resend email send failed.");
+      throw new Error(formatResendDeliveryError(response.error.message || "Resend email send failed.", fromAddress));
     }
 
     console.info(`[monthly-report] email sent report_type=${reportType} period=${input.reportMonthKey} account_id=${accountId} client=${input.account.clientName} email_status=sent resend_email_id=${response.data?.id ?? "missing"}`);
@@ -243,6 +243,20 @@ function resolveLogoUrl(): string {
   }
 
   return DEFAULT_LOGO_URL;
+}
+
+function formatResendDeliveryError(message: string, fromAddress: string): string {
+  const senderDomain = extractEmailDomain(fromAddress);
+  if (!/domain is not verified|verify a domain|verified domain/i.test(message)) {
+    return message;
+  }
+
+  return `${message} Sender "${fromAddress}" resolves to domain "${senderDomain ?? "unknown"}". Set RESEND_FROM_MONTHLY_REPORT to a Resend-verified sender domain, or add and verify this domain in Resend before running live sends.`;
+}
+
+function extractEmailDomain(value: string): string | null {
+  const match = value.match(/<[^@\s<>]+@([^>\s]+)>|[^@\s<>]+@([^>\s]+)/);
+  return (match?.[1] ?? match?.[2] ?? null)?.toLowerCase() ?? null;
 }
 
 function slugify(value: string): string {

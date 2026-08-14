@@ -1,12 +1,21 @@
 "use client";
 
-import { FormEvent, MutableRefObject, useEffect, useRef, useState } from "react";
+import {
+  FormEvent,
+  KeyboardEvent,
+  MutableRefObject,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
 import type { ReactNode } from "react";
 import {
   CalendarDaysIcon,
+  ChevronDownIcon,
   ChevronLeftIcon,
   ChevronRightIcon,
   IdCardIcon,
+  Loader2Icon,
   PlusIcon,
   RefreshCcwIcon,
   SearchIcon,
@@ -23,6 +32,10 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { ReportFilters } from "@/components/reporting/use-report-filters";
+import {
+  extractAdAccountIdFromAccountSearchInput,
+  formatAccountSuggestionLabel,
+} from "@/components/reporting/home-account-search";
 import { cn } from "@/lib/utils";
 
 interface ReportFiltersBarProps {
@@ -44,7 +57,19 @@ interface SearchEntry {
   key: string;
   platform: SearchPlatform;
   accountId: string;
+  searchText: string;
 }
+
+interface AccountSearchSuggestion {
+  accountName: string;
+  adAccountId: string;
+  country: string | null;
+  notionPageId: string;
+}
+
+const ACCOUNT_SEARCH_DEBOUNCE_MS = 300;
+const RECENT_ACCOUNTS_STORAGE_KEY = "ads-reporting-recent-accounts";
+const RECENT_ACCOUNTS_LIMIT = 5;
 
 export function ReportFiltersBar({
   filters,
@@ -71,6 +96,7 @@ export function ReportFiltersBar({
     setSearchEntries(
       parsedEntries.map((entry) => ({
         ...entry,
+        searchText: entry.accountId,
         key: nextSearchEntryKey(nextSearchEntryId),
       }))
     );
@@ -102,6 +128,7 @@ export function ReportFiltersBar({
         key: nextSearchEntryKey(nextSearchEntryId),
         platform: "meta",
         accountId: "",
+        searchText: "",
       },
     ]);
   }
@@ -113,9 +140,20 @@ export function ReportFiltersBar({
   }
 
   function updateSearchRowAccountId(key: string, value: string) {
-    const detected = detectAccountIdInputPlatform(value);
+    const accountId = extractAdAccountIdFromAccountSearchInput(value);
+    const detected = detectAccountIdInputPlatform(accountId);
     updateSearchRow(key, {
-      accountId: detected?.accountId ?? value,
+      searchText: value,
+      accountId: detected?.accountId ?? accountId,
+      ...(detected?.platform ? { platform: detected.platform } : {}),
+    });
+  }
+
+  function selectSearchRowAccount(key: string, suggestion: AccountSearchSuggestion) {
+    const detected = detectAccountIdInputPlatform(suggestion.adAccountId);
+    updateSearchRow(key, {
+      searchText: formatAccountSuggestionLabel(suggestion),
+      accountId: suggestion.adAccountId,
       ...(detected?.platform ? { platform: detected.platform } : {}),
     });
   }
@@ -132,6 +170,7 @@ export function ReportFiltersBar({
           key: nextSearchEntryKey(nextSearchEntryId),
           platform: "meta",
           accountId: "",
+          searchText: "",
         },
       ];
     });
@@ -163,15 +202,11 @@ export function ReportFiltersBar({
               </SelectContent>
             </Select>
 
-            <label className="flex w-full min-w-0 flex-1 items-center gap-2 rounded-md border border-input bg-background px-3 sm:w-auto">
-              <IdCardIcon className="size-4 text-muted-foreground" />
-              <Input
-                value={entry.accountId}
-                onChange={(event) => updateSearchRowAccountId(entry.key, event.target.value)}
-                className="h-10 border-0 shadow-none focus-visible:ring-0"
-                placeholder="Account ID"
-              />
-            </label>
+            <ReportAccountSearchInput
+              entry={entry}
+              onChange={(value) => updateSearchRowAccountId(entry.key, value)}
+              onSelect={(suggestion) => selectSearchRowAccount(entry.key, suggestion)}
+            />
 
             <Button
               type="button"
@@ -195,6 +230,12 @@ export function ReportFiltersBar({
           <PlusIcon data-icon="inline-start" />
           Add Account
         </Button>
+
+        {!searchEntries.some((entry) => Boolean(entry.accountId.trim())) ? (
+          <p className="text-xs font-medium text-amber-700" role="status">
+            Select an account to load this report.
+          </p>
+        ) : null}
       </div>
 
       {showDateFilters && dateMode === "month" ? (
@@ -273,6 +314,7 @@ export function ReportFiltersBar({
         <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:items-start">
           <Button
             type="submit"
+            disabled={!searchEntries.some((entry) => Boolean(entry.accountId.trim()))}
             className="h-10 w-full items-center justify-center gap-2 bg-red-600 px-4 text-center text-sm font-medium leading-none text-white hover:bg-red-700 sm:min-w-[148px] sm:w-auto"
           >
             <SearchIcon data-icon="inline-start" className="shrink-0" />
@@ -293,6 +335,352 @@ export function ReportFiltersBar({
         {footerContent ? <div className="w-full sm:w-auto">{footerContent}</div> : null}
       </div>
     </form>
+  );
+}
+
+function ReportAccountSearchInput({
+  entry,
+  onChange,
+  onSelect,
+}: {
+  entry: SearchEntry;
+  onChange: (value: string) => void;
+  onSelect: (suggestion: AccountSearchSuggestion) => void;
+}) {
+  const [suggestions, setSuggestions] = useState<AccountSearchSuggestion[]>([]);
+  const [recentAccounts, setRecentAccounts] = useState<AccountSearchSuggestion[]>([]);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchState, setSearchState] = useState<"idle" | "loading" | "success" | "error">(
+    "idle"
+  );
+  const [searchError, setSearchError] = useState<string | null>(null);
+  const [isOpen, setIsOpen] = useState(false);
+  const [highlightedId, setHighlightedId] = useState<string | null>(null);
+  const requestId = useRef(0);
+  const searchInputRef = useRef<HTMLInputElement>(null);
+  const query = searchQuery.trim();
+  const resultSuggestions = suggestions.filter(
+    (suggestion) =>
+      !recentAccounts.some((recent) => recent.notionPageId === suggestion.notionPageId)
+  );
+  const navigableSuggestions = [...recentAccounts, ...resultSuggestions];
+
+  useEffect(() => {
+    try {
+      const storedValue = window.localStorage.getItem(RECENT_ACCOUNTS_STORAGE_KEY);
+      const storedAccounts = storedValue ? (JSON.parse(storedValue) as unknown) : [];
+      if (Array.isArray(storedAccounts)) {
+        setRecentAccounts(
+          storedAccounts
+            .filter(isAccountSearchSuggestion)
+            .slice(0, RECENT_ACCOUNTS_LIMIT)
+        );
+      }
+    } catch {
+      window.localStorage.removeItem(RECENT_ACCOUNTS_STORAGE_KEY);
+    }
+  }, []);
+
+  useEffect(() => {
+    requestId.current += 1;
+    const currentRequestId = requestId.current;
+
+    if (query.length < 2) {
+      setSuggestions([]);
+      setSearchState("idle");
+      setSearchError(null);
+      return;
+    }
+
+    setSearchState("loading");
+    setSearchError(null);
+    setIsOpen(true);
+
+    const controller = new AbortController();
+    const timeoutId = window.setTimeout(async () => {
+      try {
+        const response = await fetch(
+          `/api/notion/accounts/search?q=${encodeURIComponent(query)}`,
+          { cache: "no-store", signal: controller.signal }
+        );
+        const payload = (await response.json().catch(() => null)) as
+          | { accounts?: AccountSearchSuggestion[]; error?: string; message?: string }
+          | null;
+
+        if (controller.signal.aborted || currentRequestId !== requestId.current) {
+          return;
+        }
+
+        if (!response.ok || !payload) {
+          throw new Error(payload?.error ?? payload?.message ?? "Unable to search accounts.");
+        }
+
+        const nextSuggestions = Array.isArray(payload.accounts) ? payload.accounts : [];
+        setSuggestions(nextSuggestions);
+        setSearchState("success");
+        setHighlightedId(nextSuggestions[0]?.notionPageId ?? null);
+      } catch (error) {
+        if (controller.signal.aborted || currentRequestId !== requestId.current) {
+          return;
+        }
+        setSuggestions([]);
+        setSearchState("error");
+        setHighlightedId(null);
+        setSearchError(error instanceof Error ? error.message : "Unable to search accounts.");
+      }
+    }, ACCOUNT_SEARCH_DEBOUNCE_MS);
+
+    return () => {
+      controller.abort();
+      window.clearTimeout(timeoutId);
+    };
+  }, [query]);
+
+  useEffect(() => {
+    if (!isOpen) {
+      return;
+    }
+    const frameId = window.requestAnimationFrame(() => searchInputRef.current?.focus());
+    return () => window.cancelAnimationFrame(frameId);
+  }, [isOpen]);
+
+  function selectSuggestion(suggestion: AccountSearchSuggestion) {
+    const nextRecent = [
+      suggestion,
+      ...recentAccounts.filter((account) => account.notionPageId !== suggestion.notionPageId),
+    ].slice(0, RECENT_ACCOUNTS_LIMIT);
+    setRecentAccounts(nextRecent);
+    try {
+      window.localStorage.setItem(RECENT_ACCOUNTS_STORAGE_KEY, JSON.stringify(nextRecent));
+    } catch {
+      // Keep the selection available in memory when browser storage is unavailable.
+    }
+    onSelect(suggestion);
+    setSearchQuery("");
+    setIsOpen(false);
+    setHighlightedId(null);
+  }
+
+  function handleKeyDown(event: KeyboardEvent<HTMLInputElement>) {
+    if (event.key === "Escape") {
+      setIsOpen(false);
+      setHighlightedId(null);
+      return;
+    }
+
+    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+      if (navigableSuggestions.length === 0) {
+        return;
+      }
+      event.preventDefault();
+      const currentIndex = navigableSuggestions.findIndex(
+        (suggestion) => suggestion.notionPageId === highlightedId
+      );
+      const nextIndex =
+        event.key === "ArrowDown"
+          ? currentIndex < navigableSuggestions.length - 1
+            ? currentIndex + 1
+            : 0
+          : currentIndex > 0
+            ? currentIndex - 1
+            : navigableSuggestions.length - 1;
+      setHighlightedId(navigableSuggestions[nextIndex]?.notionPageId ?? null);
+      return;
+    }
+
+    if (event.key === "Enter" && highlightedId) {
+      const suggestion = navigableSuggestions.find(
+        (item) => item.notionPageId === highlightedId
+      );
+      if (suggestion) {
+        event.preventDefault();
+        selectSuggestion(suggestion);
+        return;
+      }
+    }
+
+    if (event.key === "Enter") {
+      const directAccountId = extractAdAccountIdFromAccountSearchInput(query);
+      if (directAccountId) {
+        event.preventDefault();
+        onChange(directAccountId);
+        setSearchQuery("");
+        setIsOpen(false);
+        setHighlightedId(null);
+      }
+    }
+  }
+
+  return (
+    <div
+      className="relative w-full min-w-0 flex-1 sm:w-auto"
+      onBlur={(event) => {
+        if (!event.currentTarget.contains(event.relatedTarget)) {
+          setIsOpen(false);
+          setHighlightedId(null);
+        }
+      }}
+    >
+      <button
+        type="button"
+        onClick={() => {
+          setIsOpen((current) => !current);
+          setHighlightedId(recentAccounts[0]?.notionPageId ?? null);
+        }}
+        className="flex h-10 w-full min-w-0 items-center gap-2 rounded-md border border-input bg-background px-3 text-left text-sm shadow-xs outline-none transition focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50"
+        aria-label={`${entry.platform === "meta" ? "Meta Ads" : "Google Ads"} account`}
+        aria-expanded={isOpen}
+        aria-haspopup="listbox"
+      >
+        <IdCardIcon className="size-4 shrink-0 text-muted-foreground" />
+        <span
+          className={cn(
+            "min-w-0 flex-1 truncate",
+            entry.accountId ? "text-foreground" : "text-muted-foreground"
+          )}
+        >
+          {entry.searchText || "Select an account"}
+        </span>
+        <ChevronDownIcon
+          className={cn(
+            "size-4 shrink-0 text-muted-foreground transition-transform",
+            isOpen && "rotate-180"
+          )}
+        />
+      </button>
+
+      {isOpen ? (
+        <div className="absolute left-0 right-0 top-full z-50 mt-2 min-w-[320px] overflow-hidden rounded-xl border border-border bg-popover p-2 text-popover-foreground shadow-xl">
+          <div className="relative">
+            <SearchIcon className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              ref={searchInputRef}
+              value={searchQuery}
+              onChange={(event) => {
+                setSearchQuery(event.target.value);
+                setHighlightedId(null);
+              }}
+              onKeyDown={handleKeyDown}
+              className="h-10 pl-9"
+              placeholder="Search account name or ID"
+              aria-label="Search accounts"
+              aria-autocomplete="list"
+              autoComplete="off"
+            />
+          </div>
+
+          <div className="mt-2 max-h-80 overflow-auto">
+            <div className="px-2 py-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+              Recent
+            </div>
+            {recentAccounts.length > 0 ? (
+              <AccountSuggestionList
+                suggestions={recentAccounts}
+                highlightedId={highlightedId}
+                onSelect={selectSuggestion}
+                onHighlight={setHighlightedId}
+              />
+            ) : (
+              <p className="px-2 py-2 text-sm text-muted-foreground">
+                No recent accounts yet.
+              </p>
+            )}
+
+            <div className="mt-1 border-t border-border px-2 pb-1 pt-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+              Results
+            </div>
+            {query.length < 2 ? (
+              <p className="px-2 py-2 text-sm text-muted-foreground">
+                Type at least 2 characters to search Notion.
+              </p>
+            ) : searchState === "loading" ? (
+              <div className="flex items-center gap-2 px-3 py-3 text-sm text-muted-foreground">
+                <Loader2Icon className="size-4 animate-spin" />
+                Searching Notion accounts...
+              </div>
+            ) : searchState === "error" ? (
+              <div className="px-3 py-3 text-sm text-destructive">
+              {searchError ?? "Unable to search accounts."}
+              </div>
+            ) : searchState === "success" && suggestions.length === 0 ? (
+              <div className="px-3 py-3 text-sm text-muted-foreground">
+              No matching account found.
+              </div>
+            ) : resultSuggestions.length > 0 ? (
+              <AccountSuggestionList
+                suggestions={resultSuggestions}
+                highlightedId={highlightedId}
+                onSelect={selectSuggestion}
+                onHighlight={setHighlightedId}
+              />
+            ) : null}
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function AccountSuggestionList({
+  suggestions,
+  highlightedId,
+  onSelect,
+  onHighlight,
+}: {
+  suggestions: AccountSearchSuggestion[];
+  highlightedId: string | null;
+  onSelect: (suggestion: AccountSearchSuggestion) => void;
+  onHighlight: (notionPageId: string) => void;
+}) {
+  return (
+    <ul className="space-y-1" role="listbox">
+      {suggestions.map((suggestion) => {
+        const highlighted = suggestion.notionPageId === highlightedId;
+        return (
+          <li key={suggestion.notionPageId}>
+            <button
+              type="button"
+              role="option"
+              aria-selected={highlighted}
+              onMouseDown={(event) => event.preventDefault()}
+              onMouseEnter={() => onHighlight(suggestion.notionPageId)}
+              onClick={() => onSelect(suggestion)}
+              className={cn(
+                "grid w-full gap-1 rounded-md px-3 py-2 text-left text-sm transition",
+                highlighted
+                  ? "bg-red-600 text-white"
+                  : "hover:bg-accent hover:text-accent-foreground"
+              )}
+            >
+              <span className="font-semibold">
+                {formatAccountSuggestionLabel(suggestion)}
+              </span>
+              <span
+                className={cn(
+                  "text-xs",
+                  highlighted ? "text-white/75" : "text-muted-foreground"
+                )}
+              >
+                {suggestion.country ?? "No country set"}
+              </span>
+            </button>
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+
+function isAccountSearchSuggestion(value: unknown): value is AccountSearchSuggestion {
+  return Boolean(
+    value &&
+      typeof value === "object" &&
+      "accountName" in value &&
+      typeof value.accountName === "string" &&
+      "adAccountId" in value &&
+      typeof value.adAccountId === "string" &&
+      "notionPageId" in value &&
+      typeof value.notionPageId === "string"
   );
 }
 

@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { buildReportingErrorResponse } from "@/lib/reporting/api-error";
 import { parseRequestContext } from "@/lib/reporting/request";
 import { getOverallSummaryStage } from "@/lib/reporting/service";
+import { getImportedOverallSummaryStage } from "@/lib/meta-import/reporting";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -17,12 +18,14 @@ export async function GET(
   const accountId = normalizeRouteAccountId(routeParams.accountId);
 
   try {
-    const payload = await getOverallSummaryStage({
+    const load = context.source === "meta_csv" ? getImportedOverallSummaryStage : getOverallSummaryStage;
+    const payload = await load({
       accountId: context.accountId ?? accountId,
       metaAccountId: context.metaAccountId,
       googleAccountId: context.googleAccountId,
       startDate: context.startDate,
       endDate: context.endDate,
+      cacheRefreshKey: searchParams.get("cacheRefresh") ?? searchParams.get("refresh"),
     });
 
     return NextResponse.json(payload);

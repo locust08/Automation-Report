@@ -1,0 +1,61 @@
+name: Scheduled Search Term Optimization
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_id: { required: true, type: string }
+      account_id: { required: true, type: string }
+      start_date: { required: true, type: string }
+      end_date: { required: true, type: string }
+      callback_url: { required: true, type: string }
+      scheduled: { required: false, type: string, default: "false" }
+
+jobs:
+  analyze:
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm }
+      - uses: astral-sh/setup-uv@v5
+      - run: npm ci
+      - name: Mark running
+        run: curl --fail-with-body -X POST "${{ inputs.callback_url }}" -H "Authorization: Bearer $WORKER_API_SECRET" -H "Content-Type: application/json" --data "{\"runId\":\"${{ inputs.run_id }}\",\"status\":\"running\",\"scheduled\":${{ inputs.scheduled }}}"
+        env: { WORKER_API_SECRET: "${{ secrets.WORKER_API_SECRET }}" }
+      - name: Analyze prioritized terms
+        run: node scripts/run-search-term-analysis-job.mjs "${{ inputs.run_id }}" "${{ inputs.account_id }}" "${{ inputs.start_date }}" "${{ inputs.end_date }}"
+        env:
+          OPENAI_API_KEY: "${{ secrets.OPENAI_API_KEY }}"
+          GOOGLE_ADS_DEVELOPER_TOKEN: "${{ secrets.GOOGLE_ADS_DEVELOPER_TOKEN }}"
+          GOOGLE_ADS_CLIENT_ID: "${{ secrets.GOOGLE_ADS_CLIENT_ID }}"
+          GOOGLE_ADS_CLIENT_SECRET: "${{ secrets.GOOGLE_ADS_CLIENT_SECRET }}"
+          GOOGLE_ADS_REFRESH_TOKEN: "${{ secrets.GOOGLE_ADS_REFRESH_TOKEN }}"
+          GOOGLE_ADS_LOGIN_CUSTOMER_ID: "${{ secrets.GOOGLE_ADS_LOGIN_CUSTOMER_ID }}"
+          SUPABASE_URL: "${{ secrets.SUPABASE_URL }}"
+          SUPABASE_SECRET_KEY: "${{ secrets.SUPABASE_SECRET_KEY }}"
+          SEARCH_TERM_ANALYSIS_WORKER_URL: "${{ secrets.SEARCH_TERM_ANALYSIS_WORKER_URL }}"
+          WORKER_API_SECRET: "${{ secrets.WORKER_API_SECRET }}"
+      - name: Save analysis to Supabase
+        if: always()
+        continue-on-error: true
+        run: npx tsx scripts/finalize-scheduled-search-term-analysis.mts "${{ inputs.account_id }}"
+        env:
+          GOOGLE_ADS_DEVELOPER_TOKEN: "${{ secrets.GOOGLE_ADS_DEVELOPER_TOKEN }}"
+          GOOGLE_ADS_CLIENT_ID: "${{ secrets.GOOGLE_ADS_CLIENT_ID }}"
+          GOOGLE_ADS_CLIENT_SECRET: "${{ secrets.GOOGLE_ADS_CLIENT_SECRET }}"
+          GOOGLE_ADS_REFRESH_TOKEN: "${{ secrets.GOOGLE_ADS_REFRESH_TOKEN }}"
+          GOOGLE_ADS_LOGIN_CUSTOMER_ID: "${{ secrets.GOOGLE_ADS_LOGIN_CUSTOMER_ID }}"
+          SUPABASE_URL: "${{ secrets.SUPABASE_URL }}"
+          SUPABASE_SECRET_KEY: "${{ secrets.SUPABASE_SECRET_KEY }}"
+      - name: Report result
+        if: always()
+        shell: bash
+        run: |
+          STATUS="failed"
+          if [ "${{ job.status }}" = "success" ]; then STATUS="completed"; fi
+          STATUS_FILE="tmp/search-term-analysis-jobs/${{ inputs.run_id }}.json"
+          TERMS=$(jq -r '.termsProcessed // 0' "$STATUS_FILE" 2>/dev/null || echo 0)
+          BATCHES=$(jq -r '.completedBatches // 0' "$STATUS_FILE" 2>/dev/null || echo 0)
+          curl --fail-with-body -X POST "${{ inputs.callback_url }}" -H "Authorization: Bearer $WORKER_API_SECRET" -H "Content-Type: application/json" --data "{\"runId\":\"${{ inputs.run_id }}\",\"status\":\"$STATUS\",\"scheduled\":${{ inputs.scheduled }},\"termsProcessed\":$TERMS,\"batchesCompleted\":$BATCHES}"
+        env: { WORKER_API_SECRET: "${{ secrets.WORKER_API_SECRET }}" }

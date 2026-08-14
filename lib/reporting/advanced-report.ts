@@ -484,11 +484,13 @@ function createFinalUrlPerformanceRow(row: GoogleFinalUrlSpendRow, index: number
   const clicks = safeNumber(row.clicks);
   const conversions = safeNumber(row.conversions);
   const finalUrl = safeText(row.finalUrl);
+  const campaignNames = normalizeFinalUrlCampaignNames(row.campaignNames);
 
   return {
     id: safeText(row.id) || finalUrl || `final-url-${index + 1}`,
     finalUrl: finalUrl || "Not available",
-    campaign: formatFinalUrlCampaignNames(row.campaignNames),
+    campaign: formatFinalUrlCampaignNames(campaignNames),
+    campaignNames,
     spend,
     impressions,
     clicks,
@@ -529,6 +531,7 @@ function buildOtherFinalUrlPerformanceRow(rows: AdvancedFinalUrlPerformanceRow[]
     id: "other-final-urls",
     finalUrl: "Other URLs",
     campaign: `${rows.length} URLs`,
+    campaignNames: normalizeFinalUrlCampaignNames(rows.flatMap((row) => row.campaignNames)),
     spend: totals.spend,
     impressions: totals.impressions,
     clicks: totals.clicks,
@@ -570,9 +573,7 @@ function aggregateFinalUrlPercent(
 }
 
 function formatFinalUrlCampaignNames(campaignNames: string[]): string {
-  const names = (Array.isArray(campaignNames) ? campaignNames : [])
-    .map((name) => safeText(name))
-    .filter(Boolean);
+  const names = normalizeFinalUrlCampaignNames(campaignNames);
   if (names.length === 0) {
     return "Not available";
   }
@@ -580,6 +581,24 @@ function formatFinalUrlCampaignNames(campaignNames: string[]): string {
     return names.join(", ");
   }
   return `${names.slice(0, 2).join(", ")} +${names.length - 2}`;
+}
+
+function normalizeFinalUrlCampaignNames(campaignNames: string[]): string[] {
+  const seen = new Set<string>();
+  const names: string[] = [];
+  (Array.isArray(campaignNames) ? campaignNames : []).forEach((name) => {
+    const normalized = safeText(name);
+    if (!normalized) {
+      return;
+    }
+    const key = normalized.toLocaleLowerCase();
+    if (seen.has(key)) {
+      return;
+    }
+    seen.add(key);
+    names.push(normalized);
+  });
+  return names;
 }
 
 export function buildAuctionVisibilitySection(input: {

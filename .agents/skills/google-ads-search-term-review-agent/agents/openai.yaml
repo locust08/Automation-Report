@@ -1,0 +1,4 @@
+interface:
+  display_name: "Google Ads Search Term Review Agent"
+  short_description: "Review, apply, and summarize Search term actions"
+  default_prompt: "Use $google-ads-search-term-review-agent to review Google Ads Search terms from a CID, or apply an approved proposal and report the grouped negative-keyword table."

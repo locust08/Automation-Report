@@ -53,6 +53,7 @@ interface QueryState<T> {
 type CachedQueryValue<T> = {
   data: T;
   successToken: string;
+  cachedAt: number;
 };
 
 type InFlightQueryValue = {
@@ -61,6 +62,8 @@ type InFlightQueryValue = {
 
 const queryResponseCache = new Map<string, CachedQueryValue<unknown>>();
 const inFlightQueries = new Map<string, InFlightQueryValue>();
+const MAX_QUERY_CACHE_ENTRIES = 100;
+const OVERALL_STAGE_QUERY_CACHE_TTL_MS = 2 * 60 * 1000;
 
 function extractErrorMessage(
   payload: ReportingErrorPayload | null | undefined,
@@ -88,7 +91,8 @@ function useReportQuery<T>(
   requestPath: string,
   queryString: string,
   enabled: boolean,
-  fallbackMessage: string
+  fallbackMessage: string,
+  cacheTtlMs = 0
 ): LoadingState<T> {
   const queryKey = `${requestPath}?${queryString}`;
   const [state, setState] = useState<QueryState<T>>({
@@ -106,12 +110,19 @@ function useReportQuery<T>(
     }
 
     let ignoreResponse = false;
-    const cached = queryResponseCache.get(queryKey) as CachedQueryValue<T> | undefined;
+    const cached = getFreshCachedQuery<T>(queryKey, cacheTtlMs);
+    if (cached) {
+      return;
+    }
 
     const existingRequest = inFlightQueries.get(queryKey);
+    const requestUrl =
+      requestVersion > 0
+        ? `${queryKey}${queryKey.includes("?") ? "&" : "?"}cacheRefresh=${requestVersion}`
+        : queryKey;
     const requestPromise =
       existingRequest?.promise ??
-      fetch(queryKey, {
+      fetch(requestUrl, {
         cache: "no-store",
       })
         .then(async (response) => {
@@ -135,9 +146,10 @@ function useReportQuery<T>(
           return;
         }
         const successToken = `${queryKey}::${requestVersion}`;
-        queryResponseCache.set(queryKey, {
+        setCachedQuery(queryKey, {
           data: json as T,
           successToken,
+          cachedAt: Date.now(),
         });
         setState({
           data: json as T,
@@ -153,23 +165,21 @@ function useReportQuery<T>(
         }
 
         setState({
-          data: cached?.data ?? null,
+          data: null,
           error: fetchError instanceof Error ? fetchError.message : fallbackMessage,
           loading: false,
           queryKey,
-          successToken: cached?.successToken ?? null,
+          successToken: null,
         });
       });
 
     return () => {
       ignoreResponse = true;
     };
-  }, [enabled, fallbackMessage, queryKey, requestVersion]);
+  }, [cacheTtlMs, enabled, fallbackMessage, queryKey, requestVersion]);
 
   const isCurrentQuery = state.queryKey === queryKey;
-  const cached = enabled
-    ? (queryResponseCache.get(queryKey) as CachedQueryValue<T> | undefined)
-    : undefined;
+  const cached = enabled ? getFreshCachedQuery<T>(queryKey, cacheTtlMs) : undefined;
   const data = enabled && isCurrentQuery ? state.data : cached?.data ?? null;
   const error = enabled && isCurrentQuery ? state.error : null;
   const loading = enabled && isCurrentQuery ? state.loading : enabled && !cached;
@@ -197,9 +207,37 @@ export function useReportSectionQuery<T>(
   requestPath: string,
   queryString: string,
   enabled: boolean,
-  fallbackMessage: string
+  fallbackMessage: string,
+  cacheTtlMs = 0
 ): LoadingState<T> {
-  return useReportQuery<T>(requestPath, queryString, enabled, fallbackMessage);
+  return useReportQuery<T>(requestPath, queryString, enabled, fallbackMessage, cacheTtlMs);
+}
+
+function getFreshCachedQuery<T>(
+  queryKey: string,
+  cacheTtlMs: number
+): CachedQueryValue<T> | undefined {
+  const cached = queryResponseCache.get(queryKey) as CachedQueryValue<T> | undefined;
+  if (!cached) {
+    return undefined;
+  }
+  if (cacheTtlMs <= 0 || Date.now() - cached.cachedAt >= cacheTtlMs) {
+    queryResponseCache.delete(queryKey);
+    return undefined;
+  }
+  return cached;
+}
+
+function setCachedQuery<T>(queryKey: string, value: CachedQueryValue<T>) {
+  queryResponseCache.delete(queryKey);
+  queryResponseCache.set(queryKey, value as CachedQueryValue<unknown>);
+  while (queryResponseCache.size > MAX_QUERY_CACHE_ENTRIES) {
+    const oldestKey = queryResponseCache.keys().next().value;
+    if (typeof oldestKey !== "string") {
+      break;
+    }
+    queryResponseCache.delete(oldestKey);
+  }
 }
 
 export function useOverallReport(queryString: string, enabled: boolean): LoadingState<OverallReportPayload> {
@@ -220,7 +258,8 @@ export function useOverallSummaryStage(
     `/api/reports/${encodeURIComponent(accountKey || "-")}/summary`,
     queryString,
     enabled,
-    "Unable to load summary metrics."
+    "Unable to load summary metrics.",
+    OVERALL_STAGE_QUERY_CACHE_TTL_MS
   );
 }
 
@@ -233,7 +272,8 @@ export function useOverallCampaignPerformanceStage(
     `/api/reports/${encodeURIComponent(accountKey || "-")}/campaign-performance`,
     queryString,
     enabled,
-    "Unable to load campaign performance."
+    "Unable to load campaign performance.",
+    OVERALL_STAGE_QUERY_CACHE_TTL_MS
   );
 }
 
@@ -246,7 +286,8 @@ export function useOverallAudienceBreakdownStage(
     `/api/reports/${encodeURIComponent(accountKey || "-")}/tables`,
     queryString,
     enabled,
-    "Unable to load breakdown tables."
+    "Unable to load breakdown tables.",
+    OVERALL_STAGE_QUERY_CACHE_TTL_MS
   );
 }
 

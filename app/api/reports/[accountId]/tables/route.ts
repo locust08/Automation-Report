@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { buildReportingErrorResponse } from "@/lib/reporting/api-error";
 import { parseRequestContext } from "@/lib/reporting/request";
 import { getOverallAudienceBreakdownStage } from "@/lib/reporting/service";
+import { getImportedOverallAudienceStage } from "@/lib/meta-import/reporting";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -17,7 +18,8 @@ export async function GET(
   const accountId = normalizeRouteAccountId(routeParams.accountId);
 
   try {
-    const payload = await getOverallAudienceBreakdownStage({
+    const load = context.source === "meta_csv" ? getImportedOverallAudienceStage : getOverallAudienceBreakdownStage;
+    const payload = await load({
       accountId: context.accountId ?? accountId,
       metaAccountId: context.metaAccountId,
       googleAccountId: context.googleAccountId,

@@ -9,6 +9,7 @@ export function parseRequestContext(searchParams: URLSearchParams): RequestConte
     endDate: getValue(searchParams, "endDate"),
     campaignType: getValue(searchParams, "campaignType"),
     platform: toPlatform(getValue(searchParams, "platform")),
+    source: searchParams.get("source") === "meta_csv" ? "meta_csv" : "api",
   };
 }
 

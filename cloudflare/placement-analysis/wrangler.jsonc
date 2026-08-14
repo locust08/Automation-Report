@@ -1,0 +1,27 @@
+{
+  "$schema": "../../node_modules/wrangler/config-schema.json",
+  "name": "ads-dashboard-placement-analysis",
+  "account_id": "e7c515dde995479daacd82ad79dfc3e8",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-08-13",
+  "compatibility_flags": ["nodejs_compat"],
+  "observability": { "enabled": true, "head_sampling_rate": 1 },
+  "d1_databases": [{
+    "binding": "ACCOUNT_DIRECTORY",
+    "database_name": "automation-report-jobs",
+    "database_id": "06953d60-3819-46e8-b846-9b0fcfa91643"
+  }],
+  "r2_buckets": [{ "binding": "PLACEMENT_IMPORTS", "bucket_name": "automation-placement-imports" }],
+  "queues": {
+    "producers": [{ "binding": "PLACEMENT_QUEUE", "queue": "placement-analysis-queue" }],
+    "consumers": [{
+      "queue": "placement-analysis-queue",
+      "max_batch_size": 1,
+      "max_batch_timeout": 5,
+      "max_concurrency": 1,
+      "max_retries": 3,
+      "retry_delay": 30,
+      "dead_letter_queue": "placement-analysis-dead-letter-queue"
+    }]
+  }
+}

@@ -52,6 +52,18 @@ interface AdAccountRecord {
   platform: string | null;
 }
 
+export interface NotionAccountSearchSuggestion {
+  accountName: string;
+  adAccountId: string;
+  country: "MY" | "SG" | "AU" | "US" | null;
+  notionPageId: string;
+  accessPath?: string | null;
+}
+
+export interface NotionAccountSearchResponse {
+  accounts: NotionAccountSearchSuggestion[];
+}
+
 interface GoogleAdsRouteResolution {
   accountId: string;
   originalAccessPath: string | null;
@@ -482,6 +494,13 @@ export interface NotionQueryPage {
   properties?: Record<string, NotionPageProperty | undefined>;
 }
 
+const NOTION_ACCOUNT_SEARCH_CACHE_TTL_MS = 5 * 60 * 1000;
+const notionAccountSearchCache = new Map<
+  string,
+  { expiresAt: number; pages: NotionQueryPage[] }
+>();
+const notionAccountSearchRequests = new Map<string, Promise<NotionQueryPage[]>>();
+
 export async function queryNotionDatabasePages(input: {
   notionAccessToken: string | null;
   notionDatabaseId: string | null;
@@ -550,6 +569,211 @@ export async function queryNotionDatabasePages(input: {
   } while (nextCursor);
 
   return pages;
+}
+
+export async function searchNotionAdAccounts(input: {
+  query: string;
+  notionAccessToken: string | null;
+  notionDatabaseId: string | null;
+  limit?: number;
+}): Promise<NotionAccountSearchResponse> {
+  if (input.query.trim().length < 2) {
+    return { accounts: [] };
+  }
+
+  const notionConfig = resolveNotionConfig(
+    {
+      notionAccessToken: input.notionAccessToken,
+      notionDatabaseId: input.notionDatabaseId,
+    },
+    { log: false }
+  );
+  const cacheKey = notionConfig.databaseId;
+  const cached = notionAccountSearchCache.get(cacheKey);
+  const now = Date.now();
+
+  let pages: NotionQueryPage[];
+  if (cached && cached.expiresAt > now) {
+    pages = cached.pages;
+  } else {
+    let request = notionAccountSearchRequests.get(cacheKey);
+    if (!request) {
+      request = queryNotionDatabasePages({
+        notionAccessToken: notionConfig.notionAccessToken,
+        notionDatabaseId: notionConfig.databaseId,
+        pageSize: 100,
+      });
+      notionAccountSearchRequests.set(cacheKey, request);
+    }
+
+    try {
+      pages = await request;
+      notionAccountSearchCache.set(cacheKey, {
+        expiresAt: Date.now() + NOTION_ACCOUNT_SEARCH_CACHE_TTL_MS,
+        pages,
+      });
+    } finally {
+      notionAccountSearchRequests.delete(cacheKey);
+    }
+  }
+
+  return buildNotionAccountSearchResponse(input.query, pages, input.limit);
+}
+
+export function buildNotionAccountSearchResponse(
+  query: string,
+  pages: NotionQueryPage[],
+  limit = 10
+): NotionAccountSearchResponse {
+  const normalizedQuery = normalizeSearchText(query);
+  if (normalizedQuery.length < 2) {
+    return { accounts: [] };
+  }
+
+  const accounts: NotionAccountSearchSuggestion[] = [];
+  for (const page of pages) {
+    const suggestion = mapNotionAccountSearchSuggestion(page);
+    if (!suggestion) {
+      continue;
+    }
+
+    if (!matchesNotionAccountSearchQuery(suggestion, normalizedQuery)) {
+      continue;
+    }
+
+    accounts.push(suggestion);
+    if (accounts.length >= limit) {
+      break;
+    }
+  }
+
+  return { accounts };
+}
+
+function matchesNotionAccountSearchQuery(
+  suggestion: NotionAccountSearchSuggestion,
+  normalizedQuery: string
+): boolean {
+  if (normalizeSearchText(suggestion.accountName).includes(normalizedQuery)) {
+    return true;
+  }
+
+  const normalizedId = normalizeSearchText(suggestion.adAccountId);
+  if (normalizedId.includes(normalizedQuery)) {
+    return true;
+  }
+
+  const queryDigits = normalizedQuery.replace(/\D/g, "");
+  if (!queryDigits) {
+    return false;
+  }
+
+  return suggestion.adAccountId.replace(/\D/g, "").includes(queryDigits);
+}
+
+function mapNotionAccountSearchSuggestion(
+  page: NotionQueryPage
+): NotionAccountSearchSuggestion | null {
+  const properties = page.properties ?? {};
+  const accountName = getNotionPropertyTextByAliases(properties, [
+    "Account Name",
+    "Client Name",
+    "Name",
+    "Client",
+  ]);
+  const adAccountId = getNotionPropertyTextByAliases(properties, [
+    "ID",
+    "Account ID",
+    "Google Ads Account ID",
+    "Google Ads ID",
+    "Google Account ID",
+    "Google Ads Customer ID",
+    "Google Ads Account",
+    "Meta Ads Account ID",
+    "Meta Ads ID",
+    "Meta Account ID",
+    "Facebook Ads Account ID",
+    "Facebook Account ID",
+    "Meta Ads Account",
+  ]);
+
+  if (!page.id || !accountName || !adAccountId) {
+    return null;
+  }
+
+  const accessPath = getNotionPropertyTextByAliases(properties, [
+    "Google Ads Access Path",
+    "Access Path",
+    "Google Manager Account",
+    "Manager Account",
+  ]);
+
+  return {
+    accountName,
+    adAccountId,
+    country: normalizeSupportedCountry(
+      getNotionPropertyTextByAliases(properties, ["Country", "country", "Market", "Location"])
+    ),
+    notionPageId: page.id,
+    ...(accessPath ? { accessPath } : {}),
+  };
+}
+
+function getNotionPropertyTextByAliases(
+  properties: Record<string, NotionPageProperty | undefined>,
+  aliases: string[]
+): string | null {
+  for (const alias of aliases) {
+    const property = findNotionProperty(properties, alias);
+    const value = getNotionPropertyText(property);
+    if (value) {
+      return value;
+    }
+  }
+
+  return null;
+}
+
+function findNotionProperty(
+  properties: Record<string, NotionPageProperty | undefined>,
+  alias: string
+): NotionPageProperty | undefined {
+  const normalizedAlias = normalizePropertyKey(alias);
+  const entry = Object.entries(properties).find(
+    ([propertyName]) => normalizePropertyKey(propertyName) === normalizedAlias
+  );
+  return entry?.[1];
+}
+
+function normalizeSupportedCountry(value: string | null): NotionAccountSearchSuggestion["country"] {
+  const normalized = normalizePropertyKey(value ?? "");
+  const countryAliases: Record<string, NotionAccountSearchSuggestion["country"]> = {
+    my: "MY",
+    malaysia: "MY",
+    sg: "SG",
+    singapore: "SG",
+    au: "AU",
+    australia: "AU",
+    us: "US",
+    usa: "US",
+    "united states": "US",
+    "united states of america": "US",
+  };
+
+  return countryAliases[normalized] ?? null;
+}
+
+function normalizePropertyKey(value: string): string {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function normalizeSearchText(value: string): string {
+  return value.trim().toLowerCase().replace(/\s+/g, " ");
 }
 
 function resolveNotionConfig(

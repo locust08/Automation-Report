@@ -1,0 +1,11 @@
+name = "billing-operations-api"
+main = "src/index.ts"
+compatibility_date = "2026-08-03"
+
+[[d1_databases]]
+binding = "CHECKLIST_DB"
+database_name = "notion-billing-daily-alert-checklist"
+database_id = "ddadf92f-1365-4b49-b056-821d1280c9b6"
+
+[observability]
+enabled = true

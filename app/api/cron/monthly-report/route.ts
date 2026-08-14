@@ -96,7 +96,7 @@ export async function POST(request: Request) {
 
 function isAuthorized(request: Request): boolean {
   const expectedSecret =
-    process.env.CRON_SECRET?.trim() || process.env.REPORT_AUTOMATION_SECRET?.trim();
+    process.env.CRON_SECRET?.trim() || process.env.WORKER_API_SECRET?.trim();
 
   if (!expectedSecret) {
     return false;

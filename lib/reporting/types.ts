@@ -15,6 +15,8 @@ export interface SummaryMetric {
   key: string;
   label: string;
   value: number | null;
+  previousValue?: number | null;
+  displayValue?: string;
   delta: number | null;
   format: MetricFormat;
 }
@@ -132,6 +134,7 @@ export interface OverallReportPayload {
   audienceClickBreakdown: AudienceClickBreakdownResponse;
   warnings: string[];
   diagnostics?: ReportPerformanceDiagnostic[];
+  dataSource?: "meta_api" | "meta_csv";
 }
 
 export interface ReportPerformanceDiagnostic {
@@ -237,7 +240,12 @@ export interface MetaCreativePerformanceRow {
   mediaType: "image" | "video";
   imageUrl: string | null;
   videoUrl: string | null;
+  videoId?: string | null;
+  videoSourceUrl?: string | null;
+  videoPermalinkUrl?: string | null;
   thumbnailUrl: string | null;
+  posterUrl?: string | null;
+  mediaWarning?: string | null;
   campaignId: string | null;
   campaignName: string;
   adSetId: string | null;
@@ -366,18 +374,35 @@ export interface PreviewDemographicRow {
   unknownCostPerResult: number | null;
 }
 
+export interface PreviewPlatformDistributionRow {
+  platform: string;
+  device: string;
+  results: number;
+  costPerResult: number | null;
+}
+
 export interface PreviewCreativeAsset {
   id: string;
   name?: string | null;
   title?: string | null;
   body?: string | null;
   description?: string | null;
+  mediaType?: "image" | "video";
   imageUrl?: string | null;
   videoUrl?: string | null;
+  videoId?: string | null;
+  videoSourceUrl?: string | null;
+  videoPermalinkUrl?: string | null;
   thumbnailUrl?: string | null;
+  posterUrl?: string | null;
+  mediaWarning?: string | null;
   linkUrl?: string | null;
   callToActionType?: string | null;
   objectType?: string | null;
+  effectiveObjectStoryId?: string | null;
+  instagramPermalinkUrl?: string | null;
+  effectiveInstagramMediaId?: string | null;
+  facebookPermalinkUrl?: string | null;
 }
 
 export interface PreviewLinkAsset {
@@ -387,6 +412,9 @@ export interface PreviewLinkAsset {
   placementLabel?: string | null;
   device?: "desktop" | "mobile" | null;
   adFormat?: string | null;
+  previewUrl?: string | null;
+  publicPostUrl?: string | null;
+  linkKind?: "publicPost" | "metaPreview" | null;
 }
 
 export interface PreviewImageAsset {
@@ -412,6 +440,7 @@ export interface PreviewAdNode {
   previewLinks?: PreviewLinkAsset[];
   performance?: PreviewPerformanceSummary | null;
   demographics?: PreviewDemographicRow[];
+  platformDistribution?: PreviewPlatformDistributionRow[];
   finalUrl?: string | null;
   displayPathParts?: string[];
   headlines?: PreviewTextAsset[];
@@ -430,6 +459,7 @@ export interface PreviewAdGroupNode {
   details: PreviewDetailField[];
   performance?: PreviewPerformanceSummary | null;
   demographics?: PreviewDemographicRow[];
+  platformDistribution?: PreviewPlatformDistributionRow[];
   ads: PreviewAdNode[];
 }
 
@@ -442,6 +472,7 @@ export interface PreviewCampaignNode {
   details: PreviewDetailField[];
   performance?: PreviewPerformanceSummary | null;
   demographics?: PreviewDemographicRow[];
+  platformDistribution?: PreviewPlatformDistributionRow[];
   children: PreviewAdGroupNode[];
 }
 
@@ -463,7 +494,8 @@ export type MetaPreviewBlockLabel =
   | "meta-preview-ad-creatives"
   | "meta-preview-preview-links"
   | "meta-preview-insights"
-  | "meta-preview-demographics";
+  | "meta-preview-demographics"
+  | "meta-preview-platforms";
 
 export interface MetaPreviewBlockDiagnostic {
   label: MetaPreviewBlockLabel;
@@ -586,6 +618,7 @@ export interface PreviewReportPayload {
     meta?: MetaPreviewDiagnostics[];
     google: GooglePreviewDiagnostics[];
   };
+  dataSource?: "meta_api" | "meta_csv";
 }
 
 export interface RequestContext {
@@ -596,4 +629,5 @@ export interface RequestContext {
   endDate: string | null;
   campaignType: string | null;
   platform: Platform | null;
+  source: "api" | "meta_csv";
 }

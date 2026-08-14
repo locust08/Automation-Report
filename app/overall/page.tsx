@@ -8,6 +8,13 @@ function getSingleValue(value: string | string[] | undefined): string | undefine
   return Array.isArray(value) ? value[0] : value;
 }
 
+function getValues(value: string | string[] | undefined): string[] {
+  if (Array.isArray(value)) {
+    return value;
+  }
+  return value ? [value] : [];
+}
+
 function toPlatform(value: string | undefined): ReportFilters["platform"] | undefined {
   return value === "meta" || value === "google" || value === "googleYoutube" ? value : undefined;
 }
@@ -25,6 +32,12 @@ export default async function OverallPage({
     startDate: getSingleValue(resolvedSearchParams?.startDate),
     endDate: getSingleValue(resolvedSearchParams?.endDate),
     platform: toPlatform(getSingleValue(resolvedSearchParams?.platform)),
+    campaignNameFilterMode:
+      getSingleValue(resolvedSearchParams?.campaignNameFilterMode) === "exclude"
+        ? "exclude"
+        : "include",
+    campaignNameFilterValues: getValues(resolvedSearchParams?.campaignNameFilterValue),
+    source: getSingleValue(resolvedSearchParams?.source) === "meta_csv" ? "meta_csv" : "api",
   } satisfies Partial<ReportFilters>;
 
   return (

@@ -1,25 +1,43 @@
 "use client";
 
 import Link from "next/link";
+import { usePathname } from "next/navigation";
+import { useEffect, useState } from "react";
 import {
   BarChart3Icon,
   CalendarDaysIcon,
+  ClipboardListIcon,
   EyeIcon,
   HouseIcon,
   IdCardIcon,
+  ListChecksIcon,
+  LogOutIcon,
+  SearchCheckIcon,
+  SlidersHorizontalIcon,
   SparklesIcon,
+  UploadCloudIcon,
+  UsersRoundIcon,
 } from "lucide-react";
 
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { useScreenshotMode } from "@/components/reporting/use-screenshot-mode";
+import { isAdminRole, type AuthRole } from "@/lib/auth/roles";
 
 interface ReportShellProps {
   title: string;
   dateLabel: string;
   headerDateControl?: React.ReactNode;
+  headerControlLayout?: "default" | "wide";
   headerBottomControl?: React.ReactNode;
   activeQuery?: string;
   reportReady?: boolean;
   suppressExportHeader?: boolean;
+  initialRole?: AuthRole;
   children: React.ReactNode;
 }
 
@@ -31,18 +49,38 @@ export function ReportShell({
   title,
   dateLabel,
   headerDateControl,
+  headerControlLayout = "default",
   headerBottomControl,
   activeQuery = "",
   reportReady = false,
   suppressExportHeader = false,
+  initialRole,
   children,
 }: ReportShellProps) {
   const { screenshotMode } = useScreenshotMode();
+  const pathname = usePathname();
+  const [currentRole, setCurrentRole] = useState<string | null>(initialRole ?? null);
+  useEffect(() => {
+    const controller = new AbortController();
+    void fetch("/api/auth/session", { cache: "no-store", signal: controller.signal })
+      .then(async (response) => response.ok ? response.json() as Promise<{ user?: { role?: string } }> : null)
+      .then((payload) => setCurrentRole(payload?.user?.role ?? null))
+      .catch(() => undefined);
+    return () => controller.abort();
+  }, []);
+  const isAdmin = isAdminRole(currentRole);
   const hrefs = {
-    home: withQuery("/", activeQuery),
+    home: "/",
     overall: withQuery("/overall", activeQuery),
     preview: withQuery("/preview", activeQuery),
     advanced: withQuery("/advanced", activeQuery),
+    mediaPlan: withQuery("/dashboard/media-plan", activeQuery),
+    metaImport: "/meta-import",
+    billing: "/billing",
+    googleOptimization: "/google-optimization",
+    googleManagement: withQuery("/manage/google", activeQuery),
+    userManagement: "/user-management",
+    optimizationScheduling: "/optimization-scheduling",
   };
 
   return (
@@ -65,7 +103,11 @@ export function ReportShell({
             data-report-export-header-inner="true"
           >
             <div
-              className="grid gap-4 text-white md:grid-cols-[minmax(0,1fr)_auto] md:items-start md:gap-x-8"
+              className={
+                headerControlLayout === "wide"
+                  ? "grid gap-5 text-white lg:grid-cols-[minmax(340px,0.46fr)_minmax(0,1fr)] lg:items-start lg:gap-x-8"
+                  : "grid gap-4 text-white md:grid-cols-[minmax(0,1fr)_auto] md:items-start md:gap-x-8"
+              }
               data-report-export-header-grid="true"
             >
               <div className="min-w-0 space-y-3">
@@ -75,44 +117,98 @@ export function ReportShell({
                 >
                   {title}
                 </h1>
-                <nav className="flex flex-wrap items-center gap-2" data-report-export-exclude="true">
-                  <Link
-                    href={hrefs.home}
-                    title="Home"
-                    aria-label="Open Home page"
-                    className="inline-flex size-10 items-center justify-center rounded-md bg-white/10 hover:bg-white/20"
+                <TooltipProvider delayDuration={200}>
+                  <nav
+                    className="flex flex-wrap items-center gap-2"
+                    data-report-export-exclude="true"
+                    aria-label="Report navigation"
                   >
-                    <HouseIcon className="size-5" />
-                  </Link>
-                  <Link
-                    href={hrefs.overall}
-                    title="Overall"
-                    aria-label="Open Overall page"
-                    className="inline-flex size-10 items-center justify-center rounded-md bg-white/10 hover:bg-white/20"
-                  >
-                    <BarChart3Icon className="size-5" />
-                  </Link>
-                  <Link
-                    href={hrefs.preview}
-                    title="Preview"
-                    aria-label="Open Preview page"
-                    className="inline-flex size-10 items-center justify-center rounded-md bg-white/10 hover:bg-white/20"
-                  >
-                    <EyeIcon className="size-5" />
-                  </Link>
-                  <Link
-                    href={hrefs.advanced}
-                    title="Advanced Report"
-                    aria-label="Open Advanced Report page"
-                    className="inline-flex size-10 items-center justify-center rounded-md bg-white/10 hover:bg-white/20"
-                  >
-                    <SparklesIcon className="size-5" />
-                  </Link>
-                </nav>
+                    <ReportNavLink href={hrefs.home} label="Home" active={pathname === "/"}>
+                      <HouseIcon className="size-5" />
+                    </ReportNavLink>
+                    <ReportNavLink
+                      href={hrefs.overall}
+                      label="Monthly Performance"
+                      active={pathname === "/overall"}
+                    >
+                      <BarChart3Icon className="size-5" />
+                    </ReportNavLink>
+                    <ReportNavLink
+                      href={hrefs.preview}
+                      label="Campaign Preview"
+                      active={pathname === "/preview"}
+                    >
+                      <EyeIcon className="size-5" />
+                    </ReportNavLink>
+                    <ReportNavLink
+                      href={hrefs.advanced}
+                      label="Advanced Report"
+                      active={pathname === "/advanced"}
+                    >
+                      <SparklesIcon className="size-5" />
+                    </ReportNavLink>
+                    <ReportNavLink
+                      href={hrefs.mediaPlan}
+                      label="Create Media Plan"
+                      active={pathname === "/dashboard/media-plan"}
+                    >
+                      <ClipboardListIcon className="size-5" />
+                    </ReportNavLink>
+                    <ReportNavLink
+                      href={hrefs.metaImport}
+                      label="Import Meta CSV"
+                      active={pathname === "/meta-import"}
+                    >
+                      <UploadCloudIcon className="size-5" />
+                    </ReportNavLink>
+                    <ReportNavLink
+                      href={hrefs.billing}
+                      label="Billing Operations"
+                      active={pathname === "/billing"}
+                    >
+                      <ListChecksIcon className="size-5" />
+                    </ReportNavLink>
+                    <ReportNavLink
+                      href={hrefs.googleManagement}
+                      label="Google Ads Management"
+                      active={pathname.startsWith("/manage/google")}
+                    >
+                      <SlidersHorizontalIcon className="size-5" />
+                    </ReportNavLink>
+                    {isAdmin ? <>
+                      <ReportNavLink
+                        href={hrefs.googleOptimization}
+                        label="Google Optimization"
+                        active={pathname === "/google-optimization" || pathname === "/search-term-optimization" || pathname === "/placement-optimization"}
+                      >
+                        <SearchCheckIcon className="size-5" />
+                      </ReportNavLink>
+                      <ReportNavLink
+                        href={hrefs.optimizationScheduling}
+                        label="Optimization Scheduling"
+                        active={pathname === "/optimization-scheduling"}
+                      >
+                        <CalendarDaysIcon className="size-5" />
+                      </ReportNavLink>
+                      <ReportNavLink
+                        href={hrefs.userManagement}
+                        label="User Management"
+                        active={pathname === "/user-management"}
+                      >
+                        <UsersRoundIcon className="size-5" />
+                      </ReportNavLink>
+                    </> : null}
+                    <ReportLogoutButton />
+                  </nav>
+                </TooltipProvider>
               </div>
               {headerDateControl ? (
                 <div
-                  className="flex w-full items-start md:w-auto md:max-w-[420px] md:justify-self-end"
+                  className={
+                    headerControlLayout === "wide"
+                      ? "flex w-full items-start lg:w-full lg:max-w-[920px] lg:justify-self-end"
+                      : "flex w-full items-start md:w-auto md:max-w-[420px] md:justify-self-end"
+                  }
                   data-report-export-date-control="true"
                 >
                   {headerDateControl}
@@ -152,6 +248,69 @@ export function ReportShell({
         </section>
       </div>
     </main>
+  );
+}
+
+function ReportNavLink({
+  href,
+  label,
+  active,
+  children,
+}: {
+  href: string;
+  label: string;
+  active: boolean;
+  children: React.ReactNode;
+}) {
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <Link
+          href={href}
+          aria-label={label}
+          aria-current={active ? "page" : undefined}
+          className={`inline-flex size-10 items-center justify-center rounded-md outline-none transition focus-visible:ring-2 focus-visible:ring-white/90 focus-visible:ring-offset-2 focus-visible:ring-offset-red-900 ${
+            active
+              ? "bg-white text-[#9f0712] shadow-md hover:bg-white"
+              : "bg-white/10 text-white hover:bg-white/20"
+          }`}
+        >
+          {children}
+        </Link>
+      </TooltipTrigger>
+      <TooltipContent
+        side="top"
+        sideOffset={8}
+        className="border border-white/15 bg-[#211114] px-3 py-2 text-sm font-medium text-white shadow-xl"
+      >
+        {label}
+      </TooltipContent>
+    </Tooltip>
+  );
+}
+
+function ReportLogoutButton() {
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <form action="/api/auth/logout" method="post">
+          <button
+            type="submit"
+            aria-label="Logout"
+            className="inline-flex size-10 items-center justify-center rounded-md bg-white/10 text-white outline-none transition hover:bg-white/20 focus-visible:ring-2 focus-visible:ring-white/90 focus-visible:ring-offset-2 focus-visible:ring-offset-red-900"
+          >
+            <LogOutIcon className="size-5" />
+          </button>
+        </form>
+      </TooltipTrigger>
+      <TooltipContent
+        side="top"
+        sideOffset={8}
+        className="border border-white/15 bg-[#211114] px-3 py-2 text-sm font-medium text-white shadow-xl"
+      >
+        Logout
+      </TooltipContent>
+    </Tooltip>
   );
 }
 

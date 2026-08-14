@@ -31,6 +31,10 @@ import {
 } from "@/lib/reporting/metrics";
 import { MemoryCacheEntry, readThroughMemoryCache } from "@/lib/reporting/memory-cache";
 import {
+  buildMetaMonthlyOutcomeMetrics,
+  normalizeMetaMonthlyCampaignRows,
+} from "@/lib/reporting/meta-monthly-dashboard";
+import {
   fetchMetaAudienceBreakdown,
   fetchMetaAccountName,
   fetchMetaCampaignRows,
@@ -74,11 +78,23 @@ export interface OverallInput {
   startDate: string | null;
   endDate: string | null;
   diagnosticsMode?: boolean;
+  cacheRefreshKey?: string | null;
+  previewStage?: PreviewFetchStage;
+  previewSelection?: PreviewFetchSelection;
 }
 
 interface CampaignInput extends OverallInput {
   campaignType: string;
   platform: Platform;
+}
+
+export type PreviewFetchStage = "campaigns" | "ad-groups" | "ads" | "preview" | "assets" | "full";
+
+export interface PreviewFetchSelection {
+  platform: "meta" | "google" | null;
+  campaignId: string | null;
+  adGroupId: string | null;
+  adId: string | null;
 }
 
 interface ResolvedAccountIds {
@@ -149,11 +165,23 @@ const GOOGLE_FETCH_CACHE_MAX_ENTRIES = parsePositiveIntegerEnv(
   process.env.REPORTING_GOOGLE_CACHE_MAX_ENTRIES,
   200
 );
+const OVERALL_PERFORMANCE_CACHE_TTL_MS = parsePositiveIntegerEnv(
+  process.env.REPORTING_OVERALL_PERFORMANCE_CACHE_TTL_MS,
+  2 * 60 * 1000
+);
+const OVERALL_PERFORMANCE_CACHE_MAX_ENTRIES = parsePositiveIntegerEnv(
+  process.env.REPORTING_OVERALL_PERFORMANCE_CACHE_MAX_ENTRIES,
+  100
+);
 const OVERALL_REPORT_SLOW_STAGE_WARNING_MS = parsePositiveIntegerEnv(
   process.env.REPORTING_SLOW_STAGE_WARNING_MS,
   10 * 1000
 );
 
+const overallPerformanceStageCache = new Map<
+  string,
+  MemoryCacheEntry<OverallPerformanceData>
+>();
 const googleCampaignRowsCache = new Map<
   string,
   MemoryCacheEntry<{ rows: CampaignRow[]; warnings: string[] }>
@@ -166,6 +194,10 @@ const googlePreviewCache = new Map<
   string,
   MemoryCacheEntry<Awaited<ReturnType<typeof fetchGooglePreviewData>>>
 >();
+const metaPreviewCache = new Map<
+  string,
+  MemoryCacheEntry<Awaited<ReturnType<typeof fetchMetaPreviewData>>>
+>();
 const googleTopKeywordRowsCache = new Map<string, MemoryCacheEntry<TopKeywordRow[]>>();
 const googleFinalUrlSpendRowsCache = new Map<string, MemoryCacheEntry<GoogleFinalUrlSpendRow[]>>();
 const googleImageCreativeRowsCache = new Map<string, MemoryCacheEntry<GoogleImageCreativePerformanceRow[]>>();
@@ -173,7 +205,6 @@ const googleVideoCreativeRowsCache = new Map<string, MemoryCacheEntry<GoogleVide
 const googleAuctionInsightRowsCache = new Map<string, MemoryCacheEntry<AuctionInsightRow[]>>();
 const googleAccountNameCache = new Map<string, MemoryCacheEntry<string | null>>();
 const metaCreativeRowsCache = new Map<string, MemoryCacheEntry<MetaCreativePerformanceRow[]>>();
-const overallPerformanceStageCache = new Map<string, MemoryCacheEntry<OverallPerformanceData>>();
 
 function parsePositiveIntegerEnv(rawValue: string | undefined, fallback: number): number {
   const parsed = Number.parseInt(rawValue ?? "", 10);
@@ -499,8 +530,8 @@ export async function getOverallReport(input: OverallInput): Promise<OverallRepo
     );
   }
 
-  const metaCurrent = metaCurrentResult.rows;
-  const metaPrevious = metaPreviousResult.rows;
+  const metaCurrent = normalizeMetaMonthlyCampaignRows(metaCurrentResult.rows);
+  const metaPrevious = normalizeMetaMonthlyCampaignRows(metaPreviousResult.rows);
   const googleCurrent = googleCurrentResult.rows.filter((row) => row.platform === "google");
   const googlePrevious = googlePreviousResult.rows.filter((row) => row.platform === "google");
   const youtubeCurrent = googleCurrentResult.rows.filter((row) => row.platform === "googleYoutube");
@@ -685,21 +716,40 @@ export async function getOverallAudienceBreakdownStage(
 }
 
 async function getOverallPerformanceStageData(input: OverallInput): Promise<OverallPerformanceData> {
-  const cacheKey = createGoogleFetchCacheKey("overall-performance-stage", {
+  const baseCacheKey = JSON.stringify({
     accountId: input.accountId,
     metaAccountId: input.metaAccountId,
     googleAccountId: input.googleAccountId,
     startDate: input.startDate,
     endDate: input.endDate,
+    diagnosticsMode: Boolean(input.diagnosticsMode),
   });
+  const refreshKey = input.cacheRefreshKey?.trim() || null;
+  if (refreshKey) {
+    overallPerformanceStageCache.delete(baseCacheKey);
+  }
+  const cacheKey = refreshKey ? `${baseCacheKey}|refresh=${refreshKey}` : baseCacheKey;
 
-  return readThroughMemoryCache(
+  const performance = await readThroughMemoryCache(
     overallPerformanceStageCache,
     cacheKey,
     () => fetchOverallPerformanceStageData(input),
     {
-      ttlMs: GOOGLE_FETCH_CACHE_TTL_MS,
-      maxEntries: GOOGLE_FETCH_CACHE_MAX_ENTRIES,
+      ttlMs: OVERALL_PERFORMANCE_CACHE_TTL_MS,
+      maxEntries: OVERALL_PERFORMANCE_CACHE_MAX_ENTRIES,
+    }
+  );
+  if (!refreshKey) {
+    return performance;
+  }
+
+  return readThroughMemoryCache(
+    overallPerformanceStageCache,
+    baseCacheKey,
+    async () => performance,
+    {
+      ttlMs: OVERALL_PERFORMANCE_CACHE_TTL_MS,
+      maxEntries: OVERALL_PERFORMANCE_CACHE_MAX_ENTRIES,
     }
   );
 }
@@ -811,8 +861,8 @@ async function fetchOverallPerformanceStageData(input: OverallInput): Promise<Ov
     warnings: dedupeWarnings(warnings),
     diagnostics,
     reportRequestId,
-    metaCurrent: metaCurrentResult.rows,
-    metaPrevious: metaPreviousResult.rows,
+    metaCurrent: normalizeMetaMonthlyCampaignRows(metaCurrentResult.rows),
+    metaPrevious: normalizeMetaMonthlyCampaignRows(metaPreviousResult.rows),
     googleCurrent: googleCurrentResult.rows.filter((row) => row.platform === "google"),
     googlePrevious: googlePreviousResult.rows.filter((row) => row.platform === "google"),
     youtubeCurrent: googleCurrentResult.rows.filter((row) => row.platform === "googleYoutube"),
@@ -914,6 +964,13 @@ export async function getPreviewReport(input: OverallInput): Promise<PreviewRepo
   const credentials = getCredentials();
   const dateRange = buildDateRange(input.startDate, input.endDate);
   const warnings: string[] = [];
+  const previewStage = input.previewStage ?? "full";
+  const previewSelection = input.previewSelection ?? {
+    platform: null,
+    campaignId: null,
+    adGroupId: null,
+    adId: null,
+  };
 
   const { resolvedAccountIds, googleManagerContext } = await resolveReportAccountContext(
     input,
@@ -935,7 +992,9 @@ export async function getPreviewReport(input: OverallInput): Promise<PreviewRepo
       resolvedAccountIds.metaAccountIds,
       credentials.metaAccessToken,
       dateRange.startDate,
-      dateRange.endDate
+      dateRange.endDate,
+      previewStage,
+      previewSelection
     ),
     tryFetchGooglePreviewSections(
       resolvedAccountIds.googleAccountIds,
@@ -950,7 +1009,9 @@ export async function getPreviewReport(input: OverallInput): Promise<PreviewRepo
       credentials.googleLoginCustomerId,
       dateRange.startDate,
       dateRange.endDate,
-      Boolean(input.diagnosticsMode && isGooglePreviewDiagnosticsEnabled())
+      Boolean(input.diagnosticsMode && isGooglePreviewDiagnosticsEnabled()),
+      previewStage,
+      previewSelection
     ),
   ]);
 
@@ -1568,8 +1629,7 @@ function buildMetaSummary(currentRows: CampaignRow[], previousRows: CampaignRow[
   const previous = aggregateRows(previousRows, "meta");
 
   return [
-    metric("results", "Results", current.results, previous.results, "number"),
-    metric("costPerResult", "Cost/Results", current.costPerResult, previous.costPerResult, "currency"),
+    ...buildMetaMonthlyOutcomeMetrics(currentRows, previousRows),
     metric("clicks", "Clicks", current.clicks, previous.clicks, "number"),
     metric("ctr", "CTR (%)", current.ctr, previous.ctr, "percent"),
     metric("cpm", "CPM", current.cpm, previous.cpm, "currency"),
@@ -1604,6 +1664,7 @@ function metric(
     key,
     label,
     value: currentValue,
+    previousValue,
     delta: computeDelta(currentValue, previousValue),
     format,
   };
@@ -1693,7 +1754,9 @@ async function tryFetchMetaPreview(
   accountId: string | null,
   accessToken: string | null,
   startDate: string,
-  endDate: string
+  endDate: string,
+  previewStage: PreviewFetchStage,
+  previewSelection: PreviewFetchSelection
 ): Promise<{
   campaigns: PreviewCampaignNode[];
   warnings: string[];
@@ -1717,12 +1780,34 @@ async function tryFetchMetaPreview(
   }
 
   try {
-    const result = await fetchMetaPreviewData({
+    const cacheKey = createGoogleFetchCacheKey("meta-preview", {
       accountId,
-      accessToken,
       startDate,
       endDate,
+      previewStage,
+      platform: previewSelection.platform,
+      campaignId: previewSelection.campaignId,
+      adGroupId: previewSelection.adGroupId,
+      adId: previewSelection.adId,
+      credentials: accessToken.slice(-10),
     });
+    const result = await readThroughMemoryCache(
+      metaPreviewCache,
+      cacheKey,
+      () =>
+        fetchMetaPreviewData({
+          accountId,
+          accessToken,
+          startDate,
+          endDate,
+          previewStage,
+          previewSelection,
+        }),
+      {
+        ttlMs: GOOGLE_FETCH_CACHE_TTL_MS,
+        maxEntries: GOOGLE_FETCH_CACHE_MAX_ENTRIES,
+      }
+    );
     return {
       campaigns: result.data,
       warnings: [
@@ -1986,7 +2071,9 @@ async function tryFetchGooglePreview(
   fallbackLoginCustomerId: string | null,
   startDate: string,
   endDate: string,
-  includeDiagnostics: boolean
+  includeDiagnostics: boolean,
+  previewStage: PreviewFetchStage,
+  previewSelection: PreviewFetchSelection
 ): Promise<{
   campaigns: PreviewCampaignNode[];
   warnings: string[];
@@ -2029,6 +2116,11 @@ async function tryFetchGooglePreview(
     fallbackLoginCustomerId,
     startDate,
     endDate,
+    previewStage,
+    platform: previewSelection.platform,
+    campaignId: previewSelection.campaignId,
+    adGroupId: previewSelection.adGroupId,
+    adId: previewSelection.adId,
     credentials: fingerprintGoogleCredentials(
       developerToken,
       accessToken,
@@ -2056,6 +2148,8 @@ async function tryFetchGooglePreview(
           startDate,
           endDate,
           accessPath,
+          previewStage,
+          previewSelection,
         }),
       {
         ttlMs: GOOGLE_FETCH_CACHE_TTL_MS,
@@ -2662,7 +2756,9 @@ async function tryFetchMetaPreviewSections(
   accountIds: string[],
   accessToken: string | null,
   startDate: string,
-  endDate: string
+  endDate: string,
+  previewStage: PreviewFetchStage,
+  previewSelection: PreviewFetchSelection
 ): Promise<{
   campaigns: PreviewCampaignNode[];
   warnings: string[];
@@ -2670,6 +2766,9 @@ async function tryFetchMetaPreviewSections(
   fatalErrors: MetaPreviewBlockIssue[];
   diagnostics: MetaPreviewDiagnostics[];
 }> {
+  if (previewSelection.platform === "google" && previewStage !== "campaigns" && previewStage !== "full") {
+    return { campaigns: [], warnings: [], structuredWarnings: [], fatalErrors: [], diagnostics: [] };
+  }
   if (accountIds.length === 0) {
     return { campaigns: [], warnings: [], structuredWarnings: [], fatalErrors: [], diagnostics: [] };
   }
@@ -2681,7 +2780,14 @@ async function tryFetchMetaPreviewSections(
   const diagnostics: MetaPreviewDiagnostics[] = [];
 
   for (const accountId of accountIds) {
-    const result = await tryFetchMetaPreview(accountId, accessToken, startDate, endDate);
+    const result = await tryFetchMetaPreview(
+      accountId,
+      accessToken,
+      startDate,
+      endDate,
+      previewStage,
+      previewSelection
+    );
     campaigns.push(...result.campaigns);
     warnings.push(
       ...result.warnings.map((warning) => annotateWarningWithAccount(warning, "meta", accountId))
@@ -2713,7 +2819,9 @@ async function tryFetchGooglePreviewSections(
   fallbackLoginCustomerId: string | null,
   startDate: string,
   endDate: string,
-  includeDiagnostics: boolean
+  includeDiagnostics: boolean,
+  previewStage: PreviewFetchStage,
+  previewSelection: PreviewFetchSelection
 ): Promise<{
   campaigns: PreviewCampaignNode[];
   warnings: string[];
@@ -2721,6 +2829,9 @@ async function tryFetchGooglePreviewSections(
   fatalErrors: GooglePreviewFatalError[];
   diagnostics: GooglePreviewDiagnostics[];
 }> {
+  if (previewSelection.platform === "meta" && previewStage !== "campaigns" && previewStage !== "full") {
+    return { campaigns: [], warnings: [], structuredWarnings: [], fatalErrors: [], diagnostics: [] };
+  }
   if (accountIds.length === 0) {
     return { campaigns: [], warnings: [], structuredWarnings: [], fatalErrors: [], diagnostics: [] };
   }
@@ -2745,7 +2856,9 @@ async function tryFetchGooglePreviewSections(
       fallbackLoginCustomerId,
       startDate,
       endDate,
-      includeDiagnostics
+      includeDiagnostics,
+      previewStage,
+      previewSelection
     );
 
     campaigns.push(...result.campaigns);

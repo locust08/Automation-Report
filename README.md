@@ -24,6 +24,12 @@ Multi-page reporting website for Meta Ads Manager + Google Ads Manager with a sh
 - `/auction` Auction page (Google Ads Manager extraction):
   - Auction insights domain metrics
   - Average benchmark row
+- `/dashboard/media-plan` Media Plan setup page:
+  - User enters Website URL, Ad Budget, and Google CID
+  - OpenAI generates a structured Google Search media plan with `OPENAI_MEDIA_PLAN_MODEL` and `OPENAI_MEDIA_PLAN_PROMPT_ID`
+  - Generated JSON renders as editable campaign, ad group, keyword, RSA, sitelink, and planning-note sections
+  - Final approval stores one detailed Notion row per ad group, then creates the Google Ads campaign as `PAUSED`
+  - Success state shows the Notion batch details, campaign ID, and Google Ads review link
 
 ## URL Parameters
 
@@ -68,6 +74,7 @@ Credentials are expected from environment variables (Doppler injects these at ru
   - Example for this account: `{"283341217383189":"<Registered Company Name>"}`
 - `ADVANCED_REPORT_ENABLED` (optional; set `false` to disable only scheduled Advanced Report automation)
 - `OPENAI_API_KEY`, `ADVANCED_REPORT_OPENAI_MODEL`, `ADVANCED_REPORT_CREATIVE_OPENAI_MODEL` (Advanced Report AI discovery/creative analysis)
+- `OPENAI_MEDIA_PLAN_MODEL`, `OPENAI_MEDIA_PLAN_PROMPT_ID`, `OPENAI_MEDIA_PLAN_TIMEOUT_MS` (Media Plan generation; timeout is optional and defaults to `120000`)
 - `OPENROUTER_API_KEY`, `ADVANCED_REPORT_VIDEO_OPENROUTER_MODEL` (optional Advanced Report video creative analysis)
 - `DATAFORSEO_LOGIN`, `DATAFORSEO_PASSWORD` (Advanced Report keyword volume and People Also Ask data)
 
@@ -178,6 +185,75 @@ npm run dev
 
 Open `http://localhost:3000`.
 
+## Meta Ads CSV import
+
+The `/meta-import` page lets any dashboard visitor import Meta Ads Manager CSV reports without
+requiring the Marketing API for the imported dataset. The first configured account is `340568485376201`, read
+from `META_IMPORT_DEFAULT_ACCOUNT_ID`.
+
+### Export and upload
+
+1. In Meta Ads Reporting, select the correct ad account, reporting level, and date range.
+2. Include IDs, reporting dates, Amount spent, Impressions, Clicks, Results, and any optional
+   metrics required by the report.
+3. Export CSV. XLSX is not supported in this version.
+4. Open `/meta-import`, upload the CSV, review automatic mappings, correct mappings when
+   needed, and inspect invalid or duplicate rows before confirming.
+
+The importer accepts CSV files up to 4 MB and 25,000 rows. It handles quoted fields, UTF-8 BOM,
+Windows/Unix line endings, common date formats, percentages, and localized currency/number
+formats. The original file is not retained after parsing.
+
+### Persistence and duplicate handling
+
+Create the D1 database, copy its ID into `cloudflare/meta-csv-import/wrangler.toml`, configure the
+Worker-side bearer secret, then migrate and deploy:
+
+```powershell
+npx wrangler d1 create automation-meta-csv-import
+cd cloudflare/meta-csv-import
+doppler run -- npx wrangler secret put META_IMPORT_WORKER_SECRET
+cd ../..
+npm run cf:meta-import:migrate
+npm run cf:meta-import:deploy
+```
+
+Configure `META_IMPORT_WORKER_URL` and `META_IMPORT_WORKER_SECRET` in Vercel. Production imports
+fail closed when durable storage is not configured. Local development uses a process-local
+repository only.
+
+For a local `next start` production-build smoke test only, `META_IMPORT_ALLOW_EPHEMERAL_LOCAL=true`
+enables that process-local repository. Never configure this flag in Vercel or another production
+deployment.
+
+Rows use a stable key based on account ID, reporting level, campaign/ad-set/ad IDs, and reporting
+dates. New keys are inserted, changed records are updated, and exact duplicates are skipped. D1
+stores normalized rows and import history; it does not store the original CSV.
+
+After import, open the generated `/overall?...&source=meta_csv` link. Imported data supports the
+existing date and campaign-name filters, performance cards, campaign tables, screenshot/PDF page
+capture, and the preview hierarchy. API-backed reporting remains the default when `source` is not
+set.
+
+### Storage security
+
+Required production storage values:
+
+- `META_IMPORT_WORKER_URL`
+- `META_IMPORT_WORKER_SECRET`
+
+The upload page and its import APIs intentionally do not require user authentication. The Worker
+secret remains server-side and authenticates only Vercel-to-Cloudflare storage requests; never
+expose it in client-side environment variables. Import history records the actor as `Dashboard user`.
+
+### Current limitations
+
+- CSV only; no XLSX import.
+- Standard performance exports cannot reconstruct Meta creative media, public post links,
+  targeting settings, or all Ads Manager preview details.
+- Audience tables require a future audience-breakdown mapping profile.
+- An imported comparison period must exist separately for month-over-month deltas.
+
 ## Build / Lint
 
 ```bash
@@ -190,7 +266,7 @@ npm run build
 
 Advanced Report automation uses the Notion `Advanced Report` checkbox. Basic/Overall monthly automation continues to use `Monthly Email`, and bi-weekly Overall continues to use `Bi-Weekly`.
 
-Required production env vars: reporting platform credentials, `NOTION_TOKEN`, `NOTION_AD_ACCOUNTS_DATABASE_ID` or `NOTION_DATABASE_ID`, `CRON_SECRET` or `REPORT_AUTOMATION_SECRET`, `RESEND_API_KEY`, `RESEND_FROM_MONTHLY_REPORT`, `OPENAI_API_KEY`, `DATAFORSEO_LOGIN`, `DATAFORSEO_PASSWORD`. Optional: `OPENROUTER_API_KEY` for video analysis and `NOTION_MONTHLY_REPORT_LOGS_DATABASE_ID` with `idempotency_key` or `scheduled_date` for duplicate-send prevention.
+Required production env vars: reporting platform credentials, `NOTION_TOKEN`, `NOTION_AD_ACCOUNTS_DATABASE_ID` or `NOTION_DATABASE_ID`, `CRON_SECRET` or `WORKER_API_SECRET`, `RESEND_API_KEY`, `RESEND_FROM_MONTHLY_REPORT`, `OPENAI_API_KEY`, `DATAFORSEO_LOGIN`, `DATAFORSEO_PASSWORD`. Optional: `OPENROUTER_API_KEY` for video analysis and `NOTION_MONTHLY_REPORT_LOGS_DATABASE_ID` with `idempotency_key` or `scheduled_date` for duplicate-send prevention.
 
 Test checklist:
 

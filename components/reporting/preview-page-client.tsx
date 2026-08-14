@@ -3,9 +3,7 @@
 import { useMemo, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 
-import { AccountStructureFlowchart } from "@/components/reporting/account-structure-flowchart";
 import { PreviewHierarchy } from "@/components/reporting/preview-hierarchy";
-import { ReportSuccessScreen } from "@/components/reporting/report-loading-screen";
 import { ReportDownloadButton } from "@/components/reporting/screenshot-mode-toggle";
 import { ReportHeaderMonthPicker } from "@/components/reporting/report-header-month-picker";
 import { ReportFiltersBar } from "@/components/reporting/report-filters-bar";
@@ -17,15 +15,19 @@ import {
   ReportWarnings,
 } from "@/components/reporting/report-state";
 import { useReportSectionQuery } from "@/components/reporting/use-report-data";
-import { useReportReadyTransition } from "@/components/reporting/use-report-ready-transition";
 import { useReportFilters } from "@/components/reporting/use-report-filters";
 import { formatGoogleAdsAccessPathErrorMessage } from "@/lib/reporting/google-access-path";
-import {
-  getFirstPreviewAd,
-  getFirstPreviewChild,
-} from "@/lib/reporting/preview-stages";
 import { resolvePreviewEntry } from "@/lib/reporting/preview-selection";
-import type { PreviewReportPayload } from "@/lib/reporting/types";
+import type {
+  PreviewAdGroupNode,
+  PreviewAdNode,
+  PreviewCampaignNode,
+  PreviewPlatformSection,
+  PreviewReportPayload,
+} from "@/lib/reporting/types";
+
+const PREVIEW_OPTIONS_CACHE_TTL_MS = 5 * 60 * 1000;
+const PREVIEW_DETAILS_CACHE_TTL_MS = 2 * 60 * 1000;
 
 export function PreviewPageClient() {
   const router = useRouter();
@@ -65,6 +67,9 @@ export function PreviewPageClient() {
     }
     params.set("startDate", filters.startDate);
     params.set("endDate", filters.endDate);
+    if (filters.source === "meta_csv") {
+      params.set("source", "meta_csv");
+    }
     return params.toString();
   }, [
     filters.accountId,
@@ -72,6 +77,7 @@ export function PreviewPageClient() {
     filters.googleAccountId,
     filters.metaAccountId,
     filters.startDate,
+    filters.source,
   ]);
 
   const accountKey = filters.metaAccountId || filters.googleAccountId || filters.accountId || "-";
@@ -79,8 +85,18 @@ export function PreviewPageClient() {
     `/api/accounts/${encodeURIComponent(accountKey)}/campaigns`,
     queryString,
     hasAccountId,
-    "Unable to load active campaigns."
+    "Unable to load active campaigns.",
+    PREVIEW_OPTIONS_CACHE_TTL_MS
   );
+  const structureQuery = useReportSectionQuery<PreviewReportPayload>(
+    `/api/accounts/${encodeURIComponent(accountKey)}/structure`,
+    queryString,
+    hasAccountId,
+    "Unable to load account structure.",
+    PREVIEW_OPTIONS_CACHE_TTL_MS
+  );
+  const [selectedChildId, setSelectedChildId] = useState("");
+  const [selectedAdId, setSelectedAdId] = useState("");
   const campaignResolution = useMemo(
     () =>
       campaignsQuery.data
@@ -108,12 +124,17 @@ export function PreviewPageClient() {
     `/api/campaigns/${encodeURIComponent(selectedCampaign?.id ?? "-")}/ad-groups`,
     adGroupsQueryString,
     hasAccountId && Boolean(selectedCampaign),
-    "Unable to load ad groups or ad sets."
+    "Unable to load ad groups or ad sets.",
+    PREVIEW_OPTIONS_CACHE_TTL_MS
   );
-  const selectedChild = useMemo(
-    () => (adGroupsQuery.data ? getFirstPreviewChild(adGroupsQuery.data) : null),
-    [adGroupsQuery.data]
-  );
+  const selectedChild = useMemo(() => {
+    const children = getPreviewChildren(
+      adGroupsQuery.data,
+      selectedStagePlatform,
+      selectedCampaign?.id ?? null
+    );
+    return children.find((child) => child.id === selectedChildId) ?? children[0] ?? null;
+  }, [adGroupsQuery.data, selectedCampaign?.id, selectedChildId, selectedStagePlatform]);
   const adsQueryString = useMemo(
     () =>
       buildPreviewStageQuery(queryString, {
@@ -126,12 +147,24 @@ export function PreviewPageClient() {
     `/api/ad-groups/${encodeURIComponent(selectedChild?.id ?? "-")}/ads`,
     adsQueryString,
     hasAccountId && Boolean(selectedChild),
-    "Unable to load ads."
+    "Unable to load ads.",
+    PREVIEW_OPTIONS_CACHE_TTL_MS
   );
-  const selectedAd = useMemo(
-    () => (adsQuery.data ? getFirstPreviewAd(adsQuery.data) : null),
-    [adsQuery.data]
-  );
+  const selectedAd = useMemo(() => {
+    const ads = getPreviewAds(
+      adsQuery.data,
+      selectedStagePlatform,
+      selectedCampaign?.id ?? null,
+      selectedChild?.id ?? null
+    );
+    return ads.find((ad) => ad.id === selectedAdId) ?? ads[0] ?? null;
+  }, [
+    adsQuery.data,
+    selectedAdId,
+    selectedCampaign?.id,
+    selectedChild?.id,
+    selectedStagePlatform,
+  ]);
   const previewQueryString = useMemo(
     () =>
       buildPreviewStageQuery(queryString, {
@@ -145,46 +178,54 @@ export function PreviewPageClient() {
     `/api/ads/${encodeURIComponent(selectedAd?.id ?? "-")}/preview`,
     previewQueryString,
     hasAccountId && Boolean(selectedAd),
-    "Unable to load preview details."
+    "Unable to load preview details.",
+    PREVIEW_DETAILS_CACHE_TTL_MS
   );
-  const [previewVisible, setPreviewVisible] = useState(false);
   const assetsQuery = useReportSectionQuery<PreviewReportPayload>(
     `/api/ads/${encodeURIComponent(selectedAd?.id ?? "-")}/assets`,
     previewQueryString,
-    hasAccountId && Boolean(selectedAd) && previewVisible,
-    "Unable to load creative assets."
+    hasAccountId && Boolean(selectedAd) && Boolean(previewQuery.data),
+    "Unable to load creative assets.",
+    PREVIEW_DETAILS_CACHE_TTL_MS
   );
-  const data =
-    assetsQuery.data ??
-    previewQuery.data ??
-    adsQuery.data ??
-    adGroupsQuery.data ??
-    campaignsQuery.data;
-  const error =
-    campaignsQuery.error ??
-    adGroupsQuery.error ??
-    adsQuery.error ??
-    previewQuery.error ??
-    assetsQuery.error;
-  const loading =
-    campaignsQuery.loading ||
-    adGroupsQuery.loading ||
-    adsQuery.loading ||
-    previewQuery.loading ||
-    assetsQuery.loading;
+  const displayData = useMemo(
+    () =>
+      mergePreviewStagePayloads({
+        campaigns: campaignsQuery.data,
+        structure: structureQuery.data,
+        adGroups: adGroupsQuery.data,
+        ads: adsQuery.data,
+        details: assetsQuery.data ?? previewQuery.data,
+        platform: selectedStagePlatform,
+        campaignId: selectedCampaign?.id ?? null,
+        adGroupId: selectedChild?.id ?? null,
+        adId: selectedAd?.id ?? null,
+      }),
+    [
+      adGroupsQuery.data,
+      adsQuery.data,
+      assetsQuery.data,
+      campaignsQuery.data,
+      structureQuery.data,
+      previewQuery.data,
+      selectedAd?.id,
+      selectedCampaign?.id,
+      selectedChild?.id,
+      selectedStagePlatform,
+    ]
+  );
   const retry =
     assetsQuery.error ? assetsQuery.retry :
     previewQuery.error ? previewQuery.retry :
     adsQuery.error ? adsQuery.retry :
     adGroupsQuery.error ? adGroupsQuery.retry :
     campaignsQuery.retry;
-  const successToken = assetsQuery.successToken ?? previewQuery.successToken;
-  const metaFatalError = data?.metaFatalErrors?.[0] ?? null;
-  const googleFatalError = data?.googleFatalErrors?.[0] ?? null;
+  const metaFatalError = displayData?.metaFatalErrors?.[0] ?? null;
+  const googleFatalError = displayData?.googleFatalErrors?.[0] ?? null;
   const previewResolution = useMemo(
     () =>
-      data
-        ? resolvePreviewEntry(data.sections, {
+      displayData
+        ? resolvePreviewEntry(displayData.sections, {
             platform:
               selectedPlatform === "meta" || selectedPlatform === "google"
                 ? selectedPlatform
@@ -193,33 +234,19 @@ export function PreviewPageClient() {
             campaignName: selectedCampaignName || null,
           })
         : null,
-    [data, selectedCampaignId, selectedCampaignName, selectedPlatform]
+    [displayData, selectedCampaignId, selectedCampaignName, selectedPlatform]
   );
 
-  const title = `${data?.companyName ?? "Company Name"} Campaign Preview`;
+  const title = `${displayData?.companyName ?? "Company Name"} Campaign Preview`;
   const dateLabel =
-    data?.dateRange.currentLabel ?? `${filters.startDate} - ${filters.endDate}`;
-  const previewReady =
-    hasAccountId &&
-    !loading &&
-    !error &&
-    Boolean(assetsQuery.data ?? previewQuery.data) &&
-    (data?.warnings.length ?? 0) === 0 &&
-    !metaFatalError &&
-    !googleFatalError &&
-    previewResolution?.status === "ready" &&
-    Boolean(previewResolution.section) &&
-    Boolean(previewResolution.campaign);
-  const { showReadyState } = useReportReadyTransition({
-    ready: previewReady,
-    transitionKey: successToken,
-  });
-
+    displayData?.dateRange.currentLabel ?? `${filters.startDate} - ${filters.endDate}`;
   function handleCampaignChange(next: {
     platform: "meta" | "google";
     campaignId: string;
     campaignName: string;
   }) {
+    setSelectedChildId("");
+    setSelectedAdId("");
     const params = new URLSearchParams(searchParams.toString());
     const currentPlatform = params.get("platform");
     const currentCampaignId = params.get("campaignId");
@@ -244,13 +271,24 @@ export function PreviewPageClient() {
     router.replace(query ? `${pathname}?${query}` : pathname);
   }
 
-  const flowchartPlatform =
-    selectedPlatform === "meta" || selectedPlatform === "google" ? selectedPlatform : null;
-  const flowchartError = error ? `Unable to load live account hierarchy. ${error}` : null;
-  const previewMarkerRef = usePreviewVisibilityMarker(setPreviewVisible);
+  function handleChildChange(childId: string) {
+    setSelectedChildId(childId);
+    setSelectedAdId("");
+  }
 
-  if (showReadyState) {
-    return <ReportSuccessScreen kind="preview" fullPage />;
+  function handleAdChange(adId: string) {
+    setSelectedAdId(adId);
+  }
+
+  if (hasAccountId && campaignsQuery.loading && !campaignsQuery.data) {
+    return (
+      <ReportLoadingState
+        kind="preview"
+        message="Loading active campaigns..."
+        fullPage
+        onRetry={campaignsQuery.retry}
+      />
+    );
   }
 
   return (
@@ -302,38 +340,14 @@ export function PreviewPageClient() {
           <ReportErrorState kind="preview" message={campaignsQuery.error} onRetry={campaignsQuery.retry} />
         ) : null}
 
-        {hasAccountId && (loading || error) ? (
-          <AccountStructureFlowchart
-            sections={data?.sections ?? []}
-            requestedPlatform={flowchartPlatform}
-            loading={loading}
-            error={flowchartError}
-            accountIds={{
-              metaAccountId:
-                data?.accountIds.metaAccountId ??
-                (filters.metaAccountId || filters.accountId || null),
-              googleAccountId:
-                data?.accountIds.googleAccountId ??
-                (filters.googleAccountId || filters.accountId || null),
-            }}
-            onRetry={retry}
-          />
-        ) : null}
-
-        {adGroupsQuery.loading ? (
-          <ReportLoadingState kind="preview" message="Loading ad groups or ad sets..." onRetry={adGroupsQuery.retry} />
-        ) : null}
         {adGroupsQuery.error ? (
           <ReportErrorState kind="preview" message={adGroupsQuery.error} onRetry={adGroupsQuery.retry} />
-        ) : null}
-        {adsQuery.loading ? (
-          <ReportLoadingState kind="preview" message="Loading ads..." onRetry={adsQuery.retry} />
         ) : null}
         {adsQuery.error ? (
           <ReportErrorState kind="preview" message={adsQuery.error} onRetry={adsQuery.retry} />
         ) : null}
 
-        {data && metaFatalError ? (
+        {displayData && metaFatalError ? (
           <ReportErrorState
             kind="preview"
             message={`Required Meta block failed: [${metaFatalError.label}] fields=${metaFatalError.fields.join(",")} code=${
@@ -343,7 +357,7 @@ export function PreviewPageClient() {
           />
         ) : null}
 
-        {data && googleFatalError ? (
+        {displayData && googleFatalError ? (
           <ReportErrorState
             kind="preview"
             message={
@@ -367,9 +381,9 @@ export function PreviewPageClient() {
           />
         ) : null}
 
-        {data && !metaFatalError && !googleFatalError ? (
+        {displayData && !metaFatalError && !googleFatalError ? (
           <>
-            <ReportWarnings warnings={data.warnings} />
+            <ReportWarnings warnings={displayData.warnings} />
             {previewResolution?.status === "invalid-campaign" ? (
               <ReportErrorState
                 kind="preview"
@@ -385,66 +399,35 @@ export function PreviewPageClient() {
                 }
               />
             ) : null}
-            <div ref={previewMarkerRef} />
-            {previewQuery.loading ? (
-              <ReportLoadingState kind="preview" message="Loading selected ad preview..." onRetry={previewQuery.retry} />
-            ) : null}
             {previewQuery.error ? (
               <ReportErrorState kind="preview" message={previewQuery.error} onRetry={previewQuery.retry} />
-            ) : null}
-            {assetsQuery.loading ? (
-              <ReportLoadingState kind="preview" message="Loading creative assets..." onRetry={assetsQuery.retry} />
             ) : null}
             {assetsQuery.error ? (
               <ReportErrorState kind="preview" message={assetsQuery.error} onRetry={assetsQuery.retry} />
             ) : null}
-            {previewResolution?.status === "ready" && previewResolution.section && previewResolution.campaign && (assetsQuery.data ?? previewQuery.data) ? (
+            {previewResolution?.status === "ready" && previewResolution.section && previewResolution.campaign ? (
               <PreviewHierarchy
                 key={`${previewResolution.section.platform}:${previewResolution.campaign.id}`}
                 section={previewResolution.section}
                 initialCampaignId={previewResolution.campaign.id}
-                companyName={data.companyName}
-                structureFlowchart={
-                  <AccountStructureFlowchart
-                    sections={data.sections}
-                    requestedPlatform={previewResolution.section.platform}
-                    loading={false}
-                    error={null}
-                    accountIds={{
-                      metaAccountId: data.accountIds.metaAccountId,
-                      googleAccountId: data.accountIds.googleAccountId,
-                    }}
-                    onRetry={retry}
-                  />
+                initialChildId={selectedChild?.id ?? ""}
+                initialAdId={selectedAd?.id ?? ""}
+                companyName={displayData.companyName}
+                detailsLoading={
+                  adGroupsQuery.loading ||
+                  adsQuery.loading ||
+                  previewQuery.loading ||
+                  assetsQuery.loading
                 }
                 onCampaignChange={handleCampaignChange}
+                onChildChange={handleChildChange}
+                onAdChange={handleAdChange}
               />
             ) : null}
           </>
         ) : null}
       </div>
     </ReportShell>
-  );
-}
-
-function usePreviewVisibilityMarker(onVisible: (visible: boolean) => void) {
-  return useMemo(
-    () => (node: HTMLDivElement | null) => {
-      if (!node) {
-        return;
-      }
-      const observer = new IntersectionObserver(
-        (entries) => {
-          if (entries.some((entry) => entry.isIntersecting)) {
-            onVisible(true);
-            observer.disconnect();
-          }
-        },
-        { rootMargin: "280px 0px" }
-      );
-      observer.observe(node);
-    },
-    [onVisible]
   );
 }
 
@@ -457,6 +440,9 @@ function buildPreviewStageQuery(
   }
 ): string {
   const params = new URLSearchParams(queryString);
+  // Increment when the preview metric contract changes so long-lived client
+  // sessions do not keep displaying an older in-memory stage response.
+  params.set("previewMetricsVersion", "3");
   if (selection.platform) {
     params.set("platform", selection.platform);
   }
@@ -467,6 +453,146 @@ function buildPreviewStageQuery(
     params.set("adGroupId", selection.adGroupId);
   }
   return params.toString();
+}
+
+function mergePreviewStagePayloads(input: {
+  campaigns: PreviewReportPayload | null;
+  structure: PreviewReportPayload | null;
+  adGroups: PreviewReportPayload | null;
+  ads: PreviewReportPayload | null;
+  details: PreviewReportPayload | null;
+  platform: PreviewPlatformSection["platform"] | null;
+  campaignId: string | null;
+  adGroupId: string | null;
+  adId: string | null;
+}): PreviewReportPayload | null {
+  const payload = input.details ?? input.ads ?? input.adGroups ?? input.campaigns;
+  if (!payload || !input.campaigns) {
+    return payload;
+  }
+
+  return {
+    ...payload,
+    sections: input.campaigns.sections.map((section) => {
+      if (!input.platform || section.platform !== input.platform) {
+        return section;
+      }
+
+      return {
+        ...section,
+        campaigns: section.campaigns.map((campaign) => {
+          if (!input.campaignId || campaign.id !== input.campaignId) {
+            return campaign;
+          }
+
+          const stageCampaign = findPreviewCampaign(
+            input.adGroups,
+            section.platform,
+            campaign.id
+          );
+          const children = (stageCampaign?.children ?? campaign.children).map((child) => {
+            const structureChild = findPreviewChild(
+              input.structure,
+              section.platform,
+              campaign.id,
+              child.id
+            );
+            if (!input.adGroupId || child.id !== input.adGroupId) {
+              return structureChild ?? child;
+            }
+
+            const stageChild = findPreviewChild(
+              input.ads,
+              section.platform,
+              campaign.id,
+              child.id
+            );
+            const ads = (stageChild?.ads ?? structureChild?.ads ?? child.ads).map((ad) => {
+              if (!input.adId || ad.id !== input.adId) {
+                return ad;
+              }
+
+              return (
+                findPreviewAd(
+                  input.details,
+                  section.platform,
+                  campaign.id,
+                  child.id,
+                  ad.id
+                ) ?? ad
+              );
+            });
+
+            return { ...(stageChild ?? structureChild ?? child), ads };
+          });
+
+          return { ...(stageCampaign ?? campaign), children };
+        }),
+      };
+    }),
+  };
+}
+
+function getPreviewChildren(
+  payload: PreviewReportPayload | null,
+  platform: PreviewPlatformSection["platform"] | null,
+  campaignId: string | null
+): PreviewAdGroupNode[] {
+  if (!platform || !campaignId) {
+    return [];
+  }
+  return findPreviewCampaign(payload, platform, campaignId)?.children ?? [];
+}
+
+function getPreviewAds(
+  payload: PreviewReportPayload | null,
+  platform: PreviewPlatformSection["platform"] | null,
+  campaignId: string | null,
+  adGroupId: string | null
+): PreviewAdNode[] {
+  if (!platform || !campaignId || !adGroupId) {
+    return [];
+  }
+  return findPreviewChild(payload, platform, campaignId, adGroupId)?.ads ?? [];
+}
+
+function findPreviewCampaign(
+  payload: PreviewReportPayload | null,
+  platform: PreviewPlatformSection["platform"],
+  campaignId: string
+): PreviewCampaignNode | null {
+  return (
+    payload?.sections
+      .find((section) => section.platform === platform)
+      ?.campaigns.find((campaign) => campaign.id === campaignId) ?? null
+  );
+}
+
+function findPreviewChild(
+  payload: PreviewReportPayload | null,
+  platform: PreviewPlatformSection["platform"],
+  campaignId: string,
+  adGroupId: string
+): PreviewAdGroupNode | null {
+  return (
+    findPreviewCampaign(payload, platform, campaignId)?.children.find(
+      (child) => child.id === adGroupId
+    ) ?? null
+  );
+}
+
+function findPreviewAd(
+  payload: PreviewReportPayload | null,
+  platform: PreviewPlatformSection["platform"],
+  campaignId: string,
+  adGroupId: string,
+  adId: string
+): PreviewAdNode | null {
+  return (
+    findPreviewChild(payload, platform, campaignId, adGroupId)?.ads.find(
+      (ad) => ad.id === adId
+    ) ?? null
+  );
 }
 
 function toLocalIsoDate(date: Date): string {

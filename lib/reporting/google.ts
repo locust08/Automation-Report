@@ -57,6 +57,15 @@ interface GoogleFetchInput {
   endDate: string;
 }
 
+type GooglePreviewStage = "campaigns" | "ad-groups" | "ads" | "preview" | "assets" | "full";
+
+interface GooglePreviewSelection {
+  platform: "meta" | "google" | null;
+  campaignId: string | null;
+  adGroupId: string | null;
+  adId: string | null;
+}
+
 interface GoogleAccountNameInput {
   customerId: string;
   apiVersion: string;
@@ -130,6 +139,33 @@ interface GoogleAdsResult {
   };
   customer?: {
     id?: string;
+    optimizationScore?: number | string;
+    videoBrandSafetySuitability?: string;
+  };
+  customerNegativeCriterion?: {
+    resourceName?: string;
+    type?: string;
+    contentLabel?: { type?: string };
+    mobileApplication?: { appId?: string; name?: string };
+    mobileAppCategory?: { mobileAppCategoryConstant?: string };
+    negativeKeywordList?: { sharedSet?: string };
+    placement?: { url?: string };
+    placementList?: { sharedSet?: string };
+    youtubeChannel?: { channelId?: string };
+    youtubeVideo?: { videoId?: string };
+  };
+  sharedCriterion?: {
+    resourceName?: string;
+    keyword?: { text?: string; matchType?: string };
+    placement?: { url?: string };
+    youtubeChannel?: { channelId?: string };
+    youtubeVideo?: { videoId?: string };
+  };
+  sharedSet?: {
+    resourceName?: string;
+    name?: string;
+    type?: string;
+    status?: string;
   };
   genderView?: {
     gender?: string;
@@ -146,8 +182,18 @@ interface GoogleAdsResult {
     resourceName?: string;
   };
   detailPlacementView?: {
+    resourceName?: string;
     placement?: string;
     displayName?: string;
+    placementType?: string;
+    groupPlacementTargetUrl?: string;
+  };
+  performanceMaxPlacementView?: {
+    resourceName?: string;
+    placement?: string;
+    displayName?: string;
+    placementType?: string;
+    targetUrl?: string;
   };
   groupPlacementView?: {
     targetUrl?: string;
@@ -170,6 +216,7 @@ interface GoogleAdsResult {
     biddingStrategyType?: string;
     startDate?: string;
     endDate?: string;
+    optimizationScore?: number | string;
     networkSettings?: {
       targetGoogleSearch?: boolean;
       targetSearchNetwork?: boolean;
@@ -649,23 +696,6 @@ export async function fetchGoogleCampaignRows({
     fallbackLoginCustomerId: fallbackLoginCustomerId ?? null,
   });
 
-  const baseSelect = `
-    SELECT
-      campaign.id,
-      campaign.name,
-      campaign.advertising_channel_type,
-      campaign.status,
-      metrics.impressions,
-      metrics.clicks,
-      metrics.ctr,
-      metrics.average_cpc,
-      metrics.conversions,
-      metrics.cost_micros
-    FROM campaign
-    WHERE campaign.status = 'ENABLED'
-      AND segments.date BETWEEN '${startDate}' AND '${endDate}'
-  `;
-
   const results = await fetchGoogleAdsResultsWithFallback({
     customerId: context.customerId,
     apiVersion,
@@ -675,27 +705,7 @@ export async function fetchGoogleCampaignRows({
     clientId,
     clientSecret,
     loginCustomerId: context.loginCustomerId,
-    queries: [
-      `
-        SELECT
-          campaign.id,
-          campaign.name,
-          campaign.advertising_channel_type,
-          campaign.status,
-          metrics.impressions,
-          metrics.clicks,
-          metrics.ctr,
-          metrics.average_cpc,
-          metrics.conversions,
-          metrics.cost_micros,
-          metrics.engagements,
-          metrics.interactions
-        FROM campaign
-        WHERE campaign.status = 'ENABLED'
-          AND segments.date BETWEEN '${startDate}' AND '${endDate}'
-      `,
-      baseSelect,
-    ],
+    queries: buildGoogleCampaignRowsQueries(startDate, endDate),
   });
 
   return results
@@ -732,6 +742,499 @@ export async function fetchGoogleCampaignRows({
       return row;
     })
     .filter(hasReportableCampaignSpend);
+}
+
+export interface GoogleOptimizationOverview {
+  optimizationScore: number | null;
+  campaigns: Array<{ id: string; name: string; optimizationScore: number | null; clicks: number; conversions: number; conversionRate: number }>;
+}
+
+export async function fetchGoogleOptimizationOverview(input: GoogleFetchInput): Promise<GoogleOptimizationOverview> {
+  const context = await resolveVerifiedGoogleAdsContext({
+    customerId: input.customerId, apiVersion: input.apiVersion, developerToken: input.developerToken,
+    accessToken: input.accessToken, refreshToken: input.refreshToken, clientId: input.clientId,
+    clientSecret: input.clientSecret, loginCustomerId: input.loginCustomerId,
+    accessPath: input.accessPath ?? null, fallbackLoginCustomerId: input.fallbackLoginCustomerId ?? null,
+  });
+  const [customerRows, campaignRows] = await Promise.all([
+    fetchGoogleAdsResultsWithFallback({
+      customerId: context.customerId, apiVersion: input.apiVersion, developerToken: input.developerToken,
+      accessToken: input.accessToken, refreshToken: input.refreshToken, clientId: input.clientId,
+      clientSecret: input.clientSecret, loginCustomerId: context.loginCustomerId,
+      queries: ["SELECT customer.optimization_score FROM customer LIMIT 1"],
+    }),
+    fetchGoogleAdsResultsWithFallback({
+      customerId: context.customerId, apiVersion: input.apiVersion, developerToken: input.developerToken,
+      accessToken: input.accessToken, refreshToken: input.refreshToken, clientId: input.clientId,
+      clientSecret: input.clientSecret, loginCustomerId: context.loginCustomerId,
+      queries: [`SELECT campaign.id, campaign.name, campaign.optimization_score, metrics.clicks, metrics.conversions FROM campaign WHERE segments.date DURING LAST_30_DAYS AND campaign.status != 'REMOVED'`],
+    }),
+  ]);
+  const optimizationScore = nullablePercent(customerRows[0]?.customer?.optimizationScore);
+  const campaigns = campaignRows.map((row) => {
+    const clicks = toNumber(row.metrics?.clicks); const conversions = toNumber(row.metrics?.conversions);
+    return { id: row.campaign?.id ?? row.campaign?.name ?? "unknown", name: row.campaign?.name?.trim() || "Untitled campaign", optimizationScore: nullablePercent(row.campaign?.optimizationScore), clicks, conversions, conversionRate: clicks > 0 ? conversions * 100 / clicks : 0 };
+  }).sort((left, right) => (left.optimizationScore ?? Number.POSITIVE_INFINITY) - (right.optimizationScore ?? Number.POSITIVE_INFINITY));
+  return { optimizationScore, campaigns };
+}
+
+function nullablePercent(value: string | number | undefined) {
+  if (value == null || value === "") return null;
+  const number = Number(value);
+  return Number.isFinite(number) ? number * 100 : null;
+}
+
+export interface GooglePlacementPerformanceRow {
+  resourceName: string;
+  placement: string;
+  displayName: string;
+  placementType: string;
+  targetUrl: string | null;
+  campaignId: string;
+  campaignName: string;
+  campaignType?: string;
+  adGroupId: string;
+  adGroupName: string;
+  impressions: number;
+  clicks: number;
+  spend: number;
+  conversions: number;
+  videoViews: number;
+  sourceView?: "detail_placement_view" | "performance_max_placement_view";
+}
+
+export interface GoogleCampaignTypeOverview {
+  channelType: string;
+  campaignCount: number;
+}
+
+export async function fetchGoogleCampaignTypeOverview(input: GoogleFetchInput): Promise<GoogleCampaignTypeOverview[]> {
+  const context = await resolveVerifiedGoogleAdsContext({
+    customerId: input.customerId, apiVersion: input.apiVersion, developerToken: input.developerToken,
+    accessToken: input.accessToken, refreshToken: input.refreshToken, clientId: input.clientId,
+    clientSecret: input.clientSecret, loginCustomerId: input.loginCustomerId,
+    accessPath: input.accessPath ?? null, fallbackLoginCustomerId: input.fallbackLoginCustomerId ?? null,
+  });
+  const results = await fetchGoogleAdsResultsWithFallback({
+    customerId: context.customerId, apiVersion: input.apiVersion, developerToken: input.developerToken,
+    accessToken: input.accessToken, refreshToken: input.refreshToken, clientId: input.clientId,
+    clientSecret: input.clientSecret, loginCustomerId: context.loginCustomerId,
+    queries: [`SELECT campaign.id, campaign.advertising_channel_type FROM campaign WHERE campaign.status != 'REMOVED'`],
+  });
+  const counts = new Map<string, number>();
+  for (const row of results) {
+    const type = row.campaign?.advertisingChannelType?.trim() || "UNKNOWN";
+    counts.set(type, (counts.get(type) ?? 0) + 1);
+  }
+  return [...counts.entries()].map(([channelType, campaignCount]) => ({ channelType, campaignCount }));
+}
+
+export interface GooglePerformanceMaxOverview {
+  hasPerformanceMax: boolean;
+  campaignCount: number;
+  campaigns: Array<{ id: string; name: string }>;
+}
+
+export interface GoogleContentSuitabilityCriterion {
+  resourceName: string;
+  type: string;
+  value: string;
+  label: string | null;
+}
+
+export interface GoogleContentSuitabilityResult {
+  inventoryType: string | null;
+  criteria: GoogleContentSuitabilityCriterion[];
+  sharedCriteria: GoogleContentSuitabilityCriterion[];
+  warnings: string[];
+}
+
+export async function fetchGoogleContentSuitability(
+  input: Omit<GoogleFetchInput, "startDate" | "endDate">,
+): Promise<GoogleContentSuitabilityResult> {
+  const warnings: string[] = [];
+  let inventoryType: string | null = null;
+  const criteria: GoogleContentSuitabilityCriterion[] = [];
+  const sharedCriteria: GoogleContentSuitabilityCriterion[] = [];
+
+  try {
+    const customerResults = await fetchGoogleAdsResults({
+      ...input,
+      query: `
+        SELECT
+          customer.id,
+          customer.video_brand_safety_suitability
+        FROM customer
+        LIMIT 1
+      `,
+    });
+    inventoryType = customerResults[0]?.customer?.videoBrandSafetySuitability ?? null;
+  } catch (error) {
+    warnings.push(
+      `Inventory type is unavailable. ${error instanceof Error ? error.message : "Google Ads did not return this setting."}`,
+    );
+  }
+
+  let negativeResults: GoogleAdsResult[] = [];
+  try {
+    negativeResults = await fetchGoogleAdsResults({
+      ...input,
+      query: `
+        SELECT
+          customer_negative_criterion.resource_name,
+          customer_negative_criterion.type,
+          customer_negative_criterion.content_label.type,
+          customer_negative_criterion.mobile_application.app_id,
+          customer_negative_criterion.mobile_app_category.mobile_app_category_constant,
+          customer_negative_criterion.negative_keyword_list.shared_set,
+          customer_negative_criterion.placement.url,
+          customer_negative_criterion.placement_list.shared_set,
+          customer_negative_criterion.youtube_channel.channel_id,
+          customer_negative_criterion.youtube_video.video_id
+        FROM customer_negative_criterion
+      `,
+    });
+  } catch (error) {
+    warnings.push(
+      `Some account-level exclusions are unavailable. ${error instanceof Error ? error.message : "Google Ads did not return the exclusion list."}`,
+    );
+  }
+
+  const sharedSetNames = new Set<string>();
+  for (const result of negativeResults) {
+    const criterion = result.customerNegativeCriterion;
+    if (!criterion) continue;
+    const type = criterion.type ?? "UNKNOWN";
+    const sharedSet =
+      criterion.negativeKeywordList?.sharedSet ?? criterion.placementList?.sharedSet;
+    if (sharedSet) sharedSetNames.add(sharedSet);
+    const value =
+      criterion.contentLabel?.type ??
+      criterion.mobileApplication?.appId ??
+      criterion.mobileAppCategory?.mobileAppCategoryConstant ??
+      sharedSet ??
+      criterion.placement?.url ??
+      criterion.youtubeChannel?.channelId ??
+      criterion.youtubeVideo?.videoId ??
+      criterion.resourceName ??
+      "Unknown";
+    criteria.push({
+      resourceName: criterion.resourceName ?? `${type}:${value}`,
+      type,
+      value,
+      label: criterion.mobileApplication?.name ?? null,
+    });
+  }
+
+  if (sharedSetNames.size > 0) {
+    const resourceNames = [...sharedSetNames]
+      .map((value) => `'${value.replaceAll("'", "\\'")}'`)
+      .join(", ");
+    try {
+      const sharedResults = await fetchGoogleAdsResults({
+        ...input,
+        query: `
+          SELECT
+            shared_set.resource_name,
+            shared_set.name,
+            shared_set.type,
+            shared_criterion.resource_name,
+            shared_criterion.keyword.text,
+            shared_criterion.keyword.match_type,
+            shared_criterion.placement.url,
+            shared_criterion.youtube_channel.channel_id,
+            shared_criterion.youtube_video.video_id
+          FROM shared_criterion
+          WHERE shared_set.resource_name IN (${resourceNames})
+        `,
+      });
+      for (const result of sharedResults) {
+        const criterion = result.sharedCriterion;
+        const sharedSet = result.sharedSet;
+        if (!criterion || !sharedSet) continue;
+        const value =
+          criterion.keyword?.text ??
+          criterion.placement?.url ??
+          criterion.youtubeChannel?.channelId ??
+          criterion.youtubeVideo?.videoId;
+        if (!value) continue;
+        sharedCriteria.push({
+          resourceName: criterion.resourceName ?? `${sharedSet.resourceName}:${value}`,
+          type: criterion.keyword
+            ? "KEYWORD"
+            : criterion.placement
+              ? "PLACEMENT"
+              : criterion.youtubeChannel
+                ? "YOUTUBE_CHANNEL"
+                : "YOUTUBE_VIDEO",
+          value,
+          label: sharedSet.name ?? null,
+        });
+      }
+    } catch (error) {
+      warnings.push(
+        `Excluded list contents are unavailable. ${error instanceof Error ? error.message : "Google Ads did not return shared criteria."}`,
+      );
+    }
+  }
+
+  return { inventoryType, criteria, sharedCriteria, warnings };
+}
+
+export async function fetchGooglePerformanceMaxOverview(
+  input: GoogleFetchInput,
+): Promise<GooglePerformanceMaxOverview> {
+  const context = await resolveVerifiedGoogleAdsContext({
+    customerId: input.customerId,
+    apiVersion: input.apiVersion,
+    developerToken: input.developerToken,
+    accessToken: input.accessToken,
+    refreshToken: input.refreshToken,
+    clientId: input.clientId,
+    clientSecret: input.clientSecret,
+    loginCustomerId: input.loginCustomerId,
+    accessPath: input.accessPath ?? null,
+    fallbackLoginCustomerId: input.fallbackLoginCustomerId ?? null,
+  });
+  const results = await fetchGoogleAdsResultsWithFallback({
+    customerId: context.customerId,
+    apiVersion: input.apiVersion,
+    developerToken: input.developerToken,
+    accessToken: input.accessToken,
+    refreshToken: input.refreshToken,
+    clientId: input.clientId,
+    clientSecret: input.clientSecret,
+    loginCustomerId: context.loginCustomerId,
+    queries: [
+      `SELECT campaign.id, campaign.name FROM campaign WHERE campaign.advertising_channel_type = 'PERFORMANCE_MAX' AND campaign.status != 'REMOVED' ORDER BY campaign.name`,
+    ],
+  });
+  const campaigns = results.map((result) => ({
+    id: result.campaign?.id ?? "unknown",
+    name: result.campaign?.name?.trim() || "Untitled Performance Max campaign",
+  }));
+  return {
+    hasPerformanceMax: campaigns.length > 0,
+    campaignCount: campaigns.length,
+    campaigns,
+  };
+}
+
+export async function fetchGooglePerformanceMaxPlacementRows(
+  input: GoogleFetchInput,
+): Promise<GooglePlacementPerformanceRow[]> {
+  const context = await resolveVerifiedGoogleAdsContext({
+    customerId: input.customerId,
+    apiVersion: input.apiVersion,
+    developerToken: input.developerToken,
+    accessToken: input.accessToken,
+    refreshToken: input.refreshToken,
+    clientId: input.clientId,
+    clientSecret: input.clientSecret,
+    loginCustomerId: input.loginCustomerId,
+    accessPath: input.accessPath ?? null,
+    fallbackLoginCustomerId: input.fallbackLoginCustomerId ?? null,
+  });
+  const results = await fetchGoogleAdsResultsWithFallback({
+    customerId: context.customerId,
+    apiVersion: input.apiVersion,
+    developerToken: input.developerToken,
+    accessToken: input.accessToken,
+    refreshToken: input.refreshToken,
+    clientId: input.clientId,
+    clientSecret: input.clientSecret,
+    loginCustomerId: context.loginCustomerId,
+    queries: [
+      `
+        SELECT
+          performance_max_placement_view.placement,
+          performance_max_placement_view.display_name,
+          performance_max_placement_view.placement_type,
+          metrics.impressions
+        FROM performance_max_placement_view
+        WHERE segments.date BETWEEN '${input.startDate}' AND '${input.endDate}'
+          AND metrics.impressions > 0
+      `,
+    ],
+  });
+  return results.map((result, index) => ({
+    resourceName:
+      result.performanceMaxPlacementView?.resourceName ??
+      `performance-max-placement-${index}`,
+    placement:
+      result.performanceMaxPlacementView?.placement?.trim() ||
+      result.performanceMaxPlacementView?.displayName?.trim() ||
+      "Unknown placement",
+    displayName:
+      result.performanceMaxPlacementView?.displayName?.trim() ||
+      result.performanceMaxPlacementView?.placement?.trim() ||
+      "Unknown placement",
+    placementType:
+      result.performanceMaxPlacementView?.placementType?.trim() || "UNKNOWN",
+    targetUrl:
+      result.performanceMaxPlacementView?.targetUrl?.trim() || null,
+    campaignId: result.campaign?.id ?? "unknown",
+    campaignName:
+      result.campaign?.name?.trim() || "Unknown Performance Max campaign",
+    campaignType: "PERFORMANCE_MAX",
+    adGroupId: "performance-max",
+    adGroupName: "Performance Max",
+    impressions: toNumber(result.metrics?.impressions),
+    clicks: 0,
+    spend: 0,
+    conversions: 0,
+    videoViews: 0,
+    sourceView: "performance_max_placement_view",
+  }));
+}
+
+export async function fetchGooglePlacementPerformanceRows(input: GoogleFetchInput): Promise<GooglePlacementPerformanceRow[]> {
+  const context = await resolveVerifiedGoogleAdsContext({
+    customerId: input.customerId,
+    apiVersion: input.apiVersion,
+    developerToken: input.developerToken,
+    accessToken: input.accessToken,
+    refreshToken: input.refreshToken,
+    clientId: input.clientId,
+    clientSecret: input.clientSecret,
+    loginCustomerId: input.loginCustomerId,
+    accessPath: input.accessPath ?? null,
+    fallbackLoginCustomerId: input.fallbackLoginCustomerId ?? null,
+  });
+  const results = await fetchGoogleAdsResultsWithFallback({
+    customerId: context.customerId,
+    apiVersion: input.apiVersion,
+    developerToken: input.developerToken,
+    accessToken: input.accessToken,
+    refreshToken: input.refreshToken,
+    clientId: input.clientId,
+    clientSecret: input.clientSecret,
+    loginCustomerId: context.loginCustomerId,
+    queries: [`
+      SELECT
+        detail_placement_view.resource_name,
+        detail_placement_view.placement,
+        detail_placement_view.display_name,
+        detail_placement_view.placement_type,
+        detail_placement_view.group_placement_target_url,
+        campaign.id,
+        campaign.name,
+        campaign.advertising_channel_type,
+        ad_group.id,
+        ad_group.name,
+        metrics.impressions,
+        metrics.clicks,
+        metrics.cost_micros,
+        metrics.conversions,
+        metrics.video_views
+      FROM detail_placement_view
+      WHERE segments.date BETWEEN '${input.startDate}' AND '${input.endDate}'
+        AND campaign.status != 'REMOVED'
+        AND metrics.impressions > 0
+      ORDER BY metrics.cost_micros DESC
+    `, `
+      SELECT
+        detail_placement_view.resource_name,
+        detail_placement_view.placement,
+        detail_placement_view.display_name,
+        detail_placement_view.placement_type,
+        detail_placement_view.group_placement_target_url,
+        campaign.id,
+        campaign.name,
+        campaign.advertising_channel_type,
+        ad_group.id,
+        ad_group.name,
+        metrics.impressions,
+        metrics.clicks,
+        metrics.cost_micros,
+        metrics.conversions
+      FROM detail_placement_view
+      WHERE segments.date BETWEEN '${input.startDate}' AND '${input.endDate}'
+        AND campaign.status != 'REMOVED'
+        AND metrics.impressions > 0
+      ORDER BY metrics.cost_micros DESC
+    `, `
+      SELECT
+        detail_placement_view.resource_name,
+        detail_placement_view.placement,
+        detail_placement_view.display_name,
+        detail_placement_view.placement_type,
+        campaign.id,
+        campaign.name,
+        campaign.advertising_channel_type,
+        ad_group.id,
+        ad_group.name,
+        metrics.impressions,
+        metrics.clicks,
+        metrics.cost_micros,
+        metrics.conversions
+      FROM detail_placement_view
+      WHERE segments.date BETWEEN '${input.startDate}' AND '${input.endDate}'
+        AND campaign.status != 'REMOVED'
+        AND metrics.impressions > 0
+      ORDER BY metrics.cost_micros DESC
+    `],
+  });
+  return results.map((result, index) => ({
+    resourceName: result.detailPlacementView?.resourceName ?? `placement-${index}`,
+    placement: result.detailPlacementView?.placement?.trim() || "Unknown placement",
+    displayName: result.detailPlacementView?.displayName?.trim() || result.detailPlacementView?.placement?.trim() || "Unknown placement",
+    placementType: result.detailPlacementView?.placementType?.trim() || "UNKNOWN",
+    targetUrl: result.detailPlacementView?.groupPlacementTargetUrl?.trim() || null,
+    campaignId: result.campaign?.id ?? "unknown",
+    campaignName: result.campaign?.name?.trim() || "Unknown campaign",
+    campaignType: result.campaign?.advertisingChannelType?.trim() || "UNKNOWN",
+    adGroupId: result.adGroup?.id ?? "unknown",
+    adGroupName: result.adGroup?.name?.trim() || "Unknown ad group",
+    impressions: toNumber(result.metrics?.impressions),
+    clicks: toNumber(result.metrics?.clicks),
+    spend: microsToCurrency(result.metrics?.costMicros),
+    conversions: toNumber(result.metrics?.conversions),
+    videoViews: toNumber(result.metrics?.videoViews),
+    sourceView: "detail_placement_view",
+  }));
+}
+
+export function buildGoogleCampaignRowsQueries(startDate: string, endDate: string): string[] {
+  const statusPredicate = "campaign.status != 'REMOVED'";
+  const baseSelect = `
+    SELECT
+      campaign.id,
+      campaign.name,
+      campaign.advertising_channel_type,
+      campaign.status,
+      metrics.impressions,
+      metrics.clicks,
+      metrics.ctr,
+      metrics.average_cpc,
+      metrics.conversions,
+      metrics.cost_micros
+    FROM campaign
+    WHERE ${statusPredicate}
+      AND segments.date BETWEEN '${startDate}' AND '${endDate}'
+  `;
+
+  return [
+    `
+        SELECT
+          campaign.id,
+          campaign.name,
+          campaign.advertising_channel_type,
+          campaign.status,
+          metrics.impressions,
+          metrics.clicks,
+          metrics.ctr,
+          metrics.average_cpc,
+          metrics.conversions,
+          metrics.cost_micros,
+          metrics.engagements,
+          metrics.interactions
+        FROM campaign
+        WHERE ${statusPredicate}
+          AND segments.date BETWEEN '${startDate}' AND '${endDate}'
+      `,
+    baseSelect,
+  ];
 }
 
 export async function fetchGoogleAudienceClickBreakdown({
@@ -1926,8 +2429,19 @@ export async function fetchGooglePreviewHierarchy({
 }
 
 export async function fetchGooglePreviewData(
-  input: GoogleFetchInput & { accessPath?: string | null }
+  input: GoogleFetchInput & {
+    accessPath?: string | null;
+    previewStage?: GooglePreviewStage;
+    previewSelection?: GooglePreviewSelection;
+  }
 ): Promise<GooglePreviewFetchResult> {
+  const previewStage = input.previewStage ?? "full";
+  const previewSelection = input.previewSelection ?? {
+    platform: null,
+    campaignId: null,
+    adGroupId: null,
+    adId: null,
+  };
   const context = await resolveGooglePreviewAccountContext({
     customerId: input.customerId,
     apiVersion: input.apiVersion,
@@ -1955,41 +2469,100 @@ export async function fetchGooglePreviewData(
       {
         label: "preview-campaigns",
         required: true,
-        queries: buildGooglePreviewCampaignQueries(input.startDate, input.endDate),
+        queries: buildGooglePreviewCampaignQueries(input.startDate, input.endDate, previewSelection),
       },
       context,
       input
     );
     diagnostics.blocks.push(campaignsBlock.diagnostic);
 
+    if (previewStage === "campaigns") {
+      return {
+        data: buildGooglePreviewHierarchyData({
+          customerId: context.customerId,
+          campaignResults: campaignsBlock.results,
+          adGroupResults: [],
+          adResults: [],
+          keywordResults: [],
+          adGroupAssetResults: [],
+          campaignAssetResults: [],
+          customerAssetResults: [],
+          campaignCriterionResults: [],
+        }),
+        warnings: [],
+        fatalError: null,
+        diagnostics,
+      };
+    }
+
     const adGroupsBlock = await runGooglePreviewBlock(
       {
         label: "preview-ad-groups",
         required: true,
-        queries: buildGooglePreviewAdGroupQueries(input.startDate, input.endDate),
+        queries: buildGooglePreviewAdGroupQueries(input.startDate, input.endDate, previewSelection),
       },
       context,
       input
     );
     diagnostics.blocks.push(adGroupsBlock.diagnostic);
 
+    if (previewStage === "ad-groups") {
+      return {
+        data: buildGooglePreviewHierarchyData({
+          customerId: context.customerId,
+          campaignResults: campaignsBlock.results,
+          adGroupResults: adGroupsBlock.results,
+          adResults: [],
+          keywordResults: [],
+          adGroupAssetResults: [],
+          campaignAssetResults: [],
+          customerAssetResults: [],
+          campaignCriterionResults: [],
+        }),
+        warnings: [],
+        fatalError: null,
+        diagnostics,
+      };
+    }
+
     const adsBlock = await runGooglePreviewBlock(
       {
         label: "preview-ads",
         required: true,
-        queries: buildGooglePreviewAdQueries(input.startDate, input.endDate),
+        queries: buildGooglePreviewAdQueries(input.startDate, input.endDate, previewSelection),
       },
       context,
       input
     );
     diagnostics.blocks.push(adsBlock.diagnostic);
 
+    if (previewStage === "ads") {
+      return {
+        data: buildGooglePreviewHierarchyData({
+          customerId: context.customerId,
+          campaignResults: campaignsBlock.results,
+          adGroupResults: adGroupsBlock.results,
+          adResults: adsBlock.results,
+          keywordResults: [],
+          adGroupAssetResults: [],
+          campaignAssetResults: [],
+          customerAssetResults: [],
+          campaignCriterionResults: [],
+        }),
+        warnings: [],
+        fatalError: null,
+        diagnostics,
+      };
+    }
+
+    const includeAssetBlocks = previewStage === "assets" || previewStage === "full";
+
     const optionalResults = await Promise.all([
       runGoogleOptionalPreviewBlock(
         {
           label: "preview-keywords",
           required: false,
-          queries: buildGooglePreviewKeywordQueries(input.startDate, input.endDate),
+          queries: buildGooglePreviewKeywordQueries(input.startDate, input.endDate, previewSelection),
         },
         context,
         input
@@ -1998,7 +2571,7 @@ export async function fetchGooglePreviewData(
         {
           label: "preview-ad-group-assets",
           required: false,
-          queries: buildGooglePreviewAdGroupAssetQueries(),
+          queries: includeAssetBlocks ? buildGooglePreviewAdGroupAssetQueries(previewSelection) : [],
         },
         context,
         input
@@ -2007,7 +2580,7 @@ export async function fetchGooglePreviewData(
         {
           label: "preview-campaign-assets",
           required: false,
-          queries: buildGooglePreviewCampaignAssetQueries(),
+          queries: includeAssetBlocks ? buildGooglePreviewCampaignAssetQueries(previewSelection) : [],
         },
         context,
         input
@@ -2016,7 +2589,7 @@ export async function fetchGooglePreviewData(
         {
           label: "preview-customer-assets",
           required: false,
-          queries: buildGooglePreviewCustomerAssetQueries(),
+          queries: includeAssetBlocks ? buildGooglePreviewCustomerAssetQueries() : [],
         },
         context,
         input
@@ -2025,7 +2598,7 @@ export async function fetchGooglePreviewData(
         {
           label: "preview-campaign-locations",
           required: false,
-          queries: buildGooglePreviewCampaignLocationQueries(),
+          queries: includeAssetBlocks ? buildGooglePreviewCampaignLocationQueries(previewSelection) : [],
         },
         context,
         input
@@ -2034,7 +2607,7 @@ export async function fetchGooglePreviewData(
         {
           label: "preview-campaign-languages",
           required: false,
-          queries: buildGooglePreviewCampaignLanguageQueries(),
+          queries: includeAssetBlocks ? buildGooglePreviewCampaignLanguageQueries(previewSelection) : [],
         },
         context,
         input
@@ -3706,6 +4279,24 @@ async function runGoogleOptionalPreviewBlock(
   warnings: GooglePreviewWarning[];
   diagnostic: GooglePreviewBlockDiagnostic;
 }> {
+  if (block.queries.length === 0) {
+    return {
+      results: [],
+      warnings: [],
+      diagnostic: {
+        label: block.label,
+        required: block.required,
+        status: "empty",
+        customerId: context.customerId,
+        loginCustomerId: context.loginCustomerId,
+        rowCount: 0,
+        requestId: null,
+        errorCode: null,
+        message: null,
+      },
+    };
+  }
+
   const gaql = block.queries[0];
   logGooglePreviewInfo(
     `[google-preview] label=${block.label} required=${block.required} accountId=${context.customerId} customerId=${context.customerId} loginCustomerId=${context.loginCustomerId ?? "(none)"} gaql=${JSON.stringify(compactWhitespace(gaql))}`
@@ -3794,6 +4385,24 @@ async function runGooglePreviewCampaignLocationBlock(
   warnings: GooglePreviewWarning[];
   diagnostic: GooglePreviewBlockDiagnostic;
 }> {
+  if (block.queries.length === 0) {
+    return {
+      results: [],
+      warnings: [],
+      diagnostic: {
+        label: block.label,
+        required: block.required,
+        status: "empty",
+        customerId: context.customerId,
+        loginCustomerId: context.loginCustomerId,
+        rowCount: 0,
+        requestId: null,
+        errorCode: null,
+        message: null,
+      },
+    };
+  }
+
   const gaql = block.queries[0];
   logGooglePreviewInfo(
     `[google-preview] label=${block.label} required=${block.required} accountId=${context.customerId} customerId=${context.customerId} loginCustomerId=${context.loginCustomerId ?? "(none)"} gaql=${JSON.stringify(compactWhitespace(gaql))}`
@@ -4585,6 +5194,7 @@ async function executeGoogleAdsStreamRequest(input: {
     const streamError = findStreamBatchError(streamBatches);
     const failureMessage =
       streamError ??
+      parsed.errorMessage ??
       topLevelError ??
       (!parsed.ok
         ? `Google Ads API request failed with status ${parsed.status}. The customer ID may not be accessible.`
@@ -5042,7 +5652,10 @@ function extractGoogleAdsErrorInfo(
   const candidate = topLevel as
     | {
         details?: Array<{
-          errors?: Array<{ errorCode?: Record<string, string | null | undefined> }>;
+          errors?: Array<{
+            errorCode?: Record<string, string | null | undefined>;
+            message?: string;
+          }>;
         }>;
       }
     | undefined;
@@ -5052,10 +5665,17 @@ function extractGoogleAdsErrorInfo(
     .map((item) => item.errorCode ?? {})
     .flatMap((errorCodeRecord) => Object.entries(errorCodeRecord))
     .find(([, value]) => Boolean(value));
+  const detailMessage = candidate?.details
+    ?.flatMap((detail) => detail.errors ?? [])
+    .map((item) => item.message?.trim())
+    .find(Boolean);
 
   return {
     errorCode: detailErrorCode ? `${detailErrorCode[0]}:${detailErrorCode[1]}` : null,
-    errorMessage: errorMessage ?? null,
+    errorMessage:
+      detailMessage && detailMessage !== errorMessage
+        ? `${errorMessage ?? "Google Ads API request failed."} ${detailMessage}`
+        : errorMessage ?? null,
   };
 }
 
@@ -5124,9 +5744,14 @@ function normalizeCampaignType(channelType: string): string {
     .replace(/\b\w/g, (segment) => segment.toUpperCase());
 }
 
-function buildGooglePreviewCampaignQueries(_startDate: string, _endDate: string): string[] {
+function buildGooglePreviewCampaignQueries(
+  _startDate: string,
+  _endDate: string,
+  selection?: GooglePreviewSelection
+): string[] {
   void _startDate;
   void _endDate;
+  const selectionFilters = buildGooglePreviewSelectionFilters(selection, "campaign");
   return [
     `
       SELECT
@@ -5145,14 +5770,20 @@ function buildGooglePreviewCampaignQueries(_startDate: string, _endDate: string)
         campaign_budget.amount_micros
       FROM campaign
       WHERE campaign.status = 'ENABLED'
+        ${selectionFilters}
       ORDER BY campaign.name
     `,
   ];
 }
 
-function buildGooglePreviewAdGroupQueries(_startDate: string, _endDate: string): string[] {
+function buildGooglePreviewAdGroupQueries(
+  _startDate: string,
+  _endDate: string,
+  selection?: GooglePreviewSelection
+): string[] {
   void _startDate;
   void _endDate;
+  const selectionFilters = buildGooglePreviewSelectionFilters(selection, "ad-group");
   return [
     `
       SELECT
@@ -5165,14 +5796,20 @@ function buildGooglePreviewAdGroupQueries(_startDate: string, _endDate: string):
       FROM ad_group
       WHERE campaign.status = 'ENABLED'
         AND ad_group.status != 'REMOVED'
+        ${selectionFilters}
       ORDER BY campaign.id, ad_group.name
     `,
   ];
 }
 
-function buildGooglePreviewAdQueries(_startDate: string, _endDate: string): string[] {
+function buildGooglePreviewAdQueries(
+  _startDate: string,
+  _endDate: string,
+  selection?: GooglePreviewSelection
+): string[] {
   void _startDate;
   void _endDate;
+  const selectionFilters = buildGooglePreviewSelectionFilters(selection, "ad");
   return [
     `
       SELECT
@@ -5193,14 +5830,20 @@ function buildGooglePreviewAdQueries(_startDate: string, _endDate: string): stri
       WHERE campaign.status = 'ENABLED'
         AND ad_group.status != 'REMOVED'
         AND ad_group_ad.status != 'REMOVED'
+        ${selectionFilters}
       ORDER BY campaign.id, ad_group.id, ad_group_ad.ad.id
     `,
   ];
 }
 
-function buildGooglePreviewKeywordQueries(_startDate: string, _endDate: string): string[] {
+function buildGooglePreviewKeywordQueries(
+  _startDate: string,
+  _endDate: string,
+  selection?: GooglePreviewSelection
+): string[] {
   void _startDate;
   void _endDate;
+  const selectionFilters = buildGooglePreviewSelectionFilters(selection, "ad-group");
   return [
     `
       SELECT
@@ -5212,12 +5855,14 @@ function buildGooglePreviewKeywordQueries(_startDate: string, _endDate: string):
       WHERE campaign.status = 'ENABLED'
         AND ad_group.status = 'ENABLED'
         AND ad_group_criterion.status = 'ENABLED'
+        ${selectionFilters}
       ORDER BY campaign.id, ad_group.id, ad_group_criterion.criterion_id
     `,
   ];
 }
 
-function buildGooglePreviewCampaignLocationQueries(): string[] {
+function buildGooglePreviewCampaignLocationQueries(selection?: GooglePreviewSelection): string[] {
+  const selectionFilters = buildGooglePreviewSelectionFilters(selection, "campaign");
   return [
     `
       SELECT
@@ -5233,6 +5878,7 @@ function buildGooglePreviewCampaignLocationQueries(): string[] {
         AND campaign_criterion.type = 'LOCATION'
         AND campaign_criterion.negative = FALSE
         AND campaign_criterion.status != 'REMOVED'
+        ${selectionFilters}
       ORDER BY campaign.id, campaign_criterion.type, campaign_criterion.criterion_id
     `,
   ];
@@ -5282,7 +5928,8 @@ function buildGoogleCampaignCriteriaLocationDetailQuery(resourceNames: string[])
   `;
 }
 
-function buildGooglePreviewCampaignLanguageQueries(): string[] {
+function buildGooglePreviewCampaignLanguageQueries(selection?: GooglePreviewSelection): string[] {
+  const selectionFilters = buildGooglePreviewSelectionFilters(selection, "campaign");
   return [
     `
       SELECT
@@ -5295,12 +5942,14 @@ function buildGooglePreviewCampaignLanguageQueries(): string[] {
       WHERE campaign.status = 'ENABLED'
         AND campaign_criterion.type = 'LANGUAGE'
         AND campaign_criterion.negative = FALSE
+        ${selectionFilters}
       ORDER BY campaign.id, campaign_criterion.type, campaign_criterion.criterion_id
     `,
   ];
 }
 
-function buildGooglePreviewAdGroupAssetQueries(): string[] {
+function buildGooglePreviewAdGroupAssetQueries(selection?: GooglePreviewSelection): string[] {
+  const selectionFilters = buildGooglePreviewSelectionFilters(selection, "ad-group");
   return [
     `
       SELECT
@@ -5316,11 +5965,13 @@ function buildGooglePreviewAdGroupAssetQueries(): string[] {
         asset.image_asset.full_size.url
       FROM ad_group_asset
       WHERE ad_group_asset.status != 'REMOVED'
+        ${selectionFilters}
     `,
   ];
 }
 
-function buildGooglePreviewCampaignAssetQueries(): string[] {
+function buildGooglePreviewCampaignAssetQueries(selection?: GooglePreviewSelection): string[] {
+  const selectionFilters = buildGooglePreviewSelectionFilters(selection, "campaign");
   return [
     `
       SELECT
@@ -5336,6 +5987,7 @@ function buildGooglePreviewCampaignAssetQueries(): string[] {
         asset.image_asset.full_size.url
       FROM campaign_asset
       WHERE campaign_asset.status != 'REMOVED'
+        ${selectionFilters}
     `,
   ];
 }
@@ -5358,6 +6010,36 @@ function buildGooglePreviewCustomerAssetQueries(): string[] {
       WHERE customer_asset.status != 'REMOVED'
     `,
   ];
+}
+
+function buildGooglePreviewSelectionFilters(
+  selection: GooglePreviewSelection | undefined,
+  level: "campaign" | "ad-group" | "ad"
+): string {
+  if (!selection || selection.platform === "meta") {
+    return "";
+  }
+
+  const filters: string[] = [];
+  const campaignId = selection.campaignId?.trim();
+  const adGroupId = selection.adGroupId?.trim();
+  const adId = selection.adId?.trim();
+
+  if (campaignId) {
+    filters.push(`campaign.id = ${googleIdLiteral(campaignId)}`);
+  }
+  if ((level === "ad-group" || level === "ad") && adGroupId) {
+    filters.push(`ad_group.id = ${googleIdLiteral(adGroupId)}`);
+  }
+  if (level === "ad" && adId) {
+    filters.push(`ad_group_ad.ad.id = ${googleIdLiteral(adId)}`);
+  }
+
+  return filters.length ? filters.map((filter) => `AND ${filter}`).join("\n        ") : "";
+}
+
+function googleIdLiteral(value: string): string {
+  return /^\d+$/.test(value) ? value : `'${escapeGaqlString(value)}'`;
 }
 
 function normalizeGooglePreviewAccessPath(value: string | null): string | null {

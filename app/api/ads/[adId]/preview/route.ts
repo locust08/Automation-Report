@@ -4,6 +4,7 @@ import { buildReportingErrorResponse } from "@/lib/reporting/api-error";
 import { buildPreviewDetailsStage } from "@/lib/reporting/preview-stages";
 import { parseRequestContext } from "@/lib/reporting/request";
 import { getPreviewReport } from "@/lib/reporting/service";
+import { getImportedPreviewReport } from "@/lib/meta-import/reporting";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -18,13 +19,21 @@ export async function GET(
   const platform = normalizePlatform(searchParams.get("platform"));
 
   try {
-    const payload = await getPreviewReport({
+    const load = context.source === "meta_csv" ? getImportedPreviewReport : getPreviewReport;
+    const payload = await load({
       accountId: context.accountId,
       metaAccountId: context.metaAccountId,
       googleAccountId: context.googleAccountId,
       startDate: context.startDate,
       endDate: context.endDate,
       diagnosticsMode: searchParams.get("diagnostics") === "1",
+      previewStage: "preview",
+      previewSelection: {
+        platform,
+        campaignId: searchParams.get("campaignId")?.trim() || null,
+        adGroupId: searchParams.get("adGroupId")?.trim() || null,
+        adId: decodeURIComponent(routeParams.adId),
+      },
     });
 
     return NextResponse.json(

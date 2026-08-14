@@ -1,0 +1,9 @@
+name = "ads-dashboard-meta-csv-import"
+main = "src/index.ts"
+compatibility_date = "2026-05-01"
+
+[[d1_databases]]
+binding = "META_IMPORT_DB"
+database_name = "automation-meta-csv-import"
+database_id = "REPLACE_WITH_D1_DATABASE_ID"
+

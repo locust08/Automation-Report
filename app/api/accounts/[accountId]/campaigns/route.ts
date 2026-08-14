@@ -4,6 +4,7 @@ import { buildReportingErrorResponse } from "@/lib/reporting/api-error";
 import { buildPreviewCampaignsStage } from "@/lib/reporting/preview-stages";
 import { parseRequestContext } from "@/lib/reporting/request";
 import { getPreviewReport } from "@/lib/reporting/service";
+import { getImportedPreviewReport } from "@/lib/meta-import/reporting";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -17,13 +18,21 @@ export async function GET(
   const routeParams = await params;
 
   try {
-    const payload = await getPreviewReport({
+    const load = context.source === "meta_csv" ? getImportedPreviewReport : getPreviewReport;
+    const payload = await load({
       accountId: context.accountId ?? normalizeRouteAccountId(routeParams.accountId),
       metaAccountId: context.metaAccountId,
       googleAccountId: context.googleAccountId,
       startDate: context.startDate,
       endDate: context.endDate,
       diagnosticsMode: searchParams.get("diagnostics") === "1",
+      previewStage: "campaigns",
+      previewSelection: {
+        platform: null,
+        campaignId: null,
+        adGroupId: null,
+        adId: null,
+      },
     });
 
     return NextResponse.json(buildPreviewCampaignsStage(payload));

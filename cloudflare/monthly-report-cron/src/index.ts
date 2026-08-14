@@ -7,7 +7,6 @@ interface Env {
   MONTHLY_REPORT_QUEUE: Queue<ReportQueueMessage>;
   REPORT_BROWSER: BrowserWorker;
   BROWSER_LAUNCH_LIMITER: DurableObjectNamespace;
-  REPORT_AUTOMATION_SECRET: string;
   RESEND_API_KEY: string;
   RESEND_FROM_MONTHLY_REPORT?: string;
   VERCEL_APP_BASE_URL: string;
@@ -15,7 +14,8 @@ interface Env {
   NOTION_TOKEN?: string;
   NOTION_DATABASE_ID?: string;
   NOTION_AD_ACCOUNTS_DATABASE_ID?: string;
-  WORKER_API_SECRET?: string;
+  NOTION_WEBHOOK_VERIFICATION_TOKEN?: string;
+  WORKER_API_SECRET: string;
   MONTHLY_REPORT_TEST_RECIPIENT?: string;
   REPORT_EMAIL_DELIVERY_MODE?: "attachment" | "link";
   REPORT_EMAIL_LOGO_URL?: string;
@@ -23,6 +23,7 @@ interface Env {
   BROWSER_LAUNCH_SPACING_MS?: string;
   REPORT_COMPLETION_NOTIFICATION_TO?: string;
   REPORT_COMPLETION_NOTIFICATION_CC?: string;
+  REPORT_MANUAL_LIFECYCLE_NOTIFICATION_TO?: string;
   ADVANCED_REPORT_ENABLED?: string;
 }
 
@@ -133,6 +134,7 @@ interface CreateJobRequest {
   forceTestMode?: boolean;
   sendEmail?: boolean;
   reportType?: string | null;
+  manualReportType?: "monthlyOverall" | "monthlyAdvanced" | "biweeklyOverall" | null;
   country?: string | null;
   scheduledDate?: string;
   scheduledTime?: string;
@@ -158,6 +160,7 @@ interface ReportQueueMessage {
 interface JobRow {
   id: string;
   status: string;
+  report_type: string;
   report_month_key: string;
   report_month_label: string;
   start_date: string;
@@ -200,18 +203,25 @@ const MONTHLY_OVERALL_CRON = "0 4 7 * *";
 const BIWEEKLY_OVERALL_CRON = "0 4 15 * *";
 const MONTHLY_ADVANCED_CRON = "0 4 10 * *";
 const PRODUCTION_CRON = "0 4 7,10,15 * *";
+const NOTION_INCREMENTAL_SYNC_CRON = "*/10 * * * *";
+const NOTION_SYNC_KEY = "ad_accounts";
+const FULL_SYNC_INTERVAL_MS = 24 * 60 * 60 * 1000;
 const TEST_RECIPIENT_FALLBACK = "eason@locus-t.com.my";
 const NOTION_API_VERSION = "2026-03-11";
 const BROWSER_LAUNCH_LIMITER_NAME = "global-browser-launch-limiter";
-const DEFAULT_BROWSER_LAUNCH_SPACING_MS = 7000;
+const DEFAULT_BROWSER_LAUNCH_SPACING_MS = 20000;
 const BROWSER_RATE_LIMIT_RETRY_MS = 60000;
 const BROWSER_RATE_LIMIT_RETRY_JITTER_MS = 15000;
+const BROWSER_SESSION_RETRY_ATTEMPTS = 3;
+const BROWSER_SESSION_RETRY_BASE_MS = 20000;
+const BROWSER_SESSION_RETRY_JITTER_MS = 10000;
 const REPORT_ITEM_FINAL_FAILURE_ATTEMPTS = 6;
 const ADVANCED_REPORT_READY_TIMEOUT_MS = 8 * 60 * 1000;
 const ADVANCED_REPORT_READY_POLL_MS = 5000;
 const EMAIL_SAFE_PDF_SIZE_BYTES = 35 * 1024 * 1024;
 const DEFAULT_COMPLETION_NOTIFICATION_TO = ["waiing@locus-t.com.my"];
 const DEFAULT_COMPLETION_NOTIFICATION_CC = ["eason@locus-t.com.my", "ava@locus-t.com.my"];
+const DEFAULT_MANUAL_LIFECYCLE_NOTIFICATION_TO = ["jakettm6799@gmail.com"];
 const DEFAULT_FROM_ADDRESS = "LOCUS-T Reports <reports@locus-t.com.my>";
 const DEFAULT_EMAIL_LOGO_URL = "https://www.locus-t.com.my/wp-content/uploads/2024/09/LT-Logo-25.svg";
 
@@ -221,6 +231,10 @@ const worker = {
   },
 
   async scheduled(controller: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
+    if (controller.cron === NOTION_INCREMENTAL_SYNC_CRON) {
+      ctx.waitUntil(runScheduledNotionSync(env));
+      return;
+    }
     const scheduledJob = resolveScheduledJob(controller);
     const scheduledTime = new Date(controller.scheduledTime).toISOString();
     ctx.waitUntil(
@@ -320,6 +334,31 @@ async function handleFetch(request: Request, env: Env): Promise<Response> {
     });
   }
 
+  if (request.method === "POST" && url.pathname === "/notion/webhook") {
+    return handleNotionWebhook(request, env);
+  }
+
+  if (url.pathname === "/ad-accounts/search" && request.method === "GET") {
+    if (!isAuthorized(request, env)) return jsonResponse({ success: false, error: "Unauthorized" }, 401);
+    return searchAdAccounts(env, url.searchParams.get("q") ?? "");
+  }
+
+  if (url.pathname === "/ad-accounts/sync" && request.method === "POST") {
+    if (!isAuthorized(request, env)) return jsonResponse({ success: false, error: "Unauthorized" }, 401);
+    const body = (await safeReadJson(request)) as { full?: boolean } | null;
+    return jsonResponse({ success: true, ...(await syncNotionAdAccounts(env, body?.full === true ? "full" : "incremental")) });
+  }
+
+  if (url.pathname === "/ad-accounts/sync-status" && request.method === "GET") {
+    if (!isAuthorized(request, env)) return jsonResponse({ success: false, error: "Unauthorized" }, 401);
+    const state = await env.REPORT_JOBS_DB.prepare("SELECT * FROM notion_sync_state WHERE sync_key = ?")
+      .bind(NOTION_SYNC_KEY).first<Record<string, unknown>>();
+    const counts = await env.REPORT_JOBS_DB.prepare(
+      "SELECT COUNT(*) AS total, SUM(CASE WHEN active = 1 THEN 1 ELSE 0 END) AS active FROM ad_accounts"
+    ).first<Record<string, unknown>>();
+    return jsonResponse({ success: true, state, counts });
+  }
+
   if (request.method === "POST" && url.pathname === "/report-jobs") {
     if (!isAuthorized(request, env)) {
       return jsonResponse({ success: false, error: "Unauthorized" }, 401);
@@ -328,6 +367,21 @@ async function handleFetch(request: Request, env: Env): Promise<Response> {
     const body = (await safeReadJson(request)) as CreateJobRequest | null;
     const result = await createReportJob(env, body ?? {}, { source: "api" });
     return jsonResponse(result, 202);
+  }
+
+  if (request.method === "GET" && url.pathname === "/report-jobs/active") {
+    if (!isAuthorized(request, env)) {
+      return jsonResponse({ success: false, error: "Unauthorized" }, 401);
+    }
+
+    const reportType = url.searchParams.get("reportType")?.trim() ?? "";
+    const reportMonthKey = url.searchParams.get("reportMonthKey")?.trim() ?? "";
+    if (!isScheduledReportType(reportType) || !/^\d{4}-\d{2}$/.test(reportMonthKey)) {
+      return jsonResponse({ success: false, error: "A valid reportType and reportMonthKey are required." }, 400);
+    }
+
+    const job = await findActiveReportJob(env, reportType, reportMonthKey);
+    return jsonResponse({ success: true, job });
   }
 
   const jobMatch = url.pathname.match(/^\/report-jobs\/([^/]+)$/);
@@ -369,7 +423,24 @@ async function createReportJob(
 ): Promise<Record<string, unknown>> {
   const testMode = Boolean(input.forceTestMode);
   const sendEmail = input.sendEmail !== false;
+  const isManualJob = Boolean(input.manualReportType);
   const scheduledDate = resolveScheduledDate(input.scheduledDate ?? input.scheduledTime);
+  const jobReportType = resolveJobReportType(input, scheduledDate);
+  const requestedRange = resolveDateRange(input);
+  const activeJob = await findActiveReportJob(env, jobReportType, requestedRange.reportMonthKey);
+  if (activeJob) {
+    return {
+      success: true,
+      status: activeJob.status,
+      jobId: activeJob.id,
+      total: activeJob.total_items,
+      reportMonthKey: activeJob.report_month_key,
+      reportMonthLabel: activeJob.report_month_label,
+      createdAt: activeJob.created_at,
+      reusedActiveJob: true,
+      metadata,
+    };
+  }
   if (normalizeReportType(input.reportType) === "advanced" && !isAdvancedReportAutomationEnabled(env)) {
     console.warn(
       `[monthly-report-automation] skipped report_type=advanced scheduled_date=${scheduledDate} reason="ADVANCED_REPORT_ENABLED=false"`
@@ -387,7 +458,7 @@ async function createReportJob(
   }
   const resolved = await resolveTargets(env, input, testMode);
   const expandedTargets = expandAdvancedTargets(resolved.targets);
-  const monthlyEmailTargets = expandedTargets.filter((target) => target.monthlyEmailEnabled !== false);
+  const monthlyEmailTargets = expandedTargets.filter((target) => target.monthlyEmailEnabled === true);
   const skippedUnchecked = expandedTargets.length - monthlyEmailTargets.length;
   const recipientTargets = monthlyEmailTargets.filter((target) => {
     if (!sendEmail || testMode) {
@@ -417,6 +488,7 @@ async function createReportJob(
   const skippedTotal = skippedUnchecked + skippedMissingEmail + duplicateResult.skippedAlreadySent;
   const jobMetadata = {
     ...metadata,
+    manualLifecycleNotification: String(isManualJob),
     skippedUnchecked: String(skippedUnchecked),
     skippedMissingEmail: String(skippedMissingEmail),
     skippedAlreadySent: String(duplicateResult.skippedAlreadySent),
@@ -431,6 +503,15 @@ async function createReportJob(
     console.info(
       `[monthly-report-automation] debug summary processed=0 sent=0 skipped=${skippedTotal} failed=0 report_type=${normalizeReportType(input.reportType)} period=${resolved.reportMonthKey} scheduled_date=${scheduledDate}`
     );
+    if (isManualJob) {
+      await sendManualLifecycleNotificationSafely(env, {
+        state: "not_started",
+        reportType: jobReportType,
+        reportMonthLabel: resolved.reportMonthLabel,
+        total: 0,
+        skippedTotal,
+      });
+    }
     return {
       success: true,
       status: "empty",
@@ -447,15 +528,17 @@ async function createReportJob(
   const jobId = crypto.randomUUID();
   const jobStatus = targets.length > 0 ? "queued" : "empty";
 
-  await env.REPORT_JOBS_DB.prepare(
+  try {
+    await env.REPORT_JOBS_DB.prepare(
     `INSERT INTO report_jobs (
-      id, status, report_month_key, report_month_label, start_date, end_date,
+      id, status, report_type, report_month_key, report_month_label, start_date, end_date,
       total_items, send_email, test_mode, metadata_json, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   )
     .bind(
       jobId,
       jobStatus,
+      jobReportType,
       resolved.reportMonthKey,
       resolved.reportMonthLabel,
       resolved.startDate,
@@ -468,6 +551,23 @@ async function createReportJob(
       now
     )
     .run();
+  } catch (error) {
+    const concurrentJob = await findActiveReportJob(env, jobReportType, resolved.reportMonthKey);
+    if (!concurrentJob) {
+      throw error;
+    }
+    return {
+      success: true,
+      status: concurrentJob.status,
+      jobId: concurrentJob.id,
+      total: concurrentJob.total_items,
+      reportMonthKey: concurrentJob.report_month_key,
+      reportMonthLabel: concurrentJob.report_month_label,
+      createdAt: concurrentJob.created_at,
+      reusedActiveJob: true,
+      metadata,
+    };
+  }
 
   for (const target of targets) {
     const itemId = crypto.randomUUID();
@@ -520,6 +620,17 @@ async function createReportJob(
     `[monthly-report-automation] debug summary processed=0 sent=0 skipped=${skippedTotal} failed=0 report_type=${normalizeReportType(input.reportType)} period=${resolved.reportMonthKey} scheduled_date=${scheduledDate} queued=${targets.length}`
   );
 
+  if (isManualJob) {
+    await sendManualLifecycleNotificationSafely(env, {
+      state: "started",
+      jobId,
+      reportType: jobReportType,
+      reportMonthLabel: resolved.reportMonthLabel,
+      total: targets.length,
+      skippedTotal,
+    });
+  }
+
   return {
     success: true,
     jobId,
@@ -530,6 +641,8 @@ async function createReportJob(
     skippedAlreadySent: duplicateResult.skippedAlreadySent,
     reportMonthKey: resolved.reportMonthKey,
     reportMonthLabel: resolved.reportMonthLabel,
+    createdAt: now,
+    reusedActiveJob: false,
     metadata: jobMetadata,
   };
 }
@@ -829,7 +942,8 @@ async function resolveTargets(
     const payload = await resolveTargetsFromVercel(env, {
       forceTestMode: testMode,
       overrideTargets: input.accounts,
-      reportType: input.reportType,
+      reportType: input.manualReportType ?? input.reportType,
+      manual: Boolean(input.manualReportType),
     }).catch((error) => {
       console.error("[monthly-report-automation] Vercel target enrichment failed", formatError(error));
       return { targets: input.accounts ?? [] };
@@ -844,7 +958,8 @@ async function resolveTargets(
 
   const payload = await resolveTargetsFromVercel(env, {
     forceTestMode: testMode,
-    reportType: input.reportType,
+    reportType: input.manualReportType ?? input.reportType,
+    manual: Boolean(input.manualReportType),
   });
   const inputRange = resolveDateRange(input);
 
@@ -863,6 +978,7 @@ async function resolveTargetsFromVercel(
     forceTestMode: boolean;
     overrideTargets?: ReportTarget[];
     reportType?: string | null;
+    manual?: boolean;
   }
 ): Promise<{
   startDate?: string;
@@ -871,16 +987,22 @@ async function resolveTargetsFromVercel(
   reportMonthLabel?: string;
   targets?: ReportTarget[];
 }> {
-  const endpoint =
-    env.VERCEL_REPORT_TARGETS_ENDPOINT?.trim() ||
-    `${trimTrailingSlash(env.VERCEL_APP_BASE_URL)}/api/report-pdf/targets`;
+  const configuredEndpoint = env.VERCEL_REPORT_TARGETS_ENDPOINT?.trim();
+  const endpoint = body.manual
+    ? `${trimTrailingSlash(env.VERCEL_APP_BASE_URL)}/api/report-pdf/manual-targets`
+    : configuredEndpoint || `${trimTrailingSlash(env.VERCEL_APP_BASE_URL)}/api/report-pdf/targets`;
+  const requestBody = {
+    forceTestMode: body.forceTestMode,
+    ...(body.overrideTargets ? { overrideTargets: body.overrideTargets } : {}),
+    reportType: body.reportType,
+  };
   const response = await fetch(endpoint, {
     method: "POST",
     headers: {
-      Authorization: `Bearer ${readRequired(env.REPORT_AUTOMATION_SECRET, "REPORT_AUTOMATION_SECRET")}`,
+      Authorization: `Bearer ${readRequired(env.WORKER_API_SECRET, "WORKER_API_SECRET")}`,
       "Content-Type": "application/json",
     },
-    body: JSON.stringify(body),
+    body: JSON.stringify(requestBody),
   });
 
   const payload = (await response.json().catch(() => null)) as
@@ -906,18 +1028,14 @@ async function enrichTargetsFromNotion(
   targets: ReportTarget[],
   requestedReportType?: string | null
 ): Promise<ReportTarget[]> {
-  const notionToken = env.NOTION_TOKEN?.trim();
-  const databaseId = env.NOTION_AD_ACCOUNTS_DATABASE_ID?.trim() || env.NOTION_DATABASE_ID?.trim();
-
-  if (!notionToken || !databaseId || targets.length === 0) {
+  if (targets.length === 0) {
     return targets;
   }
 
   try {
-    const rows = await fetchNotionAdAccountRows(notionToken, databaseId);
+    const rows = await fetchD1AdAccountRows(env);
     const rowsByGoogleId = new Map(rows.filter((row) => row.googleAccountId).map((row) => [row.googleAccountId as string, row]));
     const rowsByMetaId = new Map(rows.filter((row) => row.metaAccountId).map((row) => [row.metaAccountId as string, row]));
-    const clientNameCache = new Map<string, Promise<string | null>>();
 
     return Promise.all(
       targets.map(async (target) => {
@@ -931,7 +1049,7 @@ async function enrichTargetsFromNotion(
           ...googleAccountIds.map((accountId) => rowsByGoogleId.get(accountId) ?? null),
           ...metaAccountIds.map((accountId) => rowsByMetaId.get(accountId) ?? null),
         ].filter((row): row is NotionAdAccountRow => Boolean(row));
-        const clientName = await resolveNotionClientName(notionToken, matchedRows, clientNameCache);
+        const clientName = matchedRows.map((row) => row.accountName).find((name): name is string => Boolean(name)) ?? null;
         const isAdvancedTarget = normalizeReportType(target.reportType ?? requestedReportType) === "advanced";
 
         return {
@@ -946,8 +1064,8 @@ async function enrichTargetsFromNotion(
             ? matchedRows.find((row) => row.ccEmail)?.ccEmail ?? null
             : target.ccEmail ?? matchedRows.find((row) => row.ccEmail)?.ccEmail ?? null,
           monthlyEmailEnabled:
-            target.monthlyEmailEnabled ??
-            resolveNotionMonthlyEmailEnabled(matchedRows, target.reportType ?? requestedReportType),
+            resolveNotionMonthlyEmailEnabled(matchedRows, target.reportType ?? requestedReportType) ??
+            target.monthlyEmailEnabled === true,
         };
       })
     );
@@ -958,6 +1076,8 @@ async function enrichTargetsFromNotion(
 }
 
 interface NotionAdAccountRow {
+  notionPageId: string;
+  platform: string | null;
   googleAccountId: string | null;
   metaAccountId: string | null;
   accountName: string | null;
@@ -966,11 +1086,16 @@ interface NotionAdAccountRow {
   monthlyEmailEnabled: boolean;
   advancedReportEnabled: boolean;
   clientRelationPageIds: string[];
+  accessPath: string | null;
+  active: boolean;
+  notionCreatedTime: string | null;
+  notionLastEditedTime: string;
 }
 
 async function fetchNotionAdAccountRows(
   notionToken: string,
-  databaseId: string
+  databaseId: string,
+  editedAfter?: string | null
 ): Promise<NotionAdAccountRow[]> {
   const database = (await notionRequest(notionToken, `/databases/${databaseId}`)) as {
     data_sources?: Array<{ id?: string | null }>;
@@ -978,17 +1103,28 @@ async function fetchNotionAdAccountRows(
   const dataSourceId = database.data_sources?.[0]?.id;
 
   if (!dataSourceId) {
-    return [];
+    throw new Error(`No Notion data source found for database ${databaseId}.`);
   }
 
-  const rows: Array<{ properties?: Record<string, unknown> }> = [];
+  const rows: Array<{
+    id?: string;
+    archived?: boolean;
+    in_trash?: boolean;
+    created_time?: string;
+    last_edited_time?: string;
+    properties?: Record<string, unknown>;
+  }> = [];
   let startCursor: string | null = null;
 
   do {
     const response = (await notionRequest(notionToken, `/data_sources/${dataSourceId}/query`, {
       start_cursor: startCursor ?? undefined,
+      page_size: 100,
+      filter: editedAfter
+        ? { timestamp: "last_edited_time", last_edited_time: { after: editedAfter } }
+        : undefined,
     })) as {
-      results?: Array<{ properties?: Record<string, unknown> }>;
+      results?: typeof rows;
       has_more?: boolean;
       next_cursor?: string | null;
     };
@@ -996,10 +1132,20 @@ async function fetchNotionAdAccountRows(
     startCursor = response.has_more ? response.next_cursor ?? null : null;
   } while (startCursor);
 
-  return rows.map((row) => mapNotionAdAccountRow(row.properties ?? {}));
+  return rows
+    .filter((row): row is typeof row & { id: string; last_edited_time: string } => Boolean(row.id && row.last_edited_time))
+    .map((row) => mapNotionAdAccountRow(row.properties ?? {}, {
+      notionPageId: row.id,
+      active: row.archived !== true && row.in_trash !== true,
+      notionCreatedTime: row.created_time ?? null,
+      notionLastEditedTime: row.last_edited_time,
+    }));
 }
 
-function mapNotionAdAccountRow(properties: Record<string, unknown>): NotionAdAccountRow {
+function mapNotionAdAccountRow(
+  properties: Record<string, unknown>,
+  metadata: Pick<NotionAdAccountRow, "notionPageId" | "active" | "notionCreatedTime" | "notionLastEditedTime">
+): NotionAdAccountRow {
   const platform = getNotionText(properties, ["Platform"])?.toLowerCase() ?? "";
   const rawId = getNotionText(properties, [
     "ID",
@@ -1014,6 +1160,8 @@ function mapNotionAdAccountRow(properties: Record<string, unknown>): NotionAdAcc
   const metaAccountId = platform.includes("meta") || !platform ? normalizeMetaAccountId(rawId) : null;
 
   return {
+    ...metadata,
+    platform: platform || null,
     googleAccountId,
     metaAccountId,
     accountName: getNotionText(properties, ["Account Name", "Name", "Client Name"]),
@@ -1032,6 +1180,7 @@ function mapNotionAdAccountRow(properties: Record<string, unknown>): NotionAdAcc
     monthlyEmailEnabled: getNotionCheckbox(properties, ["Monthly email"]),
     advancedReportEnabled: getNotionCheckbox(properties, ["Advanced Report"]),
     clientRelationPageIds: getNotionRelationIds(properties, ["Client"]),
+    accessPath: getNotionText(properties, ["Access Path", "Google Ads Access Path", "Manager ID", "MCC ID"]),
   };
 }
 
@@ -1048,46 +1197,6 @@ function resolveNotionMonthlyEmailEnabled(
   }
 
   return rows.some((row) => row.monthlyEmailEnabled);
-}
-
-async function resolveNotionClientName(
-  notionToken: string,
-  rows: NotionAdAccountRow[],
-  cache: Map<string, Promise<string | null>>
-): Promise<string | null> {
-  const relationPageIds = Array.from(new Set(rows.flatMap((row) => row.clientRelationPageIds)));
-
-  if (relationPageIds.length > 0) {
-    const names = (
-      await Promise.all(
-        relationPageIds.map((pageId) => {
-          let pending = cache.get(pageId);
-          if (!pending) {
-            pending = fetchNotionClientPageName(notionToken, pageId);
-            cache.set(pageId, pending);
-          }
-          return pending;
-        })
-      )
-    ).filter((name): name is string => Boolean(name));
-
-    if (names.length > 0) {
-      return Array.from(new Set(names)).join(" / ");
-    }
-  }
-
-  const accountNames = rows.map((row) => row.accountName).filter((name): name is string => Boolean(name));
-  return accountNames.length > 0 ? Array.from(new Set(accountNames)).join(" / ") : null;
-}
-
-async function fetchNotionClientPageName(notionToken: string, pageId: string): Promise<string | null> {
-  const page = (await notionRequest(notionToken, `/pages/${pageId}`)) as {
-    properties?: Record<string, unknown>;
-  };
-
-  return page.properties
-    ? getNotionText(page.properties, ["Client Name", "Name", "Client", "Account Name"])
-    : null;
 }
 
 async function notionRequest(
@@ -1110,6 +1219,271 @@ async function notionRequest(
   }
 
   return response.json();
+}
+
+interface D1AdAccountRow {
+  notion_page_id: string;
+  account_name: string;
+  platform: string | null;
+  google_account_id: string | null;
+  meta_account_id: string | null;
+  access_path: string | null;
+  client_email: string | null;
+  cc_email: string | null;
+  monthly_email_enabled: number;
+  advanced_report_enabled: number;
+  client_relation_page_ids_json: string;
+  active: number;
+  notion_created_time: string | null;
+  notion_last_edited_time: string;
+}
+
+async function fetchD1AdAccountRows(env: Env): Promise<NotionAdAccountRow[]> {
+  const result = await env.REPORT_JOBS_DB.prepare("SELECT * FROM ad_accounts WHERE active = 1").all<D1AdAccountRow>();
+  return (result.results ?? []).map((row) => ({
+    notionPageId: row.notion_page_id,
+    accountName: row.account_name,
+    platform: row.platform,
+    googleAccountId: row.google_account_id,
+    metaAccountId: row.meta_account_id,
+    accessPath: row.access_path,
+    clientEmail: row.client_email,
+    ccEmail: row.cc_email,
+    monthlyEmailEnabled: row.monthly_email_enabled === 1,
+    advancedReportEnabled: row.advanced_report_enabled === 1,
+    clientRelationPageIds: parseStringArray(row.client_relation_page_ids_json),
+    active: row.active === 1,
+    notionCreatedTime: row.notion_created_time,
+    notionLastEditedTime: row.notion_last_edited_time,
+  }));
+}
+
+async function runScheduledNotionSync(env: Env): Promise<void> {
+  const state = await env.REPORT_JOBS_DB.prepare(
+    "SELECT last_full_sync_at FROM notion_sync_state WHERE sync_key = ?"
+  ).bind(NOTION_SYNC_KEY).first<{ last_full_sync_at: string | null }>();
+  const lastFull = state?.last_full_sync_at ? Date.parse(state.last_full_sync_at) : 0;
+  const mode = !lastFull || Date.now() - lastFull >= FULL_SYNC_INTERVAL_MS ? "full" : "incremental";
+  try {
+    const result = await syncNotionAdAccounts(env, mode);
+    console.info(`[notion-directory] scheduled sync mode=${mode} received=${result.rowsReceived} written=${result.rowsWritten}`);
+  } catch (error) {
+    console.error("[notion-directory] scheduled sync failed", formatError(error));
+  }
+}
+
+async function syncNotionAdAccounts(env: Env, mode: "full" | "incremental") {
+  const notionToken = readRequired(env.NOTION_TOKEN, "NOTION_TOKEN");
+  const databaseId = readRequired(
+    env.NOTION_AD_ACCOUNTS_DATABASE_ID?.trim() || env.NOTION_DATABASE_ID?.trim(),
+    "NOTION_AD_ACCOUNTS_DATABASE_ID"
+  );
+  const startedAt = new Date().toISOString();
+  const state = await env.REPORT_JOBS_DB.prepare(
+    "SELECT last_incremental_sync_at FROM notion_sync_state WHERE sync_key = ?"
+  ).bind(NOTION_SYNC_KEY).first<{ last_incremental_sync_at: string | null }>();
+  const effectiveMode = mode === "incremental" && !state?.last_incremental_sync_at ? "full" : mode;
+  const editedAfter = effectiveMode === "incremental" ? subtractCheckpointOverlap(state?.last_incremental_sync_at) : null;
+  await writeSyncAttempt(env, startedAt);
+
+  try {
+    const rows = await fetchNotionAdAccountRows(notionToken, databaseId, editedAfter);
+    const eligibleRows = rows.filter((row) => Boolean(row.googleAccountId || row.metaAccountId));
+    await upsertAdAccountRows(env, eligibleRows, startedAt);
+    if (effectiveMode === "full") {
+      await env.REPORT_JOBS_DB.prepare(
+        "UPDATE ad_accounts SET active = 0, synced_at = ? WHERE active = 1 AND notion_page_id NOT IN (SELECT value FROM json_each(?))"
+      ).bind(startedAt, JSON.stringify(rows.map((row) => row.notionPageId))).run();
+    }
+    await writeSyncSuccess(env, effectiveMode, startedAt, rows.length, eligibleRows.length);
+    return { mode: effectiveMode, rowsReceived: rows.length, rowsWritten: eligibleRows.length, completedAt: startedAt };
+  } catch (error) {
+    await writeSyncFailure(env, startedAt, formatError(error));
+    throw error;
+  }
+}
+
+async function upsertAdAccountRows(env: Env, rows: NotionAdAccountRow[], syncedAt: string): Promise<void> {
+  const sql = `INSERT INTO ad_accounts (
+      notion_page_id, account_name, account_name_normalized, platform, google_account_id, meta_account_id,
+      access_path, client_email, cc_email, monthly_email_enabled, advanced_report_enabled,
+      client_relation_page_ids_json, active, notion_created_time, notion_last_edited_time, synced_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(notion_page_id) DO UPDATE SET
+      account_name = excluded.account_name, account_name_normalized = excluded.account_name_normalized,
+      platform = excluded.platform, google_account_id = excluded.google_account_id,
+      meta_account_id = excluded.meta_account_id, access_path = excluded.access_path,
+      client_email = excluded.client_email, cc_email = excluded.cc_email,
+      monthly_email_enabled = excluded.monthly_email_enabled,
+      advanced_report_enabled = excluded.advanced_report_enabled,
+      client_relation_page_ids_json = excluded.client_relation_page_ids_json, active = excluded.active,
+      notion_created_time = excluded.notion_created_time,
+      notion_last_edited_time = excluded.notion_last_edited_time, synced_at = excluded.synced_at`;
+  for (let offset = 0; offset < rows.length; offset += 50) {
+    const statements = rows.slice(offset, offset + 50).map((row) => env.REPORT_JOBS_DB.prepare(sql).bind(
+      row.notionPageId, row.accountName?.trim() || `Google Ads ${row.googleAccountId ?? row.metaAccountId ?? row.notionPageId}`,
+      normalizeDirectoryText(row.accountName ?? ""), row.platform, row.googleAccountId, row.metaAccountId,
+      row.accessPath, row.clientEmail, row.ccEmail, row.monthlyEmailEnabled ? 1 : 0,
+      row.advancedReportEnabled ? 1 : 0, JSON.stringify(row.clientRelationPageIds), row.active ? 1 : 0,
+      row.notionCreatedTime, row.notionLastEditedTime, syncedAt
+    ));
+    if (statements.length) await env.REPORT_JOBS_DB.batch(statements);
+  }
+}
+
+async function searchAdAccounts(env: Env, rawQuery: string): Promise<Response> {
+  const query = rawQuery.trim();
+  if (query.length < 2) return jsonResponse({ success: true, accounts: [] });
+  const normalizedText = normalizeDirectoryText(query);
+  const normalizedId = normalizeGoogleAccountId(query);
+  const idLike = normalizedId ? `%${escapeSqlLike(normalizedId)}%` : "";
+  const nameLike = `%${escapeSqlLike(normalizedText)}%`;
+  const result = await env.REPORT_JOBS_DB.prepare(`SELECT account_name, google_account_id, access_path, platform
+      FROM ad_accounts
+      WHERE active = 1 AND google_account_id IS NOT NULL
+        AND (account_name_normalized LIKE ? ESCAPE '\\' OR google_account_id LIKE ? ESCAPE '\\')
+      ORDER BY CASE WHEN google_account_id = ? THEN 0 WHEN account_name_normalized = ? THEN 1 ELSE 2 END,
+        account_name COLLATE NOCASE
+      LIMIT 20`)
+    .bind(nameLike, idLike, normalizedId ?? "", normalizedText).all<{
+      account_name: string; google_account_id: string; access_path: string | null; platform: string | null;
+    }>();
+  return jsonResponse({
+    success: true,
+    accounts: (result.results ?? []).map((row) => ({
+      accountName: row.account_name,
+      adAccountId: row.google_account_id,
+      accessPath: row.access_path,
+      platform: row.platform,
+    })),
+  });
+}
+
+async function handleNotionWebhook(request: Request, env: Env): Promise<Response> {
+  const rawBody = await request.text();
+  let payload: Record<string, unknown>;
+  try {
+    payload = JSON.parse(rawBody) as Record<string, unknown>;
+  } catch {
+    return jsonResponse({ success: false, error: "Invalid JSON" }, 400);
+  }
+
+  if (typeof payload.verification_token === "string") {
+    console.info(`[notion-directory] webhook verification token received: ${payload.verification_token}`);
+    return jsonResponse({ success: true });
+  }
+
+  const verificationToken = env.NOTION_WEBHOOK_VERIFICATION_TOKEN?.trim();
+  if (!verificationToken || !(await verifyNotionSignature(rawBody, request.headers.get("x-notion-signature"), verificationToken))) {
+    return jsonResponse({ success: false, error: "Invalid webhook signature" }, 401);
+  }
+
+  const eventId = typeof payload.id === "string" ? payload.id : "";
+  const eventType = typeof payload.type === "string" ? payload.type : "";
+  const entity = payload.entity && typeof payload.entity === "object" ? payload.entity as Record<string, unknown> : null;
+  const pageId = typeof entity?.id === "string" ? entity.id : "";
+  if (!eventId || !eventType || !pageId) return jsonResponse({ success: false, error: "Invalid event" }, 400);
+
+  const existing = await env.REPORT_JOBS_DB.prepare("SELECT event_id FROM notion_webhook_events WHERE event_id = ?")
+    .bind(eventId).first<{ event_id: string }>();
+  if (existing) return jsonResponse({ success: true, duplicate: true });
+  const receivedAt = new Date().toISOString();
+  await env.REPORT_JOBS_DB.prepare(`INSERT INTO notion_webhook_events
+    (event_id, event_type, notion_page_id, received_at, status) VALUES (?, ?, ?, ?, 'processing')`)
+    .bind(eventId, eventType, pageId, receivedAt).run();
+
+  try {
+    if (eventType === "page.deleted") {
+      await env.REPORT_JOBS_DB.prepare("UPDATE ad_accounts SET active = 0, synced_at = ? WHERE notion_page_id = ?")
+        .bind(receivedAt, pageId).run();
+    } else if (["page.created", "page.content_updated", "page.undeleted", "page.restored"].includes(eventType)) {
+      const row = await fetchNotionAdAccountPage(env, pageId);
+      if (row && (row.googleAccountId || row.metaAccountId)) {
+        await upsertAdAccountRows(env, [row], receivedAt);
+      } else {
+        await env.REPORT_JOBS_DB.prepare("UPDATE ad_accounts SET active = 0, synced_at = ? WHERE notion_page_id = ?")
+          .bind(receivedAt, pageId).run();
+      }
+    }
+    await env.REPORT_JOBS_DB.prepare(
+      "UPDATE notion_webhook_events SET status = 'completed', processed_at = ? WHERE event_id = ?"
+    ).bind(new Date().toISOString(), eventId).run();
+    return jsonResponse({ success: true });
+  } catch (error) {
+    await env.REPORT_JOBS_DB.prepare(
+      "UPDATE notion_webhook_events SET status = 'failed', processed_at = ?, error_message = ? WHERE event_id = ?"
+    ).bind(new Date().toISOString(), formatError(error).slice(0, 1000), eventId).run();
+    return jsonResponse({ success: false, error: "Webhook processing failed" }, 500);
+  }
+}
+
+async function fetchNotionAdAccountPage(env: Env, pageId: string): Promise<NotionAdAccountRow | null> {
+  const token = readRequired(env.NOTION_TOKEN, "NOTION_TOKEN");
+  const page = await notionRequest(token, `/pages/${encodeURIComponent(pageId)}`) as {
+    id?: string; archived?: boolean; in_trash?: boolean; created_time?: string; last_edited_time?: string;
+    properties?: Record<string, unknown>;
+  };
+  if (!page.id || !page.last_edited_time) return null;
+  return mapNotionAdAccountRow(page.properties ?? {}, {
+    notionPageId: page.id,
+    active: page.archived !== true && page.in_trash !== true,
+    notionCreatedTime: page.created_time ?? null,
+    notionLastEditedTime: page.last_edited_time,
+  });
+}
+
+async function verifyNotionSignature(rawBody: string, signature: string | null, token: string): Promise<boolean> {
+  if (!signature) return false;
+  const key = await crypto.subtle.importKey("raw", new TextEncoder().encode(token), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+  const digest = new Uint8Array(await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(rawBody)));
+  const expected = `sha256=${Array.from(digest, (byte) => byte.toString(16).padStart(2, "0")).join("")}`;
+  if (expected.length !== signature.length) return false;
+  let mismatch = 0;
+  for (let index = 0; index < expected.length; index += 1) mismatch |= expected.charCodeAt(index) ^ signature.charCodeAt(index);
+  return mismatch === 0;
+}
+
+async function writeSyncAttempt(env: Env, at: string): Promise<void> {
+  await env.REPORT_JOBS_DB.prepare(`INSERT INTO notion_sync_state
+    (sync_key, last_attempt_at, last_status, updated_at) VALUES (?, ?, 'running', ?)
+    ON CONFLICT(sync_key) DO UPDATE SET last_attempt_at = excluded.last_attempt_at,
+      last_status = 'running', last_error = NULL, updated_at = excluded.updated_at`)
+    .bind(NOTION_SYNC_KEY, at, at).run();
+}
+
+async function writeSyncSuccess(env: Env, mode: "full" | "incremental", at: string, received: number, written: number): Promise<void> {
+  await env.REPORT_JOBS_DB.prepare(`UPDATE notion_sync_state SET
+    last_incremental_sync_at = ?, last_full_sync_at = CASE WHEN ? = 'full' THEN ? ELSE last_full_sync_at END,
+    last_success_at = ?, last_status = 'success', last_error = NULL, rows_received = ?, rows_written = ?, updated_at = ?
+    WHERE sync_key = ?`).bind(at, mode, at, at, received, written, at, NOTION_SYNC_KEY).run();
+}
+
+async function writeSyncFailure(env: Env, at: string, error: string): Promise<void> {
+  await env.REPORT_JOBS_DB.prepare(`UPDATE notion_sync_state SET last_status = 'failed', last_error = ?, updated_at = ?
+    WHERE sync_key = ?`).bind(error.slice(0, 1000), at, NOTION_SYNC_KEY).run();
+}
+
+function subtractCheckpointOverlap(value: string | null | undefined): string | null {
+  if (!value) return null;
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? new Date(parsed - 1000).toISOString() : null;
+}
+
+function normalizeDirectoryText(value: string): string {
+  return value.trim().toLocaleLowerCase("en").replace(/\s+/g, " ");
+}
+
+function escapeSqlLike(value: string): string {
+  return value.replace(/[\\%_]/g, (character) => `\\${character}`);
+}
+
+function parseStringArray(value: string): string[] {
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    return Array.isArray(parsed) ? parsed.filter((item): item is string => typeof item === "string") : [];
+  } catch {
+    return [];
+  }
 }
 
 function getNotionText(properties: Record<string, unknown>, aliases: string[]): string | null {
@@ -1349,21 +1723,27 @@ function formatDateRange(start: Date, end: Date): {
   };
 }
 
-async function renderWithBrowserRateLimitRetry<T>(operation: () => Promise<T>): Promise<T> {
-  try {
-    return await operation();
-  } catch (error) {
-    if (!isBrowserRateLimitError(error)) {
-      throw error;
-    }
+async function renderWithBrowserRetry<T>(operation: () => Promise<T>): Promise<T> {
+  let lastError: unknown;
 
-    const delayMs = BROWSER_RATE_LIMIT_RETRY_MS + Math.floor(Math.random() * BROWSER_RATE_LIMIT_RETRY_JITTER_MS);
-    console.warn(
-      `[monthly-report-automation] browser launch rate limited; retrying after ${delayMs}ms`
-    );
-    await sleep(delayMs);
-    return operation();
+  for (let attempt = 1; attempt <= BROWSER_SESSION_RETRY_ATTEMPTS; attempt += 1) {
+    try {
+      return await operation();
+    } catch (error) {
+      lastError = error;
+      if (!isRetryableBrowserError(error) || attempt >= BROWSER_SESSION_RETRY_ATTEMPTS) {
+        throw error;
+      }
+
+      const delayMs = resolveBrowserRetryDelayMs(error, attempt);
+      console.warn(
+        `[monthly-report-automation] browser session failed attempt=${attempt} retrying_after_ms=${delayMs} error=${formatError(error)}`
+      );
+      await sleep(delayMs);
+    }
   }
+
+  throw lastError;
 }
 
 async function waitForBrowserLaunchSlot(env: Env): Promise<void> {
@@ -1390,6 +1770,32 @@ function isBrowserRateLimitError(error: unknown): boolean {
   return message.includes("429") || message.includes("rate limit");
 }
 
+function isRetryableBrowserError(error: unknown): boolean {
+  const message = formatError(error).toLowerCase();
+  return (
+    isBrowserRateLimitError(error) ||
+    message.includes("target page, context or browser has been closed") ||
+    message.includes("target closed") ||
+    message.includes("browser has been closed") ||
+    message.includes("chromium crashed") ||
+    message.includes("session evicted") ||
+    message.includes("connection error") ||
+    message.includes("websocket") ||
+    message.includes("unable to create new browser")
+  );
+}
+
+function resolveBrowserRetryDelayMs(error: unknown, attempt: number): number {
+  if (isBrowserRateLimitError(error)) {
+    return BROWSER_RATE_LIMIT_RETRY_MS + Math.floor(Math.random() * BROWSER_RATE_LIMIT_RETRY_JITTER_MS);
+  }
+
+  return (
+    BROWSER_SESSION_RETRY_BASE_MS * attempt +
+    Math.floor(Math.random() * BROWSER_SESSION_RETRY_JITTER_MS)
+  );
+}
+
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -1406,9 +1812,10 @@ function resolveBrowserLaunchSpacingMs(env: Env): number {
 async function renderPdfWithBrowserRun(env: Env, reportUrl: string): Promise<ArrayBuffer> {
   await waitForBrowserLaunchSlot(env);
   const browser = await puppeteer.launch(env.REPORT_BROWSER);
+  let page: Page | null = null;
 
   try {
-    const page = await browser.newPage();
+    page = await browser.newPage();
     await page.setViewport({
       width: 1440,
       height: 2200,
@@ -1469,7 +1876,12 @@ async function renderPdfWithBrowserRun(env: Env, reportUrl: string): Promise<Arr
 
     return toArrayBuffer(pdf);
   } finally {
-    await browser.close();
+    await page?.close().catch((error: unknown) => {
+      console.warn(`[monthly-report-automation] browser page close failed ${formatError(error)}`);
+    });
+    await browser.close().catch((error: unknown) => {
+      console.warn(`[monthly-report-automation] browser close failed ${formatError(error)}`);
+    });
   }
 }
 
@@ -1477,9 +1889,10 @@ async function renderAdvancedPdfWithBrowserRun(env: Env, reportUrl: string): Pro
   await ensureAdvancedReportReady(reportUrl);
   await waitForBrowserLaunchSlot(env);
   const browser = await puppeteer.launch(env.REPORT_BROWSER);
+  let page: Page | null = null;
 
   try {
-    const page = await browser.newPage();
+    page = await browser.newPage();
     await page.setViewport({
       width: 1440,
       height: 2200,
@@ -1570,7 +1983,12 @@ async function renderAdvancedPdfWithBrowserRun(env: Env, reportUrl: string): Pro
 
     return toArrayBuffer(lightweightPdf);
   } finally {
-    await browser.close();
+    await page?.close().catch((error: unknown) => {
+      console.warn(`[monthly-report-automation] browser page close failed ${formatError(error)}`);
+    });
+    await browser.close().catch((error: unknown) => {
+      console.warn(`[monthly-report-automation] browser close failed ${formatError(error)}`);
+    });
   }
 }
 
@@ -1705,7 +2123,7 @@ async function startAdvancedReportGeneration(apiUrl: string): Promise<void> {
 }
 
 async function renderPdfForReportMessage(env: Env, message: ReportQueueMessage): Promise<ArrayBuffer> {
-  return renderWithBrowserRateLimitRetry(async () => {
+  return renderWithBrowserRetry(async () => {
     if (normalizeReportType(message.target.reportType) === "advanced") {
       return renderAdvancedPdfWithBrowserRun(env, buildReportUrl(env, message));
     }
@@ -1848,9 +2266,10 @@ async function sendReportEmail(
 
   const deliveryMode = env.REPORT_EMAIL_DELIVERY_MODE ?? "attachment";
   const attachments: Array<Record<string, string>> = [];
+  const fromAddress = env.RESEND_FROM_MONTHLY_REPORT?.trim() || DEFAULT_FROM_ADDRESS;
 
   const body: Record<string, unknown> = {
-    from: env.RESEND_FROM_MONTHLY_REPORT?.trim() || DEFAULT_FROM_ADDRESS,
+    from: fromAddress,
     to: recipientEmails,
     cc: ccEmails.length > 0 ? ccEmails : undefined,
     subject: buildReportEmailSubject(input.reportType, input.target.clientName, input.reportMonthLabel),
@@ -1884,7 +2303,12 @@ async function sendReportEmail(
   const payload = (await response.json().catch(() => null)) as { id?: string; error?: { message?: string } } | null;
 
   if (!response.ok) {
-    throw new Error(payload?.error?.message ?? `Resend email failed with status ${response.status}.`);
+    throw new Error(
+      formatResendDeliveryError(
+        payload?.error?.message ?? `Resend email failed with status ${response.status}.`,
+        fromAddress
+      )
+    );
   }
 
   return {
@@ -1906,15 +2330,25 @@ async function sendCompletionNotificationEmail(
   }
 
   const cc = parseEmailList(env.REPORT_COMPLETION_NOTIFICATION_CC, DEFAULT_COMPLETION_NOTIFICATION_CC);
+  const metadata = parseJobMetadata(input.job.metadata_json);
+  const manualLifecycleRecipients = metadata?.manualLifecycleNotification === "true"
+    ? parseEmailList(
+        env.REPORT_MANUAL_LIFECYCLE_NOTIFICATION_TO,
+        DEFAULT_MANUAL_LIFECYCLE_NOTIFICATION_TO
+      )
+    : [];
   const subjectPrefix = input.job.test_mode ? "[TEST] " : "";
   const completedCount = input.items.filter((item) => item.status === "completed").length;
   const failedCount = input.failedItems.length;
   const statusLabel = failedCount > 0 ? `${failedCount} failed` : "all completed";
+  const completionVerb = manualLifecycleRecipients.length > 0 ? "Ended" : "Finished";
+  const fromAddress = env.RESEND_FROM_MONTHLY_REPORT?.trim() || DEFAULT_FROM_ADDRESS;
   const body: Record<string, unknown> = {
-    from: env.RESEND_FROM_MONTHLY_REPORT?.trim() || DEFAULT_FROM_ADDRESS,
+    from: fromAddress,
     to: recipients,
     cc: cc.length > 0 ? cc : undefined,
-    subject: `${subjectPrefix}[Report Automation] Finished - ${input.job.report_month_label} - ${completedCount}/${input.items.length} completed, ${statusLabel}`,
+    bcc: manualLifecycleRecipients.length > 0 ? manualLifecycleRecipients : undefined,
+    subject: `${subjectPrefix}[Report Automation] ${completionVerb} - ${input.job.report_month_label} - ${completedCount}/${input.items.length} completed, ${statusLabel}`,
     html: buildCompletionNotificationEmailHtml({
       job: input.job,
       items: input.items,
@@ -1934,12 +2368,94 @@ async function sendCompletionNotificationEmail(
   const payload = (await response.json().catch(() => null)) as { id?: string; error?: { message?: string } } | null;
 
   if (!response.ok) {
-    throw new Error(payload?.error?.message ?? `Resend completion notification failed with status ${response.status}.`);
+    throw new Error(
+      formatResendDeliveryError(
+        payload?.error?.message ?? `Resend completion notification failed with status ${response.status}.`,
+        fromAddress
+      )
+    );
   }
 
   return {
     resendEmailId: payload?.id ?? null,
   };
+}
+
+async function sendManualLifecycleNotificationSafely(
+  env: Env,
+  input: {
+    state: "started" | "not_started";
+    jobId?: string;
+    reportType: string;
+    reportMonthLabel: string;
+    total: number;
+    skippedTotal: number;
+  }
+): Promise<void> {
+  try {
+    const recipients = parseEmailList(
+      env.REPORT_MANUAL_LIFECYCLE_NOTIFICATION_TO,
+      DEFAULT_MANUAL_LIFECYCLE_NOTIFICATION_TO
+    );
+    if (recipients.length === 0) {
+      return;
+    }
+
+    const started = input.state === "started";
+    const fromAddress = env.RESEND_FROM_MONTHLY_REPORT?.trim() || DEFAULT_FROM_ADDRESS;
+    const title = started ? "Manual report job started" : "Manual report job did not start";
+    const explanation = started
+      ? `${input.total} account${input.total === 1 ? "" : "s"} were queued for processing.`
+      : `No eligible unsent accounts were found. ${input.skippedTotal} account${input.skippedTotal === 1 ? " was" : "s were"} skipped.`;
+    const details = [
+      ["Report", formatLifecycleReportType(input.reportType)],
+      ["Report month", input.reportMonthLabel],
+      ["Job ID", input.jobId ?? "Not created"],
+      ["Queued", String(input.total)],
+      ["Skipped", String(input.skippedTotal)],
+    ];
+    const detailRows = details
+      .map(
+        ([label, value]) =>
+          `<tr><td style="padding:8px 12px;border-top:1px solid #e5e7eb;color:#6b7280;font-weight:700;">${escapeHtml(label)}</td><td style="padding:8px 12px;border-top:1px solid #e5e7eb;color:#111827;">${escapeHtml(value)}</td></tr>`
+      )
+      .join("");
+
+    const response = await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${readRequired(env.RESEND_API_KEY, "RESEND_API_KEY")}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        from: fromAddress,
+        to: recipients,
+        subject: `[Report Automation] ${started ? "Started" : "Not started"} - ${formatLifecycleReportType(input.reportType)} - ${input.reportMonthLabel}`,
+        html: `<div style="font-family:Arial,sans-serif;color:#111827;line-height:1.5"><h2>${escapeHtml(title)}</h2><p>${escapeHtml(explanation)}</p><table role="presentation" cellspacing="0" cellpadding="0" style="border-collapse:collapse;min-width:420px;border:1px solid #e5e7eb">${detailRows}</table>${started ? "<p>A separate completion email will be sent when the job ends.</p>" : ""}</div>`,
+      }),
+    });
+    const payload = (await response.json().catch(() => null)) as { error?: { message?: string } } | null;
+    if (!response.ok) {
+      throw new Error(
+        formatResendDeliveryError(
+          payload?.error?.message ?? `Resend lifecycle notification failed with status ${response.status}.`,
+          fromAddress
+        )
+      );
+    }
+  } catch (error) {
+    console.error("[monthly-report-automation] manual lifecycle notification failed", formatError(error));
+  }
+}
+
+function formatLifecycleReportType(reportType: string): string {
+  if (reportType === "monthlyAdvanced") {
+    return "Advanced Report";
+  }
+  if (reportType === "biweeklyOverall") {
+    return "Bi-weekly Report";
+  }
+  return "Monthly Report";
 }
 
 async function refreshJobStatus(env: Env, jobId: string): Promise<void> {
@@ -2038,7 +2554,7 @@ function buildReportUrl(
   url.searchParams.set("startDate", message.startDate);
   url.searchParams.set("endDate", message.endDate);
   url.searchParams.set("screenshot", "1");
-  url.searchParams.set("exportToken", env.REPORT_AUTOMATION_SECRET);
+  url.searchParams.set("exportToken", env.WORKER_API_SECRET);
 
   const googleAccountId = normalizeOptional(target.googleAccountId);
   const metaAccountId = normalizeOptional(target.metaAccountId);
@@ -2230,6 +2746,39 @@ function normalizeReportType(value: string | null | undefined): "overall" | "adv
   return normalized.includes("advance") ? "advanced" : "overall";
 }
 
+function isScheduledReportType(value: string): value is "monthlyOverall" | "monthlyAdvanced" | "biweeklyOverall" {
+  return value === "monthlyOverall" || value === "monthlyAdvanced" || value === "biweeklyOverall";
+}
+
+function resolveJobReportType(
+  input: CreateJobRequest,
+  scheduledDate: string
+): "monthlyOverall" | "monthlyAdvanced" | "biweeklyOverall" {
+  if (input.manualReportType && isScheduledReportType(input.manualReportType)) {
+    return input.manualReportType;
+  }
+  if (normalizeReportType(input.reportType) === "advanced") {
+    return "monthlyAdvanced";
+  }
+  return new Date(`${scheduledDate}T00:00:00.000Z`).getUTCDate() === 15
+    ? "biweeklyOverall"
+    : "monthlyOverall";
+}
+
+async function findActiveReportJob(
+  env: Env,
+  reportType: string,
+  reportMonthKey: string
+): Promise<JobRow | null> {
+  return env.REPORT_JOBS_DB.prepare(
+    `SELECT * FROM report_jobs
+     WHERE report_type = ? AND report_month_key = ? AND status IN ('queued', 'processing')
+     ORDER BY created_at DESC LIMIT 1`
+  )
+    .bind(reportType, reportMonthKey)
+    .first<JobRow>();
+}
+
 function isAdvancedReportAutomationEnabled(env: Env): boolean {
   const value = env.ADVANCED_REPORT_ENABLED?.trim().toLowerCase();
   return value !== "false" && value !== "0" && value !== "off" && value !== "no";
@@ -2283,6 +2832,20 @@ function buildEmailLogoUrl(env: Env): string {
   }
 
   return DEFAULT_EMAIL_LOGO_URL;
+}
+
+function formatResendDeliveryError(message: string, fromAddress: string): string {
+  const senderDomain = extractEmailDomain(fromAddress);
+  if (!/domain is not verified|verify a domain|verified domain/i.test(message)) {
+    return message;
+  }
+
+  return `${message} Sender "${fromAddress}" resolves to domain "${senderDomain ?? "unknown"}". Set RESEND_FROM_MONTHLY_REPORT to a Resend-verified sender domain, or add and verify this domain in Resend before running live sends.`;
+}
+
+function extractEmailDomain(value: string): string | null {
+  const match = value.match(/<[^@\s<>]+@([^>\s]+)>|[^@\s<>]+@([^>\s]+)/);
+  return (match?.[1] ?? match?.[2] ?? null)?.toLowerCase() ?? null;
 }
 
 function buildEmailHtml(input: {
@@ -2711,7 +3274,7 @@ function toArrayBuffer(value: ArrayBuffer | Uint8Array): ArrayBuffer {
 }
 
 function isAuthorized(request: Request, env: Env): boolean {
-  const expected = env.WORKER_API_SECRET?.trim() || env.REPORT_AUTOMATION_SECRET?.trim();
+  const expected = env.WORKER_API_SECRET?.trim();
   if (!expected) {
     return false;
   }

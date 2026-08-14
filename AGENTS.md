@@ -123,7 +123,7 @@ The older Vercel monthly report flow is separate from normal user browsing:
 
 The newer Cloudflare automation flow is preferred for bulk sends:
 
-1. `POST /api/report-pdf/targets` on Vercel returns normalized monthly report targets and previous-month dates. It is protected by `REPORT_AUTOMATION_SECRET` or `CRON_SECRET`.
+1. `POST /api/report-pdf/targets` on Vercel returns normalized monthly report targets and previous-month dates. It is protected by `WORKER_API_SECRET` or `CRON_SECRET`.
 2. `cloudflare/monthly-report-cron` creates a D1 job row and one D1 item row per account.
 3. The Worker sends one Queue message per account.
 4. The Queue consumer renders the Vercel `/overall?...&screenshot=1` page through a Cloudflare Browser binding.
@@ -142,7 +142,7 @@ Important variables include:
 - Google Ads: `GOOGLE_ADS_DEVELOPER_TOKEN`, `GOOGLE_ADS_ACCESS_TOKEN`, `GOOGLE_ADS_REFRESH_TOKEN`, `GOOGLE_ADS_CLIENT_ID`, `GOOGLE_ADS_CLIENT_SECRET`, `GOOGLE_ADS_LOGIN_CUSTOMER_ID`, `GOOGLE_ADS_API_VERSION`.
 - Notion: `NOTION_TOKEN`, `NOTION_DATABASE_ID`, `NOTION_AD_ACCOUNTS_DATABASE_ID`, `NOTION_MONTHLY_REPORT_LOGS_DATABASE_ID`.
 - Cron/email: `CRON_SECRET`, `RESEND_API_KEY`, `RESEND_FROM_MONTHLY_REPORT`, `MONTHLY_REPORT_TEST_MODE`, `MONTHLY_REPORT_TEST_RECIPIENT`, `MONTHLY_REPORT_TARGETS_JSON`, `MONTHLY_REPORT_TEST_TARGETS_JSON`, `MONTHLY_REPORT_APP_BASE_URL`.
-- Cloudflare automation: `REPORT_AUTOMATION_SECRET`, `WORKER_API_SECRET`, `VERCEL_APP_BASE_URL`.
+- Cloudflare automation: `WORKER_API_SECRET`, `VERCEL_APP_BASE_URL`.
 - Display/company: `REPORT_COMPANY_NAME`, `REPORT_COMPANY_NAME_MAP`.
 
 The Google OAuth aliases documented in `README.md` are also supported for existing Doppler naming.

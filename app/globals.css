@@ -240,6 +240,16 @@
   }
 }
 
+@keyframes media-plan-progress-float {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-6px);
+  }
+}
+
 @keyframes report-loading-copy-swap {
   0% {
     opacity: 0;
@@ -311,6 +321,15 @@
   }
 }
 
+@keyframes metaStoryProgress {
+  0% {
+    transform: scaleX(0);
+  }
+  100% {
+    transform: scaleX(1);
+  }
+}
+
 @keyframes google-preview-slide-previous {
   0% {
     opacity: 0;
@@ -344,6 +363,10 @@
 
 .report-loading-enter {
   animation: report-loading-enter 0.45s ease-out;
+}
+
+.media-plan-progress-float {
+  animation: report-loading-enter 0.45s ease-out, media-plan-progress-float 4.8s ease-in-out 0.45s infinite;
 }
 
 .report-loading-orbit {
@@ -441,5 +464,55 @@
   .google-preview-slide-motion,
   .google-preview-sticky-panel {
     animation: none;
+  }
+}
+@keyframes search-analysis-progress {
+  0% {
+    transform: translateX(-110%);
+  }
+  100% {
+    transform: translateX(310%);
+  }
+}
+
+.search-analysis-progress {
+  animation: search-analysis-progress 1.6s ease-in-out infinite;
+}
+
+/* Radix portals live outside the report tree. Keep critical Sheet positioning in
+   plain CSS so the panel cannot be displaced if Tailwind omits a new utility. */
+.app-sheet-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 9998;
+  background: rgb(0 0 0 / 52%);
+  backdrop-filter: blur(5px);
+  -webkit-backdrop-filter: blur(5px);
+}
+
+.app-sheet-content {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 9999;
+  width: min(28rem, 100vw);
+  max-width: 100vw;
+  height: 100dvh;
+  background: white;
+  box-shadow: -18px 0 60px rgb(0 0 0 / 24%);
+}
+
+@media (max-width: 639px) {
+  .app-sheet-content {
+    left: 0;
+    width: 100vw;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .search-analysis-progress {
+    animation: none;
+    width: 65%;
   }
 }

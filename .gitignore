@@ -13,6 +13,16 @@
 # testing
 /coverage
 /artifacts/
+/output/
+/outputs/
+/tmp/
+/data/*.sqlite
+/data/*.sqlite-shm
+/data/*.sqlite-wal
+__pycache__/
+*.py[cod]
+**/.venv/
+**/.wrangler/state/v3/d1/
 
 # next.js
 /.next/
@@ -33,6 +43,7 @@ yarn-error.log*
 
 # env files (can opt-in for committing if needed)
 .env*
+!.env.example
 
 # vercel
 .vercel
@@ -42,3 +53,6 @@ yarn-error.log*
 next-env.d.ts
 
 .vercel
+
+# Sentry Config File
+.env.sentry-build-plugin

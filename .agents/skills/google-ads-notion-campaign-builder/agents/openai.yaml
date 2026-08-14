@@ -1,0 +1,4 @@
+interface:
+  display_name: "Google Ads Notion Campaign Builder"
+  short_description: "Create Google Ads campaigns from Notion rows"
+  default_prompt: "Use $google-ads-notion-campaign-builder to create a paused Google Ads campaign from approved Notion setup rows."

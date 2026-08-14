@@ -1,0 +1,20 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "search-term-optimization-scheduler",
+  "account_id": "e7c515dde995479daacd82ad79dfc3e8",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-08-12",
+  "compatibility_flags": ["nodejs_compat"],
+  "triggers": { "crons": ["*/5 * * * *"] },
+  "observability": { "enabled": true, "head_sampling_rate": 1 },
+  "vars": {
+    "GITHUB_OWNER": "locust08",
+    "GITHUB_REPO": "Automation-Report",
+    "GITHUB_WORKFLOW_REF": "main"
+  },
+  "queues": {
+    "producers": [{ "binding": "OPTIMIZATION_QUEUE", "queue": "search-term-optimization-schedule-queue" }],
+    "consumers": [{ "queue": "search-term-optimization-schedule-queue", "max_batch_size": 1, "max_batch_timeout": 5, "max_concurrency": 1, "max_retries": 3, "retry_delay": 60, "dead_letter_queue": "search-term-optimization-dead-letter-queue" }]
+  },
+  "r2_buckets": [{ "binding": "SEARCH_TERM_SNAPSHOTS", "bucket_name": "automation-search-term-snapshots" }]
+}

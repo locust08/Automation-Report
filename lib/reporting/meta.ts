@@ -18,6 +18,7 @@ import {
   PreviewDetailField,
   PreviewLinkAsset,
   PreviewPerformanceSummary,
+  PreviewPlatformDistributionRow,
   AudienceClickBreakdownResponse,
   AudienceClickBreakdownItem,
 } from "@/lib/reporting/types";
@@ -27,6 +28,15 @@ interface MetaFetchInput {
   accessToken: string;
   startDate: string;
   endDate: string;
+}
+
+type MetaPreviewStage = "campaigns" | "ad-groups" | "ads" | "preview" | "assets" | "full";
+
+interface MetaPreviewSelection {
+  platform: "meta" | "google" | null;
+  campaignId: string | null;
+  adGroupId: string | null;
+  adId: string | null;
 }
 
 interface MetaAccountNameInput {
@@ -77,10 +87,36 @@ interface MetaAdSetRow {
   targeting?: {
     age_min?: number;
     age_max?: number;
+    age_range?: number[];
     genders?: number[];
     geo_locations?: {
       countries?: string[];
+      cities?: Array<{
+        country?: string;
+        key?: string;
+        name?: string;
+        region?: string;
+        region_id?: string;
+      }>;
     };
+    excluded_geo_locations?: {
+      countries?: string[];
+    };
+    custom_audiences?: MetaTargetingItem[];
+    excluded_custom_audiences?: MetaTargetingItem[];
+    interests?: MetaTargetingItem[];
+    behaviors?: MetaTargetingItem[];
+    demographics?: MetaTargetingItem[];
+    education_statuses?: MetaTargetingItem[];
+    relationship_statuses?: MetaTargetingItem[];
+    life_events?: MetaTargetingItem[];
+    industries?: MetaTargetingItem[];
+    income?: MetaTargetingItem[];
+    family_statuses?: MetaTargetingItem[];
+    work_positions?: MetaTargetingItem[];
+    work_employers?: MetaTargetingItem[];
+    flexible_spec?: MetaFlexibleTargetingSpec[];
+    exclusions?: MetaFlexibleTargetingSpec;
     publisher_platforms?: string[];
     facebook_positions?: string[];
     instagram_positions?: string[];
@@ -92,6 +128,29 @@ interface MetaAdSetRow {
     };
   };
 }
+
+interface MetaTargetingItem {
+  id?: string;
+  key?: string;
+  name?: string;
+}
+
+type MetaFlexibleTargetingSpec = Partial<Record<MetaDetailedTargetingCategory, MetaTargetingItem[]>>;
+
+type MetaDetailedTargetingCategory =
+  | "interests"
+  | "behaviors"
+  | "demographics"
+  | "education_statuses"
+  | "relationship_statuses"
+  | "life_events"
+  | "industries"
+  | "income"
+  | "family_statuses"
+  | "work_positions"
+  | "work_employers"
+  | "custom_audiences"
+  | "excluded_custom_audiences";
 
 interface MetaAdRow {
   id?: string;
@@ -114,6 +173,9 @@ interface MetaCreativeRow {
   image_url?: string;
   thumbnail_url?: string;
   object_type?: string;
+  effective_object_story_id?: string;
+  instagram_permalink_url?: string;
+  effective_instagram_media_id?: string;
   object_story_spec?: {
     link_data?: {
       link?: string;
@@ -137,6 +199,19 @@ interface MetaCreativeRow {
       image_url?: string;
       thumbnail_url?: string;
     };
+  };
+}
+
+interface MetaVideoRow {
+  id?: string;
+  source?: string;
+  permalink_url?: string;
+  picture?: string;
+  thumbnails?: {
+    data?: Array<{
+      uri?: string;
+      is_preferred?: boolean;
+    }>;
   };
 }
 
@@ -166,6 +241,8 @@ interface MetaInsightRow {
   cost_per_thruplay?: MetaActionMetricValue;
   age?: string;
   gender?: string;
+  publisher_platform?: string;
+  device_platform?: string;
   actions?: MetaActionMetric[];
   cost_per_action_type?: MetaActionMetric[];
   country?: string;
@@ -258,6 +335,7 @@ const META_LEAD_RESULT_ACTION_PRIORITY = [
   "onsite_conversion.lead_grouped",
   "onsite_conversion.lead",
   "offsite_conversion.fb_pixel_lead",
+  ...META_MESSAGING_RESULT_ACTION_PRIORITY,
 ] as const;
 
 const META_SALES_RESULT_ACTION_PRIORITY = [
@@ -345,7 +423,9 @@ const META_PREVIEW_AD_FIELDS = [
   "creative{id,name}",
 ] as const;
 
-const META_PREVIEW_CREATIVE_FIELDS = [
+const META_PREVIEW_ACTIVE_STATUSES = ["ACTIVE", "IN_PROCESS", "WITH_ISSUES"] as const;
+
+const META_PREVIEW_CREATIVE_BASE_FIELDS = [
   "id",
   "name",
   "title",
@@ -354,6 +434,17 @@ const META_PREVIEW_CREATIVE_FIELDS = [
   "thumbnail_url",
   "object_type",
   "object_story_spec",
+] as const;
+
+const META_PREVIEW_CREATIVE_PUBLIC_LINK_FIELDS = [
+  "effective_object_story_id",
+  "instagram_permalink_url",
+  "effective_instagram_media_id",
+] as const;
+
+const META_PREVIEW_CREATIVE_FIELDS = [
+  ...META_PREVIEW_CREATIVE_BASE_FIELDS,
+  ...META_PREVIEW_CREATIVE_PUBLIC_LINK_FIELDS,
 ] as const;
 
 const META_ADVANCED_CREATIVE_INSIGHT_FIELDS = [
@@ -403,8 +494,12 @@ const META_PREVIEW_DEMOGRAPHIC_FIELDS = [
   "campaign_id",
   "adset_id",
   "ad_id",
+  "objective",
+  "optimization_goal",
   "impressions",
+  "reach",
   "clicks",
+  "cpp",
   "spend",
   "actions",
   "cost_per_action_type",
@@ -417,13 +512,6 @@ const META_PREVIEW_LINK_FORMATS = [
     placementKey: "facebookFeed",
     placementLabel: "Facebook Feed",
     device: "desktop",
-  },
-  {
-    adFormat: "MOBILE_FEED_STANDARD",
-    label: "Mobile Feed Preview",
-    placementKey: "mobile",
-    placementLabel: "Mobile Feed",
-    device: "mobile",
   },
   {
     adFormat: "INSTAGRAM_STANDARD",
@@ -586,15 +674,21 @@ export async function fetchMetaCreativePerformanceRows({
     const nextImpressions = (existing?.impressions ?? 0) + impressions;
     const nextConversions = (existing?.conversions ?? 0) + resultMetric.value;
     const mediaType =
-      creative?.videoUrl || creative?.objectType?.toUpperCase().includes("VIDEO") ? "video" : "image";
+      creative?.mediaType ??
+      (creative?.videoUrl || creative?.objectType?.toUpperCase().includes("VIDEO") ? "video" : "image");
 
     rowsByAdId.set(adId, {
       id: existing?.id ?? `${accountId}:${adId}`,
       finalUrl,
       mediaType,
-      imageUrl: creative?.imageUrl?.trim() || creative?.thumbnailUrl?.trim() || null,
-      videoUrl: creative?.videoUrl?.trim() || null,
-      thumbnailUrl: creative?.thumbnailUrl?.trim() || creative?.imageUrl?.trim() || null,
+      imageUrl: creative?.imageUrl?.trim() || creative?.posterUrl?.trim() || creative?.thumbnailUrl?.trim() || null,
+      videoUrl: creative?.videoUrl?.trim() || creative?.videoPermalinkUrl?.trim() || null,
+      videoId: creative?.videoId?.trim() || null,
+      videoSourceUrl: creative?.videoSourceUrl?.trim() || null,
+      videoPermalinkUrl: creative?.videoPermalinkUrl?.trim() || null,
+      thumbnailUrl: creative?.thumbnailUrl?.trim() || creative?.posterUrl?.trim() || creative?.imageUrl?.trim() || null,
+      posterUrl: creative?.posterUrl?.trim() || creative?.imageUrl?.trim() || creative?.thumbnailUrl?.trim() || null,
+      mediaWarning: creative?.mediaWarning?.trim() || null,
       campaignId: insight.campaign_id?.trim() || ad?.campaign_id?.trim() || null,
       campaignName: insight.campaign_name?.trim() || "Meta campaign",
       adSetId: insight.adset_id?.trim() || ad?.adset_id?.trim() || null,
@@ -707,6 +801,7 @@ async function fetchMetaCampaignInsightRowsWithFields(
     fields: fields.join(","),
     time_range: JSON.stringify({ since: input.startDate, until: input.endDate }),
   });
+  applyMetaAdsManagerInsightParams(params);
 
   return fetchMetaCollection<MetaInsightRow>(
     `${META_GRAPH_API_BASE_URL}/act_${input.accountId}/insights?${params.toString()}`
@@ -718,10 +813,24 @@ export async function fetchMetaPreviewData({
   accessToken,
   startDate,
   endDate,
-}: MetaFetchInput): Promise<MetaPreviewResponse> {
+  previewStage = "full",
+  previewSelection = {
+    platform: null,
+    campaignId: null,
+    adGroupId: null,
+    adId: null,
+  },
+}: MetaFetchInput & {
+  previewStage?: MetaPreviewStage;
+  previewSelection?: MetaPreviewSelection;
+}): Promise<MetaPreviewResponse> {
   const diagnostics: MetaPreviewBlockDiagnostic[] = [];
   const warnings: MetaPreviewBlockIssue[] = [];
   const fatalErrors: MetaPreviewBlockIssue[] = [];
+  const selectedCampaignId =
+    previewSelection.platform === "google" ? null : previewSelection.campaignId?.trim() || null;
+  const selectedAdGroupId = previewSelection.adGroupId?.trim() || null;
+  const selectedAdId = previewSelection.adId?.trim() || null;
 
   const campaignsBlock = await runMetaPreviewBlock({
     accountId,
@@ -740,21 +849,21 @@ export async function fetchMetaPreviewData({
     fatalErrors.push(campaignsBlock.issue);
   }
 
-  const adSetsBlock = await runMetaPreviewBlock({
-    accountId,
-    label: "meta-preview-adsets",
-    required: true,
-    fields: [...META_PREVIEW_ADSET_FIELDS],
-    load: () =>
-      fetchMetaAdSetCollection({
-        accountId,
-        accessToken,
-        fields: [...META_PREVIEW_ADSET_FIELDS],
-      }),
-  });
-  diagnostics.push(adSetsBlock.diagnostic);
-  if (adSetsBlock.issue) {
-    fatalErrors.push(adSetsBlock.issue);
+  if (!campaignsBlock.data) {
+    return { data: [], diagnostics, warnings, fatalErrors };
+  }
+
+  const campaigns = selectedCampaignId
+    ? campaignsBlock.data.filter((campaign) => campaign.id?.trim() === selectedCampaignId)
+    : campaignsBlock.data;
+
+  if (previewStage === "campaigns") {
+    return {
+      data: buildMetaPreviewCampaignNodes(campaigns, new Map()),
+      diagnostics,
+      warnings,
+      fatalErrors,
+    };
   }
 
   const adsBlock = await runMetaPreviewBlock({
@@ -767,6 +876,8 @@ export async function fetchMetaPreviewData({
         accountId,
         accessToken,
         fields: [...META_PREVIEW_AD_FIELDS],
+        campaignId: selectedCampaignId,
+        adSetId: selectedAdGroupId,
       }),
   });
   diagnostics.push(adsBlock.diagnostic);
@@ -774,33 +885,61 @@ export async function fetchMetaPreviewData({
     fatalErrors.push(adsBlock.issue);
   }
 
-  if (!campaignsBlock.data || !adSetsBlock.data || !adsBlock.data) {
+  if (!adsBlock.data) {
     return { data: [], diagnostics, warnings, fatalErrors };
   }
 
-  const campaigns = campaignsBlock.data;
-  const adSets = adSetsBlock.data;
-  const ads = adsBlock.data;
+  const ads = selectedAdId
+    ? adsBlock.data.filter((ad) => ad.id?.trim() === selectedAdId)
+    : adsBlock.data;
   const visibleCampaignIds = new Set(campaigns.map((campaign) => campaign.id).filter(Boolean) as string[]);
-  const visibleAdSets = adSets.filter(
-    (adSet) =>
-      Boolean(
-        adSet.id?.trim() &&
-          adSet.campaign_id?.trim() &&
-          visibleCampaignIds.has(adSet.campaign_id.trim())
-      )
-  );
-  const visibleAdSetIds = new Set(visibleAdSets.map((adSet) => adSet.id?.trim()).filter(Boolean) as string[]);
-  const visibleAds = ads.filter(
+  const campaignAds = ads.filter(
     (ad) =>
       Boolean(
         ad.id?.trim() &&
           ad.campaign_id?.trim() &&
           ad.adset_id?.trim() &&
-          visibleCampaignIds.has(ad.campaign_id.trim()) &&
-          visibleAdSetIds.has(ad.adset_id.trim())
+          visibleCampaignIds.has(ad.campaign_id.trim())
       )
   );
+
+  const adSetIds = Array.from(
+    new Set(campaignAds.map((ad) => ad.adset_id?.trim()).filter(Boolean) as string[])
+  );
+  const adSetsBlock = await runMetaPreviewBlock({
+    accountId,
+    label: "meta-preview-adsets",
+    required: false,
+    fields: [...META_PREVIEW_ADSET_FIELDS],
+    load: () =>
+      fetchMetaAdSetCollectionByIds({
+        accessToken,
+        adSetIds,
+        fields: [...META_PREVIEW_ADSET_FIELDS],
+      }),
+  });
+  diagnostics.push(adSetsBlock.diagnostic);
+  if (adSetsBlock.issue) {
+    warnings.push(adSetsBlock.issue);
+  }
+
+  const visibleAdSets = buildVisiblePreviewAdSets(campaignAds, adSetsBlock.data ?? []);
+  const visibleAdSetIds = new Set(visibleAdSets.map((adSet) => adSet.id?.trim()).filter(Boolean) as string[]);
+  const visibleAds = campaignAds.filter((ad) => visibleAdSetIds.has(ad.adset_id?.trim() || ""));
+
+  if (previewStage === "ad-groups") {
+    const adSetsByCampaign = buildMetaPreviewAdSetsByCampaign(visibleAdSets, new Map());
+    return {
+      data: buildMetaPreviewCampaignNodes(campaigns, adSetsByCampaign),
+      diagnostics,
+      warnings,
+      fatalErrors,
+    };
+  }
+
+  const includeCreativeDetails = previewStage === "preview" || previewStage === "assets" || previewStage === "full";
+  const includePreviewLinks = previewStage === "assets" || previewStage === "full";
+  const includePerformance = previewStage === "preview" || previewStage === "assets" || previewStage === "full";
   const creativeIds = Array.from(
     new Set(visibleAds.map((ad) => ad.creative?.id?.trim()).filter(Boolean) as string[])
   );
@@ -810,7 +949,10 @@ export async function fetchMetaPreviewData({
     label: "meta-preview-ad-creatives",
     required: false,
     fields: [...META_PREVIEW_CREATIVE_FIELDS],
-    load: () => fetchMetaCreativeCollection({ accessToken, creativeIds }),
+    load: () =>
+      includeCreativeDetails
+        ? fetchMetaCreativeCollection({ accessToken, creativeIds })
+        : Promise.resolve(new Map<string, PreviewCreativeAsset>()),
   });
   diagnostics.push(creativesBlock.diagnostic);
   if (creativesBlock.issue) {
@@ -823,10 +965,12 @@ export async function fetchMetaPreviewData({
     required: false,
     fields: ["body"],
     load: () =>
-      fetchMetaPreviewLinks({
-        accessToken,
-        adIds: visibleAds.map((ad) => ad.id?.trim() || ""),
-      }),
+      includePreviewLinks
+        ? fetchMetaPreviewLinks({
+            accessToken,
+            adIds: visibleAds.map((ad) => ad.id?.trim() || ""),
+          })
+        : Promise.resolve(new Map<string, PreviewLinkAsset[]>()),
   });
   diagnostics.push(previewLinksBlock.diagnostic);
   if (previewLinksBlock.issue) {
@@ -839,14 +983,16 @@ export async function fetchMetaPreviewData({
     required: false,
     fields: [...META_PREVIEW_INSIGHT_FIELDS],
     load: () =>
-      fetchMetaInsightsCollection({
-        accountId,
-        accessToken,
-        startDate,
-        endDate,
-        breakdowns: [],
-        fields: [...META_PREVIEW_INSIGHT_FIELDS],
-      }),
+      includePerformance
+        ? fetchMetaInsightsCollection({
+            accountId,
+            accessToken,
+            startDate,
+            endDate,
+            breakdowns: [],
+            fields: [...META_PREVIEW_INSIGHT_FIELDS],
+          })
+        : Promise.resolve([]),
   });
   diagnostics.push(insightsBlock.diagnostic);
   if (insightsBlock.issue) {
@@ -859,24 +1005,49 @@ export async function fetchMetaPreviewData({
     required: false,
     fields: [...META_PREVIEW_DEMOGRAPHIC_FIELDS],
     load: () =>
-      fetchMetaInsightsCollection({
-        accountId,
-        accessToken,
-        startDate,
-        endDate,
-        breakdowns: ["age", "gender"],
-        fields: [...META_PREVIEW_DEMOGRAPHIC_FIELDS],
-      }),
+      includePerformance
+        ? fetchMetaInsightsCollection({
+            accountId,
+            accessToken,
+            startDate,
+            endDate,
+            breakdowns: ["age", "gender"],
+            fields: [...META_PREVIEW_DEMOGRAPHIC_FIELDS],
+          })
+        : Promise.resolve([]),
   });
   diagnostics.push(demographicsBlock.diagnostic);
   if (demographicsBlock.issue) {
     warnings.push(demographicsBlock.issue);
   }
 
+  const platformsBlock = await runMetaPreviewBlock({
+    accountId,
+    label: "meta-preview-platforms",
+    required: false,
+    fields: [...META_PREVIEW_DEMOGRAPHIC_FIELDS],
+    load: () =>
+      includePerformance
+        ? fetchMetaInsightsCollection({
+            accountId,
+            accessToken,
+            startDate,
+            endDate,
+            breakdowns: ["publisher_platform", "device_platform"],
+            fields: [...META_PREVIEW_DEMOGRAPHIC_FIELDS],
+          })
+        : Promise.resolve([]),
+  });
+  diagnostics.push(platformsBlock.diagnostic);
+  if (platformsBlock.issue) {
+    warnings.push(platformsBlock.issue);
+  }
+
   const creativeMap = creativesBlock.data ?? new Map<string, PreviewCreativeAsset>();
   const previewLinkMap = previewLinksBlock.data ?? new Map<string, PreviewLinkAsset[]>();
   const adPerformanceMap = buildPerformanceMap(insightsBlock.data ?? []);
   const adDemographicMap = buildDemographicMap(demographicsBlock.data ?? []);
+  const adPlatformMap = buildPlatformDistributionMap(platformsBlock.data ?? []);
 
   const adsByAdSet = new Map<string, PreviewCampaignNode["children"][number]["ads"]>();
   visibleAds.forEach((ad) => {
@@ -887,6 +1058,7 @@ export async function fetchMetaPreviewData({
     }
 
     const creative = creativeMap.get(ad.creative?.id?.trim() || "");
+    const previewLinks = resolveMetaPreviewLinksForCreative(previewLinkMap.get(adId) ?? [], creative);
     const items = adsByAdSet.get(adSetId) ?? [];
     items.push({
       id: adId,
@@ -902,15 +1074,32 @@ export async function fetchMetaPreviewData({
         detailField("Destination URL", creative?.linkUrl),
       ]),
       creative: creative ?? null,
-      previewLinks: previewLinkMap.get(adId) ?? [],
+      previewLinks,
       performance: adPerformanceMap.get(adId) ?? null,
       demographics: adDemographicMap.get(adId) ?? [],
+      platformDistribution: adPlatformMap.get(adId) ?? [],
       finalUrl: creative?.linkUrl ?? null,
     });
     adsByAdSet.set(adSetId, items);
   });
 
+  const adSetsByCampaign = buildMetaPreviewAdSetsByCampaign(visibleAdSets, adsByAdSet);
+  const data = buildMetaPreviewCampaignNodes(campaigns, adSetsByCampaign);
+
+  return {
+    data,
+    diagnostics,
+    warnings,
+    fatalErrors,
+  };
+}
+
+function buildMetaPreviewAdSetsByCampaign(
+  visibleAdSets: MetaAdSetRow[],
+  adsByAdSet: Map<string, PreviewCampaignNode["children"][number]["ads"]>
+): Map<string, PreviewCampaignNode["children"]> {
   const adSetsByCampaign = new Map<string, PreviewCampaignNode["children"]>();
+
   visibleAdSets.forEach((adSet) => {
     const campaignId = adSet.campaign_id?.trim();
     const adSetId = adSet.id?.trim();
@@ -934,7 +1123,7 @@ export async function fetchMetaPreviewData({
         detailField("Minimum age", formatAgeValue(adSet.targeting?.age_min)),
         detailField("Age suggestion", formatAgeSuggestion(adSet.targeting?.age_min, adSet.targeting?.age_max)),
         detailField("Gender", formatGenderLabel(adSet.targeting?.genders)),
-        detailField("Detailed targeting included", adSet.targeting ? "Yes" : null),
+        detailField("Detailed targeting included", formatDetailedTargeting(adSet.targeting)),
         detailField("Targeting expansion", formatTargetingExpansion(adSet.targeting)),
         detailField("Placements", formatPlacementSummary(adSet.targeting)),
         detailField("Performance goal", humanizeMetaValue(adSet.optimization_goal)),
@@ -944,12 +1133,23 @@ export async function fetchMetaPreviewData({
       ]),
       performance: mergePerformanceSummaries(adItems.map((ad) => ad.performance).filter(Boolean)),
       demographics: mergeDemographicRows(adItems.flatMap((ad) => ad.demographics || [])),
+      platformDistribution: mergePlatformDistributionRows(
+        adItems.flatMap((ad) => ad.platformDistribution || [])
+      ),
       ads: adItems,
     });
     adSetsByCampaign.set(campaignId, items);
   });
 
+  return adSetsByCampaign;
+}
+
+function buildMetaPreviewCampaignNodes(
+  campaigns: MetaCampaignRow[],
+  adSetsByCampaign: Map<string, PreviewCampaignNode["children"]>
+): PreviewCampaignNode[] {
   const data: PreviewCampaignNode[] = [];
+
   campaigns.forEach((campaign) => {
     const campaignId = campaign.id?.trim();
     if (!campaignId) {
@@ -973,17 +1173,14 @@ export async function fetchMetaPreviewData({
       ]),
       performance: mergePerformanceSummaries(children.map((adSet) => adSet.performance)),
       demographics: mergeDemographicRows(children.flatMap((adSet) => adSet.demographics || [])),
+      platformDistribution: mergePlatformDistributionRows(
+        children.flatMap((adSet) => adSet.platformDistribution || [])
+      ),
       children,
     });
   });
-  data.sort((left, right) => left.name.localeCompare(right.name));
 
-  return {
-    data,
-    diagnostics,
-    warnings,
-    fatalErrors,
-  };
+  return data.sort((left, right) => left.name.localeCompare(right.name));
 }
 
 export async function fetchMetaAccountName({
@@ -1019,6 +1216,7 @@ async function fetchMetaCampaignCollection(input: {
     access_token: input.accessToken,
     limit: "200",
     fields: input.fields.join(","),
+    filtering: buildMetaEffectiveStatusFilter(),
   });
 
   return fetchMetaCollection<MetaCampaignRow>(
@@ -1026,55 +1224,24 @@ async function fetchMetaCampaignCollection(input: {
   );
 }
 
-async function fetchMetaAdSetCollection(input: {
-  accountId: string;
+async function fetchMetaAdSetCollectionByIds(input: {
   accessToken: string;
+  adSetIds: string[];
   fields: string[];
 }): Promise<MetaAdSetRow[]> {
-  const params = new URLSearchParams({
-    access_token: input.accessToken,
-    limit: "200",
-    fields: input.fields.join(","),
-  });
-
-  return fetchMetaCollection<MetaAdSetRow>(
-    `${META_GRAPH_API_BASE_URL}/act_${input.accountId}/adsets?${params.toString()}`
-  );
-}
-
-async function fetchMetaAdCollection(input: {
-  accountId: string;
-  accessToken: string;
-  fields: string[];
-}): Promise<MetaAdRow[]> {
-  const params = new URLSearchParams({
-    access_token: input.accessToken,
-    limit: "200",
-    fields: input.fields.join(","),
-  });
-
-  return fetchMetaCollection<MetaAdRow>(
-    `${META_GRAPH_API_BASE_URL}/act_${input.accountId}/ads?${params.toString()}`
-  );
-}
-
-async function fetchMetaCreativeCollection(input: {
-  accessToken: string;
-  creativeIds: string[];
-}): Promise<Map<string, PreviewCreativeAsset>> {
-  const assets = new Map<string, PreviewCreativeAsset>();
-  const chunks = chunkItems(input.creativeIds.filter(Boolean), 25);
+  const rows: MetaAdSetRow[] = [];
+  const chunks = chunkItems(input.adSetIds.filter(Boolean), 50);
 
   for (const chunk of chunks) {
     const params = new URLSearchParams({
       access_token: input.accessToken,
       ids: chunk.join(","),
-      fields: META_PREVIEW_CREATIVE_FIELDS.join(","),
+      fields: input.fields.join(","),
     });
     const response = await fetch(`${META_GRAPH_API_BASE_URL}/?${params.toString()}`, {
       cache: "no-store",
     });
-    const parsed = await parseMetaResponse<Record<string, MetaCreativeRow | { error?: MetaApiErrorShape }>>(
+    const parsed = await parseMetaResponse<Record<string, MetaAdSetRow | { error?: MetaApiErrorShape }>>(
       response
     );
 
@@ -1084,7 +1251,7 @@ async function fetchMetaCreativeCollection(input: {
       );
     }
 
-    const json = (parsed.json ?? {}) as Record<string, MetaCreativeRow | { error?: MetaApiErrorShape }> & {
+    const json = (parsed.json ?? {}) as Record<string, MetaAdSetRow | { error?: MetaApiErrorShape }> & {
       error?: MetaApiErrorShape;
     };
     if (!parsed.ok && json.error) {
@@ -1095,6 +1262,77 @@ async function fetchMetaCreativeCollection(input: {
       );
     }
 
+    for (const adSetId of chunk) {
+      const row = json[adSetId];
+      if (!row || !isMetaAdSetRow(row)) {
+        continue;
+      }
+      rows.push(row);
+    }
+  }
+
+  return rows;
+}
+
+async function fetchMetaAdCollection(input: {
+  accountId: string;
+  accessToken: string;
+  fields: string[];
+  campaignId?: string | null;
+  adSetId?: string | null;
+}): Promise<MetaAdRow[]> {
+  const params = new URLSearchParams({
+    access_token: input.accessToken,
+    limit: "200",
+    fields: input.fields.join(","),
+    filtering: buildMetaEffectiveStatusFilter(),
+  });
+  const parentId = input.adSetId?.trim() || input.campaignId?.trim();
+  const endpoint = parentId
+    ? `${META_GRAPH_API_BASE_URL}/${parentId}/ads?${params.toString()}`
+    : `${META_GRAPH_API_BASE_URL}/act_${input.accountId}/ads?${params.toString()}`;
+
+  return fetchMetaCollection<MetaAdRow>(endpoint);
+}
+
+function buildMetaEffectiveStatusFilter(): string {
+  return JSON.stringify([
+    {
+      field: "effective_status",
+      operator: "IN",
+      value: [...META_PREVIEW_ACTIVE_STATUSES],
+    },
+  ]);
+}
+
+async function fetchMetaCreativeCollection(input: {
+  accessToken: string;
+  creativeIds: string[];
+}): Promise<Map<string, PreviewCreativeAsset>> {
+  const assets = new Map<string, PreviewCreativeAsset>();
+  const chunks = chunkItems(input.creativeIds.filter(Boolean), 25);
+
+  for (const chunk of chunks) {
+    const json = await fetchMetaCreativeChunk({
+      accessToken: input.accessToken,
+      creativeIds: chunk,
+      fields: [...META_PREVIEW_CREATIVE_FIELDS],
+    }).catch((error) => {
+      if (!isUnsupportedMetaCreativePublicLinkFieldError(error)) {
+        throw error;
+      }
+
+      console.warn(
+        `[meta-preview] creative public link fields unavailable; retrying with base creative fields. message="${escapeLogMessage(error.message)}"`
+      );
+
+      return fetchMetaCreativeChunk({
+        accessToken: input.accessToken,
+        creativeIds: chunk,
+        fields: [...META_PREVIEW_CREATIVE_BASE_FIELDS],
+      });
+    });
+
     for (const creativeId of chunk) {
       const row = json[creativeId];
       if (!row || !isMetaCreativeRow(row)) {
@@ -1104,7 +1342,148 @@ async function fetchMetaCreativeCollection(input: {
     }
   }
 
+  await enrichMetaVideoCreativeAssets(input.accessToken, assets);
+
   return assets;
+}
+
+async function fetchMetaCreativeChunk(input: {
+  accessToken: string;
+  creativeIds: string[];
+  fields: string[];
+}): Promise<Record<string, MetaCreativeRow | { error?: MetaApiErrorShape }>> {
+  const params = new URLSearchParams({
+    access_token: input.accessToken,
+    ids: input.creativeIds.join(","),
+    fields: input.fields.join(","),
+  });
+  const response = await fetch(`${META_GRAPH_API_BASE_URL}/?${params.toString()}`, {
+    cache: "no-store",
+  });
+  const parsed = await parseMetaResponse<Record<string, MetaCreativeRow | { error?: MetaApiErrorShape }>>(
+    response
+  );
+
+  if (parsed.parseError) {
+    throw new MetaApiError(
+      `Meta API returned non-JSON response (status ${parsed.status}, content-type ${parsed.contentType || "unknown"}). ${parsed.parseError}. Response starts with: ${parsed.textSnippet}`
+    );
+  }
+
+  const json = (parsed.json ?? {}) as Record<string, MetaCreativeRow | { error?: MetaApiErrorShape }> & {
+    error?: MetaApiErrorShape;
+  };
+  if (!parsed.ok && json.error) {
+    throw new MetaApiError(
+      json.error.message ?? `Meta API request failed with status ${parsed.status}.`,
+      json.error.code,
+      json.error.error_subcode
+    );
+  }
+
+  return json;
+}
+
+async function enrichMetaVideoCreativeAssets(
+  accessToken: string,
+  assets: Map<string, PreviewCreativeAsset>
+): Promise<void> {
+  const videoIds = Array.from(
+    new Set(
+      Array.from(assets.values())
+        .map((asset) => asset.videoId?.trim())
+        .filter(Boolean) as string[]
+    )
+  );
+
+  if (videoIds.length === 0) {
+    return;
+  }
+
+  const videoDetails = await fetchMetaVideoDetailsCollection({ accessToken, videoIds }).catch((error) => {
+    console.warn(
+      `[meta-preview] video source fields unavailable; using poster fallback. message="${escapeLogMessage(
+        error instanceof Error ? error.message : String(error)
+      )}"`
+    );
+    return new Map<string, MetaVideoRow>();
+  });
+
+  assets.forEach((asset) => {
+    if (asset.mediaType !== "video" || !asset.videoId) {
+      return;
+    }
+
+    const video = videoDetails.get(asset.videoId);
+    const videoSourceUrl = video?.source?.trim() || null;
+    const videoPermalinkUrl = video?.permalink_url?.trim() || asset.videoPermalinkUrl || asset.videoUrl || null;
+    const posterUrl = pickMetaVideoPosterUrl(video, asset.posterUrl || asset.imageUrl || asset.thumbnailUrl || null);
+
+    asset.videoSourceUrl = videoSourceUrl;
+    asset.videoPermalinkUrl = videoPermalinkUrl;
+    asset.videoUrl = videoSourceUrl || videoPermalinkUrl;
+    asset.posterUrl = posterUrl;
+    asset.imageUrl = asset.imageUrl || posterUrl;
+    asset.thumbnailUrl = asset.thumbnailUrl || posterUrl;
+    asset.mediaWarning = videoSourceUrl
+      ? null
+      : "Meta did not expose a direct playable video source for this creative. Open the Meta post/video to play it.";
+  });
+}
+
+async function fetchMetaVideoDetailsCollection(input: {
+  accessToken: string;
+  videoIds: string[];
+}): Promise<Map<string, MetaVideoRow>> {
+  const details = new Map<string, MetaVideoRow>();
+  const chunks = chunkItems(input.videoIds.filter(Boolean), 25);
+
+  for (const chunk of chunks) {
+    const params = new URLSearchParams({
+      access_token: input.accessToken,
+      ids: chunk.join(","),
+      fields: "id,source,permalink_url,picture,thumbnails{uri,is_preferred}",
+    });
+    const response = await fetch(`${META_GRAPH_API_BASE_URL}/?${params.toString()}`, {
+      cache: "no-store",
+    });
+    const parsed = await parseMetaResponse<Record<string, MetaVideoRow | { error?: MetaApiErrorShape }>>(
+      response
+    );
+
+    if (parsed.parseError) {
+      throw new MetaApiError(
+        `Meta API returned non-JSON response (status ${parsed.status}, content-type ${parsed.contentType || "unknown"}). ${parsed.parseError}. Response starts with: ${parsed.textSnippet}`
+      );
+    }
+
+    const json = (parsed.json ?? {}) as Record<string, MetaVideoRow | { error?: MetaApiErrorShape }> & {
+      error?: MetaApiErrorShape;
+    };
+    if (!parsed.ok && json.error) {
+      throw new MetaApiError(
+        json.error.message ?? `Meta API video request failed with status ${parsed.status}.`,
+        json.error.code,
+        json.error.error_subcode
+      );
+    }
+
+    for (const videoId of chunk) {
+      const row = json[videoId];
+      if (!row || isMetaErrorRow(row)) {
+        continue;
+      }
+      details.set(videoId, row as MetaVideoRow);
+    }
+  }
+
+  return details;
+}
+
+function pickMetaVideoPosterUrl(video: MetaVideoRow | undefined, fallback: string | null): string | null {
+  const preferred = video?.thumbnails?.data?.find((thumbnail) => thumbnail.is_preferred && thumbnail.uri?.trim());
+  const first = video?.thumbnails?.data?.find((thumbnail) => thumbnail.uri?.trim());
+  return preferred?.uri?.trim() || first?.uri?.trim() || video?.picture?.trim() || fallback;
 }
 
 async function fetchMetaPreviewLinks(input: {
@@ -1159,6 +1538,9 @@ async function fetchMetaPreviewLinks(input: {
         placementLabel: format.placementLabel,
         device: format.device,
         adFormat: format.adFormat,
+        previewUrl: url,
+        publicPostUrl: null,
+        linkKind: "metaPreview",
       });
     }
 
@@ -1168,6 +1550,29 @@ async function fetchMetaPreviewLinks(input: {
   }
 
   return linksByAdId;
+}
+
+function resolveMetaPreviewLinksForCreative(
+  previewLinks: PreviewLinkAsset[],
+  creative: PreviewCreativeAsset | null | undefined
+): PreviewLinkAsset[] {
+  return previewLinks.map((link) => {
+    const publicPostUrl =
+      link.placementKey === "instagramFeed" || link.placementKey === "story"
+        ? creative?.instagramPermalinkUrl?.trim() || null
+        : link.placementKey === "facebookFeed"
+          ? creative?.facebookPermalinkUrl?.trim() || null
+          : null;
+    const previewUrl = link.previewUrl?.trim() || link.url.trim();
+
+    return {
+      ...link,
+      url: previewUrl,
+      previewUrl,
+      publicPostUrl,
+      linkKind: publicPostUrl ? "publicPost" : "metaPreview",
+    };
+  });
 }
 
 async function fetchMetaInsightsCollection(input: {
@@ -1185,6 +1590,7 @@ async function fetchMetaInsightsCollection(input: {
     fields: input.fields.join(","),
     time_range: JSON.stringify({ since: input.startDate, until: input.endDate }),
   });
+  applyMetaAdsManagerInsightParams(params);
 
   if (input.breakdowns.length > 0) {
     params.set("breakdowns", input.breakdowns.join(","));
@@ -1193,6 +1599,10 @@ async function fetchMetaInsightsCollection(input: {
   return fetchMetaCollection<MetaInsightRow>(
     `${META_GRAPH_API_BASE_URL}/act_${input.accountId}/insights?${params.toString()}`
   );
+}
+
+function applyMetaAdsManagerInsightParams(params: URLSearchParams): void {
+  params.set("use_unified_attribution_setting", "true");
 }
 
 async function fetchMetaAudienceBreakdownDimension(input: {
@@ -1457,6 +1867,19 @@ function isUnsupportedMetaInsightFieldError(error: unknown): error is Error {
   );
 }
 
+function isUnsupportedMetaCreativePublicLinkFieldError(error: unknown): error is Error {
+  if (!(error instanceof MetaApiError)) {
+    return false;
+  }
+
+  const message = error.message.toLowerCase();
+  return (
+    error.code === 100 &&
+    message.includes("field") &&
+    META_PREVIEW_CREATIVE_PUBLIC_LINK_FIELDS.some((field) => message.includes(field))
+  );
+}
+
 function escapeLogMessage(message: string): string {
   return message.replaceAll('"', '\\"').replaceAll("\n", " ");
 }
@@ -1477,6 +1900,8 @@ function buildPerformanceMap(rows: MetaInsightRow[]): Map<string, PreviewPerform
       clicks: number;
       landingPageViews: number;
       linkClicks: number;
+      resultCostTotal: number;
+      hasNativeResultCost: boolean;
     }
   >();
 
@@ -1509,11 +1934,17 @@ function buildPerformanceMap(rows: MetaInsightRow[]): Map<string, PreviewPerform
       clicks: 0,
       landingPageViews: 0,
       linkClicks: 0,
+      resultCostTotal: 0,
+      hasNativeResultCost: false,
     };
 
     current.resultLabel =
       current.resultLabel === resultMetric.label ? current.resultLabel : "Results";
     current.results += resultMetric.value;
+    if (resultMetric.costPerResult !== null && resultMetric.value > 0) {
+      current.resultCostTotal += resultMetric.costPerResult * resultMetric.value;
+      current.hasNativeResultCost = true;
+    }
     current.spend += toNumber(row.spend);
     current.impressions += toNumber(row.impressions);
     current.clicks += toNumber(row.clicks);
@@ -1525,7 +1956,13 @@ function buildPerformanceMap(rows: MetaInsightRow[]): Map<string, PreviewPerform
   return new Map(
     Array.from(performanceByAdId.entries()).map(([adId, item]) => [
       adId,
-      finalizePerformanceSummary(item),
+      finalizePerformanceSummary({
+        ...item,
+        costPerResult:
+          item.hasNativeResultCost && item.results > 0
+            ? item.resultCostTotal / item.results
+            : undefined,
+      }),
     ])
   );
 }
@@ -1542,6 +1979,12 @@ function buildDemographicMap(rows: MetaInsightRow[]): Map<string, PreviewDemogra
         maleSpend: number;
         femaleSpend: number;
         unknownSpend: number;
+        maleResultCostTotal: number;
+        femaleResultCostTotal: number;
+        unknownResultCostTotal: number;
+        maleHasNativeResultCost: boolean;
+        femaleHasNativeResultCost: boolean;
+        unknownHasNativeResultCost: boolean;
       }
     >
   >();
@@ -1562,6 +2005,12 @@ function buildDemographicMap(rows: MetaInsightRow[]): Map<string, PreviewDemogra
       maleSpend: 0,
       femaleSpend: 0,
       unknownSpend: 0,
+      maleResultCostTotal: 0,
+      femaleResultCostTotal: 0,
+      unknownResultCostTotal: 0,
+      maleHasNativeResultCost: false,
+      femaleHasNativeResultCost: false,
+      unknownHasNativeResultCost: false,
     };
     const resultMetric = pickResultMetric({
       objectiveResults: row.objective_results,
@@ -1583,12 +2032,24 @@ function buildDemographicMap(rows: MetaInsightRow[]): Map<string, PreviewDemogra
     if (gender === "male") {
       current.maleResults += resultMetric.value;
       current.maleSpend += spend;
+      if (resultMetric.costPerResult !== null && resultMetric.value > 0) {
+        current.maleResultCostTotal += resultMetric.costPerResult * resultMetric.value;
+        current.maleHasNativeResultCost = true;
+      }
     } else if (gender === "female") {
       current.femaleResults += resultMetric.value;
       current.femaleSpend += spend;
+      if (resultMetric.costPerResult !== null && resultMetric.value > 0) {
+        current.femaleResultCostTotal += resultMetric.costPerResult * resultMetric.value;
+        current.femaleHasNativeResultCost = true;
+      }
     } else {
       current.unknownResults += resultMetric.value;
       current.unknownSpend += spend;
+      if (resultMetric.costPerResult !== null && resultMetric.value > 0) {
+        current.unknownResultCostTotal += resultMetric.costPerResult * resultMetric.value;
+        current.unknownHasNativeResultCost = true;
+      }
     }
 
     perAge.set(ageRange, current);
@@ -1604,11 +2065,74 @@ function buildDemographicMap(rows: MetaInsightRow[]): Map<string, PreviewDemogra
           maleResults: row.maleResults,
           femaleResults: row.femaleResults,
           unknownResults: row.unknownResults,
-          maleCostPerResult: row.maleResults > 0 ? row.maleSpend / row.maleResults : null,
-          femaleCostPerResult: row.femaleResults > 0 ? row.femaleSpend / row.femaleResults : null,
-          unknownCostPerResult: row.unknownResults > 0 ? row.unknownSpend / row.unknownResults : null,
+          maleCostPerResult:
+            row.maleResults > 0
+              ? row.maleHasNativeResultCost
+                ? row.maleResultCostTotal / row.maleResults
+                : row.maleSpend / row.maleResults
+              : null,
+          femaleCostPerResult:
+            row.femaleResults > 0
+              ? row.femaleHasNativeResultCost
+                ? row.femaleResultCostTotal / row.femaleResults
+                : row.femaleSpend / row.femaleResults
+              : null,
+          unknownCostPerResult:
+            row.unknownResults > 0
+              ? row.unknownHasNativeResultCost
+                ? row.unknownResultCostTotal / row.unknownResults
+                : row.unknownSpend / row.unknownResults
+              : null,
         }))
         .sort((left, right) => sortAgeRange(left.ageRange, right.ageRange)),
+    ])
+  );
+}
+
+function buildPlatformDistributionMap(
+  rows: MetaInsightRow[]
+): Map<string, PreviewPlatformDistributionRow[]> {
+  const rowsByAd = new Map<string, PreviewPlatformDistributionRow[]>();
+
+  rows.forEach((row) => {
+    const adId = row.ad_id?.trim();
+    if (!adId) {
+      return;
+    }
+
+    const resultMetric = pickResultMetric({
+      objectiveResults: row.objective_results,
+      costPerResult: row.cost_per_result,
+      costPerObjectiveResult: row.cost_per_objective_result,
+      reach: row.reach,
+      cpp: row.cpp,
+      estimatedAdRecallers: row.estimated_ad_recallers,
+      costPerEstimatedAdRecallers: row.cost_per_estimated_ad_recallers,
+      videoThruPlayWatchedActions: row.video_thruplay_watched_actions,
+      costPerThruPlay: row.cost_per_thruplay,
+      actions: row.actions,
+      costs: row.cost_per_action_type,
+      objective: row.objective,
+      optimizationGoal: row.optimization_goal,
+    });
+    const results = resultMetric.value;
+    const spend = toNumber(row.spend);
+    const item: PreviewPlatformDistributionRow = {
+      platform: humanizeMetaValue(row.publisher_platform) || "Unknown platform",
+      device: humanizeMetaValue(row.device_platform) || "Unknown device",
+      results,
+      costPerResult:
+        results > 0
+          ? resultMetric.costPerResult ?? spend / results
+          : null,
+    };
+    rowsByAd.set(adId, [...(rowsByAd.get(adId) ?? []), item]);
+  });
+
+  return new Map(
+    Array.from(rowsByAd.entries()).map(([adId, items]) => [
+      adId,
+      mergePlatformDistributionRows(items),
     ])
   );
 }
@@ -1617,12 +2141,25 @@ function mapCreativeAsset(row: MetaCreativeRow): PreviewCreativeAsset {
   const storyLink = row.object_story_spec?.link_data?.link?.trim();
   const videoLink = row.object_story_spec?.video_data?.call_to_action?.value?.link?.trim();
   const videoId = row.object_story_spec?.video_data?.video_id?.trim();
-  const imageUrl =
-    row.image_url?.trim() ||
-    row.thumbnail_url?.trim() ||
+  const isVideo = Boolean(videoId || row.object_type?.toUpperCase().includes("VIDEO"));
+  const primaryImageUrl = row.image_url?.trim() || null;
+  const videoPosterUrl =
     row.object_story_spec?.video_data?.image_url?.trim() ||
+    primaryImageUrl ||
     row.object_story_spec?.video_data?.thumbnail_url?.trim() ||
+    row.thumbnail_url?.trim() ||
     null;
+  const imageUrl = isVideo ? videoPosterUrl : primaryImageUrl || row.thumbnail_url?.trim() || null;
+  const thumbnailUrl =
+    row.thumbnail_url?.trim() ||
+    row.object_story_spec?.video_data?.thumbnail_url?.trim() ||
+    videoPosterUrl ||
+    imageUrl ||
+    null;
+  const effectiveObjectStoryId = row.effective_object_story_id?.trim() || null;
+  const instagramPermalinkUrl = row.instagram_permalink_url?.trim() || null;
+  const facebookPermalinkUrl = effectiveObjectStoryId ? `https://www.facebook.com/${effectiveObjectStoryId}` : null;
+  const videoPermalinkUrl = videoId ? `https://www.facebook.com/watch/?v=${encodeURIComponent(videoId)}` : null;
 
   return {
     id: row.id?.trim() || "",
@@ -1638,22 +2175,76 @@ function mapCreativeAsset(row: MetaCreativeRow): PreviewCreativeAsset {
       row.object_story_spec?.video_data?.message?.trim() ||
       null,
     description: row.object_story_spec?.link_data?.description?.trim() || null,
+    mediaType: isVideo ? "video" : "image",
     imageUrl,
-    videoUrl: videoId ? `https://www.facebook.com/watch/?v=${encodeURIComponent(videoId)}` : null,
-    thumbnailUrl: row.thumbnail_url?.trim() || row.object_story_spec?.video_data?.thumbnail_url?.trim() || null,
+    videoUrl: videoPermalinkUrl,
+    videoId: videoId || null,
+    videoSourceUrl: null,
+    videoPermalinkUrl,
+    thumbnailUrl,
+    posterUrl: isVideo ? videoPosterUrl : imageUrl,
+    mediaWarning: isVideo
+      ? "Meta did not expose a direct playable video source for this creative yet."
+      : null,
     linkUrl: storyLink || videoLink || null,
     callToActionType:
       row.object_story_spec?.link_data?.call_to_action?.type?.trim() ||
       row.object_story_spec?.video_data?.call_to_action?.type?.trim() ||
       null,
     objectType: row.object_type?.trim() || null,
+    effectiveObjectStoryId,
+    instagramPermalinkUrl,
+    effectiveInstagramMediaId: row.effective_instagram_media_id?.trim() || null,
+    facebookPermalinkUrl,
   };
 }
 
 function isMetaCreativeRow(
   value: MetaCreativeRow | { error?: MetaApiErrorShape }
 ): value is MetaCreativeRow {
-  return !("error" in value);
+  return !isMetaErrorRow(value);
+}
+
+function isMetaErrorRow(value: unknown): value is { error: MetaApiErrorShape } {
+  return Boolean(
+    value &&
+      typeof value === "object" &&
+      "error" in value &&
+      (value as { error?: MetaApiErrorShape }).error
+  );
+}
+
+function isMetaAdSetRow(value: MetaAdSetRow | { error?: MetaApiErrorShape }): value is MetaAdSetRow {
+  return !isMetaErrorRow(value);
+}
+
+function buildVisiblePreviewAdSets(ads: MetaAdRow[], adSets: MetaAdSetRow[]): MetaAdSetRow[] {
+  const adSetsById = new Map<string, MetaAdSetRow>();
+
+  adSets.forEach((adSet) => {
+    const adSetId = adSet.id?.trim();
+    if (!adSetId) {
+      return;
+    }
+    adSetsById.set(adSetId, adSet);
+  });
+
+  ads.forEach((ad) => {
+    const adSetId = ad.adset_id?.trim();
+    const campaignId = ad.campaign_id?.trim();
+    if (!adSetId || !campaignId || adSetsById.has(adSetId)) {
+      return;
+    }
+    adSetsById.set(adSetId, {
+      id: adSetId,
+      name: `Ad Set ${adSetId}`,
+      campaign_id: campaignId,
+      status: ad.status,
+      effective_status: ad.effective_status,
+    });
+  });
+
+  return Array.from(adSetsById.values());
 }
 
 function finalizePerformanceSummary(input: {
@@ -1664,6 +2255,7 @@ function finalizePerformanceSummary(input: {
   clicks: number;
   landingPageViews: number;
   linkClicks: number;
+  costPerResult?: number;
 }): PreviewPerformanceSummary {
   return {
     resultLabel: input.resultLabel || "Results",
@@ -1674,7 +2266,10 @@ function finalizePerformanceSummary(input: {
     ctr: input.impressions > 0 ? (input.clicks * 100) / input.impressions : 0,
     cpc: input.clicks > 0 ? input.spend / input.clicks : null,
     cpm: input.impressions > 0 ? (input.spend * 1000) / input.impressions : null,
-    costPerResult: input.results > 0 ? input.spend / input.results : null,
+    costPerResult:
+      input.results > 0
+        ? input.costPerResult ?? input.spend / input.results
+        : null,
     landingPageViews: input.landingPageViews,
     linkClicks: input.linkClicks,
   };
@@ -1765,6 +2360,36 @@ function mergeDemographicRows(rows: PreviewDemographicRow[]): PreviewDemographic
     .sort((left, right) => sortAgeRange(left.ageRange, right.ageRange));
 }
 
+function mergePlatformDistributionRows(
+  rows: PreviewPlatformDistributionRow[]
+): PreviewPlatformDistributionRow[] {
+  const totals = new Map<string, { platform: string; device: string; results: number; spend: number }>();
+
+  rows.forEach((row) => {
+    const key = `${row.platform}\u0000${row.device}`;
+    const current = totals.get(key) ?? {
+      platform: row.platform,
+      device: row.device,
+      results: 0,
+      spend: 0,
+    };
+    current.results += row.results;
+    current.spend += (row.costPerResult ?? 0) * row.results;
+    totals.set(key, current);
+  });
+
+  return Array.from(totals.values())
+    .map((row) => ({
+      platform: row.platform,
+      device: row.device,
+      results: row.results,
+      costPerResult: row.results > 0 ? row.spend / row.results : null,
+    }))
+    .sort((left, right) =>
+      left.device.localeCompare(right.device) || left.platform.localeCompare(right.platform)
+    );
+}
+
 function pickResultMetric(input: {
   objectiveResults?: MetaObjectiveResultMetricValue;
   costPerResult?: MetaObjectiveResultMetricValue;
@@ -1780,9 +2405,28 @@ function pickResultMetric(input: {
   objective?: string;
   optimizationGoal?: string;
 }): { actionType: string; label: string; value: number; costPerResult: number | null } {
+  // Awareness campaigns use delivery outcomes rather than conversion actions.
+  // Preserve Meta's configured awareness result so the preview KPIs match Ads
+  // Manager instead of forcing Results and Cost per result to zero.
   const awarenessResultMetric = pickAwarenessResultMetric(input);
   if (awarenessResultMetric) {
     return awarenessResultMetric;
+  }
+
+  // Meta Ads Manager exposes the campaign's selected Results definition through
+  // cost_per_result.indicator. Prefer that explicit action mapping over broad
+  // objective fallbacks because a messaging lead campaign can contain both
+  // generic lead actions and messaging-conversation actions.
+  const configuredResultCostMetric = input.actions?.length
+    ? pickConfiguredResultCostMetric(
+        input.costPerResult,
+        input.costPerObjectiveResult,
+        input.actions,
+        input.costs
+      )
+    : null;
+  if (configuredResultCostMetric) {
+    return configuredResultCostMetric;
   }
 
   const trafficResultMetric = pickTrafficResultMetric(input);
@@ -1823,16 +2467,6 @@ function pickResultMetric(input: {
 
   if (!actions?.length) {
     return { actionType: "results", label: "Results", value: 0, costPerResult: null };
-  }
-
-  const configuredResultCostMetric = pickConfiguredResultCostMetric(
-    input.costPerResult,
-    input.costPerObjectiveResult,
-    actions,
-    costs
-  );
-  if (configuredResultCostMetric) {
-    return configuredResultCostMetric;
   }
 
   const prioritizedActionTypes = uniqueActionTypes([
@@ -1950,37 +2584,76 @@ function pickAwarenessResultMetric(input: {
     return null;
   }
 
-  const thruPlayValue = readMetaActionMetricTotal(input.videoThruPlayWatchedActions);
-  if (thruPlayValue > 0) {
+  const estimatedAdRecallers = toNumber(input.estimatedAdRecallers);
+  const costPerEstimatedAdRecaller = toNumber(input.costPerEstimatedAdRecallers);
+  const thruPlays = readMetaMetricValue(input.videoThruPlayWatchedActions);
+  const costPerThruPlay = readMetaMetricValue(input.costPerThruPlay);
+  const reach = toNumber(input.reach);
+
+  if (optimizationGoal.includes("THRUPLAY") && thruPlays > 0) {
     return {
       actionType: "video_thruplay_watched_actions",
       label: "ThruPlays",
-      value: thruPlayValue,
-      costPerResult: readMetaActionMetricFirstValue(input.costPerThruPlay),
+      value: thruPlays,
+      costPerResult: costPerThruPlay > 0 ? costPerThruPlay : null,
     };
   }
 
-  const estimatedAdRecallers = toNumber(input.estimatedAdRecallers);
-  if (estimatedAdRecallers > 0) {
-    return {
-      actionType: "estimated_ad_recallers",
-      label: "Estimated ad recall lift",
-      value: estimatedAdRecallers,
-      costPerResult: toNumber(input.costPerEstimatedAdRecallers) || null,
-    };
-  }
-
-  const reach = toNumber(input.reach);
   if (optimizationGoal.includes("REACH") && reach > 0) {
     return {
       actionType: "reach",
       label: "Reach",
       value: reach,
-      costPerResult: toNumber(input.cpp) || null,
+      costPerResult: toNumber(input.cpp) > 0 ? toNumber(input.cpp) : null,
     };
   }
 
-  return null;
+  if (estimatedAdRecallers > 0) {
+    return {
+      actionType: "estimated_ad_recallers",
+      label: "Estimated ad recallers",
+      value: estimatedAdRecallers,
+      costPerResult: costPerEstimatedAdRecaller > 0 ? costPerEstimatedAdRecaller : null,
+    };
+  }
+
+  if (thruPlays > 0) {
+    return {
+      actionType: "video_thruplay_watched_actions",
+      label: "ThruPlays",
+      value: thruPlays,
+      costPerResult: costPerThruPlay > 0 ? costPerThruPlay : null,
+    };
+  }
+
+  if (reach > 0) {
+    return {
+      actionType: "reach",
+      label: "Reach",
+      value: reach,
+      costPerResult: toNumber(input.cpp) > 0 ? toNumber(input.cpp) : null,
+    };
+  }
+
+  return {
+    actionType: "awareness",
+    label: "Awareness",
+    value: 0,
+    costPerResult: null,
+  };
+}
+
+function readMetaMetricValue(value: MetaActionMetricValue | undefined): number {
+  if (value === undefined || value === null) {
+    return 0;
+  }
+  if (Array.isArray(value)) {
+    return value.reduce((total, item) => total + toNumber(item.value), 0);
+  }
+  if (typeof value === "object") {
+    return toNumber(value.value);
+  }
+  return toNumber(value);
 }
 
 function pickTrafficResultMetric(input: {
@@ -2184,34 +2857,6 @@ function normalizeMetaObjectiveResultMetrics(
   }
 
   return [value];
-}
-
-function normalizeMetaActionMetrics(value: MetaActionMetricValue | undefined): MetaActionMetric[] {
-  if (value === undefined || value === null) {
-    return [];
-  }
-
-  if (Array.isArray(value)) {
-    return value;
-  }
-
-  if (typeof value === "string" || typeof value === "number") {
-    return [{ value }];
-  }
-
-  return [value];
-}
-
-function readMetaActionMetricTotal(value: MetaActionMetricValue | undefined): number {
-  return normalizeMetaActionMetrics(value).reduce(
-    (total, metric) => total + toNumber(metric.value),
-    0
-  );
-}
-
-function readMetaActionMetricFirstValue(value: MetaActionMetricValue | undefined): number | null {
-  const metric = normalizeMetaActionMetrics(value).find((item) => toNumber(item.value) > 0);
-  return metric ? toNumber(metric.value) : null;
 }
 
 function readMetaObjectiveResultKey(result: MetaObjectiveResultMetric): string {
@@ -2466,6 +3111,103 @@ function formatGenderLabel(genders: number[] | undefined): string | null {
     .filter((gender): gender is "Male" | "Female" => gender !== null);
 
   return labels.length > 0 ? labels.join(", ") : "All";
+}
+
+const META_DETAILED_TARGETING_CATEGORIES: Array<{
+  key: MetaDetailedTargetingCategory;
+  label: string;
+}> = [
+  { key: "interests", label: "Interests" },
+  { key: "behaviors", label: "Behaviors" },
+  { key: "demographics", label: "Demographics" },
+  { key: "education_statuses", label: "Education" },
+  { key: "relationship_statuses", label: "Relationship status" },
+  { key: "life_events", label: "Life events" },
+  { key: "industries", label: "Industries" },
+  { key: "income", label: "Income" },
+  { key: "family_statuses", label: "Family status" },
+  { key: "work_positions", label: "Job titles" },
+  { key: "work_employers", label: "Employers" },
+  { key: "custom_audiences", label: "Custom audiences" },
+];
+
+function formatDetailedTargeting(targeting: MetaAdSetRow["targeting"]): string | null {
+  if (!targeting) {
+    return "None";
+  }
+
+  const sections: string[] = [];
+  const directMatches = formatDetailedTargetingGroup(targeting, "People who match:");
+  if (directMatches) {
+    sections.push(directMatches);
+  }
+
+  targeting.flexible_spec?.forEach((spec, index) => {
+    const heading = sections.length === 0 && index === 0 ? "People who match:" : "And must also match:";
+    const group = formatDetailedTargetingGroup(spec, heading);
+    if (group) {
+      sections.push(group);
+    }
+  });
+
+  const exclusions = formatDetailedTargetingExclusions(targeting);
+  if (exclusions) {
+    sections.push(exclusions);
+  }
+
+  return sections.length > 0 ? sections.join("\n\n") : "None";
+}
+
+function formatDetailedTargetingGroup(
+  spec: MetaFlexibleTargetingSpec,
+  heading: string
+): string | null {
+  const lines = META_DETAILED_TARGETING_CATEGORIES
+    .map(({ key, label }) => formatDetailedTargetingCategoryLine(label, spec[key]))
+    .filter((line): line is string => Boolean(line));
+
+  if (lines.length === 0) {
+    return null;
+  }
+
+  return [heading, ...lines].join("\n");
+}
+
+function formatDetailedTargetingExclusions(targeting: MetaAdSetRow["targeting"]): string | null {
+  const lines: string[] = [];
+  const excludedCustomAudiences = formatDetailedTargetingCategoryLine(
+    "Custom audiences",
+    targeting?.excluded_custom_audiences
+  );
+  if (excludedCustomAudiences) {
+    lines.push(excludedCustomAudiences);
+  }
+
+  if (targeting?.exclusions) {
+    const exclusionLines = META_DETAILED_TARGETING_CATEGORIES
+      .filter(({ key }) => key !== "custom_audiences")
+      .map(({ key, label }) => formatDetailedTargetingCategoryLine(label, targeting.exclusions?.[key]))
+      .filter((line): line is string => Boolean(line));
+    lines.push(...exclusionLines);
+  }
+
+  return lines.length > 0 ? ["Exclude people who match:", ...lines].join("\n") : null;
+}
+
+function formatDetailedTargetingCategoryLine(
+  label: string,
+  items: MetaTargetingItem[] | undefined
+): string | null {
+  const names = uniqueNonEmpty(items?.map((item) => item.name?.trim()) ?? []);
+  if (names.length === 0) {
+    return null;
+  }
+
+  return `- ${label}: ${names.join(", ")}`;
+}
+
+function uniqueNonEmpty(values: Array<string | undefined>): string[] {
+  return Array.from(new Set(values.filter((value): value is string => Boolean(value))));
 }
 
 function formatTargetingExpansion(targeting: MetaAdSetRow["targeting"]): string | null {
