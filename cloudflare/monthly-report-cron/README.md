@@ -46,7 +46,6 @@ Expected resource names:
 
 Set these as Worker secrets, preferably sourced from Doppler:
 
-- `REPORT_AUTOMATION_SECRET`
 - `RESEND_API_KEY`
 - `RESEND_FROM_MONTHLY_REPORT`
 - `VERCEL_APP_BASE_URL`
@@ -56,7 +55,7 @@ Set these as Worker secrets, preferably sourced from Doppler:
 - `NOTION_AD_ACCOUNTS_DATABASE_ID`
 - `NOTION_WEBHOOK_VERIFICATION_TOKEN`
 
-`REPORT_AUTOMATION_SECRET` must match the Vercel app secret used by `/api/report-pdf/targets`.
+`WORKER_API_SECRET` must match the Vercel app secret used by `/api/report-pdf/targets`, account searches, and manual report operations.
 
 The Vercel app also needs `MONTHLY_REPORT_WORKER_URL` (or `REPORT_AUTOMATION_WORKER_URL`) and the matching `WORKER_API_SECRET` so account searches can use D1.
 
@@ -157,7 +156,6 @@ doppler run -- npx wrangler deploy
 Set Worker secrets:
 
 ```bash
-doppler run -- npx wrangler secret put REPORT_AUTOMATION_SECRET
 doppler run -- npx wrangler secret put RESEND_API_KEY
 doppler run -- npx wrangler secret put RESEND_FROM_MONTHLY_REPORT
 doppler run -- npx wrangler secret put VERCEL_APP_BASE_URL

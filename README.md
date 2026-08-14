@@ -266,7 +266,7 @@ npm run build
 
 Advanced Report automation uses the Notion `Advanced Report` checkbox. Basic/Overall monthly automation continues to use `Monthly Email`, and bi-weekly Overall continues to use `Bi-Weekly`.
 
-Required production env vars: reporting platform credentials, `NOTION_TOKEN`, `NOTION_AD_ACCOUNTS_DATABASE_ID` or `NOTION_DATABASE_ID`, `CRON_SECRET` or `REPORT_AUTOMATION_SECRET`, `RESEND_API_KEY`, `RESEND_FROM_MONTHLY_REPORT`, `OPENAI_API_KEY`, `DATAFORSEO_LOGIN`, `DATAFORSEO_PASSWORD`. Optional: `OPENROUTER_API_KEY` for video analysis and `NOTION_MONTHLY_REPORT_LOGS_DATABASE_ID` with `idempotency_key` or `scheduled_date` for duplicate-send prevention.
+Required production env vars: reporting platform credentials, `NOTION_TOKEN`, `NOTION_AD_ACCOUNTS_DATABASE_ID` or `NOTION_DATABASE_ID`, `CRON_SECRET` or `WORKER_API_SECRET`, `RESEND_API_KEY`, `RESEND_FROM_MONTHLY_REPORT`, `OPENAI_API_KEY`, `DATAFORSEO_LOGIN`, `DATAFORSEO_PASSWORD`. Optional: `OPENROUTER_API_KEY` for video analysis and `NOTION_MONTHLY_REPORT_LOGS_DATABASE_ID` with `idempotency_key` or `scheduled_date` for duplicate-send prevention.
 
 Test checklist:
 

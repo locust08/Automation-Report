@@ -1,27 +1,27 @@
 type RunMessage={runId:string;scheduleId:string;googleCustomerId:string;accountName:string;startDate:string;endDate:string;scheduledFor:string;scheduled?:boolean};
-type SchedulerEnv=Omit<Env,"OPTIMIZATION_QUEUE">&{OPTIMIZATION_QUEUE:Queue<RunMessage>;REPORT_AUTOMATION_SECRET:string;GITHUB_ACTIONS_TOKEN:string;VERCEL_APP_BASE_URL:string};
+type SchedulerEnv=Omit<Env,"OPTIMIZATION_QUEUE">&{OPTIMIZATION_QUEUE:Queue<RunMessage>;WORKER_API_SECRET:string;GITHUB_ACTIONS_TOKEN:string;VERCEL_APP_BASE_URL:string};
 
 function requireWorkerConfiguration(env:SchedulerEnv){
   if(!env.VERCEL_APP_BASE_URL?.startsWith("https://"))throw new Error("VERCEL_APP_BASE_URL is not configured");
-  if(!env.REPORT_AUTOMATION_SECRET)throw new Error("REPORT_AUTOMATION_SECRET is not configured");
+  if(!env.WORKER_API_SECRET)throw new Error("WORKER_API_SECRET is not configured");
 }
 
 async function claim(env:SchedulerEnv){
   requireWorkerConfiguration(env);
-  const response=await fetch(`${env.VERCEL_APP_BASE_URL.replace(/\/$/,"")}/api/optimization-scheduling/claim`,{method:"POST",headers:{Authorization:`Bearer ${env.REPORT_AUTOMATION_SECRET}`}});
+  const response=await fetch(`${env.VERCEL_APP_BASE_URL.replace(/\/$/,"")}/api/optimization-scheduling/claim`,{method:"POST",headers:{Authorization:`Bearer ${env.WORKER_API_SECRET}`}});
   if(!response.ok)throw new Error(`Claim failed (${response.status})`);
   return response.json() as Promise<{runs:RunMessage[]}>;
 }
 
 async function callback(env:SchedulerEnv,body:Record<string,unknown>){
   requireWorkerConfiguration(env);
-  const response=await fetch(`${env.VERCEL_APP_BASE_URL.replace(/\/$/,"")}/api/search-term-optimization/worker-callback`,{method:"POST",headers:{Authorization:`Bearer ${env.REPORT_AUTOMATION_SECRET}`,"Content-Type":"application/json"},body:JSON.stringify(body)});
+  const response=await fetch(`${env.VERCEL_APP_BASE_URL.replace(/\/$/,"")}/api/search-term-optimization/worker-callback`,{method:"POST",headers:{Authorization:`Bearer ${env.WORKER_API_SECRET}`,"Content-Type":"application/json"},body:JSON.stringify(body)});
   if(!response.ok)throw new Error(`Callback failed (${response.status})`);
 }
 
 export default {
   async fetch(request:Request,env:SchedulerEnv){
-    if(!await authorized(request,env.REPORT_AUTOMATION_SECRET))return json({error:"Unauthorized"},401);const url=new URL(request.url);
+    if(!await authorized(request,env.WORKER_API_SECRET))return json({error:"Unauthorized"},401);const url=new URL(request.url);
     if(request.method==="POST"&&url.pathname==="/search-term-analysis/jobs"){const body=await request.json<RunMessage>();if(!body.runId||!/^[0-9]{10}$/.test(body.googleCustomerId))return json({error:"Invalid analysis job"},400);await env.OPTIMIZATION_QUEUE.send(body);return json({queued:true},202);}
     const inputMatch=url.pathname.match(/^\/search-term-analysis\/jobs\/([-\w]+)\/input\/(\d{1,3})$/);
     if(inputMatch){const run=String(Number(inputMatch[2])).padStart(3,"0");const key=`search-term-jobs/${inputMatch[1]}/input/${run}.json`;return r2ObjectResponse(request,env,key);}

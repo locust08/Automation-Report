@@ -12,6 +12,6 @@ export async function GET(request: Request) {
 }
 
 function isAuthorized(request: Request) {
-  const secret = process.env.CRON_SECRET?.trim() || process.env.REPORT_AUTOMATION_SECRET?.trim();
+  const secret = process.env.CRON_SECRET?.trim() || process.env.WORKER_API_SECRET?.trim();
   return Boolean(secret) && request.headers.get("authorization") === `Bearer ${secret}`;
 }

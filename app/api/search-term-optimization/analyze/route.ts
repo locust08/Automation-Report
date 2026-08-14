@@ -59,7 +59,7 @@ export async function POST(request: Request) {
       jobId, accountId, status: "queued", stage: "Checking Google Ads for new search terms", startedAt: new Date().toISOString(),
     }, null, 2), "utf8");
     await fs.writeFile(path.join(jobsDirectory(), `${jobId}.baseline.json`),JSON.stringify((existing?.results??[]).map(stableSearchTermKey)),"utf8");
-    const workerUrl=process.env.SEARCH_TERM_ANALYSIS_WORKER_URL?.replace(/\/$/,"");const workerSecret=process.env.REPORT_AUTOMATION_SECRET||process.env.WORKER_API_SECRET;
+    const workerUrl=process.env.SEARCH_TERM_ANALYSIS_WORKER_URL?.replace(/\/$/,"");const workerSecret=process.env.WORKER_API_SECRET;
     if(workerUrl&&workerSecret){const queued=await fetch(`${workerUrl}/search-term-analysis/jobs`,{method:"POST",headers:{Authorization:`Bearer ${workerSecret}`,"Content-Type":"application/json"},body:JSON.stringify({runId:jobId,scheduleId:"",googleCustomerId:accountId,accountName:existing?.account.customerName??"",startDate:"",endDate:"",scheduledFor:new Date().toISOString(),scheduled:false})});if(!queued.ok)throw new Error(`Unable to queue analysis worker (${queued.status}).`);return NextResponse.json({jobId,status:"queued",stage:"Queued for background analysis"},{status:202});}
     if (process.env.VERCEL) throw new Error("Search-term background Worker is not configured for this Vercel environment.");
     const child = spawn("doppler", [
@@ -123,7 +123,7 @@ export async function PUT(request:Request){
   const session=await getServerAuthSession();if(!session||session.role!=="admin")return NextResponse.json({error:"Administrator access is required."},{status:403});
   const body=await request.json() as {jobId?:string;action?:"retry"};if(!body.jobId||body.action!=="retry")return NextResponse.json({error:"A retry job is required."},{status:400});
   const job=await retryDurableAnalysis(body.jobId);if(!job)return NextResponse.json({error:"Analysis job was not found."},{status:404});
-  const workerUrl=process.env.SEARCH_TERM_ANALYSIS_WORKER_URL?.replace(/\/$/,"");const workerSecret=process.env.REPORT_AUTOMATION_SECRET||process.env.WORKER_API_SECRET;
+  const workerUrl=process.env.SEARCH_TERM_ANALYSIS_WORKER_URL?.replace(/\/$/,"");const workerSecret=process.env.WORKER_API_SECRET;
   if(workerUrl&&workerSecret){const queued=await fetch(`${workerUrl}/search-term-analysis/jobs`,{method:"POST",headers:{Authorization:`Bearer ${workerSecret}`,"Content-Type":"application/json"},body:JSON.stringify({runId:job.id,scheduleId:"",googleCustomerId:job.google_customer_id,accountName:job.account_name,startDate:job.reporting_start_date??"",endDate:job.reporting_end_date??"",scheduledFor:new Date().toISOString(),scheduled:job.source==="scheduled"})});if(!queued.ok)return NextResponse.json({error:"Unable to queue the retry."},{status:502});}
   else{if(process.env.VERCEL)return NextResponse.json({error:"Search-term background Worker is not configured for this Vercel environment."},{status:503});const child=spawn("doppler",["run","--",process.execPath,path.join(process.cwd(),"scripts","run-search-term-analysis-job.mjs"),job.id,job.google_customer_id,job.reporting_start_date??"",job.reporting_end_date??""],{cwd:process.cwd(),windowsHide:true,stdio:"ignore"});child.unref();}
   return NextResponse.json(toClientJob(job));

@@ -5,7 +5,7 @@ This Worker claims scheduled analyses from Vercel, dispatches the durable analys
 ## Required Cloudflare secrets
 
 - `VERCEL_APP_BASE_URL` — production HTTPS origin of the Vercel application
-- `REPORT_AUTOMATION_SECRET` — shared by the Worker, Vercel, and GitHub Actions callbacks
+- `WORKER_API_SECRET` — shared by the Worker, Vercel, and GitHub Actions callbacks
 - `GITHUB_ACTIONS_TOKEN` — token allowed to dispatch the repository workflow
 
 Configure them with `wrangler secret put`; do not add their values to `wrangler.jsonc`.
@@ -13,7 +13,7 @@ Configure them with `wrangler secret put`; do not add their values to `wrangler.
 ## Required Vercel variables
 
 - `SEARCH_TERM_ANALYSIS_WORKER_URL`
-- `WORKER_API_SECRET` (must match the Worker authorization secret used by the application endpoints)
+- `WORKER_API_SECRET` (must match the Worker and GitHub Actions secret)
 - Supabase and Google Ads credentials already required by Search Terms analysis
 
 ## Required GitHub Actions secrets

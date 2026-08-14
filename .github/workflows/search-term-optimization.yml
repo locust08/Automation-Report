@@ -21,8 +21,8 @@ jobs:
       - uses: astral-sh/setup-uv@v5
       - run: npm ci
       - name: Mark running
-        run: curl --fail-with-body -X POST "${{ inputs.callback_url }}" -H "Authorization: Bearer $REPORT_AUTOMATION_SECRET" -H "Content-Type: application/json" --data "{\"runId\":\"${{ inputs.run_id }}\",\"status\":\"running\",\"scheduled\":${{ inputs.scheduled }}}"
-        env: { REPORT_AUTOMATION_SECRET: "${{ secrets.REPORT_AUTOMATION_SECRET }}" }
+        run: curl --fail-with-body -X POST "${{ inputs.callback_url }}" -H "Authorization: Bearer $WORKER_API_SECRET" -H "Content-Type: application/json" --data "{\"runId\":\"${{ inputs.run_id }}\",\"status\":\"running\",\"scheduled\":${{ inputs.scheduled }}}"
+        env: { WORKER_API_SECRET: "${{ secrets.WORKER_API_SECRET }}" }
       - name: Analyze prioritized terms
         run: node scripts/run-search-term-analysis-job.mjs "${{ inputs.run_id }}" "${{ inputs.account_id }}" "${{ inputs.start_date }}" "${{ inputs.end_date }}"
         env:
@@ -57,5 +57,5 @@ jobs:
           STATUS_FILE="tmp/search-term-analysis-jobs/${{ inputs.run_id }}.json"
           TERMS=$(jq -r '.termsProcessed // 0' "$STATUS_FILE" 2>/dev/null || echo 0)
           BATCHES=$(jq -r '.completedBatches // 0' "$STATUS_FILE" 2>/dev/null || echo 0)
-          curl --fail-with-body -X POST "${{ inputs.callback_url }}" -H "Authorization: Bearer $REPORT_AUTOMATION_SECRET" -H "Content-Type: application/json" --data "{\"runId\":\"${{ inputs.run_id }}\",\"status\":\"$STATUS\",\"scheduled\":${{ inputs.scheduled }},\"termsProcessed\":$TERMS,\"batchesCompleted\":$BATCHES}"
-        env: { REPORT_AUTOMATION_SECRET: "${{ secrets.REPORT_AUTOMATION_SECRET }}" }
+          curl --fail-with-body -X POST "${{ inputs.callback_url }}" -H "Authorization: Bearer $WORKER_API_SECRET" -H "Content-Type: application/json" --data "{\"runId\":\"${{ inputs.run_id }}\",\"status\":\"$STATUS\",\"scheduled\":${{ inputs.scheduled }},\"termsProcessed\":$TERMS,\"batchesCompleted\":$BATCHES}"
+        env: { WORKER_API_SECRET: "${{ secrets.WORKER_API_SECRET }}" }

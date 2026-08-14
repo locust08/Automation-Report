@@ -177,7 +177,7 @@ async function resolveReportTargets(input: {
 
 function isAuthorized(request: Request): boolean {
   const expectedSecret =
-    process.env.REPORT_AUTOMATION_SECRET?.trim() || process.env.CRON_SECRET?.trim();
+    process.env.WORKER_API_SECRET?.trim() || process.env.CRON_SECRET?.trim();
 
   if (!expectedSecret) {
     return false;

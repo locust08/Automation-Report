@@ -7,7 +7,6 @@ interface Env {
   MONTHLY_REPORT_QUEUE: Queue<ReportQueueMessage>;
   REPORT_BROWSER: BrowserWorker;
   BROWSER_LAUNCH_LIMITER: DurableObjectNamespace;
-  REPORT_AUTOMATION_SECRET: string;
   RESEND_API_KEY: string;
   RESEND_FROM_MONTHLY_REPORT?: string;
   VERCEL_APP_BASE_URL: string;
@@ -16,7 +15,7 @@ interface Env {
   NOTION_DATABASE_ID?: string;
   NOTION_AD_ACCOUNTS_DATABASE_ID?: string;
   NOTION_WEBHOOK_VERIFICATION_TOKEN?: string;
-  WORKER_API_SECRET?: string;
+  WORKER_API_SECRET: string;
   MONTHLY_REPORT_TEST_RECIPIENT?: string;
   REPORT_EMAIL_DELIVERY_MODE?: "attachment" | "link";
   REPORT_EMAIL_LOGO_URL?: string;
@@ -1000,7 +999,7 @@ async function resolveTargetsFromVercel(
   const response = await fetch(endpoint, {
     method: "POST",
     headers: {
-      Authorization: `Bearer ${readRequired(env.REPORT_AUTOMATION_SECRET, "REPORT_AUTOMATION_SECRET")}`,
+      Authorization: `Bearer ${readRequired(env.WORKER_API_SECRET, "WORKER_API_SECRET")}`,
       "Content-Type": "application/json",
     },
     body: JSON.stringify(requestBody),
@@ -2555,7 +2554,7 @@ function buildReportUrl(
   url.searchParams.set("startDate", message.startDate);
   url.searchParams.set("endDate", message.endDate);
   url.searchParams.set("screenshot", "1");
-  url.searchParams.set("exportToken", env.REPORT_AUTOMATION_SECRET);
+  url.searchParams.set("exportToken", env.WORKER_API_SECRET);
 
   const googleAccountId = normalizeOptional(target.googleAccountId);
   const metaAccountId = normalizeOptional(target.metaAccountId);
@@ -3275,7 +3274,7 @@ function toArrayBuffer(value: ArrayBuffer | Uint8Array): ArrayBuffer {
 }
 
 function isAuthorized(request: Request, env: Env): boolean {
-  const expected = env.WORKER_API_SECRET?.trim() || env.REPORT_AUTOMATION_SECRET?.trim();
+  const expected = env.WORKER_API_SECRET?.trim();
   if (!expected) {
     return false;
   }

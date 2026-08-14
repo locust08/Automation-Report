@@ -13,7 +13,7 @@ export function assertBackendAdsSyncPermission(request: Request, changeSet: AdsC
     throw new AdsSyncPermissionError("This ad platform is not supported for safe sync.");
   }
 
-  const expectedSecret = process.env.ADS_SYNC_SECRET?.trim() || process.env.REPORT_AUTOMATION_SECRET?.trim() || "";
+  const expectedSecret = process.env.ADS_SYNC_SECRET?.trim() || process.env.WORKER_API_SECRET?.trim() || "";
   if (!expectedSecret) {
     if (process.env.NODE_ENV !== "production" || process.env.ADS_SYNC_ALLOW_UNPROTECTED_DEV === "true") {
       return;
