@@ -18,8 +18,6 @@ function rawKey(row:RawCurrentSearchTerm){return `${row.campaign_id}|${row.ad_gr
 function normalize(value:string){return value.trim().toLowerCase().replace(/\s+/g," ");}
 function accountFilter(customerId:string){const normalized=customerId.replace(/\D/g,"");const formatted=`${normalized.slice(0,3)}-${normalized.slice(3,6)}-${normalized.slice(6)}`;return `or=(google_customer_id.eq.${qs(normalized)},google_customer_id.eq.${qs(formatted)})`;}
 function summary(results:OptimizationResult[]):OptimizationDashboardPayload["summary"]{return {totalReviewed:results.length,automaticallyExcluded:results.filter(r=>r.executionStatus==="published").length,addExactRecommendations:results.filter(r=>r.proposedAction==="add exact").length,needsReview:results.filter(r=>r.proposedAction!=="no action"&&r.executionStatus==="review-required").length,noAction:results.filter(r=>r.proposedAction==="no action").length,failedOrUnverified:results.filter(r=>r.executionStatus==="failed"||r.verificationStatus==="failed").length};}
-function fingerprint(rows:RawCurrentSearchTerm[]){return createHash("sha256").update(rows.map(rawKey).sort().join("\n")).digest("hex");}
-
 export async function persistDashboardToSupabase(payload:OptimizationDashboardPayload):Promise<OptimizationDashboardPayload>{
  const refresh=payload.refresh??{mode:"full" as const,checkedAt:payload.account.lastAnalysisAt,currentTerms:payload.results.length,reusedTerms:0,newTerms:payload.results.length,queuedNewTerms:0};
  const runs=await supabaseRest<Run[]>("ad_automation_search_term_analysis_runs?on_conflict=google_customer_id,analyzed_at",{method:"POST",headers:{Prefer:"resolution=merge-duplicates,return=representation"},body:jsonBody({google_customer_id:payload.account.customerId.replace(/\D/g,""),customer_name:payload.account.customerName,reporting_start_date:payload.account.reportingPeriod.startDate,reporting_end_date:payload.account.reportingPeriod.endDate,analyzed_at:payload.account.lastAnalysisAt,recommendations:payload.results,last_checked_at:refresh.checkedAt,source_fingerprint:createHash("sha256").update(payload.results.map(stableSearchTermKey).sort().join("\n")).digest("hex"),current_term_count:refresh.currentTerms,reused_term_count:refresh.reusedTerms,new_term_count:refresh.newTerms,queued_new_term_count:refresh.queuedNewTerms,refresh_status:refresh.mode})});
@@ -38,9 +36,9 @@ export async function getLatestDashboardFromSupabase(customerId?:string):Promise
 
 async function getLatestRelationalDashboard(customerId?:string):Promise<OptimizationDashboardPayload|null>{
  if(!customerId)return null;
- const jobs=await supabaseRest<DurableJob[]>(`ad_automation_search_term_analysis_jobs?google_customer_id=eq.${qs(customerId)}&select=id,google_customer_id,account_name,reporting_start_date,reporting_end_date,total_terms,terms_processed,status,started_at,updated_at&order=created_at.desc&limit=20`);
- let job:DurableJob|undefined;let stored:DurableRow[]=[];
- for(const candidate of jobs){const candidateRows=await loadDurableRows(candidate.id);if(candidateRows.length){job=candidate;stored=candidateRows;break;}}
+ const jobs=await supabaseRest<DurableJob[]>(`ad_automation_search_term_analysis_jobs?google_customer_id=eq.${qs(customerId)}&terms_processed=gt.0&select=id,google_customer_id,account_name,reporting_start_date,reporting_end_date,total_terms,terms_processed,status,started_at,updated_at&order=created_at.desc&limit=1`);
+ const job=jobs[0];
+ const stored=job?await loadDurableRows(job.id,job.terms_processed):[];
  if(!job||!stored.length)return null;
  const settings=await getSearchTermAccountSettings(customerId,job.started_at??job.updated_at);
  const allResults=stored.map(item=>({...item.result_json,id:`rel:${item.id}`,recommendationId:`rel:${item.id}`,searchTermId:`rel:${item.id}`,reviewStatus:item.review_status??item.result_json.reviewStatus,reviewDecision:(item.review_decision as "approved"|"rejected"|null)??item.result_json.reviewDecision,lastReviewedAt:item.updated_at}));
@@ -49,13 +47,10 @@ async function getLatestRelationalDashboard(customerId?:string):Promise<Optimiza
  return {account:{customerId,customerName:job.account_name||`Google Ads ${customerId}`,reportingPeriod:{startDate:job.reporting_start_date??analyzedAt.slice(0,10),endDate:job.reporting_end_date??analyzedAt.slice(0,10)},lastAnalysisAt:analyzedAt,nextRunAt:settings.nextRunAt,automationEnabled:settings.automationEnabled},source:{label:"Supabase progressive reviewed search terms",fresh:true,termsReviewed:allResults.length,mutatingGoogleAdsChanges:false},summary:summary(allResults),results,history:results.filter(row=>row.verificationStatus==="verified"),googleRecommendations:[],googleRecommendationsWarning:null,changeSets:[],settings,refresh:{mode:"cached",checkedAt:job.updated_at,currentTerms:job.total_terms,reusedTerms:allResults.length,newTerms:0,queuedNewTerms:Math.max(0,job.total_terms-allResults.length)}};
 }
 
-async function loadDurableRows(jobId:string){
- const rows:DurableRow[]=[];
- for(let offset=0;offset<2500;offset+=250){
-  const page=await supabaseRest<DurableRow[]>(`ad_automation_search_term_analysis_rows?job_id=eq.${jobId}&select=id,result_json,review_status,review_decision,updated_at&order=batch_number.asc,id.asc&offset=${offset}&limit=250`);
-  rows.push(...page);if(page.length<250)break;
- }
- return rows;
+async function loadDurableRows(jobId:string,termsProcessed:number){
+ const pageCount=Math.min(10,Math.max(1,Math.ceil(termsProcessed/250)));
+ const pages=await Promise.all(Array.from({length:pageCount},(_,page)=>supabaseRest<DurableRow[]>(`ad_automation_search_term_analysis_rows?job_id=eq.${jobId}&select=id,result_json,review_status,review_decision,updated_at&order=batch_number.asc,id.asc&offset=${page*250}&limit=250`)));
+ return pages.flat();
 }
 
 export async function mergeIncrementalDashboard(input:{cached:OptimizationDashboardPayload|null;newlyAnalyzed:OptimizationDashboardPayload;currentRows:RawCurrentSearchTerm[];checkedAt:string;queuedNewTerms:number}):Promise<OptimizationDashboardPayload>{

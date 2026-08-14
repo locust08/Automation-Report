@@ -3,6 +3,7 @@ pragma journal_mode = wal;
 
 create table if not exists ad_automation_search_term_account_settings (
   google_customer_id text primary key,
+  automation_enabled integer not null default 0 check (automation_enabled in (0, 1)),
   schedule_frequency text not null default 'monthly'
     check (schedule_frequency in ('manual', 'weekly', 'biweekly', 'monthly')),
   auto_safe_score_threshold integer not null default 90

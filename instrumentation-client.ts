@@ -19,25 +19,19 @@ if (sentryDsn) {
 const projectToken = process.env.NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN;
 const host = process.env.NEXT_PUBLIC_POSTHOG_HOST;
 
-if (!projectToken || !host) {
-  if (process.env.NODE_ENV === "development") {
-    const missingVariable = !projectToken
-      ? "NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN"
-      : "NEXT_PUBLIC_POSTHOG_HOST";
-
-    throw new Error(
-      `${missingVariable} variable required by PostHog is missing or un-configured, this causes events to be silently missed. This error stops appearing once ${missingVariable} is configured`,
-    );
-  }
-} else {
+if (projectToken && host) {
   posthog.init(projectToken, {
     api_host: host,
-    defaults: "2026-01-30",
-    capture_exceptions: {
-      capture_unhandled_errors: true,
-      capture_unhandled_rejections: true,
-      capture_console_errors: false,
-    },
+    debug: process.env.NODE_ENV === "development",
+    defaults: "2026-05-30",
+    autocapture: false,
+    capture_pageview: false,
+    capture_pageleave: false,
+    disable_session_recording: true,
+    person_profiles: "identified_only",
+    capture_exceptions: false,
+    mask_all_text: true,
+    mask_all_element_attributes: true,
   });
 
   void fetch("/api/auth/session", { cache: "no-store" })
@@ -45,7 +39,7 @@ if (!projectToken || !host) {
       if (!response.ok) return;
 
       const { user } = (await response.json()) as {
-        user?: { id?: unknown; email?: unknown; fullName?: unknown; role?: unknown };
+        user?: { id?: unknown; role?: unknown };
       };
       if (typeof user?.id !== "string" || !user.id) return;
 

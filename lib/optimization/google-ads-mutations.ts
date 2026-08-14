@@ -111,5 +111,12 @@ export async function publishPlacementExclusions(customerId: string, rows: Place
     if (row.placementType === "MOBILE_APPLICATION") return { create: { campaign, negative: true, mobileApplication: { appId: row.placement } } };
     return { create: { campaign, negative: true, placement: { url: row.placement } } };
   });
-  return mutate(normalized, "campaignCriteria", operations);
+  const results = await mutate(normalized, "campaignCriteria", operations);
+  return {
+    published: results.length,
+    resourceNames: results.flatMap((result) => {
+      const resourceName = (result as { resourceName?: unknown })?.resourceName;
+      return typeof resourceName === "string" ? [resourceName] : [];
+    }),
+  };
 }

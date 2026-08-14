@@ -3,7 +3,6 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
-import posthog from "posthog-js";
 import {
   BarChart3Icon,
   CalendarDaysIcon,
@@ -27,7 +26,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { useScreenshotMode } from "@/components/reporting/use-screenshot-mode";
-import { isAdminRole } from "@/lib/auth/roles";
+import { isAdminRole, type AuthRole } from "@/lib/auth/roles";
 
 interface ReportShellProps {
   title: string;
@@ -38,6 +37,7 @@ interface ReportShellProps {
   activeQuery?: string;
   reportReady?: boolean;
   suppressExportHeader?: boolean;
+  initialRole?: AuthRole;
   children: React.ReactNode;
 }
 
@@ -54,11 +54,12 @@ export function ReportShell({
   activeQuery = "",
   reportReady = false,
   suppressExportHeader = false,
+  initialRole,
   children,
 }: ReportShellProps) {
   const { screenshotMode } = useScreenshotMode();
   const pathname = usePathname();
-  const [currentRole, setCurrentRole] = useState<string | null>(null);
+  const [currentRole, setCurrentRole] = useState<string | null>(initialRole ?? null);
   useEffect(() => {
     const controller = new AbortController();
     void fetch("/api/auth/session", { cache: "no-store", signal: controller.signal })
@@ -292,7 +293,7 @@ function ReportLogoutButton() {
   return (
     <Tooltip>
       <TooltipTrigger asChild>
-        <form action="/api/auth/logout" method="post" onSubmit={() => posthog.reset()}>
+        <form action="/api/auth/logout" method="post">
           <button
             type="submit"
             aria-label="Logout"

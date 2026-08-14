@@ -7,7 +7,7 @@ import type { SearchTermPmReport, SearchTermPmReportItem, SearchTermPmReportList
 type Row = Record<string, string | number | null>;
 
 function openDatabase() {
-  const databasePath = resolve(process.env.SEARCH_TERM_SQLITE_PATH || "data/search-term-optimization.sqlite");
+  const databasePath = resolve(/* turbopackIgnore: true */ process.env.SEARCH_TERM_SQLITE_PATH || "data/search-term-optimization.sqlite");
   mkdirSync(dirname(databasePath), { recursive: true });
   const database = new DatabaseSync(databasePath);
   database.exec(readFileSync(resolve("lib/search-term-optimization/sqlite-schema.sql"), "utf8"));

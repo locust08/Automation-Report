@@ -6,6 +6,7 @@ import type { AnalysisScheduleFrequency, SearchTermAccountSettings } from "@/lib
 
 type StoredSettings = {
   google_customer_id: string;
+  automation_enabled: number;
   schedule_frequency: AnalysisScheduleFrequency;
   auto_safe_score_threshold: number;
   review_score_threshold: number;
@@ -16,17 +17,21 @@ type StoredSettings = {
 };
 
 function openSettingsDatabase() {
-  const databasePath = resolve(process.env.SEARCH_TERM_SQLITE_PATH || "data/search-term-optimization.sqlite");
+  const databasePath = resolve(/* turbopackIgnore: true */ process.env.SEARCH_TERM_SQLITE_PATH || "data/search-term-optimization.sqlite");
   mkdirSync(dirname(databasePath), { recursive: true });
   const database = new DatabaseSync(databasePath);
   database.exec(readFileSync(resolve("lib/search-term-optimization/sqlite-schema.sql"), "utf8"));
+  const columns = database.prepare("pragma table_info(ad_automation_search_term_account_settings)").all() as Array<{ name: string }>;
+  if (!columns.some((column) => column.name === "automation_enabled")) {
+    database.exec("alter table ad_automation_search_term_account_settings add column automation_enabled integer not null default 0 check (automation_enabled in (0, 1))");
+  }
   return database;
 }
 
 function mapSettings(row: StoredSettings): SearchTermAccountSettings {
   return {
     googleCustomerId: row.google_customer_id,
-    automationEnabled: false,
+    automationEnabled: Boolean(row.automation_enabled),
     scheduleFrequency: row.schedule_frequency,
     autoSafeScoreThreshold: row.auto_safe_score_threshold,
     highSpendThreshold: row.high_spend_threshold,
@@ -81,13 +86,14 @@ export function saveSearchTermAccountSettings(input: Omit<SearchTermAccountSetti
     `).get(input.googleCustomerId) as { last_run_at?: string | null } | undefined;
     const previousRun = existing?.last_run_at ? new Date(existing.last_run_at) : null;
     const anchor = previousRun && previousRun.getTime() > Date.now() ? previousRun : new Date();
-    const nextRunAt = calculateNextRun(input.scheduleFrequency, anchor);
+    const nextRunAt = input.automationEnabled ? calculateNextRun(input.scheduleFrequency, anchor) : null;
     database.prepare(`
       insert into ad_automation_search_term_account_settings (
-        google_customer_id, schedule_frequency, auto_safe_score_threshold,
+        google_customer_id, automation_enabled, schedule_frequency, auto_safe_score_threshold,
         high_spend_threshold, minimum_clicks_threshold, next_run_at, updated_at
-      ) values (?, ?, ?, ?, ?, ?, datetime('now'))
+      ) values (?, ?, ?, ?, ?, ?, ?, datetime('now'))
       on conflict (google_customer_id) do update set
+        automation_enabled = excluded.automation_enabled,
         schedule_frequency = excluded.schedule_frequency,
         auto_safe_score_threshold = excluded.auto_safe_score_threshold,
         high_spend_threshold = excluded.high_spend_threshold,
@@ -95,7 +101,7 @@ export function saveSearchTermAccountSettings(input: Omit<SearchTermAccountSetti
         next_run_at = excluded.next_run_at,
         updated_at = datetime('now')
     `).run(
-      input.googleCustomerId, input.scheduleFrequency, input.autoSafeScoreThreshold,
+      input.googleCustomerId, input.automationEnabled ? 1 : 0, input.scheduleFrequency, input.autoSafeScoreThreshold,
       input.highSpendThreshold, input.minimumClicksThreshold, nextRunAt,
     );
     return getSearchTermAccountSettingsFromDatabase(database, input.googleCustomerId);
@@ -110,7 +116,7 @@ export function listDueSearchTermAccounts(now = new Date()) {
     return (database.prepare(`
       select google_customer_id as googleCustomerId
       from ad_automation_search_term_account_settings
-      where schedule_frequency <> 'manual' and next_run_at is not null and next_run_at <= ?
+      where automation_enabled = 1 and schedule_frequency <> 'manual' and next_run_at is not null and next_run_at <= ?
       order by next_run_at asc
     `).all(now.toISOString()) as Array<{ googleCustomerId: string }>);
   } finally {
@@ -122,10 +128,10 @@ export function recordSearchTermAnalysisCompleted(customerId: string, completedA
   const database = openSettingsDatabase();
   try {
     const row = database.prepare(`
-      select schedule_frequency, last_run_at from ad_automation_search_term_account_settings where google_customer_id = ?
-    `).get(customerId) as { schedule_frequency: AnalysisScheduleFrequency; last_run_at: string | null } | undefined;
+      select automation_enabled, schedule_frequency, last_run_at from ad_automation_search_term_account_settings where google_customer_id = ?
+    `).get(customerId) as { automation_enabled: number; schedule_frequency: AnalysisScheduleFrequency; last_run_at: string | null } | undefined;
     if (!row || row.last_run_at === completedAt) return row ? getSearchTermAccountSettingsFromDatabase(database, customerId) : null;
-    const nextRunAt = calculateNextRun(row.schedule_frequency, new Date(completedAt));
+    const nextRunAt = row.automation_enabled ? calculateNextRun(row.schedule_frequency, new Date(completedAt)) : null;
     database.prepare(`
       update ad_automation_search_term_account_settings
       set last_run_at = ?, next_run_at = ?, updated_at = datetime('now')

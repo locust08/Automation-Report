@@ -46,8 +46,14 @@ export function GoogleOptimizationPageClient({ role }: { role: AuthRole }) {
   }, []);
 
   useEffect(() => {
-    if (!initialAccountId || selectedAccount) return;
+    if (!initialAccountId) {
+      setSelectedAccount(null);
+      return;
+    }
+    if (selectedAccount && normalizeId(selectedAccount.adAccountId) === normalizeId(initialAccountId)) return;
     const controller = new AbortController();
+    setSelectedAccount(null);
+    setQuery(initialAccountId);
     void fetch(`/api/search-term-optimization/account-search?q=${encodeURIComponent(initialAccountId)}`, { cache: "no-store", signal: controller.signal })
       .then(async (response) => {
         const payload = await response.json() as { accounts?: Account[] };
@@ -154,7 +160,7 @@ export function GoogleOptimizationPageClient({ role }: { role: AuthRole }) {
   }
 
   return (
-    <ReportShell title="Google Optimization" dateLabel="Search terms and placements" activeQuery={activeQuery} reportReady>
+    <ReportShell title="Google Optimization" dateLabel="Search terms and placements" activeQuery={activeQuery} initialRole={role} reportReady>
       <div className="space-y-5 text-neutral-950">
         <section className="rounded-2xl border border-neutral-200 bg-white p-5 shadow-sm sm:p-7">
           <label className="mb-2 block text-sm font-semibold text-neutral-800">Google Ads account</label>
@@ -186,10 +192,10 @@ export function GoogleOptimizationPageClient({ role }: { role: AuthRole }) {
 
         {!selectedAccount ? <section className="rounded-2xl border border-neutral-200 bg-white p-8 text-center shadow-sm"><h2 className="font-semibold">Select a Google Ads account</h2><p className="mt-1 text-sm text-neutral-500">Both optimization dashboards will load for the selected account.</p></section> : null}
         <div role="tabpanel" hidden={tab !== "search-terms"} className={tab === "search-terms" && selectedAccount ? "block" : "hidden"}>
-          <SearchTermOptimizationPageClient role={role} embedded externalAccount={selectedAccount} />
+          <SearchTermOptimizationPageClient key={`search-terms-${normalizeId(selectedAccount?.adAccountId ?? "none")}`} role={role} embedded externalAccount={selectedAccount} />
         </div>
         <div role="tabpanel" hidden={tab !== "placements"} className={tab === "placements" && selectedAccount ? "block" : "hidden"}>
-          <PlacementOptimizationPageClient role={role} embedded externalAccount={selectedAccount} />
+          <PlacementOptimizationPageClient key={`placements-${normalizeId(selectedAccount?.adAccountId ?? "none")}`} role={role} embedded externalAccount={selectedAccount} />
         </div>
       </div>
     </ReportShell>

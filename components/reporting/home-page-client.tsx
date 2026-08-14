@@ -3,7 +3,6 @@
 import { FormEvent, KeyboardEvent, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import posthog from "posthog-js";
 import {
   ArrowRightIcon,
   CalendarDaysIcon,
@@ -491,7 +490,7 @@ export function HomePageClient({ displayName, role }: HomePageClientProps) {
             <p className="min-w-0 truncate text-sm font-medium sm:text-base">
               Welcome, <span className="font-semibold">{displayName}</span>
             </p>
-            <form action="/api/auth/logout" method="post" onSubmit={() => posthog.reset()}>
+            <form action="/api/auth/logout" method="post">
               <Button
                 type="submit"
                 variant="outline"

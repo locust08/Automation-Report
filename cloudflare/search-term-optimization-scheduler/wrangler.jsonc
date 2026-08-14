@@ -10,8 +10,7 @@
   "vars": {
     "GITHUB_OWNER": "locust08",
     "GITHUB_REPO": "Automation-Report",
-    "GITHUB_WORKFLOW_REF": "main",
-    "VERCEL_APP_BASE_URL": ""
+    "GITHUB_WORKFLOW_REF": "main"
   },
   "queues": {
     "producers": [{ "binding": "OPTIMIZATION_QUEUE", "queue": "search-term-optimization-schedule-queue" }],

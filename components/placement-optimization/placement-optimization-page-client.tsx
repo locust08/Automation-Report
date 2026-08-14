@@ -60,13 +60,13 @@ type AccountSuggestion = {
   accessPath?: string | null;
 };
 type AccountSearchState = "idle" | "loading" | "success" | "error";
-type PlacementJob = { id:string; status:"queued"|"running"|"partial"|"completed"|"failed"|"cancelled"; stage:string; processed_rows:number; total_rows:number|null; error:string|null; started_at:string };
+type PlacementJob = { id:string; status:"queued"|"running"|"completed"|"failed"|"cancelled"; stage:string; processed_rows:number; total_rows:number|null; has_more:boolean; error:string|null; started_at:string; expires_at?:string|null };
 const ACCOUNT_SEARCH_CACHE_KEY =
   "placement-optimization-pmax-account-search-cache-v1";
 const RECENT_ACCOUNTS_KEY = "placement-optimization-recent-accounts";
 const ACCOUNT_SEARCH_CACHE_TTL_MS = 15 * 60 * 1000;
 const PLACEMENT_OVERVIEW_CACHE_KEY = "placement-optimization-overview-cache-v1";
-const PLACEMENT_OVERVIEW_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+const PLACEMENT_OVERVIEW_CACHE_TTL_MS = 60 * 60 * 1000;
 const ACCOUNT_SEARCH_DEBOUNCE_MS = 300;
 const PLACEMENTS_PER_PAGE = 20;
 
@@ -74,13 +74,13 @@ export function PlacementOptimizationPageClient({ role, embedded = false, extern
   const searchParams = useSearchParams();
   const mode = modeForRole(role);
   const [data, setData] = useState<PlacementDashboardPayload | null>(null);
-  const [hasLivePlacementRows, setHasLivePlacementRows] = useState(false);
   const [loading, setLoading] = useState(false);
   const [loadStartedAt, setLoadStartedAt] = useState<number | null>(null);
   const [loadCompletedAt, setLoadCompletedAt] = useState<string | null>(null);
   const [analysisJob, setAnalysisJob] = useState<PlacementJob | null>(null);
   const [remoteRowTotal, setRemoteRowTotal] = useState(0);
   const [error, setError] = useState<string | null>(null);
+  const [loadErrorDetails, setLoadErrorDetails] = useState<{code?:string;accountId?:string;managerId?:string|null}|null>(null);
   const [account, setAccount] = useState("");
   const [selectedAccount, setSelectedAccount] =
     useState<AccountSuggestion | null>(null);
@@ -93,7 +93,7 @@ export function PlacementOptimizationPageClient({ role, embedded = false, extern
   const searchRequestId = useRef(0);
   const placementLoadController = useRef<AbortController | null>(null);
   const skipNextSearch = useRef(false);
-  const [type, setType] = useState(searchParams.get("type") || "all");
+  const [type] = useState(searchParams.get("type") || "all");
   const [decisionsOpen, setDecisionsOpen] = useState(false);
   const [decisionView, setDecisionView] = useState<"content" | "excluded">("content");
   const [decisionType, setDecisionType] = useState("all");
@@ -115,12 +115,12 @@ export function PlacementOptimizationPageClient({ role, embedded = false, extern
     const cachedOverview = accountId ? readPlacementOverviewCache(accountId) : null;
     if (cachedOverview) {
       setData(cachedOverview);
-      setHasLivePlacementRows(false);
     }
     setLoading(true);
     setLoadStartedAt(Date.now());
     setLoadCompletedAt(null);
     setError(null);
+    setLoadErrorDetails(null);
     try {
       const params = new URLSearchParams();
       if (accountId) params.set("accountId", accountId);
@@ -131,16 +131,20 @@ export function PlacementOptimizationPageClient({ role, embedded = false, extern
       });
       const payload = (await response.json()) as PlacementDashboardPayload & {
         error?: string;
+        code?: string;
+        accountId?: string;
+        managerId?: string | null;
       };
-      if (!response.ok)
+      if (!response.ok) {
+        setLoadErrorDetails({code:payload.code,accountId:payload.accountId,managerId:payload.managerId});
         throw new Error(payload.error || "Unable to load placements.");
+      }
       setData(payload);
-      setHasLivePlacementRows(true);
-      setLoadCompletedAt(new Date().toISOString());
+      if(payload.placementCache?.status === "completed")setLoadCompletedAt(new Date().toISOString());
       writePlacementOverviewCache(payload);
       if (accountId) {
-        const jobResponse=await fetch(`/api/placement-optimization/analyze?accountId=${encodeURIComponent(accountId)}`,{cache:"no-store",signal:controller.signal});
-        if(jobResponse.ok){const jobPayload=await jobResponse.json() as {job:PlacementJob|null};setAnalysisJob(jobPayload.job);}
+        const jobResponse=await fetch("/api/placement-optimization/analyze",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({accountId,startDate:payload.account.startDate,endDate:payload.account.endDate,refresh}),cache:"no-store",signal:controller.signal});
+        if(jobResponse.ok){const jobPayload=await jobResponse.json() as PlacementJob;setAnalysisJob(jobPayload);if(jobPayload.status==="completed")setLoadCompletedAt(new Date().toISOString());}
       }
     } catch (caught) {
       if (controller.signal.aborted) return;
@@ -163,6 +167,10 @@ export function PlacementOptimizationPageClient({ role, embedded = false, extern
   useEffect(() => {
     if (!embedded || !externalAccount) return;
     skipNextSearch.current = true;
+    setData(null);
+    setAnalysisJob(null);
+    setError(null);
+    setPage(1);
     setSelectedAccount({
       accountName: externalAccount.accountName,
       adAccountId: externalAccount.adAccountId,
@@ -318,13 +326,14 @@ export function PlacementOptimizationPageClient({ role, embedded = false, extern
     setDropdownOpen(false);
     void startPlacementAnalysis(selectedAccount.adAccountId);
   }
-  async function startPlacementAnalysis(accountId:string){setError(null);setLoadCompletedAt(null);try{const response=await fetch("/api/placement-optimization/analyze",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({accountId})});const job=await response.json() as PlacementJob&{error?:string};if(!response.ok)throw new Error(job.error??"Unable to start placement analysis.");setAnalysisJob(job);}catch(caught){setError(caught instanceof Error?caught.message:"Unable to start placement analysis.");}}
-  useEffect(()=>{if(!analysisJob||!["queued","running"].includes(analysisJob.status))return;const timer=window.setInterval(async()=>{try{const response=await fetch(`/api/placement-optimization/analyze?jobId=${encodeURIComponent(analysisJob.id)}`,{cache:"no-store"});const job=await response.json() as PlacementJob&{error?:string};if(!response.ok)throw new Error(job.error??"Unable to read placement progress.");const hasNewBatch=job.processed_rows>analysisJob.processed_rows;setAnalysisJob(job);if(hasNewBatch||job.status==="completed"){setLoadCompletedAt(new Date().toISOString());if(selectedAccount)void load(selectedAccount.adAccountId);}else if(job.status==="failed")setError(job.error??"Placement analysis failed.");}catch(caught){setError(caught instanceof Error?caught.message:"Unable to read placement progress.");}},2000);return()=>window.clearInterval(timer);},[analysisJob,load,selectedAccount]);
-  async function cancelPlacementAnalysis(){if(!analysisJob)return;await fetch(`/api/placement-optimization/analyze?jobId=${encodeURIComponent(analysisJob.id)}`,{method:"DELETE"});setAnalysisJob(current=>current?{...current,status:"cancelled",stage:"Cancellation requested"}:null);}
+  async function startPlacementAnalysis(accountId:string){setError(null);setLoadCompletedAt(null);try{const response=await fetch("/api/placement-optimization/analyze",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({accountId,startDate:data?.account.startDate,endDate:data?.account.endDate,refresh:true})});const job=await response.json() as PlacementJob&{error?:string};if(!response.ok)throw new Error(job.error??"Unable to refresh placements.");setAnalysisJob(job);}catch(caught){setError(caught instanceof Error?caught.message:"Unable to refresh placements.");}}
+  async function loadNextPlacementBatch(){if(!data||!analysisJob?.has_more||["queued","running"].includes(analysisJob.status))return;setError(null);try{const response=await fetch("/api/placement-optimization/analyze",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({accountId:data.account.customerId,startDate:data.account.startDate,endDate:data.account.endDate,loadMore:true})});const job=await response.json() as PlacementJob&{error?:string};if(!response.ok)throw new Error(job.error??"Unable to load the next placement batch.");setAnalysisJob(job);}catch(caught){setError(caught instanceof Error?caught.message:"Unable to load the next placement batch.");}}
+  useEffect(()=>{if(!analysisJob||!["queued","running"].includes(analysisJob.status)||!data)return;const timer=window.setInterval(async()=>{try{const params=new URLSearchParams({accountId:data.account.customerId,startDate:data.account.startDate,endDate:data.account.endDate});const response=await fetch(`/api/placement-optimization/analyze?${params}`,{cache:"no-store"});const payload=await response.json() as {job:PlacementJob|null;error?:string};if(!response.ok)throw new Error(payload.error??"Unable to read placement progress.");if(!payload.job)return;const hasNewChunk=payload.job.processed_rows>analysisJob.processed_rows;setAnalysisJob(payload.job);if(hasNewChunk||payload.job.status==="completed"){setLoadCompletedAt(new Date().toISOString());void load(data.account.customerId);}else if(payload.job.status==="failed")setError(payload.job.error??"Placement retrieval failed.");}catch(caught){setError(caught instanceof Error?caught.message:"Unable to read placement progress.");}},2000);return()=>window.clearInterval(timer);},[analysisJob,data,load]);
+  async function cancelPlacementAnalysis(){if(!analysisJob||!data)return;const params=new URLSearchParams({accountId:data.account.customerId,startDate:data.account.startDate,endDate:data.account.endDate});await fetch(`/api/placement-optimization/analyze?${params}`,{method:"DELETE"});setAnalysisJob(current=>current?{...current,status:"cancelled",stage:"Placement retrieval stopped"}:null);}
   const customerId=data?.account.customerId;
   const accountStartDate=data?.account.startDate;
   const accountEndDate=data?.account.endDate;
-  const loadRowsPage=useCallback(async(pageNumber:number)=>{if(!customerId||!accountStartDate||!accountEndDate)return;const params=new URLSearchParams({accountId:customerId,startDate:accountStartDate,endDate:accountEndDate,page:String(pageNumber),pageSize:String(PLACEMENTS_PER_PAGE),campaignType:decisionCampaignType,placementType:decisionType});const response=await fetch(`/api/placement-optimization/rows?${params}`,{cache:"no-store"});const payload=await response.json() as {rows?:PlacementOptimizationRow[];total?:number;error?:string};if(!response.ok)throw new Error(payload.error??"Unable to load placements.");setData(current=>current?{...current,rows:payload.rows??[]}:current);setRemoteRowTotal(payload.total??0);setHasLivePlacementRows(true);},[accountEndDate,accountStartDate,customerId,decisionCampaignType,decisionType]);
+  const loadRowsPage=useCallback(async(pageNumber:number)=>{if(!customerId||!accountStartDate||!accountEndDate)return;const params=new URLSearchParams({accountId:customerId,startDate:accountStartDate,endDate:accountEndDate,page:String(pageNumber),pageSize:String(PLACEMENTS_PER_PAGE),campaignType:decisionCampaignType,placementType:decisionType,view:decisionView});const response=await fetch(`/api/placement-optimization/rows?${params}`,{cache:"no-store"});const payload=await response.json() as {rows?:PlacementOptimizationRow[];total?:number;error?:string};if(!response.ok)throw new Error(payload.error??"Unable to load placements.");setData(current=>current?{...current,rows:payload.rows??[]}:current);setRemoteRowTotal(payload.total??0);},[accountEndDate,accountStartDate,customerId,decisionCampaignType,decisionType,decisionView]);
   useEffect(()=>{if(!decisionsOpen)return;void loadRowsPage(decisionPage).catch(caught=>setError(caught instanceof Error?caught.message:"Unable to load placements."));},[decisionPage,decisionsOpen,loadRowsPage]);
   const rows = useMemo(
     () =>
@@ -376,7 +385,7 @@ export function PlacementOptimizationPageClient({ role, embedded = false, extern
       const response = await fetch(endpoint, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ recommendationIds: ids, decision }),
+        body: JSON.stringify({ decision, accountId: data?.account.customerId, startDate: data?.account.startDate, endDate: data?.account.endDate, placements: (data?.rows ?? []).filter((row) => ids.includes(row.id)).map(toExclusionPayload) }),
       });
       const result = (await response.json()) as {
         error?: string;
@@ -413,50 +422,6 @@ export function PlacementOptimizationPageClient({ role, embedded = false, extern
       setDecisionSaving(false);
     }
   }
-  async function removeDecisions(ids: string[]) {
-    setError(null);
-    setDecisionSaving(true);
-    try {
-      const response = await fetch("/api/placement-optimization/decisions", {
-        method: "DELETE",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ recommendationIds: ids }),
-      });
-      const result = (await response.json()) as {
-        error?: string;
-        status?: string;
-        reviewerEmail?: string;
-        reviewerRole?: string;
-        createdAt?: string;
-      };
-      if (!response.ok) {
-        setError(result.error || "Unable to remove the placement decision.");
-        return;
-      }
-      const selectedIds = new Set(ids);
-      setData((current) => current ? {
-        ...current,
-        rows: current.rows.map((row) => selectedIds.has(row.id) ? {
-          ...row,
-          currentDecision: null,
-          reviewStatus: result.status ?? "pending_optimizer",
-          reviewHistory: [{
-            id: `local-${result.createdAt ?? Date.now()}`,
-            reviewerEmail: result.reviewerEmail ?? "Current user",
-            reviewerRole: result.reviewerRole ?? role,
-            action: "decision_removed",
-            resultingStatus: result.status ?? "pending_optimizer",
-            createdAt: result.createdAt ?? new Date().toISOString(),
-          }, ...row.reviewHistory],
-        } : row),
-      } : current);
-      setSelected(new Set());
-    } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Unable to remove the placement decision.");
-    } finally {
-      setDecisionSaving(false);
-    }
-  }
   const decisionRows = useMemo(() => (data?.rows ?? []).filter((row) => {
     if (decisionType !== "all" && row.placementType !== decisionType) return false;
     if (decisionCampaignType !== "all" && row.campaignType !== decisionCampaignType) return false;
@@ -486,15 +451,16 @@ export function PlacementOptimizationPageClient({ role, embedded = false, extern
       reportReady={!loading}
     >
       <div className="space-y-5 text-neutral-950">
-        {loading ? <PlacementAnalysisLoader startedAt={loadStartedAt} onCancel={cancelLoad} /> : null}
+        {loading && !(analysisJob && ["queued","running"].includes(analysisJob.status)) ? <PlacementAnalysisLoader startedAt={loadStartedAt} onCancel={cancelLoad} /> : null}
         {analysisJob && ["queued","running"].includes(analysisJob.status) ? <PlacementJobProgress job={analysisJob} onCancel={()=>void cancelPlacementAnalysis()} /> : null}
-        {!loading && data && loadCompletedAt ? (
-          <section role="status" className="flex items-center gap-3 rounded-2xl border border-emerald-200 bg-emerald-50 px-5 py-4 text-emerald-900 shadow-sm">
+        {!loading && data && loadCompletedAt && analysisJob?.status === "completed" ? (
+          <section role="status" className="flex flex-wrap items-center gap-3 rounded-2xl border border-emerald-200 bg-emerald-50 px-5 py-4 text-emerald-900 shadow-sm">
             <CheckCircle2Icon className="size-5 shrink-0 text-emerald-700" />
             <div>
-              <p className="font-semibold">Placement summary loaded</p>
-              <p className="text-sm text-emerald-800">{data.placementOverview.placementCount.toLocaleString()} saved placement{data.placementOverview.placementCount === 1 ? " is" : "s are"} available · loaded at {formatDate(loadCompletedAt)}.</p>
+              <p className="font-semibold">Placements loaded from Google Ads</p>
+              <p className="text-sm text-emerald-800">{analysisJob.processed_rows.toLocaleString()} temporary placement{analysisJob.processed_rows === 1 ? " is" : "s are"} available · expires one hour after retrieval.</p>
             </div>
+            {analysisJob.has_more ? <Button type="button" variant="outline" className="ml-auto cursor-pointer bg-white" onClick={()=>void loadNextPlacementBatch()}>Load next 250</Button> : <span className="ml-auto text-sm font-medium">All available placements loaded</span>}
           </section>
         ) : null}
         {!embedded ? <section className="rounded-2xl border bg-white p-5 shadow-sm">
@@ -535,7 +501,7 @@ export function PlacementOptimizationPageClient({ role, embedded = false, extern
           <section className="rounded-2xl border bg-white p-5 shadow-sm">
             <h2 className="text-3xl font-semibold">{data.account.customerName}</h2>
             <PlacementAccountDetails account={data.account} />
-            <div className="mt-4 flex flex-wrap items-center gap-2"><Button type="button" disabled={!externalAccount||!placementStorageAvailable||Boolean(analysisJob&&["queued","running","partial"].includes(analysisJob.status))} className="cursor-pointer bg-red-700 hover:bg-red-800" onClick={()=>externalAccount&&void startPlacementAnalysis(externalAccount.adAccountId)}><SearchIcon className="size-4" />Start placement import</Button><Button type="button" variant="outline" className="ml-auto cursor-pointer hover:border-red-200 hover:bg-red-50 hover:text-red-700" onClick={() => { setSuitabilityOpen(true); if (!suitability && !suitabilityLoading) void loadSuitability(); }}><ShieldCheckIcon className="size-4" />Content suitability</Button></div>
+            <div className="mt-4 flex flex-wrap items-center gap-2"><Button type="button" variant="outline" disabled={!externalAccount||Boolean(analysisJob&&["queued","running"].includes(analysisJob.status))} className="cursor-pointer" onClick={()=>externalAccount&&void startPlacementAnalysis(externalAccount.adAccountId)}><RefreshCwIcon className="size-4" />Refresh placements</Button><Button type="button" variant="outline" className="ml-auto cursor-pointer hover:border-red-200 hover:bg-red-50 hover:text-red-700" onClick={() => { setSuitabilityOpen(true); if (!suitability && !suitabilityLoading) void loadSuitability(); }}><ShieldCheckIcon className="size-4" />Content suitability</Button></div>
           </section>
         ) : null}
         <ContentSuitabilitySheet
@@ -562,7 +528,7 @@ export function PlacementOptimizationPageClient({ role, embedded = false, extern
             </div>
             <div className="flex flex-wrap items-center justify-end gap-2">
               <Button type="button" disabled={!placementStorageAvailable||!data.placementOverview.placementCount} className="cursor-pointer bg-red-700 hover:bg-red-800" onClick={() => {setDecisionPage(1);setDecisionsOpen(true);}}>
-                {!placementStorageAvailable?"Temporarily unavailable":data.placementOverview.placementCount ? "View placements" : "No saved placements"}
+                {!placementStorageAvailable?"Temporarily unavailable":analysisJob?.processed_rows?`View ${analysisJob.processed_rows.toLocaleString()} loaded`:analysisJob&&["queued","running"].includes(analysisJob.status)?"Loading placements…":data.placementOverview.placementCount ? "View placements" : "No placement data"}
               </Button>
             </div>
           </section>
@@ -588,9 +554,19 @@ export function PlacementOptimizationPageClient({ role, embedded = false, extern
           canOptimizer={canOptimizer}
           saving={decisionSaving}
           onOptimizerDecision={(decision, ids) => void decide("/api/placement-optimization/decisions", decision, ids)}
-          onRemove={(ids) => void removeDecisions(ids)}
         />
-        {error ? (
+        {error && loadErrorDetails?.code === "GOOGLE_ADS_ACCESS_PATH_INVALID" ? (
+          <section role="alert" className="rounded-2xl border border-amber-300 bg-amber-50 p-5 text-amber-950 shadow-sm">
+            <h3 className="text-lg font-semibold">Google Ads account connection needs attention</h3>
+            <p className="mt-2 text-sm">{error}</p>
+            <div className="mt-3 rounded-xl border border-amber-200 bg-white/70 p-3 text-sm">
+              <p><span className="font-medium">Account:</span> {formatCustomerId(loadErrorDetails.accountId ?? selectedAccount?.adAccountId ?? "")}</p>
+              <p className="mt-1"><span className="font-medium">Saved manager:</span> {loadErrorDetails.managerId ? formatCustomerId(loadErrorDetails.managerId) : "Not configured"}</p>
+            </div>
+            <p className="mt-3 text-sm">Update this account&apos;s Access Path in Notion, sync the account directory, then retry.</p>
+            <Button type="button" variant="outline" className="mt-4 cursor-pointer bg-white" disabled={loading} onClick={()=>selectedAccount&&void load(selectedAccount.adAccountId,true)}><RefreshCwIcon className="size-4" />Retry connection</Button>
+          </section>
+        ) : error ? (
           <p
             role="alert"
             className="rounded-xl border border-red-200 bg-red-50 p-4 text-red-800"
@@ -838,7 +814,7 @@ function PlacementJobProgress({job,onCancel}:{job:PlacementJob;onCancel:()=>void
   const [elapsedSeconds,setElapsedSeconds]=useState(0);
   useEffect(()=>{const start=new Date(job.started_at).getTime();const update=()=>setElapsedSeconds(Math.max(0,Math.floor((Date.now()-start)/1000)));update();const timer=window.setInterval(update,1000);return()=>window.clearInterval(timer);},[job.started_at]);
   const progress=job.total_rows?Math.min(100,Math.round(job.processed_rows/job.total_rows*100)):null;
-  return <section role="status" className="overflow-hidden rounded-2xl border border-red-100 bg-white shadow-sm"><div className="flex items-center gap-3 p-5"><span className="flex size-10 items-center justify-center rounded-xl bg-red-50 text-red-700"><Spinner className="size-5" /></span><div className="min-w-0 flex-1"><p className="font-semibold">Placement analysis is running in the background</p><p className="text-sm text-neutral-500">{job.stage}{job.total_rows?` · ${job.processed_rows.toLocaleString()} of ${job.total_rows.toLocaleString()} saved`:""}</p></div><Button type="button" variant="outline" className="shrink-0 cursor-pointer" onClick={onCancel}>Cancel</Button></div><div className="border-t bg-neutral-50 px-5 py-3"><div className="mb-2 flex justify-between text-xs text-neutral-500"><span>{progress===null?"Preparing data":`${progress}% complete`}</span><span>Elapsed: {formatElapsedTime(elapsedSeconds)}</span></div><div className="h-2 overflow-hidden rounded-full bg-neutral-200"><div className="h-full rounded-full bg-gradient-to-r from-red-700 to-red-400 transition-all" style={{width:`${progress??15}%`}} /></div></div></section>;
+  return <section role="status" className="overflow-hidden rounded-2xl border border-red-100 bg-white shadow-sm"><div className="flex items-center gap-3 p-5"><span className="flex size-10 items-center justify-center rounded-xl bg-red-50 text-red-700"><Spinner className="size-5" /></span><div className="min-w-0 flex-1"><p className="font-semibold">Loading placements from Google Ads</p><p className="text-sm text-neutral-500">{job.stage}{job.total_rows?` · ${job.processed_rows.toLocaleString()} of ${job.total_rows.toLocaleString()} retrieved`:""}</p></div><Button type="button" variant="outline" className="shrink-0 cursor-pointer" onClick={onCancel}>Stop retrieval</Button></div><div className="border-t bg-neutral-50 px-5 py-3"><div className="mb-2 flex justify-between text-xs text-neutral-500"><span>{progress===null?"Preparing temporary results":`${progress}% complete`}</span><span>Elapsed: {formatElapsedTime(elapsedSeconds)}</span></div><div className="h-2 overflow-hidden rounded-full bg-neutral-200"><div className="h-full rounded-full bg-gradient-to-r from-red-700 to-red-400 transition-all" style={{width:`${progress??15}%`}} /></div></div></section>;
 }
 
 function useResizableSheet(initialWidth = 720, maximumViewportFraction = 1) {
@@ -951,6 +927,8 @@ function SheetResizeHandle({
   );
 }
 
+// Retained temporarily for compatibility with older saved placement payloads.
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 function PlacementsSheet({
   open,
   onOpenChange,
@@ -1102,7 +1080,6 @@ function PlacementDecisionsSheet({
   canOptimizer,
   saving,
   onOptimizerDecision,
-  onRemove,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -1124,7 +1101,6 @@ function PlacementDecisionsSheet({
   canOptimizer: boolean;
   saving: boolean;
   onOptimizerDecision: (decision: PlacementDecision, ids: string[]) => void;
-  onRemove: (ids: string[]) => void;
 }) {
   const { sidebarWidth, resizing, resizeHandleProps } = useResizableSheet(720, 0.65);
   const selectedIds = [...selected];
@@ -1200,9 +1176,7 @@ function PlacementDecisionsSheet({
                   <PlacementDecisionButton action="exclude" disabled={saving} onClick={() => onOptimizerDecision("exclude", selectedIds)}>Exclude</PlacementDecisionButton>
                 </>
               ) : null}
-              {view === "excluded" ? (
-                <PlacementDecisionButton action="remove" disabled={saving} onClick={() => onRemove(selectedIds)}>Remove decision</PlacementDecisionButton>
-              ) : null}
+              {view === "excluded" ? <span className="text-sm text-neutral-500">Published exclusion history cannot be removed here.</span> : null}
               {saving ? <span className="inline-flex items-center gap-2 text-sm text-neutral-500"><Spinner className="size-4" /> Saving history…</span> : null}
             </div>
           ) : null}
@@ -1739,6 +1713,25 @@ function humanize(value: string) {
 function placementStatusLabel(value: string) {
   return value === "ready_for_publishing" ? "Excluded" : humanize(value);
 }
+
+function toExclusionPayload(row: PlacementOptimizationRow) {
+  return {
+    placement: row.placement,
+    displayName: row.displayName,
+    placementType: row.placementType,
+    targetUrl: row.targetUrl,
+    campaignId: row.campaignId,
+    campaignName: row.campaignName,
+    campaignType: row.campaignType,
+    adGroupId: row.adGroupId,
+    adGroupName: row.adGroupName,
+    impressions: row.impressions,
+    clicks: row.clicks,
+    spend: row.spend,
+    conversions: row.conversions,
+    videoViews: row.videoViews,
+  };
+}
 function formatReportingDate(value: string) {
   const date = new Date(`${value}T00:00:00`);
   return Number.isNaN(date.getTime())
@@ -1753,6 +1746,12 @@ function formatElapsedTime(totalSeconds: number) {
   const minutes = Math.floor(totalSeconds / 60);
   const seconds = totalSeconds % 60;
   return minutes > 0 ? `${minutes}m ${seconds}s` : `${seconds}s`;
+}
+function formatCustomerId(value: string) {
+  const normalized = value.replace(/\D/g, "");
+  return normalized.length === 10
+    ? `${normalized.slice(0, 3)}-${normalized.slice(3, 6)}-${normalized.slice(6)}`
+    : value || "Unknown";
 }
 function formatDate(value: string) {
   const date = new Date(

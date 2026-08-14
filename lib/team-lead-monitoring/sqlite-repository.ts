@@ -14,7 +14,7 @@ type DbValue = string | number | null;
 type DbRow = Record<string, DbValue>;
 
 function openDatabase() {
-  const path = resolve(process.env.SEARCH_TERM_SQLITE_PATH || "data/search-term-optimization.sqlite");
+  const path = resolve(/* turbopackIgnore: true */ process.env.SEARCH_TERM_SQLITE_PATH || "data/search-term-optimization.sqlite");
   mkdirSync(dirname(path), { recursive: true });
   const db = new DatabaseSync(path);
   db.exec(readFileSync(resolve("lib/search-term-optimization/sqlite-schema.sql"), "utf8"));

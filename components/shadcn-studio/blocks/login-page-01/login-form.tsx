@@ -112,12 +112,10 @@ const LoginForm = () => {
         const sessionResponse = await fetch("/api/auth/session", { cache: "no-store" });
         if (sessionResponse.ok) {
           const { user } = (await sessionResponse.json()) as {
-            user?: { id?: unknown; email?: unknown; fullName?: unknown; role?: unknown };
+            user?: { id?: unknown; role?: unknown };
           };
           if (typeof user?.id === "string" && user.id) {
             posthog.identify(user.id, {
-              ...(typeof user.email === "string" ? { email: user.email } : {}),
-              ...(typeof user.fullName === "string" ? { name: user.fullName } : {}),
               ...(typeof user.role === "string" ? { role: user.role } : {}),
             });
           }

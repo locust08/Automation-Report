@@ -74,6 +74,7 @@ const ACCOUNT_SEARCH_CACHE_KEY = "search-term-optimization-account-search-cache"
 const RECENT_ACCOUNT_LIMIT = 5;
 const malaysiaToday = () => new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kuala_Lumpur", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
 type AccountSearchState = "idle" | "loading" | "success" | "error";
+type DashboardLoadErrorCode = "SEARCH_TERM_STORAGE_UNAVAILABLE" | "SEARCH_TERM_ANALYSIS_NOT_FOUND" | "SEARCH_TERM_DASHBOARD_LOAD_FAILED" | null;
 
 const REVIEW_ROLES: AuthRole[] = ["pms", "specialist", "admin"];
 
@@ -84,6 +85,7 @@ export function SearchTermOptimizationPageClient({ role, embedded = false, exter
   const canApprove = false;
   const [data, setData] = useState<OptimizationDashboardPayload | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [loadErrorCode, setLoadErrorCode] = useState<DashboardLoadErrorCode>(null);
   const [loading, setLoading] = useState(() => !isAdminRole(role));
   const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
   const [decisions, setDecisions] = useState<Record<string, ReviewDecision>>({});
@@ -127,13 +129,24 @@ export function SearchTermOptimizationPageClient({ role, embedded = false, exter
   const load = useCallback(async (accountId?: string) => {
     setLoading(true);
     setError(null);
+    setLoadErrorCode(null);
     const params = new URLSearchParams();
     if (accountId) params.set("accountId", accountId);
 
     try {
-      const response = await fetch(`/api/search-term-optimization?${params}`, { cache: "no-store" });
-      const payload = (await response.json()) as OptimizationDashboardPayload & { error?: string };
-      if (!response.ok) throw new Error(payload.error ?? "Unable to load optimization data.");
+      const controller = new AbortController();
+      const timeout = window.setTimeout(() => controller.abort(), 15_000);
+      let response: Response;
+      try {
+        response = await fetch(`/api/search-term-optimization?${params}`, { cache: "no-store", signal: controller.signal });
+      } finally {
+        window.clearTimeout(timeout);
+      }
+      const payload = (await response.json()) as OptimizationDashboardPayload & { code?: Exclude<DashboardLoadErrorCode, null>; error?: string };
+      if (!response.ok) {
+        setLoadErrorCode(payload.code ?? "SEARCH_TERM_DASHBOARD_LOAD_FAILED");
+        throw new Error(payload.error ?? "Unable to load optimization data.");
+      }
       setData(payload);
       setDecisions(Object.fromEntries(
         payload.results
@@ -149,7 +162,9 @@ export function SearchTermOptimizationPageClient({ role, embedded = false, exter
       setGoogleRecommendations([]);
       setGoogleRecommendationsWarning(null);
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Unable to load optimization data.");
+      const timedOut = caught instanceof DOMException && caught.name === "AbortError";
+      if (timedOut) setLoadErrorCode("SEARCH_TERM_STORAGE_UNAVAILABLE");
+      setError(timedOut ? "Saved analysis took too long to respond. Please try again." : caught instanceof Error ? caught.message : "Unable to load optimization data.");
       setData(null);
     } finally {
       setLoading(false);
@@ -730,14 +745,20 @@ export function SearchTermOptimizationPageClient({ role, embedded = false, exter
             <p className="font-semibold">No account selected for analysis</p>
             <p className="mt-1 text-sm text-neutral-500">Select an account above, then press Search to begin.</p>
           </section>
-        ) : !analysisLoading && error ? (
+        ) : !analysisLoading && error && loadErrorCode === "SEARCH_TERM_STORAGE_UNAVAILABLE" ? (
+          <section className="rounded-2xl border border-amber-200 bg-amber-50 p-5 text-amber-900">
+            <p className="font-semibold">Saved analysis is temporarily unavailable</p>
+            <p className="mt-1 text-sm">{error}</p>
+            <Button type="button" variant="outline" className="mt-3 cursor-pointer bg-white" disabled={loading} onClick={()=>void load(accountPerformance?.adAccountId)}>Retry</Button>
+          </section>
+        ) : !analysisLoading && error && loadErrorCode !== "SEARCH_TERM_ANALYSIS_NOT_FOUND" ? (
           <section className="rounded-2xl border border-red-200 bg-red-50 p-5 text-red-800">
             <p className="font-semibold">Optimization dashboard unavailable</p>
             <p className="mt-1 text-sm">{error}</p>
             {retryAnalysisJobId?<Button type="button" variant="outline" className="mt-3 cursor-pointer bg-white" onClick={()=>void retrySearchTermAnalysis()}>Retry failed run</Button>:null}
           </section>
         ) : null}
-        {loading || analysisLoading ? <LoadingDataIndicator label={analysisStage ?? "Loading analysis data..."} startedAt={analysisStartedAt} activityAt={analysisActivityAt} progress={analysisProgress} onStop={activeAnalysisJobId?()=>void stopSearchTermAnalysis():undefined} stopping={analysisStopping} /> : null}
+        {loading || analysisLoading ? <LoadingDataIndicator title={analysisLoading ? "Analyzing search terms" : "Loading saved search-term analysis"} label={analysisLoading ? (analysisStage ?? "Preparing analysis...") : "Retrieving saved recommendations..."} startedAt={analysisLoading ? analysisStartedAt : null} activityAt={analysisLoading ? analysisActivityAt : null} progress={analysisLoading ? analysisProgress : undefined} showWorkerStatus={analysisLoading} onStop={analysisLoading && activeAnalysisJobId?()=>void stopSearchTermAnalysis():undefined} stopping={analysisStopping} /> : null}
 
         {!loading && !analysisLoading && !data && !error && !accountPerformance ? (
           <section className="rounded-2xl border border-neutral-200 bg-white p-5 text-neutral-700 shadow-sm">
@@ -746,7 +767,7 @@ export function SearchTermOptimizationPageClient({ role, embedded = false, exter
           </section>
         ) : null}
 
-        {!loading && !analysisLoading && !data && !error && accountPerformance ? (
+        {!loading && !analysisLoading && !data && (!error || loadErrorCode === "SEARCH_TERM_ANALYSIS_NOT_FOUND") && accountPerformance ? (
           <section className="rounded-2xl border border-neutral-200 bg-white p-5 text-neutral-700 shadow-sm">
             <p className="font-semibold">Search-term analysis is not available yet</p>
             <p className="mt-1 text-sm text-neutral-500">Press Start analysis to retrieve and analyze this account&apos;s search terms.</p>
@@ -887,7 +908,9 @@ export function SearchTermOptimizationPageClient({ role, embedded = false, exter
                 params.set("startDate", reportDateSelection.startDate);
                 params.set("endDate", reportDateSelection.endDate);
               }
-              window.location.href = `/api/search-term-optimization/summary-report?${params.toString()}`;
+              const download = document.createElement("a");
+              download.href = `/api/search-term-optimization/summary-report?${params.toString()}`;
+              download.click();
             }}>
               Generate report
             </AlertDialogAction>
@@ -1051,7 +1074,7 @@ function SettingField({ label, description, children }: { label: string; descrip
 }
 
 
-function LoadingDataIndicator({ label, compact = false, startedAt, activityAt, progress,onStop,stopping=false }: { label: string; compact?: boolean; startedAt?: string | null; activityAt?: string | null; progress?: {currentBatch:number;completedBatches:number;maxBatches:number;currentBatchSize:number;termsProcessed:number;progressComplete:boolean};onStop?:()=>void;stopping?:boolean }) {
+function LoadingDataIndicator({ title = "Analyzing search terms", label, compact = false, startedAt, activityAt, progress, showWorkerStatus = true, onStop, stopping=false }: { title?: string; label: string; compact?: boolean; startedAt?: string | null; activityAt?: string | null; progress?: {currentBatch:number;completedBatches:number;maxBatches:number;currentBatchSize:number;termsProcessed:number;progressComplete:boolean};showWorkerStatus?:boolean;onStop?:()=>void;stopping?:boolean }) {
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
     if (compact || !startedAt) return;
@@ -1077,21 +1100,21 @@ function LoadingDataIndicator({ label, compact = false, startedAt, activityAt, p
           <Spinner className="size-5" />
         </span>
         <div className="min-w-0 flex-1">
-          <p className="font-semibold text-neutral-900">Analyzing search terms</p>
+          <p className="font-semibold text-neutral-900">{title}</p>
           <p className="mt-0.5 truncate text-sm text-neutral-500">{progress?.currentBatch ? `Run ${progress.currentBatch} of ${progress.maxBatches} · analyzing ${progress.currentBatchSize} terms` : label}</p>
         </div>
         {onStop?<Button type="button" variant="outline" disabled={stopping} className="shrink-0 cursor-pointer" onClick={onStop}>{stopping?<><Spinner className="size-4"/>Stopping…</>:"Stop analysis"}</Button>:<span className="hidden rounded-full bg-neutral-100 px-3 py-1 text-xs font-medium text-neutral-500 sm:inline-flex">Please wait</span>}
       </div>
       <div className="border-t border-neutral-100 bg-neutral-50 px-5 py-3 sm:px-6">
         <div className="mb-2 flex items-center justify-between text-xs font-medium text-neutral-500">
-          <span>{elapsedSeconds === null ? "Analysis in progress" : `Elapsed ${formatElapsedTime(elapsedSeconds)}`}</span>
-          <span className={heartbeatHealthy ? "text-emerald-700" : "text-amber-700"}>
+          <span>{showWorkerStatus ? (elapsedSeconds === null ? "Analysis in progress" : `Elapsed ${formatElapsedTime(elapsedSeconds)}`) : "Loading saved results"}</span>
+          {showWorkerStatus ? <span className={heartbeatHealthy ? "text-emerald-700" : "text-amber-700"}>
             {activitySeconds === null
               ? "Waiting for worker ping…"
               : heartbeatHealthy
                 ? `Worker ping: ${activitySeconds}s ago`
                 : `Worker ping: ${activitySeconds}s ago · checking status`}
-          </span>
+          </span> : <span>Checking saved analysis...</span>}
         </div>
         <div className="h-2.5 overflow-hidden rounded-full bg-neutral-200 ring-1 ring-inset ring-neutral-300/60">
           <div className="h-full rounded-full bg-gradient-to-r from-red-700 via-red-500 to-red-400 shadow-sm transition-[width] duration-500" style={{width:`${progressPercent}%`}} />

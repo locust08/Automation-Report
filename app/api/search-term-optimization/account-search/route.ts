@@ -35,14 +35,16 @@ export async function GET(request: Request) {
 
   try {
     const tokens=searchTokens(query);
-    const searches=[query,...tokens].filter((value,index,all)=>all.indexOf(value)===index).slice(0,7);
-    const responses=await Promise.all(searches.map(async value=>{
+    const searchWorker=async(value:string)=>{
       const url = new URL("/ad-accounts/search", ensureTrailingSlash(workerUrl));url.searchParams.set("q",value);
       const response=await fetch(url,{headers:{Authorization:`Bearer ${workerSecret}`},cache:"no-store",signal:AbortSignal.timeout(10_000)});
       const payload=await response.json().catch(()=>null) as AccountSearchPayload|null;
       if(!response.ok||!payload?.success)throw new Error(payload?.error||`Account directory returned HTTP ${response.status}.`);
       return payload.accounts??[];
-    }));
+    };
+    const direct=await searchWorker(query);
+    const directMatches=direct.filter(account=>matchesEveryToken(account,tokens));
+    const responses=directMatches.length?[directMatches]:await Promise.all(tokens.slice(0,6).map(searchWorker));
     const unique=new Map<string,NonNullable<AccountSearchPayload["accounts"]>[number]>();
     for(const account of responses.flat())unique.set(account.adAccountId.replace(/\D/g,""),account);
     const accounts=[...unique.values()].filter(account=>matchesEveryToken(account,tokens));
