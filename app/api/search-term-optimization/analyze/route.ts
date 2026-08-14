@@ -9,7 +9,7 @@ import { getServerAuthSession } from "@/lib/auth/server-session";
 import { deleteLatestManualRunnerOutput, ManualRunnerOutputRepository, readLatestCurrentSearchTerms } from "@/lib/search-term-optimization/repository";
 import { getLatestDashboardFromSupabase, mergeIncrementalDashboard, persistDashboardToSupabase, stableSearchTermKey } from "@/lib/search-term-optimization/supabase-repository";
 import { recordSearchTermAnalysisCompleted } from "@/lib/search-term-optimization/supabase-settings";
-import { claimDailySlot, createDurableAnalysisJob, getActiveDurableAnalysisJob, getDurableAnalysisJob, releaseManualClaim, requestDurableAnalysisStop, retryDurableAnalysis, stopDurableAnalysisImmediately, toClientJob } from "@/lib/search-term-optimization/durable-analysis";
+import { claimDailySlot, createDurableAnalysisJob, getActiveDurableAnalysisJob, getDurableAnalysisJob, releaseManualClaim, retryDurableAnalysis, stopDurableAnalysisImmediately, toClientJob } from "@/lib/search-term-optimization/durable-analysis";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -117,7 +117,7 @@ export async function GET(request: Request) {
   }
 }
 
-export async function DELETE(request:Request){const session=await getServerAuthSession();if(!session||session.role!=="admin")return NextResponse.json({error:"Administrator access is required."},{status:403});const jobId=new URL(request.url).searchParams.get("jobId")??"";const current=await getDurableAnalysisJob(jobId);if(!current)return NextResponse.json({error:"Analysis job was not found."},{status:404});if(["completed","failed","stopped"].includes(current.status))return NextResponse.json(toClientJob(current));const pingAt=current.last_worker_ping_at?Date.parse(current.last_worker_ping_at):0;const stale=pingAt>0&&Date.now()-pingAt>30_000;const job=stale?await stopDurableAnalysisImmediately(jobId,"Analysis stopped because the worker was no longer responding; completed runs were kept"):await requestDurableAnalysisStop(jobId);return NextResponse.json(toClientJob(job!));}
+export async function DELETE(request:Request){const session=await getServerAuthSession();if(!session||session.role!=="admin")return NextResponse.json({error:"Administrator access is required."},{status:403});const jobId=new URL(request.url).searchParams.get("jobId")??"";const current=await getDurableAnalysisJob(jobId);if(!current)return NextResponse.json({error:"Analysis job was not found."},{status:404});if(["completed","failed","stopped"].includes(current.status))return NextResponse.json(toClientJob(current));const job=await stopDurableAnalysisImmediately(jobId,"Analysis force stopped; completed runs were kept");return NextResponse.json(toClientJob(job!));}
 
 export async function PUT(request:Request){
   const session=await getServerAuthSession();if(!session||session.role!=="admin")return NextResponse.json({error:"Administrator access is required."},{status:403});
