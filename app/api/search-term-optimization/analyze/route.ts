@@ -87,7 +87,15 @@ export async function GET(request: Request) {
     const durable=await getDurableAnalysisJob(jobId);
     if(durable?.status==="completed"){const dashboard=await getLatestDashboardFromSupabase(durable.google_customer_id);return NextResponse.json({...toClientJob(durable),dashboard});}
     const localStatus=await fs.readFile(path.join(jobsDirectory(), `${jobId}.json`), "utf8").catch(()=>null);
-    if(!localStatus&&durable)return NextResponse.json(toClientJob(durable));
+    if (!localStatus && durable) {
+      const dashboard = durable.completed_runs > 0
+        ? await getLatestDashboardFromSupabase(durable.google_customer_id)
+        : null;
+      return NextResponse.json({
+        ...toClientJob(durable),
+        ...(dashboard ? { dashboard } : {}),
+      });
+    }
     const status = JSON.parse(localStatus!) as JobStatus;
     if (status.status !== "completed") {
       const log = await fs.stat(path.join(jobsDirectory(), `${jobId}.log`)).catch(() => null);
