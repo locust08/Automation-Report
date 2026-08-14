@@ -5,8 +5,8 @@ on:
     inputs:
       run_id: { required: true, type: string }
       account_id: { required: true, type: string }
-      start_date: { required: true, type: string }
-      end_date: { required: true, type: string }
+      start_date: { required: false, type: string, default: "" }
+      end_date: { required: false, type: string, default: "" }
       callback_url: { required: true, type: string }
       scheduled: { required: false, type: string, default: "false" }
 
