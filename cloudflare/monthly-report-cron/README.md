@@ -28,7 +28,8 @@ Cloudflare cron uses UTC.
 - Bi-Weekly Overall: day 15
   - Runs on the 15th day of every month at `04:00 UTC`
   - Generates current-month data from the 1st through the 14th.
-- Ad-account incremental sync: `*/10 * * * *`
+- Ad-account incremental sync: `5,15,25,35,45,55 * * * *`
+  - Runs every 10 minutes with a five-minute offset so it cannot collide with report jobs at minute `0`.
   - Queries only Notion pages edited since the last successful checkpoint.
   - Automatically performs a full reconciliation when the previous full sync is more than 24 hours old.
 

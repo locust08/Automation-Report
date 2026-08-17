@@ -937,12 +937,14 @@ async function resolveTargets(
   reportMonthKey: string;
   reportMonthLabel: string;
 }> {
+  const scheduleDay = new Date(`${resolveScheduledDate(input.scheduledDate ?? input.scheduledTime)}T00:00:00Z`).getUTCDate();
   if (Array.isArray(input.accounts) && input.accounts.length > 0) {
     const range = resolveDateRange(input);
     const payload = await resolveTargetsFromVercel(env, {
       forceTestMode: testMode,
       overrideTargets: input.accounts,
       reportType: input.manualReportType ?? input.reportType,
+      scheduleDay,
       manual: Boolean(input.manualReportType),
     }).catch((error) => {
       console.error("[monthly-report-automation] Vercel target enrichment failed", formatError(error));
@@ -959,6 +961,7 @@ async function resolveTargets(
   const payload = await resolveTargetsFromVercel(env, {
     forceTestMode: testMode,
     reportType: input.manualReportType ?? input.reportType,
+    scheduleDay,
     manual: Boolean(input.manualReportType),
   });
   const inputRange = resolveDateRange(input);
@@ -978,6 +981,7 @@ async function resolveTargetsFromVercel(
     forceTestMode: boolean;
     overrideTargets?: ReportTarget[];
     reportType?: string | null;
+    scheduleDay?: number;
     manual?: boolean;
   }
 ): Promise<{
@@ -995,6 +999,7 @@ async function resolveTargetsFromVercel(
     forceTestMode: body.forceTestMode,
     ...(body.overrideTargets ? { overrideTargets: body.overrideTargets } : {}),
     reportType: body.reportType,
+    scheduleDay: body.scheduleDay,
   };
   const response = await fetch(endpoint, {
     method: "POST",
