@@ -3,6 +3,8 @@ type QueryValue = string | number | boolean | null | Record<string, unknown> | u
 // same Supabase project. Four seconds produced false outage states even while
 // PostgREST was healthy, so keep the request bounded but allow normal jitter.
 const READ_TIMEOUT_MS = Math.max(4_000, Number(process.env.SUPABASE_READ_TIMEOUT_MS || 10_000));
+const RETRYABLE_METHODS = new Set(["GET", "HEAD", "PATCH", "PUT", "DELETE"]);
+const RETRY_DELAYS_MS = [750, 1_500];
 
 export class SupabaseUnavailableError extends Error {
   readonly code = "PLACEMENT_STORAGE_UNAVAILABLE";
@@ -33,14 +35,21 @@ export async function supabaseRest<T>(path: string, init?: RequestInit): Promise
   headers.set("Content-Type", "application/json");
   if (!headers.has("Prefer")) headers.set("Prefer", "return=representation");
   const method = (init?.method ?? "GET").toUpperCase();
-  const attempts = method === "GET" || method === "HEAD" ? 2 : 1;
+  // These methods are idempotent for the REST calls made by this app, so a
+  // timeout or temporary PostgREST outage can be retried without duplicating
+  // rows. POST remains single-attempt unless its caller explicitly retries an
+  // operation with its own idempotency key.
+  const attempts = RETRYABLE_METHODS.has(method) ? RETRY_DELAYS_MS.length + 1 : 1;
   for (let attempt = 0; attempt < attempts; attempt += 1) {
     try {
       const response = await fetch(`${url}/rest/v1/${path}`, { ...init, headers, cache: "no-store", signal: AbortSignal.timeout(READ_TIMEOUT_MS) });
       const body = await response.text();
       const unavailable = [502, 503, 504].includes(response.status) || body.includes('"code":"PGRST002"');
       if (unavailable) {
-        if (attempt + 1 < attempts) { await new Promise((resolve) => setTimeout(resolve, 750)); continue; }
+        if (attempt + 1 < attempts) {
+          await new Promise((resolve) => setTimeout(resolve, RETRY_DELAYS_MS[attempt]));
+          continue;
+        }
         throw new SupabaseUnavailableError();
       }
       if (!response.ok) throw new Error(`Supabase optimization request failed (${response.status}): ${body.slice(0, 800)}`);
@@ -48,7 +57,10 @@ export async function supabaseRest<T>(path: string, init?: RequestInit): Promise
     } catch (error) {
       if (isSupabaseUnavailableError(error)) throw error;
       if (error instanceof DOMException && error.name === "TimeoutError" || error instanceof TypeError) {
-        if (attempt + 1 < attempts) { await new Promise((resolve) => setTimeout(resolve, 750)); continue; }
+        if (attempt + 1 < attempts) {
+          await new Promise((resolve) => setTimeout(resolve, RETRY_DELAYS_MS[attempt]));
+          continue;
+        }
         throw new SupabaseUnavailableError();
       }
       throw error;
