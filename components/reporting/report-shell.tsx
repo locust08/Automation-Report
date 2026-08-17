@@ -105,14 +105,14 @@ export function ReportShell({
             <div
               className={
                 headerControlLayout === "wide"
-                  ? "grid gap-5 text-white lg:grid-cols-[minmax(340px,0.46fr)_minmax(0,1fr)] lg:items-start lg:gap-x-8"
+                  ? "grid gap-5 text-white lg:grid-cols-[minmax(430px,0.8fr)_minmax(0,1.2fr)] lg:items-start lg:gap-x-8"
                   : "grid gap-4 text-white md:grid-cols-[minmax(0,1fr)_auto] md:items-start md:gap-x-8"
               }
               data-report-export-header-grid="true"
             >
               <div className="min-w-0 space-y-3">
                 <h1
-                  className="break-words text-3xl font-semibold leading-tight tracking-tight [overflow-wrap:anywhere] sm:text-4xl md:text-6xl"
+                  className={`${headerControlLayout === "wide" ? "lg:text-4xl lg:[overflow-wrap:normal]" : "md:text-6xl"} break-words text-3xl font-semibold leading-tight tracking-tight [overflow-wrap:anywhere] sm:text-4xl`}
                   data-report-export-title="true"
                 >
                   {title}

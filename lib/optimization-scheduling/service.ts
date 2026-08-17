@@ -1,4 +1,5 @@
 import { jsonBody, qs, supabaseRest } from "@/lib/optimization/supabase-rest";
+import { sendOptimizationLifecycleEmailSafely } from "@/lib/optimization-scheduling/lifecycle-email";
 import { claimDailySlot, createDurableAnalysisJob, getDailySlot } from "@/lib/search-term-optimization/durable-analysis";
 
 export type OptimizationSchedule = {
@@ -132,9 +133,10 @@ export async function claimDueOptimizationSchedules(now = new Date()) {
 }
 
 export async function updateOptimizationScheduleRun(input:{runId:string;status:"dispatched"|"running"|"completed"|"failed";dispatchId?:string;termsProcessed?:number;batchesCompleted?:number;error?:string}) {
-  const runs = await supabaseRest<Array<{schedule_id:string;scheduled_for:string}>>(`ad_automation_search_term_schedule_runs?id=eq.${qs(input.runId)}&select=schedule_id,scheduled_for`);
+  const runs = await supabaseRest<Array<{schedule_id:string;scheduled_for:string;google_customer_id:string;status:string}>>(`ad_automation_search_term_schedule_runs?id=eq.${qs(input.runId)}&select=schedule_id,scheduled_for,google_customer_id,status`);
   const run = runs[0];
   if (!run) throw new Error("Schedule run was not found.");
+  const previousStatus = run.status;
   const runChanges:Record<string,string|number|null>={status:input.status,dispatch_id:input.dispatchId??null,terms_processed:input.termsProcessed??0,batches_completed:input.batchesCompleted??0,error:input.error??null,updated_at:new Date().toISOString()};
   if(input.status==="running")runChanges.started_at=new Date().toISOString();
   if(["completed","failed"].includes(input.status))runChanges.completed_at=new Date().toISOString();
@@ -146,4 +148,16 @@ export async function updateOptimizationScheduleRun(input:{runId:string;status:"
   const completed = input.status === "completed";
   const next = completed && schedule.schedule_type === "once" ? null : completed ? calculateScheduleNextRun(mapped,new Date(new Date(run.scheduled_for).getTime()+1000)) : schedule.next_run_at;
   await supabaseRest(`ad_automation_search_term_schedules?id=eq.${qs(run.schedule_id)}`, {method:"PATCH",body:jsonBody({enabled:completed&&schedule.schedule_type==="once"?false:schedule.enabled,next_run_at:next,last_run_at:completed?new Date().toISOString():schedule.last_run_at,last_status:input.status,last_error:input.error??null,updated_at:new Date().toISOString()})});
+  if (previousStatus !== input.status && ["running", "completed", "failed"].includes(input.status)) {
+    await sendOptimizationLifecycleEmailSafely({
+      status: input.status as "running" | "completed" | "failed",
+      runId: input.runId,
+      accountName: schedule.account_name,
+      googleCustomerId: run.google_customer_id,
+      scheduledFor: run.scheduled_for,
+      termsProcessed: input.termsProcessed,
+      batchesCompleted: input.batchesCompleted,
+      error: input.error,
+    });
+  }
 }

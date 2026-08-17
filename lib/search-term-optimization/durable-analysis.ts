@@ -31,7 +31,12 @@ export async function getDailyCapacity(date = malaysiaDate()):Promise<DailyCapac
 async function reserveScheduledSlots(date:string){
   const start=new Date(`${date}T00:00:00+08:00`);const end=new Date(start.getTime()+86400000);
   const schedules=await supabaseRest<Array<{id:string;google_customer_id:string;account_name:string}>>(`ad_automation_search_term_schedules?enabled=eq.true&next_run_at=gte.${qs(start.toISOString())}&next_run_at=lt.${qs(end.toISOString())}&select=id,google_customer_id,account_name`);
-  for(const schedule of schedules)await supabaseRest("ad_automation_search_term_daily_slots?on_conflict=malaysia_run_date,google_customer_id",{method:"POST",headers:{Prefer:"resolution=ignore-duplicates,return=minimal"},body:jsonBody({malaysia_run_date:date,google_customer_id:schedule.google_customer_id,account_name:schedule.account_name,source:"scheduled",status:"reserved"})});
+  if(!schedules.length)return;
+  await supabaseRest("ad_automation_search_term_daily_slots?on_conflict=malaysia_run_date,google_customer_id",{
+    method:"POST",
+    headers:{Prefer:"resolution=ignore-duplicates,return=minimal"},
+    body:jsonBody(schedules.map(schedule=>({malaysia_run_date:date,google_customer_id:schedule.google_customer_id,account_name:schedule.account_name,source:"scheduled",status:"reserved"}))),
+  });
 }
 
 export async function getDailySlot(customerId:string,date=malaysiaDate()){const rows=await supabaseRest<Slot[]>(`ad_automation_search_term_daily_slots?malaysia_run_date=eq.${qs(date)}&google_customer_id=eq.${qs(customerId)}&select=*&limit=1`);return rows[0]??null;}
