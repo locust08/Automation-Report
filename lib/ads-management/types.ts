@@ -41,11 +41,34 @@ export interface ManagedSitelink {
 }
 export type ManagedRecommendationCategory = "repairs" | "bidding_budgets" | "keywords_targeting" | "ads_assets" | "measurement";
 export interface ManagedRecommendationMetrics { impressions?: number; clicks?: number; costMicros?: string; conversions?: number; videoViews?: number }
+export type ManagedRecommendationDetailFamily = "keyword" | "budget" | "bidding" | "asset" | "targeting" | "shopping" | "repair" | "generic";
+export interface ManagedRecommendationDetailItem {
+  label: string;
+  value?: string;
+  values?: string[];
+  previousValue?: string;
+  recommendedValue?: string;
+}
+export interface ManagedRecommendationDetailSection {
+  title: string;
+  layout: "facts" | "chips" | "comparison";
+  items: ManagedRecommendationDetailItem[];
+}
+export type ManagedRecommendationDetails =
+  | { family: "keyword"; sections: ManagedRecommendationDetailSection[] }
+  | { family: "budget"; sections: ManagedRecommendationDetailSection[] }
+  | { family: "bidding"; sections: ManagedRecommendationDetailSection[] }
+  | { family: "asset"; sections: ManagedRecommendationDetailSection[] }
+  | { family: "targeting"; sections: ManagedRecommendationDetailSection[] }
+  | { family: "shopping"; sections: ManagedRecommendationDetailSection[] }
+  | { family: "repair"; sections: ManagedRecommendationDetailSection[] }
+  | { family: "generic"; sections: ManagedRecommendationDetailSection[] };
 export interface ManagedRecommendation {
   resourceName: string; type: string; category: ManagedRecommendationCategory; title: string; description: string;
   campaignResourceName?: string; campaignName?: string; adGroupResourceName?: string; adGroupName?: string;
   baseMetrics?: ManagedRecommendationMetrics; potentialMetrics?: ManagedRecommendationMetrics;
   optimizationScoreUplift?: number;
+  details: ManagedRecommendationDetails;
 }
 export interface ManagedCampaignPerformancePoint { date: string; costMicros: string; impressions: number; clicks: number; conversions: number; interactions: number }
 export interface ManagedPerformanceMetrics { costMicros: string; impressions: number; clicks: number; conversions: number; interactions: number }

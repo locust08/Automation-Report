@@ -1,6 +1,6 @@
 import { getCredentials, normalizeGoogleAccountId } from "@/lib/reporting/env";
 import { resolveGoogleAccountsFromNotion } from "@/lib/reporting/notion";
-import type { AdsFieldChangeRecord, ManagedAdTextAsset, ManagedAsset, ManagedAssetAutomationSetting, ManagedCampaign, ManagedCustomParameter, ManagedEntityType, ManagedFieldKey, ManagedFieldValue, ManagedRecommendation, ManagedRecommendationCategory, ManagedRecommendationMetrics, ManagedSitelink, ManagedSitelinkAssociation, ManagedSitelinkScope } from "@/lib/ads-management/types";
+import type { AdsFieldChangeRecord, ManagedAdTextAsset, ManagedAsset, ManagedAssetAutomationSetting, ManagedCampaign, ManagedCustomParameter, ManagedEntityType, ManagedFieldKey, ManagedFieldValue, ManagedRecommendation, ManagedRecommendationCategory, ManagedRecommendationDetailFamily, ManagedRecommendationDetailItem, ManagedRecommendationDetails, ManagedRecommendationMetrics, ManagedSitelink, ManagedSitelinkAssociation, ManagedSitelinkScope } from "@/lib/ads-management/types";
 
 interface GoogleRow {
   campaign?: { id?: string; resourceName?: string; name?: string; status?: string; primaryStatus?: string; primaryStatusReasons?: string[]; optimizationScore?: number; startDate?: string; endDate?: string; advertisingChannelType?: string; biddingStrategyType?: string; campaignBudget?: string };
@@ -11,7 +11,7 @@ interface GoogleRow {
   customerAsset?: { resourceName?: string; asset?: string; fieldType?: string; status?: string; source?: string };
   campaignAsset?: { resourceName?: string; campaign?: string; asset?: string; fieldType?: string; status?: string; source?: string };
   adGroupAsset?: { resourceName?: string; adGroup?: string; asset?: string; fieldType?: string; status?: string; source?: string };
-  recommendation?: { resourceName?: string; type?: string; dismissed?: boolean; campaign?: string; adGroup?: string; campaignBudget?: string; impact?: { baseMetrics?: ManagedRecommendationMetrics; potentialMetrics?: ManagedRecommendationMetrics } };
+  recommendation?: { resourceName?: string; type?: string; dismissed?: boolean; campaign?: string; campaigns?: string[]; adGroup?: string; campaignBudget?: string; impact?: { baseMetrics?: ManagedRecommendationMetrics; potentialMetrics?: ManagedRecommendationMetrics }; [key: string]: unknown };
   customer?: { optimizationScore?: number; currencyCode?: string };
   segments?: { date?: string; recommendationType?: string };
   metrics?: { costMicros?: string | number; impressions?: string | number; clicks?: string | number; conversions?: number; allConversions?: number; conversionsFromInteractionsRate?: number; interactions?: string | number; searchBudgetLostImpressionShare?: number; searchRankLostImpressionShare?: number; optimizationScoreUrl?: string; optimizationScoreUplift?: number };
@@ -260,10 +260,25 @@ function managedDateCondition(startDate?: string, endDate?: string) { const vali
 
 export async function fetchManagedRecommendations(accountId: string): Promise<{ recommendations: ManagedRecommendation[]; optimizationScore: number | null; optimizationScoreUrl: string | null; synchronizedAt: string }> {
   const ctx = await contextFor(accountId);
-  const recommendationQuery = `SELECT recommendation.resource_name, recommendation.type, recommendation.dismissed, recommendation.campaign, recommendation.ad_group, recommendation.campaign_budget, recommendation.impact, campaign.name, ad_group.name FROM recommendation WHERE recommendation.dismissed = FALSE`;
+  const baseRecommendationFields = "recommendation.resource_name, recommendation.type, recommendation.dismissed, recommendation.campaign, recommendation.campaigns, recommendation.ad_group, recommendation.campaign_budget, recommendation.impact, campaign.name, ad_group.name, customer.currency_code";
+  const detailRecommendationFields = [
+    "call_asset", "callout_asset", "campaign_budget", "custom_audience_opt_in", "display_expansion_opt_in", "dynamic_image_extension_opt_in", "enhanced_cpc_opt_in",
+    "forecasting_campaign_budget", "forecasting_set_target_cpa", "forecasting_set_target_roas", "improve_demand_gen_ad_strength", "improve_google_tag_coverage",
+    "improve_performance_max_ad_strength", "keyword_match_type", "keyword", "lead_form_asset", "lower_target_roas", "marginal_roi_campaign_budget",
+    "maximize_clicks_opt_in", "maximize_conversion_value_opt_in", "maximize_conversions_opt_in", "migrate_dynamic_search_ads_campaign_to_performance_max",
+    "move_unused_budget", "optimize_ad_rotation", "performance_max_final_url_opt_in", "performance_max_opt_in", "raise_target_cpa_bid_too_low", "raise_target_cpa",
+    "refresh_customer_match_list", "responsive_search_ad_asset", "responsive_search_ad_improve_ad_strength", "responsive_search_ad", "search_partners_opt_in",
+    "set_target_cpa", "set_target_roas", "shopping_add_age_group", "shopping_add_color", "shopping_add_gender", "shopping_add_gtin", "shopping_add_more_identifiers",
+    "shopping_add_products_to_campaign", "shopping_add_size", "shopping_fix_disapproved_products", "shopping_fix_merchant_center_account_suspension_warning",
+    "shopping_fix_suspended_merchant_center_account", "shopping_migrate_regular_shopping_campaign_offers_to_performance_max", "shopping_target_all_offers",
+    "sitelink_asset", "target_cpa_opt_in", "target_roas_opt_in", "text_ad", "upgrade_local_campaign_to_performance_max",
+    "upgrade_smart_shopping_campaign_to_performance_max", "use_broad_match_keyword",
+  ].map((fieldName) => `recommendation.${fieldName}_recommendation`).join(", ");
+  const baseRecommendationQuery = `SELECT ${baseRecommendationFields} FROM recommendation WHERE recommendation.dismissed = FALSE`;
+  const richRecommendationQuery = `SELECT ${baseRecommendationFields}, ${detailRecommendationFields} FROM recommendation WHERE recommendation.dismissed = FALSE`;
   const scoreQuery = `SELECT customer.optimization_score, metrics.optimization_score_url, metrics.optimization_score_uplift, segments.recommendation_type FROM customer`;
   const [recommendationBatches, scoreBatches] = await Promise.all([
-    googlePost<Array<{ results?: GoogleRow[] }>>(ctx, "googleAds:searchStream", { query: recommendationQuery }),
+    fetchRecommendationRowsWithFallback(ctx, richRecommendationQuery, baseRecommendationQuery),
     googlePost<Array<{ results?: GoogleRow[] }>>(ctx, "googleAds:searchStream", { query: scoreQuery }),
   ]);
   const scoreRows = scoreBatches.flatMap((batch) => batch.results ?? []);
@@ -271,10 +286,113 @@ export async function fetchManagedRecommendations(accountId: string): Promise<{ 
   const recommendations = recommendationBatches.flatMap((batch) => batch.results ?? []).flatMap((row): ManagedRecommendation[] => {
     const item = row.recommendation;
     if (!item?.resourceName || !item.type) return [];
-    return [{ resourceName: item.resourceName, type: item.type, category: recommendationCategory(item.type), title: recommendationTitle(item.type), description: recommendationDescription(item.type), campaignResourceName: item.campaign, campaignName: row.campaign?.name, adGroupResourceName: item.adGroup, adGroupName: row.adGroup?.name, baseMetrics: item.impact?.baseMetrics, potentialMetrics: item.impact?.potentialMetrics, optimizationScoreUplift: scoreUpliftByType.get(item.type) }];
+    return [{ resourceName: item.resourceName, type: item.type, category: recommendationCategory(item.type), title: recommendationTitle(item.type), description: recommendationDescription(item.type), campaignResourceName: item.campaign, campaignName: row.campaign?.name, adGroupResourceName: item.adGroup, adGroupName: row.adGroup?.name, baseMetrics: item.impact?.baseMetrics, potentialMetrics: item.impact?.potentialMetrics, optimizationScoreUplift: scoreUpliftByType.get(item.type), details: managedRecommendationDetails(item.type, item, row.customer?.currencyCode || "MYR") }];
   });
   const scoreRow = scoreRows[0];
   return { recommendations, optimizationScore: typeof scoreRow?.customer?.optimizationScore === "number" ? scoreRow.customer.optimizationScore : null, optimizationScoreUrl: scoreRow?.metrics?.optimizationScoreUrl || null, synchronizedAt: new Date().toISOString() };
+}
+
+async function fetchRecommendationRowsWithFallback(ctx: GoogleContext, richQuery: string, baseQuery: string): Promise<Array<{ results?: GoogleRow[] }>> {
+  try {
+    return await googlePost<Array<{ results?: GoogleRow[] }>>(ctx, "googleAds:searchStream", { query: richQuery });
+  } catch (error) {
+    console.warn("Google Ads rich recommendation query failed; retrying with base recommendation fields.", error instanceof Error ? error.message : error);
+    return googlePost<Array<{ results?: GoogleRow[] }>>(ctx, "googleAds:searchStream", { query: baseQuery });
+  }
+}
+
+function managedRecommendationDetails(type: string, recommendation: NonNullable<GoogleRow["recommendation"]>, currencyCode: string): ManagedRecommendationDetails {
+  const family = recommendationDetailFamily(type);
+  const detailKey = Object.keys(recommendation).find((key) => key.endsWith("Recommendation") && recommendation[key] && typeof recommendation[key] === "object");
+  const payload = detailKey ? recommendation[detailKey] : undefined;
+  if (!payload || typeof payload !== "object") return { family: "generic", sections: [] };
+  const record = payload as Record<string, unknown>;
+  const sections = [] as ManagedRecommendationDetails["sections"];
+
+  if (family === "keyword") {
+    const keyword = asRecord(record.keyword);
+    const keywordRows: ManagedRecommendationDetailItem[] = [];
+    if (keyword?.text) keywordRows.push({ label: "Suggested keyword", value: String(keyword.text) });
+    if (keyword?.matchType) keywordRows.push({ label: "Match type", value: humanize(String(keyword.matchType)) });
+    const bid = microsDisplay(record.recommendedCpcBidMicros, currencyCode);
+    if (bid) keywordRows.push({ label: "Recommended CPC", value: bid });
+    if (keywordRows.length) sections.push({ title: "Keyword", layout: "facts", items: keywordRows });
+    const terms = stringValues(record.searchTerms);
+    if (terms.length) sections.push({ title: "Matching search terms", layout: "chips", items: [{ label: "Search terms", values: terms }] });
+  }
+
+  if (family === "budget") {
+    const current = microsDisplay(record.currentBudgetAmountMicros, currencyCode);
+    const recommended = microsDisplay(record.recommendedBudgetAmountMicros, currencyCode);
+    if (current || recommended) sections.push({ title: "Budget change", layout: "comparison", items: [{ label: "Daily budget", previousValue: current || "Not returned", recommendedValue: recommended || "Not returned" }] });
+    const options = Array.isArray(record.budgetOptions) ? record.budgetOptions : [];
+    const optionRows = options.flatMap((option, index): ManagedRecommendationDetailItem[] => {
+      const value = asRecord(option);
+      if (!value) return [];
+      const amount = microsDisplay(value.budgetAmountMicros, currencyCode);
+      return amount ? [{ label: `Option ${index + 1}`, value: amount }] : [];
+    });
+    if (optionRows.length) sections.push({ title: "Google forecast options", layout: "facts", items: optionRows });
+  }
+
+  const specializedKeys = new Set(family === "keyword" ? ["keyword", "searchTerms", "recommendedCpcBidMicros"] : family === "budget" ? ["currentBudgetAmountMicros", "recommendedBudgetAmountMicros", "budgetOptions"] : []);
+  const genericRecord = Object.fromEntries(Object.entries(record).filter(([key]) => !specializedKeys.has(key)));
+  const genericItems = flattenRecommendationFacts(genericRecord, currencyCode);
+  if (genericItems.length) sections.push({ title: recommendationDetailSectionTitle(family), layout: family === "asset" || family === "targeting" ? "chips" : "facts", items: genericItems });
+  return { family, sections } as ManagedRecommendationDetails;
+}
+
+function recommendationDetailFamily(type: string): ManagedRecommendationDetailFamily {
+  if (type === "KEYWORD" || type.includes("KEYWORD_MATCH") || type.includes("BROAD_MATCH")) return "keyword";
+  if (type.includes("BUDGET")) return "budget";
+  if (type.includes("CPA") || type.includes("ROAS") || type.includes("BID") || type.includes("MAXIMIZE") || type.includes("CPC")) return "bidding";
+  if (type.includes("SHOPPING") || type.includes("MERCHANT_CENTER")) return "shopping";
+  if (type.includes("FIX") || type.includes("SUSPENSION") || type.includes("REFRESH") || type.includes("TAG_COVERAGE")) return "repair";
+  if (type.includes("SEARCH_PARTNERS") || type.includes("DISPLAY_EXPANSION") || type.includes("AUDIENCE") || type.includes("CUSTOMER_MATCH")) return "targeting";
+  if (type.includes("AD") || type.includes("ASSET") || type.includes("IMAGE") || type.includes("SITELINK") || type.includes("PERFORMANCE_MAX")) return "asset";
+  return "generic";
+}
+
+function recommendationDetailSectionTitle(family: ManagedRecommendationDetailFamily): string {
+  return ({ keyword: "Keyword details", budget: "Budget details", bidding: "Bidding change", asset: "Suggested ads and assets", targeting: "Targeting change", shopping: "Shopping details", repair: "Issue details", generic: "Recommendation details" } as Record<ManagedRecommendationDetailFamily, string>)[family];
+}
+
+function flattenRecommendationFacts(value: Record<string, unknown>, currencyCode: string, prefix = ""): ManagedRecommendationDetailItem[] {
+  return Object.entries(value).flatMap(([key, candidate]): ManagedRecommendationDetailItem[] => {
+    if (candidate == null || candidate === "" || key === "impact") return [];
+    const label = [prefix, humanize(key)].filter(Boolean).join(" · ");
+    if (key.toLowerCase().endsWith("micros")) {
+      const formatted = microsDisplay(candidate, currencyCode);
+      return formatted ? [{ label, value: formatted }] : [];
+    }
+    if (Array.isArray(candidate)) {
+      const values = stringValues(candidate);
+      if (values.length) return [{ label, values: values.slice(0, 30) }];
+      return candidate.slice(0, 12).flatMap((item, index) => {
+        const record = asRecord(item);
+        return record ? flattenRecommendationFacts(record, currencyCode, `${label} ${index + 1}`) : [];
+      });
+    }
+    if (typeof candidate === "object") return flattenRecommendationFacts(candidate as Record<string, unknown>, currencyCode, label);
+    return [{ label, value: typeof candidate === "boolean" ? (candidate ? "Yes" : "No") : humanize(String(candidate)) }];
+  });
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null { return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null; }
+function stringValues(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((item): string[] => {
+    if (typeof item === "string" || typeof item === "number") return [String(item)];
+    const record = asRecord(item);
+    if (!record) return [];
+    const preferred = record.text ?? record.searchTerm ?? record.name ?? record.value;
+    return preferred == null ? [] : [String(preferred)];
+  }).filter(Boolean);
+}
+function microsDisplay(value: unknown, currencyCode: string): string | null {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return null;
+  return new Intl.NumberFormat("en-MY", { style: "currency", currency: currencyCode || "MYR", maximumFractionDigits: 2 }).format(number / 1_000_000);
 }
 
 function recommendationCategory(type: string): ManagedRecommendationCategory {

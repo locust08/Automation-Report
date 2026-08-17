@@ -14,7 +14,7 @@ import { ChangeRequestPageClient } from "@/components/ads-management/change-requ
 import { ReportShell } from "@/components/reporting/report-shell";
 import { ReportErrorState } from "@/components/reporting/report-state";
 import { canEditAds, type AuthenticatedAdsUser } from "@/lib/auth/permissions";
-import type { AdsChangeSetRecord, DraftChangeInput, DraftEditorContext, ManagedAd, ManagedAdTextAsset, ManagedAssetAutomationSetting, ManagedCampaign, ManagedCampaignPerformancePoint, ManagedCustomParameter, ManagedFieldValue, ManagedPerformanceMetrics, ManagedRecommendation, ManagedRecommendationCategory, ManagedSitelink, ManagedSitelinkAssociation, ManagedSitelinkScope } from "@/lib/ads-management/types";
+import type { AdsChangeSetRecord, DraftChangeInput, DraftEditorContext, ManagedAd, ManagedAdTextAsset, ManagedAssetAutomationSetting, ManagedCampaign, ManagedCampaignPerformancePoint, ManagedCustomParameter, ManagedFieldValue, ManagedPerformanceMetrics, ManagedRecommendation, ManagedRecommendationCategory, ManagedRecommendationDetailFamily, ManagedRecommendationDetailSection, ManagedSitelink, ManagedSitelinkAssociation, ManagedSitelinkScope } from "@/lib/ads-management/types";
 
 type SaveState = "idle" | "saving" | "saved" | "failed";
 type ManagementView = "recommendations" | "campaigns" | "ad_groups" | "ads" | "history";
@@ -1594,22 +1594,106 @@ function RecommendationCard({ recommendations, featured, onApply }: { recommenda
         </Button>
         <ChevronDownIcon className="size-4 shrink-0 text-slate-400 transition-transform group-open:rotate-180" />
       </summary>
-      <div className="border-t px-4 py-4">
-        <p className="text-sm leading-6 text-slate-600">{recommendation.description}</p>
-        <div className="mt-3 min-w-0">
+      <div className="border-t bg-slate-50/60 px-4 py-4">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <p className="max-w-3xl text-sm leading-6 text-slate-600">{recommendation.description}</p>
           {delta ? (
-            <div className="inline-flex rounded-lg border border-green-100 bg-green-50 px-3 py-2">
-              <span>
-                <span className="block text-[10px] uppercase tracking-wide text-green-700">Projected impact</span>
-                <strong className="text-base text-green-800">{delta}</strong>
-              </span>
+            <div className="shrink-0 rounded-lg border border-green-100 bg-green-50 px-3 py-2">
+              <span className="block text-[10px] uppercase tracking-wide text-green-700">Projected impact</span>
+              <strong className="text-base text-green-800">{delta}</strong>
             </div>
           ) : null}
-          {recommendations.length > 1 ? <p className="mt-3 text-xs leading-5 text-slate-500">{campaignNames.length ? campaignNames.join(" · ") : `${recommendations.length} account-level recommendations`}</p> : recommendation.campaignName || recommendation.adGroupName ? <p className="mt-3 text-xs text-slate-500">{[recommendation.campaignName, recommendation.adGroupName].filter(Boolean).join(" · ")}</p> : null}
         </div>
+        <div className="mt-4 space-y-3">
+          {recommendations.map((item, index) => (
+            <RecommendationInstance key={item.resourceName} recommendation={item} index={index} total={recommendations.length} />
+          ))}
+        </div>
+        {recommendations.length > 1 && campaignNames.length ? <p className="mt-3 text-xs leading-5 text-slate-500">Affected campaigns: {campaignNames.join(" · ")}</p> : null}
       </div>
     </details>
   );
+}
+function RecommendationInstance({ recommendation, index, total }: { recommendation: ManagedRecommendation; index: number; total: number }) {
+  const context = [recommendation.campaignName, recommendation.adGroupName].filter(Boolean).join(" · ");
+  const impact = recommendationDelta(recommendation);
+  const presentation = recommendationDetailPresentation[recommendation.details.family];
+  return (
+    <article className="overflow-hidden rounded-xl border border-slate-200 bg-white">
+      <div className="flex flex-wrap items-start justify-between gap-3 border-b border-slate-100 px-4 py-3">
+        <div className="min-w-0">
+          <p className={`text-xs font-semibold uppercase tracking-wide ${presentation.labelClass}`}>{total > 1 ? `Recommendation ${index + 1} · ${presentation.label}` : presentation.label}</p>
+          <p className="mt-1 text-sm font-semibold text-slate-900">{context || "Account-level recommendation"}</p>
+        </div>
+        {impact ? <span className="rounded-full bg-green-50 px-2.5 py-1 text-xs font-semibold text-green-700">{impact}</span> : null}
+      </div>
+      {recommendation.details.sections.length ? (
+        <div className="grid gap-3 p-4 lg:grid-cols-2">
+          {recommendation.details.sections.map((section, sectionIndex) => (
+            <RecommendationDetailSectionView key={`${section.title}-${sectionIndex}`} section={section} />
+          ))}
+        </div>
+      ) : (
+        <p className="px-4 py-3 text-sm text-slate-500">Google did not return additional structured details for this recommendation.</p>
+      )}
+    </article>
+  );
+}
+const recommendationDetailPresentation: Record<ManagedRecommendationDetailFamily, { label: string; labelClass: string }> = {
+  keyword: { label: "Keyword opportunity", labelClass: "text-violet-700" },
+  budget: { label: "Budget recommendation", labelClass: "text-blue-700" },
+  bidding: { label: "Bidding recommendation", labelClass: "text-cyan-700" },
+  asset: { label: "Ad and asset recommendation", labelClass: "text-indigo-700" },
+  targeting: { label: "Targeting recommendation", labelClass: "text-fuchsia-700" },
+  shopping: { label: "Shopping recommendation", labelClass: "text-amber-700" },
+  repair: { label: "Issue to resolve", labelClass: "text-red-700" },
+  generic: { label: "Recommendation details", labelClass: "text-slate-500" },
+};
+function RecommendationDetailSectionView({ section }: { section: ManagedRecommendationDetailSection }) {
+  if (section.layout === "comparison") {
+    return (
+      <section className="rounded-xl border border-blue-100 bg-blue-50/50 p-3">
+        <p className="text-xs font-semibold uppercase tracking-wide text-blue-700">{section.title}</p>
+        <div className="mt-3 space-y-3">
+          {section.items.map((item, index) => (
+            <div key={`${item.label}-${index}`}>
+              <p className="text-xs text-slate-500">{item.label}</p>
+              <div className="mt-1 grid grid-cols-[1fr_auto_1fr] items-center gap-2 text-sm">
+                <span className="rounded-lg border bg-white px-3 py-2 text-slate-600">{item.previousValue || "—"}</span>
+                <span className="text-slate-400">→</span>
+                <strong className="rounded-lg border border-blue-200 bg-white px-3 py-2 text-blue-700">{item.recommendedValue || "—"}</strong>
+              </div>
+            </div>
+          ))}
+        </div>
+      </section>
+    );
+  }
+  return (
+    <section className="rounded-xl border border-slate-200 bg-white p-3">
+      <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">{section.title}</p>
+      <div className="mt-3 space-y-3">
+        {section.items.map((item, index) => (
+          <div key={`${item.label}-${index}`}>
+            <p className="text-xs text-slate-500">{item.label}</p>
+            {item.values?.length ? (
+              <div className="mt-1.5 flex flex-wrap gap-1.5">
+                {item.values.map((value, valueIndex) => <span key={`${value}-${valueIndex}`} className="max-w-full break-words rounded-full bg-slate-100 px-2.5 py-1 text-xs font-medium text-slate-700">{value}</span>)}
+              </div>
+            ) : <p className="mt-1 break-words text-sm font-semibold text-slate-900">{item.value || "—"}</p>}
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+function recommendationDelta(recommendation: ManagedRecommendation): string | null {
+  const clicks = Number(recommendation.potentialMetrics?.clicks || 0) - Number(recommendation.baseMetrics?.clicks || 0);
+  if (clicks > 0) return `+${Math.round(clicks)} clicks`;
+  const conversions = Number(recommendation.potentialMetrics?.conversions || 0) - Number(recommendation.baseMetrics?.conversions || 0);
+  if (conversions > 0) return `+${conversions.toFixed(1)} conversions`;
+  const impressions = Number(recommendation.potentialMetrics?.impressions || 0) - Number(recommendation.baseMetrics?.impressions || 0);
+  return impressions > 0 ? `+${Math.round(impressions)} impressions` : null;
 }
 function recommendationGroupDelta(recommendations: ManagedRecommendation[]): string | null {
   const clicks = recommendations.reduce((sum, recommendation) => sum + Number(recommendation.potentialMetrics?.clicks || 0) - Number(recommendation.baseMetrics?.clicks || 0), 0);
