@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react"
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 
 import { GoogleAccountSearchField } from "@/components/optimization/google-account-search-field";
+import { DailyCapacityCounterGrid, type DailyAnalysisCapacity } from "@/components/optimization/daily-capacity-counter-grid";
 import { PlacementOptimizationPageClient } from "@/components/placement-optimization/placement-optimization-page-client";
 import { ReportShell } from "@/components/reporting/report-shell";
 import { SearchTermOptimizationPageClient } from "@/components/search-term-optimization/search-term-optimization-page-client";
@@ -19,6 +20,7 @@ type Account = {
 type SearchState = "idle" | "loading" | "success" | "error";
 
 const RECENT_ACCOUNTS_KEY = "google-optimization-recent-accounts";
+const ACCOUNT_SUMMARY_HOST_ID = "google-optimization-account-summary";
 
 export function GoogleOptimizationPageClient({ role }: { role: AuthRole }) {
   const pathname = usePathname();
@@ -35,6 +37,16 @@ export function GoogleOptimizationPageClient({ role }: { role: AuthRole }) {
   const [open, setOpen] = useState(false);
   const [highlightedIndex, setHighlightedIndex] = useState(-1);
   const requestId = useRef(0);
+  const [dailyCapacity, setDailyCapacity] = useState<DailyAnalysisCapacity | null>(null);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    void fetch("/api/search-term-optimization/capacity", { cache: "no-store", signal: controller.signal })
+      .then(async response => response.ok ? response.json() as Promise<DailyAnalysisCapacity> : null)
+      .then(capacity => setDailyCapacity(capacity))
+      .catch(() => undefined);
+    return () => controller.abort();
+  }, []);
 
   useEffect(() => {
     try {
@@ -160,7 +172,15 @@ export function GoogleOptimizationPageClient({ role }: { role: AuthRole }) {
   }
 
   return (
-    <ReportShell title="Google Optimization" dateLabel="Search terms and placements" activeQuery={activeQuery} initialRole={role} reportReady>
+    <ReportShell
+      title="Google Optimization"
+      dateLabel=""
+      activeQuery={activeQuery}
+      initialRole={role}
+      reportReady
+      headerControlLayout="wide"
+      headerDateControl={<DailyCapacityCounterGrid capacity={dailyCapacity} />}
+    >
       <div className="space-y-5 text-neutral-950">
         <section className="rounded-2xl border border-neutral-200 bg-white p-5 shadow-sm sm:p-7">
           <label className="mb-2 block text-sm font-semibold text-neutral-800">Google Ads account</label>
@@ -182,7 +202,7 @@ export function GoogleOptimizationPageClient({ role }: { role: AuthRole }) {
             />
           </div>
           <p className="mt-2 text-xs text-neutral-500">Select one account to load its saved search-term and placement optimization data.</p>
-          {selectedAccount ? <div className="mt-5"><h2 className="text-3xl font-semibold">{selectedAccount.accountName}</h2><p className="mt-1 text-sm text-neutral-500">CID {selectedAccount.adAccountId}</p></div> : null}
+          {selectedAccount ? <div id={ACCOUNT_SUMMARY_HOST_ID} className="mt-5">{tab === "placements" ? <><h2 className="text-3xl font-semibold">{selectedAccount.accountName}</h2><p className="mt-1 text-sm text-neutral-500">CID {selectedAccount.adAccountId}</p></> : null}</div> : null}
         </section>
 
         <div className="grid grid-cols-2 rounded-xl border border-neutral-200 bg-white p-1 shadow-sm" role="tablist" aria-label="Google optimization views">
@@ -192,7 +212,7 @@ export function GoogleOptimizationPageClient({ role }: { role: AuthRole }) {
 
         {!selectedAccount ? <section className="rounded-2xl border border-neutral-200 bg-white p-8 text-center shadow-sm"><h2 className="font-semibold">Select a Google Ads account</h2><p className="mt-1 text-sm text-neutral-500">Both optimization dashboards will load for the selected account.</p></section> : null}
         <div role="tabpanel" hidden={tab !== "search-terms"} className={tab === "search-terms" && selectedAccount ? "block" : "hidden"}>
-          <SearchTermOptimizationPageClient key={`search-terms-${normalizeId(selectedAccount?.adAccountId ?? "none")}`} role={role} embedded externalAccount={selectedAccount} />
+          <SearchTermOptimizationPageClient key={`search-terms-${normalizeId(selectedAccount?.adAccountId ?? "none")}`} role={role} embedded externalAccount={selectedAccount} embeddedHeaderTargetId={tab === "search-terms" ? ACCOUNT_SUMMARY_HOST_ID : undefined} />
         </div>
         <div role="tabpanel" hidden={tab !== "placements"} className={tab === "placements" && selectedAccount ? "block" : "hidden"}>
           <PlacementOptimizationPageClient key={`placements-${normalizeId(selectedAccount?.adAccountId ?? "none")}`} role={role} embedded externalAccount={selectedAccount} />

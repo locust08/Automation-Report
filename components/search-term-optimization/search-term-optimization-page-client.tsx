@@ -1,6 +1,7 @@
 "use client";
 
 import { KeyboardEvent, type ComponentProps, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import {
   ChevronLeftIcon,
   ChevronRightIcon,
@@ -11,7 +12,6 @@ import {
   FileDownIcon,
   SearchIcon,
   ShieldAlertIcon,
-  SaveIcon,
   XIcon,
 } from "lucide-react";
 
@@ -19,10 +19,8 @@ import { Badge } from "@/components/ui/badge";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Spinner } from "@/components/ui/spinner";
-import { Switch } from "@/components/ui/switch";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { ReportDatePicker, type ReportDateSelection } from "@/components/search-term-optimization/report-date-picker";
 import { ReportShell } from "@/components/reporting/report-shell";
@@ -33,8 +31,6 @@ import type {
   OptimizationDashboardPayload,
   OptimizationResult,
   GoogleKeywordRecommendation,
-  SearchTermAccountSettings,
-  AnalysisScheduleFrequency,
 } from "@/lib/search-term-optimization/types";
 
 type CategoryFilter =
@@ -78,8 +74,10 @@ type DashboardLoadErrorCode = "SEARCH_TERM_STORAGE_UNAVAILABLE" | "SEARCH_TERM_A
 
 const REVIEW_ROLES: AuthRole[] = ["pms", "specialist", "admin"];
 
-export function SearchTermOptimizationPageClient({ role, embedded = false, externalAccount }: { role: AuthRole; embedded?: boolean; externalAccount?: { accountName: string; adAccountId: string; accessPath?: string | null } | null }) {
+export function SearchTermOptimizationPageClient({ role, embedded = false, externalAccount, embeddedHeaderTargetId }: { role: AuthRole; embedded?: boolean; externalAccount?: { accountName: string; adAccountId: string; accessPath?: string | null } | null; embeddedHeaderTargetId?: string }) {
   const isAdmin = isAdminRole(role);
+  const [embeddedHeaderTarget,setEmbeddedHeaderTarget]=useState<HTMLElement|null>(null);
+  useEffect(()=>{setEmbeddedHeaderTarget(embeddedHeaderTargetId?document.getElementById(embeddedHeaderTargetId):null);},[embeddedHeaderTargetId]);
   const [categoryFilter, setCategoryFilter] = useState<CategoryFilter>("special review needed");
   const canReview = REVIEW_ROLES.includes(role);
   const canApprove = false;
@@ -684,8 +682,28 @@ export function SearchTermOptimizationPageClient({ role, embedded = false, exter
       reportReady={!loading && !analysisLoading && !error}
     >
       <div className="space-y-5 text-neutral-950">
-        {dailyCapacity ? <section className="rounded-2xl border border-neutral-200 bg-white p-4 shadow-sm"><div className="mb-4"><p className="font-semibold text-neutral-950">Daily analysis limit</p><p className="mt-1 text-sm text-neutral-500">Overall account-analysis attempts for today · maximum {dailyCapacity.total} accounts</p></div><div className="grid grid-cols-2 gap-3 sm:grid-cols-4"><CapacityStat label="Total attempts" value={dailyCapacity.total}/><CapacityStat label="Used" value={dailyCapacity.used+dailyCapacity.claiming}/><CapacityStat label="Reserved" value={dailyCapacity.reserved}/><CapacityStat label="Available" value={dailyCapacity.available}/></div></section> : null}
-        <section className="relative rounded-3xl border border-neutral-200 bg-white p-5 shadow-sm sm:p-7">
+        {embedded&&embeddedHeaderTarget?createPortal(<div className="space-y-5">
+          {isAdmin&&externalAccount?<div className="flex flex-wrap gap-2">
+            <Button type="button" className="h-11 cursor-pointer bg-red-600 text-white hover:bg-red-700" disabled={analysisLoading||dailyCapacityReached} onClick={()=>void runSelectedAccountAnalysis()}>
+              {analysisLoading?<Spinner className="size-4"/>:<SearchIcon className="size-4"/>}
+              {analysisLoading?"Analyzing...":dailyCapacityReached?"Max analysis reached today":"Start analysis"}
+            </Button>
+            <Button type="button" variant="outline" className="h-11 cursor-pointer whitespace-nowrap hover:border-red-200 hover:bg-red-50 hover:text-red-700" disabled={!data||loading||analysisLoading} onClick={()=>{setReportDateSelection({mode:"single",date:malaysiaToday()});setReportDialogOpen(true);}}>
+              <FileDownIcon className="size-4"/>Summary report
+            </Button>
+          </div>:null}
+          <div>
+            <h1 className="text-3xl font-semibold sm:text-5xl">{externalAccount?.accountName??(!analysisLoading&&data?.account.customerName?data.account.customerName:accountPerformance?.accountName??"Search-Term Optimization")}</h1>
+            {!analysisLoading&&data?<div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+              <AccountDetail label="Google Ads account" value={`CID ${data.account.customerId}`}/>
+              <AccountDetail label="Analysis period" value={`${formatDate(data.account.reportingPeriod.startDate)} – ${formatDate(data.account.reportingPeriod.endDate)}`} emphasized/>
+              <AccountDetail label="Analyzed on" value={formatDateTime(data.account.lastAnalysisAt)}/>
+              <AccountDetail label="Next scheduled run" value={data.account.nextRunAt?formatDateTime(data.account.nextRunAt):"Not scheduled"}/>
+            </div>:<p className="mt-1 text-sm text-neutral-500">CID {externalAccount?.adAccountId}</p>}
+          </div>
+        </div>,embeddedHeaderTarget):null}
+        {!embedded && dailyCapacity ? <section className="rounded-2xl border border-neutral-200 bg-white p-4 shadow-sm"><div className="mb-4"><p className="font-semibold text-neutral-950">Daily analysis limit</p><p className="mt-1 text-sm text-neutral-500">Overall account-analysis attempts for today · maximum {dailyCapacity.total} accounts</p></div><div className="grid grid-cols-2 gap-3 sm:grid-cols-4"><CapacityStat label="Total attempts" value={dailyCapacity.total}/><CapacityStat label="Used" value={dailyCapacity.used+dailyCapacity.claiming}/><CapacityStat label="Reserved" value={dailyCapacity.reserved}/><CapacityStat label="Available" value={dailyCapacity.available}/></div></section> : null}
+        <section className={embedded?"hidden":"relative rounded-3xl border border-neutral-200 bg-white p-5 shadow-sm sm:p-7"}>
           {isAdmin && !embedded ? <div className="mb-5">
             <label className="mb-2 block text-sm font-semibold text-neutral-800">Notion account search</label>
             <div className="flex max-w-4xl items-start gap-2">
@@ -776,7 +794,7 @@ export function SearchTermOptimizationPageClient({ role, embedded = false, exter
 
         {data ? (
           <>
-            <section className="grid grid-cols-[repeat(auto-fit,minmax(260px,1fr))] gap-3">
+            {!embedded ? <section className="grid grid-cols-[repeat(auto-fit,minmax(260px,1fr))] gap-3">
               {cards.map(([key, label, value]) => (
                 <div
                   key={key}
@@ -786,7 +804,7 @@ export function SearchTermOptimizationPageClient({ role, embedded = false, exter
                   <span className="mt-auto block pt-2 text-3xl font-semibold leading-none tabular-nums">{value.toLocaleString("en-MY")}</span>
                 </div>
               ))}
-            </section>
+            </section> : null}
 
             <section className="rounded-2xl border border-neutral-200 bg-white p-5 shadow-sm">
               <h2 className="text-lg font-semibold">{data.results[0]?.adGroup || "General"}</h2>
@@ -796,18 +814,6 @@ export function SearchTermOptimizationPageClient({ role, embedded = false, exter
                 </a>
               ) : null}
               <GeneralAccountPerformance account={accountPerformance} />
-              <AccountScheduleSettings
-                settings={data.settings}
-                editable={isAdmin}
-                onSaved={(settings) => {
-                  setData((current) => current ? {
-                    ...current,
-                    settings,
-                    account: { ...current.account, nextRunAt: settings.nextRunAt },
-                  } : current);
-                  void load(settings.googleCustomerId);
-                }}
-              />
             </section>
 
             <section className="rounded-2xl border border-neutral-200 bg-white p-5 shadow-sm">
@@ -965,114 +971,6 @@ function AutomationUnavailableStatus() {
     </div>
   );
 }
-
-function AccountScheduleSettings({ settings, editable, onSaved }: {
-  settings: SearchTermAccountSettings;
-  editable: boolean;
-  onSaved: (settings: SearchTermAccountSettings) => void;
-}) {
-  const [frequency, setFrequency] = useState<AnalysisScheduleFrequency>(
-    settings.scheduleFrequency === "manual" ? "monthly" : settings.scheduleFrequency,
-  );
-  const [automationEnabled, setAutomationEnabled] = useState(settings.automationEnabled);
-  const [autoSafe, setAutoSafe] = useState(String(settings.autoSafeScoreThreshold));
-  const [highSpend, setHighSpend] = useState(String(settings.highSpendThreshold));
-  const [minimumClicks, setMinimumClicks] = useState(String(settings.minimumClicksThreshold));
-  const [saving, setSaving] = useState(false);
-  const [message, setMessage] = useState<string | null>(null);
-
-  useEffect(() => {
-    setAutomationEnabled(settings.automationEnabled);
-    setFrequency(settings.scheduleFrequency === "manual" ? "monthly" : settings.scheduleFrequency);
-    setAutoSafe(String(settings.autoSafeScoreThreshold));
-    setHighSpend(String(settings.highSpendThreshold));
-    setMinimumClicks(String(settings.minimumClicksThreshold));
-  }, [settings]);
-
-  async function save() {
-    setSaving(true);
-    setMessage(null);
-    try {
-      const response = await fetch("/api/search-term-optimization/settings", {
-        method: "PUT",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          googleCustomerId: settings.googleCustomerId,
-          automationEnabled,
-          scheduleFrequency: frequency,
-          autoSafeScoreThreshold: Number(autoSafe),
-          highSpendThreshold: Number(highSpend),
-          minimumClicksThreshold: Number(minimumClicks),
-        }),
-      });
-      const payload = await response.json() as SearchTermAccountSettings & { error?: string };
-      if (!response.ok) throw new Error(payload.error ?? "Unable to save account settings.");
-      onSaved(payload);
-      setMessage("Account rules saved.");
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : "Unable to save account settings.");
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  return (
-    <div className="mt-4 space-y-3">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <p className="text-sm font-semibold text-neutral-900">Account rules</p>
-          <p className="mt-0.5 text-xs text-neutral-500">{settings.nextRunAt ? `Next analysis ${formatDateTime(settings.nextRunAt)}` : "Monthly analysis is the default schedule"}</p>
-        </div>
-        {!editable ? <Badge variant="outline">Administrator managed</Badge> : null}
-      </div>
-      <div className="grid gap-3 lg:grid-cols-2">
-        <section className="rounded-xl border border-neutral-200 bg-white p-4 shadow-sm" aria-labelledby="automation-rules-heading">
-          <div className="mb-3 flex items-center justify-between gap-3">
-            <div>
-              <h3 id="automation-rules-heading" className="text-sm font-semibold text-neutral-900">Automation</h3>
-              <p className="mt-0.5 text-xs text-neutral-500">{automationEnabled ? "Scheduled analysis is on." : "Scheduled analysis is off."}</p>
-            </div>
-            <div className="flex items-center gap-2">
-              <span className="text-xs font-semibold text-neutral-600">{automationEnabled ? "On" : "Off"}</span>
-              <Switch
-                checked={automationEnabled}
-                onCheckedChange={setAutomationEnabled}
-                disabled={!editable || saving}
-                aria-label="Enable scheduled analysis"
-                className="data-[state=checked]:bg-emerald-600 data-[state=unchecked]:bg-red-600"
-              />
-            </div>
-          </div>
-          <div className="grid gap-3 sm:grid-cols-2">
-            <SettingField label="Review frequency" description="How often this account's search-term analysis runs automatically.">
-              <Select disabled={!editable || saving || !automationEnabled} value={frequency} onValueChange={(value) => setFrequency(value as AnalysisScheduleFrequency)}>
-                <SelectTrigger className="w-full cursor-pointer bg-white"><SelectValue /></SelectTrigger>
-                <SelectContent><SelectItem value="weekly">Weekly</SelectItem><SelectItem value="biweekly">Biweekly</SelectItem><SelectItem value="monthly">Monthly</SelectItem></SelectContent>
-              </Select>
-            </SettingField>
-            <SettingField label="Auto-safe score" description="Scores at or above this qualify as auto-safe only after every safety gate passes."><Input disabled={!editable || saving || !automationEnabled} type="number" min={90} max={100} value={autoSafe} onChange={(event) => setAutoSafe(event.target.value)} /></SettingField>
-          </div>
-        </section>
-        <section className="rounded-xl border border-neutral-200 bg-white p-4 shadow-sm" aria-labelledby="priority-rules-heading">
-          <h3 id="priority-rules-heading" className="mb-3 text-sm font-semibold text-neutral-900">Priority</h3>
-          <div className="grid gap-3 sm:grid-cols-2">
-            <SettingField label="High spend (RM)" description="Moves high-spend terms higher. Double the amount is critical."><Input disabled={!editable || saving} type="number" min={0} step="0.01" value={highSpend} onChange={(event) => setHighSpend(event.target.value)} /></SettingField>
-            <SettingField label="Minimum paid clicks" description="Moves terms with this many clicks higher."><Input disabled={!editable || saving} type="number" min={0} step={1} value={minimumClicks} onChange={(event) => setMinimumClicks(event.target.value)} /></SettingField>
-          </div>
-        </section>
-      </div>
-      {editable ? <div className="flex flex-wrap items-center justify-end gap-3 pt-1">
-        {message ? <span className={`text-xs ${message === "Account rules saved." ? "text-emerald-700" : "text-red-700"}`}>{message}</span> : null}
-        <Button type="button" className="cursor-pointer bg-red-700 text-white hover:bg-red-800" disabled={saving} onClick={() => void save()}>{saving ? <Spinner className="size-4" /> : <SaveIcon className="size-4" />}{saving ? "Saving..." : "Save rules"}</Button>
-      </div> : null}
-    </div>
-  );
-}
-
-function SettingField({ label, description, children }: { label: string; description?: string; children: React.ReactNode }) {
-  return <label className="block"><span className="mb-1 block text-xs font-semibold uppercase tracking-wide text-neutral-500">{label}</span>{children}{description ? <span className="mt-1.5 block text-[11px] leading-4 text-neutral-500">{description}</span> : null}</label>;
-}
-
 
 function LoadingDataIndicator({ title = "Analyzing search terms", label, compact = false, startedAt, activityAt, progress, showWorkerStatus = true, onStop, stopping=false }: { title?: string; label: string; compact?: boolean; startedAt?: string | null; activityAt?: string | null; progress?: {currentBatch:number;completedBatches:number;maxBatches:number;currentBatchSize:number;termsProcessed:number;progressComplete:boolean};showWorkerStatus?:boolean;onStop?:()=>void;stopping?:boolean }) {
   const [now, setNow] = useState(() => Date.now());

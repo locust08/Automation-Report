@@ -135,30 +135,22 @@ function malaysiaDateOnly(){
 }
 
 function TimePicker({value,minTime,onChange}:{value:string;minTime:string|null;onChange:(time:string)=>void}){
-  const [open,setOpen]=useState(false);
-  const [rawHour="09",rawMinute="00"]=value.split(":");
-  const hour24=Math.min(23,Math.max(0,Number(rawHour)||0));
-  const minute=Math.min(59,Math.max(0,Number(rawMinute)||0));
-  const period=hour24>=12?"PM":"AM";
-  const hour12=hour24%12||12;
-  const update=(nextHour:number,nextMinute:number,nextPeriod:string)=>{
-    const normalizedHour=(nextHour%12)+(nextPeriod==="PM"?12:0);
-    const nextValue=`${String(normalizedHour).padStart(2,"0")}:${String(nextMinute).padStart(2,"0")}`;
-    if(!minTime||nextValue>=minTime)onChange(nextValue);
+  const normalized=/^([01]\d|2[0-3]):[0-5]\d$/.test(value)?value:"09:00";
+  const slots=Array.from({length:24},(_,hour)=>`${String(hour).padStart(2,"0")}:00`)
+    .filter(time=>!minTime||time>=minTime);
+  const displayTime=(time:string)=>{
+    const [displayHour,displayMinute]=time.split(":").map(Number);
+    return `${String(displayHour%12||12).padStart(2,"0")}:${String(displayMinute).padStart(2,"0")} ${displayHour>=12?"PM":"AM"}`;
   };
-  const hourAvailable=(candidateHour12:number,candidatePeriod:string)=>{
-    if(!minTime)return true;
-    const candidateHour=(candidateHour12%12)+(candidatePeriod==="PM"?12:0);
-    return `${String(candidateHour).padStart(2,"0")}:59`>=minTime;
-  };
-  const minuteAvailable=(candidateMinute:number)=>{
-    if(!minTime)return true;
-    const candidateHour=(hour12%12)+(period==="PM"?12:0);
-    return `${String(candidateHour).padStart(2,"0")}:${String(candidateMinute).padStart(2,"0")}`>=minTime;
-  };
-  const periodAvailable=(candidatePeriod:string)=>Array.from({length:12},(_,index)=>index+1).some(candidateHour=>hourAvailable(candidateHour,candidatePeriod));
-  const display=new Intl.DateTimeFormat("en-MY",{hour:"2-digit",minute:"2-digit",hour12:true,timeZone:"UTC"}).format(new Date(Date.UTC(2026,0,1,hour24,minute)));
-  return <Popover open={open} onOpenChange={setOpen}><PopoverTrigger asChild><Button type="button" variant="outline" className="w-full justify-between bg-white font-normal"><span>{display}</span><Clock3Icon className="text-neutral-500"/></Button></PopoverTrigger><PopoverContent align="start" className="w-80"><p className="mb-1 text-sm font-semibold">Run time · Malaysia</p>{minTime?<p className="mb-3 text-xs text-neutral-500">Past times are unavailable for today.</p>:<div className="mb-3"/>}<div className="grid grid-cols-[1fr_1fr_1fr] gap-2"><Select value={String(hour12)} onValueChange={next=>update(Number(next),minute,period)}><SelectTrigger className="w-full"><SelectValue/></SelectTrigger><SelectContent>{Array.from({length:12},(_,index)=>index+1).map(hour=><SelectItem key={hour} value={String(hour)} disabled={!hourAvailable(hour,period)}>{String(hour).padStart(2,"0")}</SelectItem>)}</SelectContent></Select><Select value={String(minute)} onValueChange={next=>update(hour12,Number(next),period)}><SelectTrigger className="w-full"><SelectValue/></SelectTrigger><SelectContent>{Array.from({length:60},(_,index)=>index).map(item=><SelectItem key={item} value={String(item)} disabled={!minuteAvailable(item)}>{String(item).padStart(2,"0")}</SelectItem>)}</SelectContent></Select><Select value={period} onValueChange={next=>update(hour12,minute,next)}><SelectTrigger className="w-full"><SelectValue/></SelectTrigger><SelectContent><SelectItem value="AM" disabled={!periodAvailable("AM")}>AM</SelectItem><SelectItem value="PM" disabled={!periodAvailable("PM")}>PM</SelectItem></SelectContent></Select></div><Button type="button" className="mt-4 w-full bg-red-700 hover:bg-red-800" onClick={()=>setOpen(false)}>Done</Button></PopoverContent></Popover>;
+  const selected=slots.includes(normalized)?normalized:"";
+  return <div>
+    <Select value={selected} onValueChange={onChange}>
+      <SelectTrigger className="w-full bg-white" aria-label="Run time in Malaysia">
+        <span className="flex items-center gap-2"><Clock3Icon className="size-4 text-neutral-500"/><SelectValue placeholder="Select an available time"/></span>
+      </SelectTrigger>
+      <SelectContent>{slots.map(time=><SelectItem key={time} value={time}>{displayTime(time)}</SelectItem>)}</SelectContent>
+    </Select>
+  </div>;
 }
 
 function InfoLabel({label,explanation}:{label:string;explanation:string}){

@@ -99,6 +99,8 @@ export function PlacementOptimizationPageClient({ role, embedded = false, extern
   const [decisionType, setDecisionType] = useState("all");
   const [decisionCampaignType, setDecisionCampaignType] = useState("all");
   const [decisionPage, setDecisionPage] = useState(1);
+  const [decisionRowsLoading, setDecisionRowsLoading] = useState(false);
+  const [decisionRowsError, setDecisionRowsError] = useState<string | null>(null);
   const [decisionSaving, setDecisionSaving] = useState(false);
   const [pendingExclusionIds, setPendingExclusionIds] = useState<string[] | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -333,8 +335,10 @@ export function PlacementOptimizationPageClient({ role, embedded = false, extern
   const customerId=data?.account.customerId;
   const accountStartDate=data?.account.startDate;
   const accountEndDate=data?.account.endDate;
-  const loadRowsPage=useCallback(async(pageNumber:number)=>{if(!customerId||!accountStartDate||!accountEndDate)return;const params=new URLSearchParams({accountId:customerId,startDate:accountStartDate,endDate:accountEndDate,page:String(pageNumber),pageSize:String(PLACEMENTS_PER_PAGE),campaignType:decisionCampaignType,placementType:decisionType,view:decisionView});const response=await fetch(`/api/placement-optimization/rows?${params}`,{cache:"no-store"});const payload=await response.json() as {rows?:PlacementOptimizationRow[];total?:number;error?:string};if(!response.ok)throw new Error(payload.error??"Unable to load placements.");setData(current=>current?{...current,rows:payload.rows??[]}:current);setRemoteRowTotal(payload.total??0);},[accountEndDate,accountStartDate,customerId,decisionCampaignType,decisionType,decisionView]);
-  useEffect(()=>{if(!decisionsOpen)return;void loadRowsPage(decisionPage).catch(caught=>setError(caught instanceof Error?caught.message:"Unable to load placements."));},[decisionPage,decisionsOpen,loadRowsPage]);
+  const analysisStatus=analysisJob?.status;
+  const analyzedPlacementRows=analysisJob?.processed_rows??0;
+  const loadRowsPage=useCallback(async(pageNumber:number)=>{if(!customerId||!accountStartDate||!accountEndDate)return;setDecisionRowsLoading(true);setDecisionRowsError(null);try{const params=new URLSearchParams({accountId:customerId,startDate:accountStartDate,endDate:accountEndDate,page:String(pageNumber),pageSize:String(PLACEMENTS_PER_PAGE),campaignType:decisionCampaignType,placementType:decisionType,view:decisionView});const response=await fetch(`/api/placement-optimization/rows?${params}`,{cache:"no-store"});const payload=await response.json() as {rows?:PlacementOptimizationRow[];total?:number;error?:string};if(!response.ok)throw new Error(payload.error??"Unable to load placements.");setData(current=>current?{...current,rows:payload.rows??[]}:current);setRemoteRowTotal(payload.total??0);}catch(caught){setDecisionRowsError(caught instanceof Error?caught.message:"Unable to load placements.");}finally{setDecisionRowsLoading(false);}},[accountEndDate,accountStartDate,customerId,decisionCampaignType,decisionType,decisionView]);
+  useEffect(()=>{if(!decisionsOpen)return;if(analysisStatus&&["queued","running"].includes(analysisStatus)&&analyzedPlacementRows===0){setDecisionRowsLoading(true);setDecisionRowsError(null);return;}void loadRowsPage(decisionPage);},[analysisStatus,analyzedPlacementRows,decisionPage,decisionsOpen,loadRowsPage]);
   const rows = useMemo(
     () =>
       data?.rows.filter(
@@ -519,7 +523,7 @@ export function PlacementOptimizationPageClient({ role, embedded = false, extern
             <Button type="button" variant="outline" disabled={loading} onClick={()=>void load(data.account.customerId)}>{loading?<Spinner className="size-4"/>:null}Retry</Button>
           </section>
         ) : null}
-        {data ? <PlacementOverview data={data} /> : null}
+        {data ? <PlacementOverview data={data} showCounters={!embedded} /> : null}
         {data ? (
           <section className="flex items-center justify-between gap-4 rounded-2xl border bg-white p-5 shadow-sm">
             <div>
@@ -553,6 +557,9 @@ export function PlacementOptimizationPageClient({ role, embedded = false, extern
           onSelectedChange={setSelected}
           canOptimizer={canOptimizer}
           saving={decisionSaving}
+          loading={decisionRowsLoading}
+          loadError={decisionRowsError}
+          onRetry={() => void loadRowsPage(decisionPage)}
           onOptimizerDecision={(decision, ids) => void decide("/api/placement-optimization/decisions", decision, ids)}
         />
         {error && loadErrorDetails?.code === "GOOGLE_ADS_ACCESS_PATH_INVALID" ? (
@@ -1079,6 +1086,9 @@ function PlacementDecisionsSheet({
   onSelectedChange,
   canOptimizer,
   saving,
+  loading,
+  loadError,
+  onRetry,
   onOptimizerDecision,
 }: {
   open: boolean;
@@ -1100,6 +1110,9 @@ function PlacementDecisionsSheet({
   onSelectedChange: React.Dispatch<React.SetStateAction<Set<string>>>;
   canOptimizer: boolean;
   saving: boolean;
+  loading: boolean;
+  loadError: string | null;
+  onRetry: () => void;
   onOptimizerDecision: (decision: PlacementDecision, ids: string[]) => void;
 }) {
   const { sidebarWidth, resizing, resizeHandleProps } = useResizableSheet(720, 0.65);
@@ -1183,7 +1196,19 @@ function PlacementDecisionsSheet({
         </div>
         <div className="min-h-0 flex-1 overflow-y-auto p-4">
           <div className="space-y-3">
-            {pageRows.map((row) => {
+            {loading ? (
+              <div className="flex items-center justify-center gap-2 rounded-xl border border-dashed p-8 text-sm text-neutral-500">
+                <Spinner className="size-4" />
+                Loading placements…
+              </div>
+            ) : null}
+            {!loading && loadError ? (
+              <div className="rounded-xl border border-amber-200 bg-amber-50 p-5 text-center text-sm text-amber-950">
+                <p>{loadError}</p>
+                <Button type="button" variant="outline" className="mt-3 bg-white" onClick={onRetry}>Try again</Button>
+              </div>
+            ) : null}
+            {!loading && !loadError ? pageRows.map((row) => {
               const latest = row.reviewHistory[0];
               const href = placementWebsiteUrl(row.targetUrl, row.placement);
               return (
@@ -1236,8 +1261,8 @@ function PlacementDecisionsSheet({
                   </div>
                 </article>
               );
-            })}
-            {pageRows.length === 0 ? <p className="rounded-xl border border-dashed p-8 text-center text-sm text-neutral-500">{view === "excluded" ? "No placement exclusion decisions have been recorded." : "No placements match this filter."}</p> : null}
+            }) : null}
+            {!loading && !loadError && pageRows.length === 0 ? <p className="rounded-xl border border-dashed p-8 text-center text-sm text-neutral-500">{view === "excluded" ? "No placement exclusion decisions have been recorded." : "No placements match this filter."}</p> : null}
           </div>
         </div>
         <div className="flex items-center justify-between gap-3 border-t bg-neutral-50 p-4 text-sm">
@@ -1451,7 +1476,7 @@ function PlacementAccountDetail({ label, value, emphasized = false }: { label: s
   );
 }
 
-function PlacementOverview({ data }: { data: PlacementDashboardPayload }) {
+function PlacementOverview({ data, showCounters = true }: { data: PlacementDashboardPayload; showCounters?: boolean }) {
   const storageUnavailable = data.placementStorage?.status === "unavailable";
   const overview = data.placementOverview ?? {
     campaignCount: data.performanceMax?.campaignCount ?? new Set(data.rows.map((row) => row.campaignName)).size,
@@ -1474,14 +1499,14 @@ function PlacementOverview({ data }: { data: PlacementDashboardPayload }) {
           {storageUnavailable ? "Placement data unavailable" : overview.placementCount ? `${overview.placementCount} placements` : "No placement data"}
         </Badge>
       </header>
-      <div className="grid gap-3 border-b p-5 sm:grid-cols-2 lg:grid-cols-4">
+      {showCounters ? <div className="grid gap-3 border-b p-5 sm:grid-cols-2 lg:grid-cols-4">
         {[
           ["Campaigns", overview.campaignCount.toLocaleString()],
           ["Placements", storageUnavailable ? "Temporarily unavailable" : overview.placementCount.toLocaleString()],
           ["Total impressions", storageUnavailable ? "Temporarily unavailable" : total.toLocaleString()],
           ["Unique sites", storageUnavailable ? "Temporarily unavailable" : overview.uniqueSites.toLocaleString()],
         ].map(([label, value]) => <div key={label} className="rounded-xl border bg-white p-4"><p className="text-xs font-semibold uppercase text-neutral-500">{label}</p><p className="mt-2 text-2xl font-semibold">{value}</p></div>)}
-      </div>
+      </div> : null}
       <div className="grid gap-3 border-b p-5 sm:grid-cols-2 xl:grid-cols-3">
         {campaignTypes.map((item)=><div key={item.channelType} className="rounded-xl border bg-white p-4"><div className="flex items-start justify-between gap-3"><div><p className="font-semibold">{item.label}</p><p className="mt-1 text-xs text-neutral-500">{item.campaignCount} campaign{item.campaignCount===1?"":"s"}</p></div><Badge variant="outline">{storageUnavailable?"Unavailable":`${item.placementCount} placements`}</Badge></div><p className="mt-3 text-sm text-neutral-600">{storageUnavailable?"Placement data is temporarily unavailable":item.available?`${item.impressions.toLocaleString()} impressions · ${item.spend.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})} spend`:"No placement data for this period"}</p></div>)}
       </div>
