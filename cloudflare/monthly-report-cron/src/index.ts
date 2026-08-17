@@ -476,7 +476,7 @@ async function createReportJob(
       }
     }
   }
-  const duplicateResult = sendEmail
+  const duplicateResult = sendEmail && !testMode
     ? await filterAlreadySentTargets(env, recipientTargets, {
         startDate: resolved.startDate,
         endDate: resolved.endDate,
@@ -571,6 +571,13 @@ async function createReportJob(
 
   for (const target of targets) {
     const itemId = crypto.randomUUID();
+    const liveIdempotencyKey = buildReportIdempotencyKey(target, {
+      reportMonthKey: resolved.reportMonthKey,
+      scheduledDate,
+    });
+    const idempotencyKey = testMode
+      ? `test:${jobId}:${liveIdempotencyKey}`
+      : liveIdempotencyKey;
     await env.REPORT_JOBS_DB.prepare(
       `INSERT INTO report_job_items (
         id, job_id, status, client_name, platform, report_type, country, google_account_id, meta_account_id,
@@ -587,10 +594,7 @@ async function createReportJob(
         normalizeAdvancedCountry(target.country),
         normalizeOptional(target.googleAccountId),
         normalizeOptional(target.metaAccountId),
-        buildReportIdempotencyKey(target, {
-          reportMonthKey: resolved.reportMonthKey,
-          scheduledDate,
-        }),
+        idempotencyKey,
         resolveRecipientEmail(env, target, testMode),
         testMode ? null : normalizeOptional(target.ccEmail),
         0,
@@ -676,6 +680,7 @@ async function filterAlreadySentTargets(
          AND j.report_month_key = ?
          AND j.start_date = ?
          AND j.end_date = ?
+         AND j.test_mode = 0
          AND i.status = 'completed'
        LIMIT 1`
     )
