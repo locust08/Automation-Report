@@ -113,6 +113,7 @@ function malaysiaDate(value:Date) {
 }
 
 export async function claimDueOptimizationSchedules(now = new Date()) {
+  const emailTestOnly = process.env.OPTIMIZATION_SCHEDULE_EMAIL_TEST_ONLY === "true";
   const due = await supabaseRest<ScheduleRow[]>(`ad_automation_search_term_schedules?enabled=eq.true&next_run_at=lte.${qs(now.toISOString())}&select=*&order=next_run_at.asc&limit=4`);
   const claimed:ClaimedScheduleRun[] = [];
   for (const row of due) {
@@ -127,7 +128,17 @@ export async function claimDueOptimizationSchedules(now = new Date()) {
     const endDate = row.period_mode === "fixed" ? row.period_end_date! : day;
     const startDate = row.period_mode === "fixed" ? row.period_start_date! : malaysiaDate(new Date(new Date(`${day}T00:00:00${MALAYSIA_OFFSET}`).getTime() - ((row.rolling_days ?? 30) - 1) * 86400000));
     const runs = await supabaseRest<Array<{id:string}>>("ad_automation_search_term_schedule_runs?on_conflict=run_key", {method:"POST",headers:{Prefer:"resolution=ignore-duplicates,return=representation"},body:jsonBody({schedule_id:row.id,google_customer_id:row.google_customer_id,run_key:runKey,scheduled_for:row.next_run_at!,malaysia_run_date:day,status:"claimed"})});
-    if (runs[0]) {await claimDailySlot({customerId:row.google_customer_id,accountName:row.account_name,source:"scheduled",scheduleRunId:runs[0].id,date:day});await createDurableAnalysisJob({id:runs[0].id,customerId:row.google_customer_id,accountName:row.account_name,source:"scheduled",startDate,endDate});claimed.push({runId:runs[0].id,scheduleId:row.id,googleCustomerId:row.google_customer_id,accountName:row.account_name,startDate,endDate,scheduledFor:row.next_run_at!});}
+    if (runs[0]) {
+      if (emailTestOnly) {
+        await updateOptimizationScheduleRun({runId:runs[0].id,status:"running"});
+        await updateOptimizationScheduleRun({runId:runs[0].id,status:"completed",termsProcessed:0,batchesCompleted:0});
+        console.info(`[optimization-scheduling] email-only test completed run_id=${runs[0].id}`);
+        continue;
+      }
+      await claimDailySlot({customerId:row.google_customer_id,accountName:row.account_name,source:"scheduled",scheduleRunId:runs[0].id,date:day});
+      await createDurableAnalysisJob({id:runs[0].id,customerId:row.google_customer_id,accountName:row.account_name,source:"scheduled",startDate,endDate});
+      claimed.push({runId:runs[0].id,scheduleId:row.id,googleCustomerId:row.google_customer_id,accountName:row.account_name,startDate,endDate,scheduledFor:row.next_run_at!});
+    }
   }
   return claimed;
 }

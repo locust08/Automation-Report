@@ -136,7 +136,11 @@ function malaysiaDateOnly(){
 
 function TimePicker({value,minTime,onChange}:{value:string;minTime:string|null;onChange:(time:string)=>void}){
   const normalized=/^([01]\d|2[0-3]):[0-5]\d$/.test(value)?value:"09:00";
-  const slots=Array.from({length:24},(_,hour)=>`${String(hour).padStart(2,"0")}:00`)
+  const slots=Array.from({length:24*12},(_,index)=>{
+    const hour=Math.floor(index/12);
+    const minute=(index%12)*5;
+    return `${String(hour).padStart(2,"0")}:${String(minute).padStart(2,"0")}`;
+  })
     .filter(time=>!minTime||time>=minTime);
   const displayTime=(time:string)=>{
     const [displayHour,displayMinute]=time.split(":").map(Number);
