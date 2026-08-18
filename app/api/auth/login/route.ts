@@ -9,6 +9,7 @@ import {
 import { isAuthRole } from "@/lib/auth/roles";
 import { getAuthTableUrl, getSupabaseBaseUrl, getSupabasePublicKey, getSupabaseServerKey } from "@/lib/auth/config";
 import { checkLoginRateLimit, clearLoginFailures, getLoginAttemptKey, recordLoginFailure } from "@/lib/auth/login-rate-limit";
+import { isAllowedOrganizationEmail } from "@/lib/auth/allowed-email";
 
 type LoginBody = {
   email?: unknown;
@@ -41,6 +42,10 @@ export async function POST(request: Request) {
 
     if (!email || !password) {
       return NextResponse.json({ error: "Email and password are required." }, { status: 400 });
+    }
+
+    if (!isAllowedOrganizationEmail(email)) {
+      return NextResponse.json({ error: "You are not in these organizations." }, { status: 403 });
     }
 
     const attemptKey = getLoginAttemptKey(email, request);

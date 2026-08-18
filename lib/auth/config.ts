@@ -10,8 +10,25 @@ export function getSupabaseBaseUrl() {
   return configured?.trim().replace(/\/$/, "") || null;
 }
 
+export function getReportingAuthBaseUrl() {
+  const tableUrl = process.env.SUPABASE_ADS_REPORTING_AUTH_URL?.trim();
+  if (tableUrl) {
+    try {
+      return new URL(tableUrl).origin;
+    } catch {
+      return null;
+    }
+  }
+  return getSupabaseBaseUrl();
+}
+
 export function getSupabasePublicKey() {
-  return (process.env.SUPABASE_ANON_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY)?.trim() || null;
+  return (
+    process.env.SUPABASE_PUBLISHABLE_KEY ||
+    process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY ||
+    process.env.SUPABASE_ANON_KEY ||
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
+  )?.trim() || null;
 }
 
 export function getSupabaseServerKey() {

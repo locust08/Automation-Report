@@ -128,6 +128,7 @@ type HomePageClientProps = {
 };
 
 export function HomePageClient({ displayName, role }: HomePageClientProps) {
+  const isBasicUser = role === "user";
   const router = useRouter();
 
   const searchParams = useSearchParams();
@@ -551,8 +552,9 @@ export function HomePageClient({ displayName, role }: HomePageClientProps) {
                 className="block text-xs font-medium text-amber-200"
                 role="status"
               >
-                Select an account to open reports. Bulk Send Report and Create Media Plan are
-                available without one.
+                {isBasicUser
+                  ? "Select an account to open reports."
+                  : "Select an account to open reports. Bulk Send Report and Create Media Plan are available without one."}
               </span>
             ) : null}
 
@@ -739,7 +741,7 @@ export function HomePageClient({ displayName, role }: HomePageClientProps) {
               )}
             </div>
 
-            <Button
+            {!isBasicUser ? <Button
               type="button"
               onClick={() => {
                 setIsSendModalOpen(true);
@@ -750,11 +752,11 @@ export function HomePageClient({ displayName, role }: HomePageClientProps) {
             >
               Send Report
               <SendIcon data-icon="inline-end" />
-            </Button>
+            </Button> : null}
           </div>
         </form>
 
-        <div className="mt-5 grid gap-3 sm:grid-cols-2">
+        {!isBasicUser ? <><div className="mt-5 grid gap-3 sm:grid-cols-2">
           <a
             href={mediaPlanHref}
             className="flex items-center rounded-2xl border border-white/25 bg-white/10 p-4 text-white transition hover:bg-white/15"
@@ -824,7 +826,7 @@ export function HomePageClient({ displayName, role }: HomePageClientProps) {
             <LinkIcon className="size-4" />
             Select an account to open the advanced report
           </span>
-        )}
+        )}</> : null}
         </div>
       </div>
 

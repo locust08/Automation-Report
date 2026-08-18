@@ -63,7 +63,9 @@ export async function verifyAuthToken(token: string): Promise<AuthSession | null
 
 export async function authSessionFromRequest(request: NextRequest): Promise<AuthSession | null> {
   const token = request.cookies.get(AUTH_COOKIE_NAME)?.value;
-  return token ? verifyAuthToken(token) : null;
+  if (!token) return null;
+  const { getCurrentAuthSession } = await import("@/lib/auth/current-session");
+  return getCurrentAuthSession(token);
 }
 
 export function sessionDisplayName(session: Pick<AuthSession, "email" | "fullName">): string {

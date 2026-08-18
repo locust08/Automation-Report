@@ -1,13 +1,13 @@
 import { NextResponse, type NextRequest } from "next/server";
 
-import { AUTH_COOKIE_NAME, verifyAuthToken } from "@/lib/auth/session";
+import { isUserRoleRequestAllowed } from "@/lib/auth/access";
+import { getCurrentAuthSession } from "@/lib/auth/current-session";
+import { AUTH_COOKIE_NAME } from "@/lib/auth/session";
 
 export async function proxy(request: NextRequest) {
   const token = request.cookies.get(AUTH_COOKIE_NAME)?.value;
   const isLoginPage = request.nextUrl.pathname === "/";
-  // Navigation must not block on a remote profile lookup. The profile and role
-  // were validated when this signed session was created.
-  const session = token ? await verifyAuthToken(token) : null;
+  const session = token ? await getCurrentAuthSession(token) : null;
   const isDashboard = request.nextUrl.pathname.startsWith("/dashboard");
   const isBilling = request.nextUrl.pathname.startsWith("/billing");
   const isSearchTermOptimization = request.nextUrl.pathname.startsWith("/search-term-optimization");
@@ -22,6 +22,13 @@ export async function proxy(request: NextRequest) {
     return NextResponse.redirect(new URL("/dashboard", request.url));
   }
 
+  if (session?.role === "user" && !isLoginPage && !isUserRoleRequestAllowed(request.nextUrl.pathname, request.method)) {
+    if (request.nextUrl.pathname.startsWith("/api/")) {
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    }
+    return NextResponse.redirect(new URL("/dashboard", request.url));
+  }
+
   if (session && isLoginPage) {
     return NextResponse.redirect(new URL("/dashboard", request.url));
   }
@@ -30,5 +37,5 @@ export async function proxy(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/", "/dashboard/:path*", "/billing/:path*", "/search-term-optimization/:path*", "/user-management/:path*", "/manage/google/:path*"],
+  matcher: ["/((?!_next/|.*\\..*).*)"],
 };

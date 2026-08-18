@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { EyeIcon, EyeOffIcon } from "lucide-react";
+import { useSearchParams } from "next/navigation";
 import { useRouter } from "next/navigation";
 import posthog from "posthog-js";
 
@@ -13,6 +14,12 @@ import { InputGroup, InputGroupAddon, InputGroupInput } from "@/components/ui/in
 
 const LOCKOUT_STORAGE_KEY = "ads-reporting-login-lockout-until-v2";
 
+function getOAuthErrorMessage(authError: string | null) {
+  if (authError === "organization") return "You are not in these organizations.";
+  if (authError === "inactive") return "Your account is inactive. Contact your administrator.";
+  return authError ? "Google sign-in could not be completed. Please try again." : null;
+}
+
 function formatCountdown(totalSeconds: number) {
   const minutes = Math.floor(totalSeconds / 60);
   const seconds = totalSeconds % 60;
@@ -21,10 +28,13 @@ function formatCountdown(totalSeconds: number) {
 
 const LoginForm = () => {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [isVisible, setIsVisible] = useState(false);
   const [rememberMe, setRememberMe] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [errorMessage, setErrorMessage] = useState<string | null>(() =>
+    getOAuthErrorMessage(searchParams.get("authError")),
+  );
   const [attemptsRemaining, setAttemptsRemaining] = useState(3);
   const [lockoutUntil, setLockoutUntil] = useState<number | null>(null);
   const [retryAfterSeconds, setRetryAfterSeconds] = useState(0);
@@ -134,6 +144,15 @@ const LoginForm = () => {
   return (
     <form onSubmit={handleSubmit}>
       <FieldGroup className="gap-5">
+        <Button asChild variant="outline" className="h-12 w-full rounded-xl border-neutral-300 bg-white text-base font-semibold text-neutral-800 hover:bg-neutral-50">
+          <a href="/api/auth/google" className="flex items-center justify-center gap-3">
+            <span aria-hidden="true" className="text-lg font-bold text-[#4285f4]">G</span>
+            Continue with Google
+          </a>
+        </Button>
+        <div className="flex items-center gap-3 text-xs font-medium uppercase tracking-wider text-neutral-400">
+          <span className="h-px flex-1 bg-neutral-200" /><span>or</span><span className="h-px flex-1 bg-neutral-200" />
+        </div>
         <Field className="gap-2">
           <FieldLabel htmlFor="userEmail" className="font-semibold text-neutral-800">Email address</FieldLabel>
           <Input id="userEmail" name="email" type="email" autoComplete="email" placeholder="name@locus-t.com.my" required className="h-12 rounded-xl border-neutral-300 bg-white focus-visible:border-red-600 focus-visible:ring-red-600/20" />

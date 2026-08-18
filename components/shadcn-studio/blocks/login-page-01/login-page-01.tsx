@@ -21,7 +21,7 @@ const Login = () => (
       <CardContent className="px-6 pb-8 sm:px-9 sm:pb-9">
         <div className="space-y-5">
           <LoginForm />
-          <p className="text-center text-sm text-neutral-500">Internal access only. Contact your administrator if you need an account.</p>
+          <p className="text-center text-sm text-neutral-500">Access is limited to locus-t.com.my and digitalbee.ai accounts.</p>
         </div>
       </CardContent>
     </Card>

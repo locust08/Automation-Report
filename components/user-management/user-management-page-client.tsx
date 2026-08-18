@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import posthog from "posthog-js";
 import { EyeIcon, EyeOffIcon, PencilIcon, SaveIcon, SearchIcon, ShieldCheckIcon, UserPlusIcon, UsersRoundIcon, XIcon } from "lucide-react";
 
@@ -15,13 +15,13 @@ import { Switch } from "@/components/ui/switch";
 import { AUTH_ROLES, AUTH_ROLE_LABELS, type AuthRole } from "@/lib/auth/roles";
 import type { ManagedUser } from "@/lib/auth/users";
 
-export function UserManagementPageClient({ currentUserId }: { currentUserId: string }) {
-  const [users, setUsers] = useState<ManagedUser[]>([]);
-  const [loading, setLoading] = useState(true);
+export function UserManagementPageClient({ currentUserId, initialUsers }: { currentUserId: string; initialUsers: ManagedUser[] }) {
+  const [users, setUsers] = useState<ManagedUser[]>(initialUsers);
+  const loading = false;
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
-  const [role, setRole] = useState<AuthRole>("specialist");
+  const [role, setRole] = useState<AuthRole>("user");
   const [isActive, setIsActive] = useState(true);
   const [userSearch, setUserSearch] = useState("");
   const [editingUserId, setEditingUserId] = useState<string | null>(null);
@@ -35,23 +35,6 @@ export function UserManagementPageClient({ currentUserId }: { currentUserId: str
         .some((value) => value?.toLowerCase().includes(query)),
     );
   }, [userSearch, users]);
-
-  const loadUsers = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const response = await fetch("/api/admin/users", { cache: "no-store" });
-      const payload = (await response.json()) as { users?: ManagedUser[]; error?: string };
-      if (!response.ok) throw new Error(payload.error ?? "Unable to load users.");
-      setUsers(payload.users ?? []);
-    } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Unable to load users.");
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  useEffect(() => { void loadUsers(); }, [loadUsers]);
 
   async function createUser(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -72,14 +55,18 @@ export function UserManagementPageClient({ currentUserId }: { currentUserId: str
       const payload = (await response.json()) as { user?: ManagedUser; error?: string };
       if (!response.ok) throw new Error(payload.error ?? "Unable to create user.");
       form.reset();
-      setRole("specialist");
+      setRole("user");
       setIsActive(true);
       setNotice("User created successfully.");
       posthog.capture("user_created", {
         role,
         is_active: isActive,
       });
-      await loadUsers();
+      if (payload.user) {
+        setUsers((current) => [...current, payload.user!].sort((left, right) =>
+          (left.fullName || left.email).localeCompare(right.fullName || right.email),
+        ));
+      }
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Unable to create user.");
     } finally {
