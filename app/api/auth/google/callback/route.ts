@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { isAllowedOrganizationEmail } from "@/lib/auth/allowed-email";
 import { getAuthTableUrl, getReportingAuthBaseUrl, getSupabasePublicKey, getSupabaseServerKey } from "@/lib/auth/config";
 import {
+  createSupabaseGoogleTokenPayload,
   getGoogleOAuthConfig,
   getOAuthRedirectUri,
   GOOGLE_OAUTH_STATE_COOKIE,
@@ -55,14 +56,14 @@ async function insertReportingUser(row: ReportingAuthRow): Promise<ReportingAuth
   return created;
 }
 
-async function exchangeGoogleIdentity(idToken: string) {
+async function exchangeGoogleIdentity(idToken: string, accessToken: string) {
   const baseUrl = getReportingAuthBaseUrl();
   const apiKey = getSupabasePublicKey();
   if (!baseUrl || !apiKey) throw new Error("Supabase Auth is not configured.");
   const response = await fetch(`${baseUrl}/auth/v1/token?grant_type=id_token`, {
     method: "POST",
     headers: { apikey: apiKey, "Content-Type": "application/json" },
-    body: JSON.stringify({ provider: "google", token: idToken }),
+    body: JSON.stringify(createSupabaseGoogleTokenPayload(idToken, accessToken)),
     cache: "no-store",
   });
   const payload = (await response.json()) as { user?: { id?: string; email?: string } };
@@ -110,7 +111,7 @@ export async function GET(request: NextRequest) {
     }
     if (!isAllowedOrganizationEmail(email)) return redirectWithError(request, "organization");
 
-    const supabaseUser = await exchangeGoogleIdentity(token.id_token);
+    const supabaseUser = await exchangeGoogleIdentity(token.id_token, token.access_token);
     if (supabaseUser.email?.trim().toLowerCase() !== email) return redirectWithError(request, "oauth_failed");
     const profile = await provisionOAuthReportingUser(
       { supabaseUserId: supabaseUser.id!, email, fullName: googleUser.name?.trim() || null },

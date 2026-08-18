@@ -26,6 +26,14 @@ export function createOAuthState() {
   return randomBytes(32).toString("base64url");
 }
 
+export function createSupabaseGoogleTokenPayload(idToken: string, accessToken: string) {
+  return {
+    provider: "google",
+    id_token: idToken,
+    access_token: accessToken,
+  };
+}
+
 export function getOAuthRedirectUri(requestUrl: string) {
   const configuredOrigin = process.env.AUTH_APP_BASE_URL?.trim().replace(/\/$/, "");
   return `${configuredOrigin || new URL(requestUrl).origin}/api/auth/google/callback`;
