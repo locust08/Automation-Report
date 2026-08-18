@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { publishSearchTermOptimizations } from "@/lib/optimization/google-ads-mutations";
-import { jsonBody, qs, supabaseRest } from "@/lib/optimization/supabase-rest";
+import { jsonBody, qs, supabaseRest, supabaseRestCount } from "@/lib/optimization/supabase-rest";
 import type { LeadQualityImportRow, LeadQualityValues } from "@/lib/search-term-optimization/lead-quality-repository";
 import { getSearchTermAccountSettings } from "@/lib/search-term-optimization/supabase-settings";
 import type { OptimizationDashboardPayload, OptimizationResult } from "@/lib/search-term-optimization/types";
@@ -38,19 +38,32 @@ async function getLatestRelationalDashboard(customerId?:string):Promise<Optimiza
  if(!customerId)return null;
  const jobs=await supabaseRest<DurableJob[]>(`ad_automation_search_term_analysis_jobs?google_customer_id=eq.${qs(customerId)}&terms_processed=gt.0&select=id,google_customer_id,account_name,reporting_start_date,reporting_end_date,total_terms,terms_processed,status,started_at,updated_at&order=created_at.desc&limit=1`);
  const job=jobs[0];
- const stored=job?await loadDurableRows(job.id,job.terms_processed):[];
- if(!job||!stored.length)return null;
- const settings=await getSearchTermAccountSettings(customerId,job.started_at??job.updated_at);
- const allResults=stored.map(item=>({...item.result_json,id:`rel:${item.id}`,recommendationId:`rel:${item.id}`,searchTermId:`rel:${item.id}`,reviewStatus:item.review_status??item.result_json.reviewStatus,reviewDecision:(item.review_decision as "approved"|"rejected"|null)??item.result_json.reviewDecision,lastReviewedAt:item.updated_at}));
- const results=allResults.slice(0,250);
+ if(!job)return null;
+ const [stored,settings,dashboardSummary]=await Promise.all([
+  loadDurableRows(job.id),
+  getSearchTermAccountSettings(customerId,job.started_at??job.updated_at),
+  loadDurableSummary(job.id,job.terms_processed),
+ ]);
+ if(!stored.length)return null;
+ const results=stored.map(item=>({...item.result_json,id:`rel:${item.id}`,recommendationId:`rel:${item.id}`,searchTermId:`rel:${item.id}`,reviewStatus:item.review_status??item.result_json.reviewStatus,reviewDecision:(item.review_decision as "approved"|"rejected"|null)??item.result_json.reviewDecision,lastReviewedAt:item.updated_at}));
  const analyzedAt=job.started_at??job.updated_at;
- return {account:{customerId,customerName:job.account_name||`Google Ads ${customerId}`,reportingPeriod:{startDate:job.reporting_start_date??analyzedAt.slice(0,10),endDate:job.reporting_end_date??analyzedAt.slice(0,10)},lastAnalysisAt:analyzedAt,nextRunAt:settings.nextRunAt,automationEnabled:settings.automationEnabled},source:{label:"Supabase progressive reviewed search terms",fresh:true,termsReviewed:allResults.length,mutatingGoogleAdsChanges:false},summary:summary(allResults),results,history:results.filter(row=>row.verificationStatus==="verified"),googleRecommendations:[],googleRecommendationsWarning:null,changeSets:[],settings,refresh:{mode:"cached",checkedAt:job.updated_at,currentTerms:job.total_terms,reusedTerms:allResults.length,newTerms:0,queuedNewTerms:Math.max(0,job.total_terms-allResults.length)}};
+ return {account:{customerId,customerName:job.account_name||`Google Ads ${customerId}`,reportingPeriod:{startDate:job.reporting_start_date??analyzedAt.slice(0,10),endDate:job.reporting_end_date??analyzedAt.slice(0,10)},lastAnalysisAt:analyzedAt,nextRunAt:settings.nextRunAt,automationEnabled:settings.automationEnabled},source:{label:"Supabase progressive reviewed search terms",fresh:true,termsReviewed:dashboardSummary.totalReviewed,mutatingGoogleAdsChanges:false},summary:dashboardSummary,results,history:results.filter(row=>row.verificationStatus==="verified"),googleRecommendations:[],googleRecommendationsWarning:null,changeSets:[],settings,refresh:{mode:"cached",checkedAt:job.updated_at,currentTerms:job.total_terms,reusedTerms:dashboardSummary.totalReviewed,newTerms:0,queuedNewTerms:Math.max(0,job.total_terms-dashboardSummary.totalReviewed)}};
 }
 
-async function loadDurableRows(jobId:string,termsProcessed:number){
- const pageCount=Math.min(10,Math.max(1,Math.ceil(termsProcessed/250)));
- const pages=await Promise.all(Array.from({length:pageCount},(_,page)=>supabaseRest<DurableRow[]>(`ad_automation_search_term_analysis_rows?job_id=eq.${jobId}&select=id,result_json,review_status,review_decision,updated_at&order=batch_number.asc,id.asc&offset=${page*250}&limit=250`)));
- return pages.flat();
+async function loadDurableRows(jobId:string){
+ return supabaseRest<DurableRow[]>(`ad_automation_search_term_analysis_rows?job_id=eq.${qs(jobId)}&select=id,result_json,review_status,review_decision,updated_at&order=batch_number.asc,id.asc&limit=250`);
+}
+
+async function loadDurableSummary(jobId:string,totalReviewed:number):Promise<OptimizationDashboardPayload["summary"]>{
+ const base=`ad_automation_search_term_analysis_rows?job_id=eq.${qs(jobId)}&select=id&limit=1`;
+ const [automaticallyExcluded,addExactRecommendations,needsReview,noAction,failedOrUnverified]=await Promise.all([
+  supabaseRestCount(`${base}&execution_status=eq.published`),
+  supabaseRestCount(`${base}&proposed_action=eq.${qs("add exact")}`),
+  supabaseRestCount(`${base}&proposed_action=neq.${qs("no action")}&execution_status=eq.review-required`),
+  supabaseRestCount(`${base}&proposed_action=eq.${qs("no action")}`),
+  supabaseRestCount(`${base}&or=(execution_status.eq.failed,verification_status.eq.failed)`),
+ ]);
+ return {totalReviewed,automaticallyExcluded,addExactRecommendations,needsReview,noAction,failedOrUnverified};
 }
 
 export async function mergeIncrementalDashboard(input:{cached:OptimizationDashboardPayload|null;newlyAnalyzed:OptimizationDashboardPayload;currentRows:RawCurrentSearchTerm[];checkedAt:string;queuedNewTerms:number}):Promise<OptimizationDashboardPayload>{

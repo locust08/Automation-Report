@@ -27,7 +27,7 @@ function config() {
   return { url: url.replace(/\/$/, ""), key };
 }
 
-export async function supabaseRest<T>(path: string, init?: RequestInit): Promise<T> {
+async function requestSupabase(path: string, init?: RequestInit): Promise<{ response: Response; body: string }> {
   const { url, key } = config();
   const headers = new Headers(init?.headers);
   headers.set("apikey", key);
@@ -53,7 +53,7 @@ export async function supabaseRest<T>(path: string, init?: RequestInit): Promise
         throw new SupabaseUnavailableError();
       }
       if (!response.ok) throw new Error(`Supabase optimization request failed (${response.status}): ${body.slice(0, 800)}`);
-      return (body ? JSON.parse(body) : null) as T;
+      return { response, body };
     } catch (error) {
       if (isSupabaseUnavailableError(error)) throw error;
       if (error instanceof DOMException && error.name === "TimeoutError" || error instanceof TypeError) {
@@ -67,6 +67,22 @@ export async function supabaseRest<T>(path: string, init?: RequestInit): Promise
     }
   }
   throw new SupabaseUnavailableError();
+}
+
+export async function supabaseRest<T>(path: string, init?: RequestInit): Promise<T> {
+  const { body } = await requestSupabase(path, init);
+  return (body ? JSON.parse(body) : null) as T;
+}
+
+export async function supabaseRestCount(path: string): Promise<number> {
+  const { response } = await requestSupabase(path, {
+    method: "HEAD",
+    headers: { Prefer: "count=exact" },
+  });
+  const contentRange = response.headers.get("Content-Range");
+  const match = contentRange?.match(/\/(\d+)$/);
+  if (!match) throw new Error("Supabase count response did not include an exact count.");
+  return Number(match[1]);
 }
 
 export function qs(value: string) {

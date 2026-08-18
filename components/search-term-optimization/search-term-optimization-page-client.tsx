@@ -27,6 +27,7 @@ import { ReportShell } from "@/components/reporting/report-shell";
 import { AccountEscalationNotice } from "@/components/team-lead-monitoring/account-escalation-notice";
 import { GoogleAccountSearchField } from "@/components/optimization/google-account-search-field";
 import { isAdminRole, type AuthRole } from "@/lib/auth/roles";
+import { fetchDashboardWithRetry } from "@/lib/search-term-optimization/dashboard-load";
 import type {
   OptimizationDashboardPayload,
   OptimizationResult,
@@ -111,6 +112,7 @@ export function SearchTermOptimizationPageClient({ role, embedded = false, exter
   const [accountDropdownOpen, setAccountDropdownOpen] = useState(false);
   const [highlightedAccountIndex, setHighlightedAccountIndex] = useState(-1);
   const accountSearchRequestId = useRef(0);
+  const dashboardLoadRequestId = useRef(0);
   const skipNextAccountSearch = useRef(false);
   const [recommendationsLoading, setRecommendationsLoading] = useState(false);
   const [recommendationsLoaded, setRecommendationsLoaded] = useState(false);
@@ -125,6 +127,8 @@ export function SearchTermOptimizationPageClient({ role, embedded = false, exter
   const dailyCapacityReached=Boolean(dailyCapacity?.available===0&&accountPerformance&&!dailyCapacity.allocatedAccountIds.includes(accountPerformance.adAccountId.replace(/\D/g,"")));
 
   const load = useCallback(async (accountId?: string) => {
+    const requestId = dashboardLoadRequestId.current + 1;
+    dashboardLoadRequestId.current = requestId;
     setLoading(true);
     setError(null);
     setLoadErrorCode(null);
@@ -132,15 +136,9 @@ export function SearchTermOptimizationPageClient({ role, embedded = false, exter
     if (accountId) params.set("accountId", accountId);
 
     try {
-      const controller = new AbortController();
-      const timeout = window.setTimeout(() => controller.abort(), 15_000);
-      let response: Response;
-      try {
-        response = await fetch(`/api/search-term-optimization?${params}`, { cache: "no-store", signal: controller.signal });
-      } finally {
-        window.clearTimeout(timeout);
-      }
+      const response = await fetchDashboardWithRetry(`/api/search-term-optimization?${params}`);
       const payload = (await response.json()) as OptimizationDashboardPayload & { code?: Exclude<DashboardLoadErrorCode, null>; error?: string };
+      if (requestId !== dashboardLoadRequestId.current) return;
       if (!response.ok) {
         setLoadErrorCode(payload.code ?? "SEARCH_TERM_DASHBOARD_LOAD_FAILED");
         throw new Error(payload.error ?? "Unable to load optimization data.");
@@ -160,12 +158,13 @@ export function SearchTermOptimizationPageClient({ role, embedded = false, exter
       setGoogleRecommendations([]);
       setGoogleRecommendationsWarning(null);
     } catch (caught) {
+      if (requestId !== dashboardLoadRequestId.current) return;
       const timedOut = caught instanceof DOMException && caught.name === "AbortError";
       if (timedOut) setLoadErrorCode("SEARCH_TERM_STORAGE_UNAVAILABLE");
       setError(timedOut ? "Saved analysis took too long to respond. Please try again." : caught instanceof Error ? caught.message : "Unable to load optimization data.");
       setData(null);
     } finally {
-      setLoading(false);
+      if (requestId === dashboardLoadRequestId.current) setLoading(false);
     }
   }, []);
 
