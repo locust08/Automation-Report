@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { buildSitelinkMutateOperations, sitelinkVerificationMatches, validateLocalChange } from "@/lib/ads-management/google";
+import { buildSitelinkMutateOperations, buildTrafficQualityCriterionMutation, criterionVerificationMatches, sitelinkVerificationMatches, validateLocalChange } from "@/lib/ads-management/google";
 import type { AdsFieldChangeRecord } from "@/lib/ads-management/types";
 
 function change(overrides: Partial<AdsFieldChangeRecord>): AdsFieldChangeRecord {
@@ -22,6 +22,40 @@ test("limits Demand Gen display paths", () => assert.equal(validateLocalChange(c
 test("accepts a controlled Google recommendation apply request", () => assert.deepEqual(validateLocalChange(change({ entity_type: "campaign", entity_id: "customers/1234567890/recommendations/test-recommendation", field_key: "recommendation.apply", field_label: "Apply Google recommendation", value_type: "recommendation", baseline_value: "ACTIVE", proposed_value: "APPLIED" })), []));
 test("rejects an invalid Google recommendation resource", () => assert.equal(validateLocalChange(change({ entity_type: "campaign", entity_id: "not-a-recommendation", field_key: "recommendation.apply", field_label: "Apply Google recommendation", value_type: "recommendation", baseline_value: "ACTIVE", proposed_value: "APPLIED" })).length, 1));
 test("accepts final URL with https", () => assert.deepEqual(validateLocalChange(change({ entity_type: "ad", field_key: "ad.final_url", field_label: "Final URL", value_type: "url", baseline_value: "https://bellamysorganic.com.sg", proposed_value: "https://bellamysorganic.com.sg/landing" })), []));
+
+test("builds exact, phrase, and broad ad-group negative keyword creates", () => {
+  for (const matchType of ["EXACT", "PHRASE", "BROAD"]) {
+    const mutation = buildTrafficQualityCriterionMutation("1234567890", change({ entity_type: "ad_group_negative_keyword", entity_id: "22", field_key: "ad_group_criterion.negative_keyword", value_type: "negative_keyword", baseline_value: { exists: false }, proposed_value: { text: "free support", matchType, negative: true, campaignId: "11", adGroupId: "22" } }));
+    assert.equal(mutation.path, "adGroupCriteria:mutate");
+    assert.deepEqual(mutation.operation, { create: { adGroup: "customers/1234567890/adGroups/22", negative: true, status: "ENABLED", keyword: { text: "free support", matchType } } });
+  }
+});
+
+test("builds campaign exclusions for website, app, YouTube channel, and YouTube video", () => {
+  const cases = [
+    ["WEBSITE", "example.com", { placement: { url: "example.com" } }],
+    ["MOBILE_APPLICATION", "mobileapp::2-com.example.app", { mobileApplication: { appId: "2-com.example.app" } }],
+    ["YOUTUBE_CHANNEL", "UC123", { youtubeChannel: { channelId: "UC123" } }],
+    ["YOUTUBE_VIDEO", "video123", { youtubeVideo: { videoId: "video123" } }],
+  ] as const;
+  for (const [placementType, placement, criterion] of cases) {
+    const mutation = buildTrafficQualityCriterionMutation("1234567890", change({ entity_type: "campaign_placement_exclusion", entity_id: "11", field_key: "campaign_criterion.placement_exclusion", value_type: "placement_exclusion", baseline_value: { exists: false }, proposed_value: { placement, placementType, negative: true, campaignId: "11" } }));
+    assert.equal(mutation.path, "campaignCriteria:mutate");
+    assert.deepEqual(mutation.operation, { create: { campaign: "customers/1234567890/campaigns/11", negative: true, ...criterion } });
+  }
+});
+
+test("criterion validation rejects unsupported placement types and malformed keyword payloads", () => {
+  assert.ok(validateLocalChange(change({ entity_type: "campaign_placement_exclusion", field_key: "campaign_criterion.placement_exclusion", value_type: "placement_exclusion", baseline_value: { exists: false }, proposed_value: { placement: "x", placementType: "UNKNOWN", negative: true, campaignId: "11" } })).length > 0);
+  assert.ok(validateLocalChange(change({ entity_type: "ad_group_negative_keyword", field_key: "ad_group_criterion.negative_keyword", value_type: "negative_keyword", baseline_value: { exists: false }, proposed_value: { text: "", matchType: "FUZZY", negative: true, adGroupId: "22" } })).length > 0);
+});
+
+test("criterion verification requires a matching Google readback", () => {
+  const proposed = { placement: "UC123", placementType: "YOUTUBE_CHANNEL", negative: true, campaignId: "11" };
+  const field = change({ entity_type: "campaign_placement_exclusion", field_key: "campaign_criterion.placement_exclusion", value_type: "placement_exclusion", proposed_value: proposed, published_value: proposed });
+  assert.equal(criterionVerificationMatches(field, { exists: true, value: proposed }), true);
+  assert.equal(criterionVerificationMatches(field, { exists: false }), false);
+});
 
 const originalSitelink = { id: "customers/1234567890/adGroupAssets/11~22~SITELINK", assetResourceName: "customers/1234567890/assets/22", linkResourceName: "customers/1234567890/adGroupAssets/11~22~SITELINK", scope: "ad_group" as const, targetResourceName: "customers/1234567890/adGroups/11", source: "ADVERTISER", status: "ENABLED", linkText: "Shop", description1: "See all products", description2: "Order online today", finalUrls: ["https://example.com/shop"], finalMobileUrls: [], startDate: "", endDate: "", editable: true };
 

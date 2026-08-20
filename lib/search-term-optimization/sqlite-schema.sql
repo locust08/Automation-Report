@@ -148,3 +148,50 @@ create index if not exists ad_search_term_change_sets_account_idx
   on ad_automation_search_term_change_sets (google_customer_id, status, created_at desc);
 create index if not exists ad_search_term_change_set_items_recommendation_idx
   on ad_automation_search_term_change_set_items (recommendation_id);
+
+-- Legacy local report cache. Production M01/M03 operational state is stored in
+-- Supabase; these tables keep the focused SQLite workflow tests and old history
+-- readable while migration is in progress.
+create table if not exists ad_automation_search_term_pm_reports (
+  id integer primary key autoincrement,
+  change_set_id integer not null unique
+    references ad_automation_search_term_change_sets(id),
+  google_customer_id text not null,
+  customer_name text not null,
+  reporting_start_date text,
+  reporting_end_date text,
+  published_by_user_id text not null,
+  published_by_email text not null,
+  published_at text not null,
+  verification_status text not null check (verification_status = 'verified'),
+  verified_at text not null,
+  item_count integer not null check (item_count > 0),
+  affected_campaign_count integer not null check (affected_campaign_count > 0),
+  total_spend real not null default 0,
+  total_clicks integer not null default 0,
+  total_conversions real not null default 0,
+  snapshot_json text not null check (json_valid(snapshot_json)),
+  generated_at text not null default (datetime('now'))
+);
+
+create table if not exists ad_automation_search_term_pm_report_items (
+  id integer primary key autoincrement,
+  report_id integer not null
+    references ad_automation_search_term_pm_reports(id) on delete cascade,
+  change_set_item_id integer not null,
+  recommendation_id integer not null,
+  campaign_name text not null,
+  ad_group_name text not null,
+  search_term text not null,
+  optimization_type text not null,
+  negative_match_type text not null,
+  classification text not null,
+  reason text not null,
+  spend real not null default 0,
+  clicks integer not null default 0,
+  conversions real not null default 0,
+  snapshot_json text not null check (json_valid(snapshot_json))
+);
+
+create index if not exists ad_search_term_pm_reports_account_idx
+  on ad_automation_search_term_pm_reports (google_customer_id, published_at desc);

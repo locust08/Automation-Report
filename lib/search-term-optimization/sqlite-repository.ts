@@ -114,31 +114,8 @@ function ensureSearchTermColumns(database: DatabaseSync) {
     ["verification_status", "text not null default 'pending'"], ["verified_at", "text"], ["verification_details", "text"],
   ];
   for (const [name, type] of publishingColumns) if (!changeSetColumns.has(name)) database.exec(`alter table ad_automation_search_term_change_sets add column ${name} ${type}`);
-  // The prototype now uses a single review stage. Migrate proposals left in
-  // the former Final Review queue into their terminal category.
-  database.exec(`
-    update ad_automation_search_term_recommendations
-    set review_status = case
-          when current_decision in ('submit_for_approval', 'approver_approved') then 'approved_for_publishing'
-          when current_decision in ('reject', 'approver_rejected') then 'approver_rejected'
-          else review_status
-        end,
-        current_decision = case
-          when current_decision in ('submit_for_approval', 'approver_approved') then 'approver_approved'
-          when current_decision in ('reject', 'approver_rejected') then 'approver_rejected'
-          else current_decision
-        end,
-        updated_at = datetime('now')
-    where review_status = 'ready_for_approval'
-  `);
-  // KIV was removed from the two-stage search-term workflow. Existing KIV rows
-  // return to the first-review queue with no proposed decision.
-  database.exec(`
-    update ad_automation_search_term_recommendations
-    set previous_decision = coalesce(previous_decision, current_decision),
-        review_status = 'pending', current_decision = null, updated_at = datetime('now')
-    where review_status = 'kiv' or current_decision = 'kiv'
-  `);
+  // Do not collapse rows awaiting final review into a terminal state here.
+  // Reviewer decisions and M03 approval are intentionally separate gates.
 }
 
 function migrateApproverSchema(database: DatabaseSync, schema: string) {

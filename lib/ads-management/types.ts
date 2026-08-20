@@ -4,7 +4,7 @@ export type AdsManagementStatus =
   | "published" | "verification_in_progress" | "verified" | "partially_completed"
   | "failed" | "cancelled" | "reverted";
 
-export type ManagedEntityType = "campaign" | "ad_group" | "ad";
+export type ManagedEntityType = "campaign" | "ad_group" | "ad" | "campaign_negative_keyword" | "ad_group_negative_keyword" | "campaign_placement_exclusion";
 export type ManagedFieldKey = string;
 
 export interface ManagedAdTextAsset { text: string; pinnedField?: string }

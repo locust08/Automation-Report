@@ -69,6 +69,13 @@ export async function addEvent(changeSetId: string, eventType: string, actorName
   await db("ads_change_events", { method: "POST", body: JSON.stringify({ change_set_id: changeSetId, field_change_id: fieldChangeId ?? null, event_type: eventType, actor_name: actorName, message, metadata }) });
 }
 
+export async function addApproval(changeSetId: string, approverId: string | null, approverName: string, changeSetVersion: number, comment?: string) {
+  await db("ads_change_approvals", {
+    method: "POST",
+    body: JSON.stringify({ change_set_id: changeSetId, decision: "approved", approver_id: approverId, approver_name: approverName, change_set_version: changeSetVersion, comment: comment?.trim() || null }),
+  });
+}
+
 export async function createNotification(changeSetId: string, message: string) {
   await db("ads_change_notifications", { method: "POST", body: JSON.stringify({ change_set_id: changeSetId, channel: "email", message, status: "draft" }) });
 }

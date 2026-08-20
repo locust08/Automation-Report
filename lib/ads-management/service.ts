@@ -6,6 +6,7 @@ import { formatSitelinkCompletionValue } from "@/lib/ads-management/sitelink-dis
 // giving focused service tests a reliable seam that works with ESM modules.
 export const adsManagementServiceDependencies = {
   addEvent: adsRepository.addEvent,
+  addApproval: adsRepository.addApproval,
   createNotification: adsRepository.createNotification,
   getChangeSet: adsRepository.getChangeSet,
   patchChangeSet: adsRepository.patchChangeSet,
@@ -13,6 +14,7 @@ export const adsManagementServiceDependencies = {
   assertGoogleWritesAllowed: googleAds.assertGoogleWritesAllowed,
   fetchOfficialValues: googleAds.fetchOfficialValues,
   mutateGoogleChanges: googleAds.mutateGoogleChanges,
+  criterionVerificationMatches: googleAds.criterionVerificationMatches,
   sitelinkVerificationMatches: googleAds.sitelinkVerificationMatches,
   validateLocalChange: googleAds.validateLocalChange,
 };
@@ -46,7 +48,7 @@ function comparableValue(value: unknown): unknown {
   return value;
 }
 
-export async function submitChangeSetForReview(id: string, actorName: string) {
+export async function validateChangeRequest(id: string, actorName: string) {
   const set = await adsManagementServiceDependencies.getChangeSet(id); const changes = set.ads_field_changes ?? [];
   if (!changes.length) throw new Error("Add at least one proposed edit before submitting for review.");
   await adsManagementServiceDependencies.patchChangeSet(id, { status: "validation_in_progress" });
@@ -77,9 +79,22 @@ export async function submitChangeSetForReview(id: string, actorName: string) {
     const official = latest.get(change.id); const conflict = !equal(official, change.baseline_value); conflicted ||= conflict;
     await adsManagementServiceDependencies.patchFieldChange(change.id, { latest_official_value: official ?? null, reviewed_official_value: conflict ? null : official ?? null, conflict_resolution: conflict ? null : "no_conflict" });
   }
-  const status = conflicted ? "conflict_detected" : "ready_to_publish";
+  const status = conflicted ? "conflict_detected" : "awaiting_approval";
   await adsManagementServiceDependencies.patchChangeSet(id, { status });
-  await adsManagementServiceDependencies.addEvent(id, conflicted ? "conflict_detected" : "validated_for_publishing", actorName, conflicted ? "Google changed after the draft baseline was captured." : "Change request passed local and Google validation and is ready to publish.");
+  await adsManagementServiceDependencies.addEvent(id, conflicted ? "conflict_detected" : "validated_awaiting_approval", actorName, conflicted ? "Google changed after the draft baseline was captured." : "Change request passed local and Google validation and is awaiting explicit approval.");
+  return adsManagementServiceDependencies.getChangeSet(id);
+}
+
+/** @deprecated Use validateChangeRequest. Kept for existing clients while the UI migrates. */
+export const submitChangeSetForReview = validateChangeRequest;
+
+export async function approveChangeRequest(id: string, actorName: string, actorId: string | null = null, comment?: string) {
+  if (!actorName.trim()) throw new Error("An authenticated approver is required.");
+  const set = await adsManagementServiceDependencies.getChangeSet(id);
+  if (set.status !== "awaiting_approval") throw new Error("Only a validated change request awaiting approval can be approved.");
+  await adsManagementServiceDependencies.addApproval(id, actorId, actorName, set.version, comment);
+  await adsManagementServiceDependencies.patchChangeSet(id, { status: "approved", approved_at: new Date().toISOString() });
+  await adsManagementServiceDependencies.addEvent(id, "approved", actorName, "Change request was explicitly approved for publishing.", { changeSetVersion: set.version });
   return adsManagementServiceDependencies.getChangeSet(id);
 }
 
@@ -95,24 +110,14 @@ export async function resolveConflict(id: string, fieldId: string, resolution: s
   await adsManagementServiceDependencies.addEvent(id, "conflict_resolved", actorName, `${change.field_label}: ${resolution.replaceAll("_", " ")}.`, { resolution }, fieldId);
   const refreshed = await adsManagementServiceDependencies.getChangeSet(id);
   const unresolved = refreshed.ads_field_changes?.some((c) => c.latest_official_value !== null && !equal(c.latest_official_value, c.baseline_value) && (!c.conflict_resolution || c.conflict_resolution === "escalate"));
-  if (!unresolved) await adsManagementServiceDependencies.patchChangeSet(id, { status: "ready_to_publish" });
+  if (!unresolved) await adsManagementServiceDependencies.patchChangeSet(id, { status: "awaiting_approval", approved_at: null });
   return adsManagementServiceDependencies.getChangeSet(id);
 }
 
 export async function publishChangeRequest(id: string, actorName: string, completionMessageOverride?: string) {
   if (!actorName.trim()) throw new Error("An authenticated user is required to publish changes.");
-  let set = await adsManagementServiceDependencies.getChangeSet(id);
-  if (["draft", "validation_failed"].includes(set.status)) {
-    set = await submitChangeSetForReview(id, actorName);
-  }
-  // Requests created before approval was retired may still carry this status.
-  // Move them into the current direct-publish workflow without creating an approval.
-  if (set.status === "awaiting_approval") {
-    await adsManagementServiceDependencies.patchChangeSet(id, { status: "ready_to_publish", approved_at: null });
-    set = await adsManagementServiceDependencies.getChangeSet(id);
-  }
-  if (["conflict_detected", "validation_failed"].includes(set.status)) return set;
-  if (set.status !== "ready_to_publish") throw new Error("This request is not ready to publish.");
+  const set = await adsManagementServiceDependencies.getChangeSet(id);
+  if (set.status !== "approved" || !set.approved_at) throw new Error("This request must be explicitly approved before publishing.");
   return publishAndVerify(set, actorName, completionMessageOverride);
 }
 
@@ -153,7 +158,7 @@ async function publishAndVerify(set: Awaited<ReturnType<typeof adsManagementServ
   const verifiedValues = await adsManagementServiceDependencies.fetchOfficialValues(set.account_id, published);
   let verified = 0;
   for (const c of published) {
-    const observed = verifiedValues.get(c.id); const ok = c.value_type === "sitelinks" ? adsManagementServiceDependencies.sitelinkVerificationMatches(c, observed) : equal(observed, c.published_value); if (ok) verified += 1;
+    const observed = verifiedValues.get(c.id); const ok = c.value_type === "sitelinks" ? adsManagementServiceDependencies.sitelinkVerificationMatches(c, observed) : ["negative_keyword", "placement_exclusion"].includes(c.value_type) ? adsManagementServiceDependencies.criterionVerificationMatches(c, observed) : equal(observed, c.published_value); if (ok) verified += 1;
     await adsManagementServiceDependencies.patchFieldChange(c.id, { verified_value: observed ?? null, verification_status: ok ? "verified" : "failed", last_error_message: ok ? null : "Published value did not match the value read from Google." });
   }
   const complete = successes === changes.length && verified === published.length;
@@ -176,7 +181,7 @@ export async function retryChangeRequestVerification(id: string, actorName: stri
   let verified = 0;
   for (const change of published) {
     const observed = verifiedValues.get(change.id);
-    const ok = change.value_type === "sitelinks" ? adsManagementServiceDependencies.sitelinkVerificationMatches(change, observed) : equal(observed, change.published_value);
+    const ok = change.value_type === "sitelinks" ? adsManagementServiceDependencies.sitelinkVerificationMatches(change, observed) : ["negative_keyword", "placement_exclusion"].includes(change.value_type) ? adsManagementServiceDependencies.criterionVerificationMatches(change, observed) : equal(observed, change.published_value);
     if (ok) verified += 1;
     await adsManagementServiceDependencies.patchFieldChange(change.id, { verified_value: observed ?? null, verification_status: ok ? "verified" : "failed", last_error_message: ok ? null : "Published value did not match the value read from Google." });
   }
@@ -184,6 +189,65 @@ export async function retryChangeRequestVerification(id: string, actorName: stri
   await adsManagementServiceDependencies.patchChangeSet(id, { status: complete ? "verified" : "partially_completed", verified_at: complete ? new Date().toISOString() : null });
   await adsManagementServiceDependencies.addEvent(id, complete ? "verified" : "verification_failed", actorName, complete ? "All published Google Ads changes were verified on retry." : "Some published Google Ads changes still do not match the requested values.");
   if (complete && !(set.ads_change_notifications ?? []).length) await adsManagementServiceDependencies.createNotification(id, completionMessage(set.account_name, published));
+  return adsManagementServiceDependencies.getChangeSet(id);
+}
+
+export async function retryFailedChangeRequestItems(id: string, actorName: string) {
+  if (!actorName.trim()) throw new Error("Operator name is required to retry failed items.");
+  const set = await adsManagementServiceDependencies.getChangeSet(id);
+  if (!["failed", "partially_completed"].includes(set.status) || !set.approved_at) throw new Error("This request does not have approved failed items to retry.");
+  const changes = set.ads_field_changes ?? [];
+  const failed = changes.filter((change) => change.publish_status === "failed");
+  if (!failed.length) throw new Error("This request has no failed publish items to retry.");
+
+  const latest = await adsManagementServiceDependencies.fetchOfficialValues(set.account_id, failed);
+  const retryable: typeof failed = [];
+  let conflicts = 0;
+  for (const change of failed) {
+    const observed = latest.get(change.id);
+    const alreadyApplied = ["negative_keyword", "placement_exclusion"].includes(change.value_type)
+      ? adsManagementServiceDependencies.criterionVerificationMatches(change, observed)
+      : equal(observed, change.proposed_value);
+    if (alreadyApplied) {
+      await adsManagementServiceDependencies.patchFieldChange(change.id, { publish_status: "succeeded", published_value: change.proposed_value, verified_value: observed ?? null, verification_status: "verified", latest_official_value: observed ?? null, last_error_message: null });
+    } else if (!equal(observed, change.reviewed_official_value)) {
+      conflicts += 1;
+      await adsManagementServiceDependencies.patchFieldChange(change.id, { latest_official_value: observed ?? null, last_error_message: "Google changed before this failed item could be retried." });
+    } else {
+      retryable.push(change);
+    }
+  }
+  if (conflicts) {
+    await adsManagementServiceDependencies.addEvent(id, "publish_retry_blocked_by_conflict", actorName, "One or more failed items changed in Google and were not retried.");
+    return adsManagementServiceDependencies.getChangeSet(id);
+  }
+  if (retryable.length) {
+    adsManagementServiceDependencies.assertGoogleWritesAllowed(set.account_id);
+    await adsManagementServiceDependencies.patchChangeSet(id, { status: "publishing" });
+    await adsManagementServiceDependencies.addEvent(id, "publish_retry_started", actorName, `Retrying ${retryable.length} failed item(s).`);
+    const results = await adsManagementServiceDependencies.mutateGoogleChanges(set.account_id, retryable, false);
+    for (const change of retryable) {
+      const result = results.get(change.id) as { error?: string } | undefined;
+      const ok = !result?.error;
+      await adsManagementServiceDependencies.patchFieldChange(change.id, { publish_status: ok ? "succeeded" : "failed", published_value: ok ? change.proposed_value : null, platform_response: result ?? null, last_error_message: result?.error ?? null, publish_attempts: change.publish_attempts + 1 });
+    }
+  }
+
+  const afterRetry = await adsManagementServiceDependencies.getChangeSet(id);
+  const allChanges = afterRetry.ads_field_changes ?? [];
+  const published = allChanges.filter((change) => change.publish_status === "succeeded" && change.published_value !== null);
+  const verifiedValues = await adsManagementServiceDependencies.fetchOfficialValues(set.account_id, published);
+  let verified = 0;
+  for (const change of published) {
+    const observed = verifiedValues.get(change.id);
+    const ok = change.value_type === "sitelinks" ? adsManagementServiceDependencies.sitelinkVerificationMatches(change, observed) : ["negative_keyword", "placement_exclusion"].includes(change.value_type) ? adsManagementServiceDependencies.criterionVerificationMatches(change, observed) : equal(observed, change.published_value);
+    if (ok) verified += 1;
+    await adsManagementServiceDependencies.patchFieldChange(change.id, { verified_value: observed ?? null, verification_status: ok ? "verified" : "failed", last_error_message: ok ? null : "Published value did not match the value read from Google." });
+  }
+  const complete = published.length === allChanges.length && verified === allChanges.length;
+  await adsManagementServiceDependencies.patchChangeSet(id, { status: complete ? "verified" : "partially_completed", verified_at: complete ? new Date().toISOString() : null });
+  await adsManagementServiceDependencies.addEvent(id, complete ? "verified_after_publish_retry" : "publish_retry_incomplete", actorName, complete ? "All retried items were published and verified." : "Some retried items still need attention.");
+  if (complete && !(afterRetry.ads_change_notifications ?? []).length) await adsManagementServiceDependencies.createNotification(id, completionMessage(set.account_name, published));
   return adsManagementServiceDependencies.getChangeSet(id);
 }
 
