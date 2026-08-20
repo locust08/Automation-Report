@@ -293,6 +293,35 @@ begin
 end;
 $$;
 
+create or replace function ads_internal.protect_campaign_build_resource()
+returns trigger
+language plpgsql
+set search_path = ''
+as $$
+begin
+  if tg_op = 'DELETE' then
+    raise exception 'Campaign build resources cannot be deleted' using errcode = '55000';
+  end if;
+
+  if old.provider_resource_id is not null
+    and new.provider_resource_id is distinct from old.provider_resource_id then
+    raise exception 'A non-null provider resource ID is immutable' using errcode = '55000';
+  end if;
+
+  if old.provider_parent_resource_id is not null
+    and new.provider_parent_resource_id is distinct from old.provider_parent_resource_id then
+    raise exception 'A non-null provider parent resource ID is immutable' using errcode = '55000';
+  end if;
+
+  if old.verified_at is not null
+    and new.verified_at is distinct from old.verified_at then
+    raise exception 'A verified campaign resource cannot regress' using errcode = '55000';
+  end if;
+
+  return new;
+end;
+$$;
+
 create or replace function ads_internal.resolve_m04_actor(p_actor_id uuid)
 returns table(actor_name text, actor_email text, actor_role text)
 language plpgsql
@@ -1071,10 +1100,914 @@ begin
 end;
 $$;
 
+create or replace function public.ads_acquire_campaign_gate_claim(
+  p_build_id bigint,
+  p_gate smallint,
+  p_action text,
+  p_request_idempotency_key text,
+  p_expected_revision_id bigint,
+  p_expected_revision_hash text,
+  p_claim_ttl_seconds integer,
+  p_intent jsonb,
+  p_actor_id uuid,
+  p_trusted_ip inet,
+  p_trusted_user_agent text
+)
+returns public.ads_campaign_gate_attempts
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_build public.ads_campaign_builds%rowtype;
+  v_plan public.ads_campaign_plans%rowtype;
+  v_approval public.ads_campaign_approvals%rowtype;
+  v_attempt public.ads_campaign_gate_attempts%rowtype;
+  v_actor_name text;
+  v_actor_email text;
+  v_actor_role text;
+  v_attempt_number integer;
+  v_expired_count integer;
+  v_from_status text;
+begin
+  select actor.actor_name, actor.actor_email, actor.actor_role
+  into strict v_actor_name, v_actor_email, v_actor_role
+  from ads_internal.resolve_m04_actor(p_actor_id) as actor;
+
+  if p_gate not in (1, 2) then
+    raise exception 'Campaign gate must be 1 or 2' using errcode = '22023';
+  end if;
+  if pg_catalog.btrim(coalesce(p_request_idempotency_key, '')) = '' then
+    raise exception 'Gate claim idempotency key is required' using errcode = '22023';
+  end if;
+  if p_claim_ttl_seconds is null or p_claim_ttl_seconds < 1 or p_claim_ttl_seconds > 3600 then
+    raise exception 'Gate claim TTL must be between 1 and 3600 seconds' using errcode = '22023';
+  end if;
+  if p_intent is null or pg_catalog.jsonb_typeof(p_intent) <> 'object' then
+    raise exception 'Gate claim intent must be a JSON object' using errcode = '22023';
+  end if;
+  if (p_gate = 1 and p_action not in ('create', 'reconcile'))
+    or (p_gate = 2 and p_action not in ('deliver', 'reconcile')) then
+    raise exception 'Gate action does not match the selected gate' using errcode = '22023';
+  end if;
+
+  select build.*
+  into v_build
+  from public.ads_campaign_builds as build
+  where build.id = p_build_id
+  for update;
+  if not found then
+    raise exception 'Campaign build was not found' using errcode = 'P0002';
+  end if;
+
+  select plan.* into strict v_plan
+  from public.ads_campaign_plans as plan
+  where plan.id = v_build.plan_id;
+  select approval.* into strict v_approval
+  from public.ads_campaign_approvals as approval
+  where approval.id = v_build.approval_id;
+
+  if v_approval.decision <> 'approved'
+    or v_approval.expires_at <= pg_catalog.clock_timestamp()
+    or v_approval.revision_id <> v_build.revision_id
+    or v_approval.revision_hash <> v_build.revision_hash
+    or v_plan.approved_revision_id <> v_build.revision_id
+    or v_plan.approved_revision_hash <> v_build.revision_hash
+    or v_plan.active_revision_id <> v_build.revision_id then
+    raise exception 'Campaign build approval is no longer current and unexpired' using errcode = '55000';
+  end if;
+  if p_expected_revision_id is distinct from v_build.revision_id
+    or p_expected_revision_hash is distinct from v_build.revision_hash then
+    raise exception 'Campaign build revision lock does not match' using errcode = '40001';
+  end if;
+
+  select attempt.* into v_attempt
+  from public.ads_campaign_gate_attempts as attempt
+  where attempt.build_id = v_build.id
+    and attempt.request_idempotency_key = p_request_idempotency_key;
+  if found then
+    if v_attempt.gate is distinct from p_gate
+      or v_attempt.action is distinct from p_action
+      or v_attempt.revision_id is distinct from p_expected_revision_id
+      or v_attempt.revision_hash is distinct from p_expected_revision_hash
+      or v_attempt.intent is distinct from p_intent
+      or v_attempt.actor_id is distinct from p_actor_id then
+      raise exception 'Gate claim idempotency key conflicts with an existing request' using errcode = '22023';
+    end if;
+    return v_attempt;
+  end if;
+
+  update public.ads_campaign_gate_attempts
+  set status = 'expired', released_at = pg_catalog.clock_timestamp(),
+      updated_at = pg_catalog.clock_timestamp()
+  where build_id = v_build.id and gate = p_gate and status = 'claimed'
+    and released_at is null and claim_expires_at <= pg_catalog.clock_timestamp();
+  get diagnostics v_expired_count = row_count;
+
+  if exists (
+    select 1 from public.ads_campaign_gate_attempts as attempt
+    where attempt.build_id = v_build.id and attempt.gate = p_gate
+      and attempt.status = 'claimed' and attempt.released_at is null
+  ) then
+    raise exception 'A different active gate claim already exists' using errcode = '55P03';
+  end if;
+
+  if p_gate = 1 then
+    if p_action = 'create' and not (
+      v_build.status = 'pending_gate_1'
+      or (v_build.status = 'gate_1_in_progress' and v_expired_count > 0)
+    ) then
+      raise exception 'Gate 1 create requires a pending build or an expired claim' using errcode = '55000';
+    end if;
+    if p_action = 'reconcile' and v_build.status <> 'reconciliation_required' then
+      raise exception 'Reconciliation requires a build awaiting reconciliation' using errcode = '55000';
+    end if;
+    if not (p_intent ? 'resources')
+      or pg_catalog.jsonb_typeof(p_intent -> 'resources') <> 'array'
+      or pg_catalog.jsonb_array_length(p_intent -> 'resources') = 0 then
+      raise exception 'Gate 1 intent must declare logical resources' using errcode = '22023';
+    end if;
+    if exists (
+      select 1 from pg_catalog.jsonb_array_elements(p_intent -> 'resources') as item(value)
+      where pg_catalog.btrim(coalesce(item.value ->> 'logical_resource_key', '')) = ''
+        or pg_catalog.btrim(coalesce(item.value ->> 'resource_type', '')) = ''
+    ) or (
+      select pg_catalog.count(*) <> pg_catalog.count(distinct item.value ->> 'logical_resource_key')
+      from pg_catalog.jsonb_array_elements(p_intent -> 'resources') as item(value)
+    ) then
+      raise exception 'Gate 1 logical resource intents must be complete and unique' using errcode = '22023';
+    end if;
+    if exists (
+      select 1
+      from pg_catalog.jsonb_array_elements(p_intent -> 'resources') as item(value)
+      join public.ads_campaign_build_resources as resource
+        on resource.build_id = v_build.id
+       and resource.logical_resource_key = item.value ->> 'logical_resource_key'
+      where resource.resource_type <> item.value ->> 'resource_type'
+    ) then
+      raise exception 'Logical resource type conflicts with persisted intent' using errcode = '22023';
+    end if;
+  else
+    if p_action = 'deliver' and v_build.status <> 'ready_to_deliver' then
+      raise exception 'Gate 2 requires a build ready to deliver' using errcode = '55000';
+    end if;
+    if p_action = 'reconcile' and v_build.status <> 'delivery_unverified' then
+      raise exception 'Gate 2 reconciliation requires unverified delivery' using errcode = '55000';
+    end if;
+  end if;
+
+  select coalesce(pg_catalog.max(attempt.attempt_number), 0) + 1
+  into v_attempt_number
+  from public.ads_campaign_gate_attempts as attempt
+  where attempt.build_id = v_build.id;
+
+  insert into public.ads_campaign_gate_attempts (
+    build_id, gate, action, request_idempotency_key, attempt_number,
+    revision_id, revision_hash, status, intent, claim_expires_at,
+    actor_id, actor_name, trusted_ip, trusted_user_agent
+  ) values (
+    v_build.id, p_gate, p_action, p_request_idempotency_key, v_attempt_number,
+    v_build.revision_id, v_build.revision_hash, 'claimed', p_intent,
+    pg_catalog.clock_timestamp() + pg_catalog.make_interval(secs => p_claim_ttl_seconds),
+    p_actor_id, v_actor_name, p_trusted_ip, p_trusted_user_agent
+  ) returning * into v_attempt;
+
+  if p_gate = 1 then
+    insert into public.ads_campaign_build_resources (
+      build_id, logical_resource_key, resource_type
+    )
+    select v_build.id, item.value ->> 'logical_resource_key', item.value ->> 'resource_type'
+    from pg_catalog.jsonb_array_elements(p_intent -> 'resources') as item(value)
+    on conflict (build_id, logical_resource_key) do nothing;
+  end if;
+
+  v_from_status := v_build.status;
+  update public.ads_campaign_builds
+  set status = case when p_gate = 1 then 'gate_1_in_progress' else 'gate_2_in_progress' end,
+      gate_1_started_at = case when p_gate = 1 then coalesce(gate_1_started_at, pg_catalog.clock_timestamp()) else gate_1_started_at end,
+      gate_2_started_at = case when p_gate = 2 then coalesce(gate_2_started_at, pg_catalog.clock_timestamp()) else gate_2_started_at end,
+      delivery_started_at = case when p_gate = 2 then coalesce(delivery_started_at, pg_catalog.clock_timestamp()) else delivery_started_at end,
+      updated_at = pg_catalog.clock_timestamp(), lock_version = lock_version + 1
+  where id = v_build.id
+  returning * into v_build;
+
+  if p_gate = 1 and v_plan.status = 'approved' then
+    update public.ads_campaign_plans
+    set status = 'launch_in_progress', updated_at = pg_catalog.clock_timestamp(),
+        lock_version = lock_version + 1
+    where id = v_plan.id;
+  end if;
+
+  perform ads_internal.append_campaign_audit(
+    v_build.plan_id, v_build.revision_id, v_build.id, v_attempt.id,
+    'campaign_gate_claim_acquired', v_from_status, v_build.status,
+    p_actor_id, p_trusted_ip, p_trusted_user_agent,
+    pg_catalog.jsonb_build_object(
+      'gate', p_gate, 'action', p_action,
+      'request_idempotency_key', p_request_idempotency_key,
+      'claim_expires_at', v_attempt.claim_expires_at
+    )
+  );
+  return v_attempt;
+end;
+$$;
+
+create or replace function public.ads_acquire_campaign_retry_claim(
+  p_build_id bigint,
+  p_prior_attempt_id bigint,
+  p_request_idempotency_key text,
+  p_expected_revision_hash text,
+  p_claim_ttl_seconds integer,
+  p_intent jsonb,
+  p_actor_id uuid,
+  p_trusted_ip inet,
+  p_trusted_user_agent text
+)
+returns public.ads_campaign_gate_attempts
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_build public.ads_campaign_builds%rowtype;
+  v_plan public.ads_campaign_plans%rowtype;
+  v_approval public.ads_campaign_approvals%rowtype;
+  v_parent public.ads_campaign_gate_attempts%rowtype;
+  v_attempt public.ads_campaign_gate_attempts%rowtype;
+  v_actor_name text;
+  v_actor_email text;
+  v_actor_role text;
+  v_attempt_number integer;
+  v_from_status text;
+begin
+  select actor.actor_name, actor.actor_email, actor.actor_role
+  into strict v_actor_name, v_actor_email, v_actor_role
+  from ads_internal.resolve_m04_actor(p_actor_id) as actor;
+
+  if pg_catalog.btrim(coalesce(p_request_idempotency_key, '')) = '' then
+    raise exception 'Retry claim idempotency key is required' using errcode = '22023';
+  end if;
+  if p_claim_ttl_seconds is null or p_claim_ttl_seconds < 1 or p_claim_ttl_seconds > 3600 then
+    raise exception 'Gate claim TTL must be between 1 and 3600 seconds' using errcode = '22023';
+  end if;
+  if p_intent is null or pg_catalog.jsonb_typeof(p_intent) <> 'object'
+    or pg_catalog.jsonb_typeof(p_intent -> 'resources') <> 'array'
+    or pg_catalog.jsonb_array_length(p_intent -> 'resources') = 0 then
+    raise exception 'Retry intent must declare logical resources' using errcode = '22023';
+  end if;
+  if exists (
+    select 1 from pg_catalog.jsonb_array_elements(p_intent -> 'resources') as item(value)
+    where pg_catalog.btrim(coalesce(item.value ->> 'logical_resource_key', '')) = ''
+      or pg_catalog.btrim(coalesce(item.value ->> 'resource_type', '')) = ''
+  ) or (
+    select pg_catalog.count(*) <> pg_catalog.count(distinct item.value ->> 'logical_resource_key')
+    from pg_catalog.jsonb_array_elements(p_intent -> 'resources') as item(value)
+  ) then
+    raise exception 'Retry logical resource intents must be complete and unique' using errcode = '22023';
+  end if;
+
+  select build.* into v_build
+  from public.ads_campaign_builds as build
+  where build.id = p_build_id
+  for update;
+  if not found then
+    raise exception 'Campaign build was not found' using errcode = 'P0002';
+  end if;
+  if p_expected_revision_hash is distinct from v_build.revision_hash then
+    raise exception 'Campaign build revision lock does not match' using errcode = '40001';
+  end if;
+
+  select plan.* into strict v_plan from public.ads_campaign_plans as plan where plan.id = v_build.plan_id;
+  select approval.* into strict v_approval from public.ads_campaign_approvals as approval where approval.id = v_build.approval_id;
+  if v_approval.decision <> 'approved' or v_approval.expires_at <= pg_catalog.clock_timestamp()
+    or v_plan.approved_revision_id <> v_build.revision_id
+    or v_plan.approved_revision_hash <> v_build.revision_hash
+    or v_plan.active_revision_id <> v_build.revision_id then
+    raise exception 'Campaign build approval is no longer current and unexpired' using errcode = '55000';
+  end if;
+
+  select attempt.* into v_parent
+  from public.ads_campaign_gate_attempts as attempt
+  where attempt.id = p_prior_attempt_id;
+  if not found then
+    raise exception 'Retry parent attempt was not found' using errcode = 'P0002';
+  end if;
+  if v_parent.build_id <> v_build.id then
+    raise exception 'Retry parent does not belong to the selected build' using errcode = '22023';
+  end if;
+  if v_parent.gate <> 1 or v_parent.action not in ('create', 'retry')
+    or v_parent.status not in ('failed', 'reconciliation_required', 'expired')
+    or v_parent.revision_id <> v_build.revision_id
+    or v_parent.revision_hash <> v_build.revision_hash then
+    raise exception 'Retry parent is not an eligible Gate 1 mutation attempt' using errcode = '55000';
+  end if;
+  if exists (
+    select 1
+    from pg_catalog.jsonb_array_elements(p_intent -> 'resources') as retry_item(value)
+    where not exists (
+      select 1
+      from pg_catalog.jsonb_array_elements(v_parent.intent -> 'resources') as parent_item(value)
+      where parent_item.value ->> 'logical_resource_key' = retry_item.value ->> 'logical_resource_key'
+        and parent_item.value ->> 'resource_type' = retry_item.value ->> 'resource_type'
+    )
+  ) or exists (
+    select 1
+    from pg_catalog.jsonb_array_elements(v_parent.intent -> 'resources') as parent_item(value)
+    where not exists (
+      select 1
+      from pg_catalog.jsonb_array_elements(p_intent -> 'resources') as retry_item(value)
+      where retry_item.value ->> 'logical_resource_key' = parent_item.value ->> 'logical_resource_key'
+        and retry_item.value ->> 'resource_type' = parent_item.value ->> 'resource_type'
+    )
+  ) then
+    raise exception 'Retry intent must match the parent logical resources' using errcode = '22023';
+  end if;
+
+  select attempt.* into v_attempt
+  from public.ads_campaign_gate_attempts as attempt
+  where attempt.build_id = v_build.id
+    and attempt.request_idempotency_key = p_request_idempotency_key;
+  if found then
+    if v_attempt.action <> 'retry'
+      or v_attempt.retry_parent_attempt_id is distinct from v_parent.id
+      or v_attempt.revision_hash is distinct from p_expected_revision_hash
+      or v_attempt.intent is distinct from p_intent
+      or v_attempt.actor_id is distinct from p_actor_id then
+      raise exception 'Retry claim idempotency key conflicts with an existing request' using errcode = '22023';
+    end if;
+    return v_attempt;
+  end if;
+
+  if exists (
+    select 1
+    from pg_catalog.jsonb_array_elements(p_intent -> 'resources') as item(value)
+    left join public.ads_campaign_build_resources as resource
+      on resource.build_id = v_build.id
+     and resource.logical_resource_key = item.value ->> 'logical_resource_key'
+    where resource.id is null
+      or resource.provider_resource_id is not null
+      or not exists (
+        select 1
+        from public.ads_campaign_qa_results as qa
+        join public.ads_campaign_gate_attempts as evidence_attempt on evidence_attempt.id = qa.attempt_id
+        where qa.build_resource_id = resource.id
+          and evidence_attempt.build_id = v_build.id
+          and evidence_attempt.action = 'reconcile'
+          and evidence_attempt.claimed_at > v_parent.claimed_at
+          and qa.phase = 'reconciliation'
+          and qa.result = 'missing'
+          and qa.readback_evidence <> '{}'::jsonb
+      )
+  ) then
+    raise exception 'Mutation retry requires every intended resource to be proven missing by reconciliation readback' using errcode = '55000';
+  end if;
+
+  update public.ads_campaign_gate_attempts
+  set status = 'expired', released_at = pg_catalog.clock_timestamp(), updated_at = pg_catalog.clock_timestamp()
+  where build_id = v_build.id and gate = 1 and status = 'claimed'
+    and released_at is null and claim_expires_at <= pg_catalog.clock_timestamp();
+  if exists (
+    select 1 from public.ads_campaign_gate_attempts as attempt
+    where attempt.build_id = v_build.id and attempt.gate = 1
+      and attempt.status = 'claimed' and attempt.released_at is null
+  ) then
+    raise exception 'A different active gate claim already exists' using errcode = '55P03';
+  end if;
+
+  select coalesce(pg_catalog.max(attempt.attempt_number), 0) + 1 into v_attempt_number
+  from public.ads_campaign_gate_attempts as attempt where attempt.build_id = v_build.id;
+  insert into public.ads_campaign_gate_attempts (
+    build_id, gate, action, request_idempotency_key, retry_parent_attempt_id,
+    attempt_number, revision_id, revision_hash, status, intent,
+    claim_expires_at, actor_id, actor_name, trusted_ip, trusted_user_agent
+  ) values (
+    v_build.id, 1, 'retry', p_request_idempotency_key, v_parent.id,
+    v_attempt_number, v_build.revision_id, v_build.revision_hash, 'claimed', p_intent,
+    pg_catalog.clock_timestamp() + pg_catalog.make_interval(secs => p_claim_ttl_seconds),
+    p_actor_id, v_actor_name, p_trusted_ip, p_trusted_user_agent
+  ) returning * into v_attempt;
+
+  v_from_status := v_build.status;
+  update public.ads_campaign_builds
+  set status = 'gate_1_in_progress',
+      gate_1_started_at = coalesce(gate_1_started_at, pg_catalog.clock_timestamp()),
+      updated_at = pg_catalog.clock_timestamp(), lock_version = lock_version + 1
+  where id = v_build.id returning * into v_build;
+  perform ads_internal.append_campaign_audit(
+    v_build.plan_id, v_build.revision_id, v_build.id, v_attempt.id,
+    'campaign_gate_retry_claim_acquired', v_from_status, v_build.status,
+    p_actor_id, p_trusted_ip, p_trusted_user_agent,
+    pg_catalog.jsonb_build_object(
+      'gate', 1, 'retry_parent_attempt_id', v_parent.id,
+      'request_idempotency_key', p_request_idempotency_key,
+      'claim_expires_at', v_attempt.claim_expires_at
+    )
+  );
+  return v_attempt;
+end;
+$$;
+
+create or replace function public.ads_record_campaign_resource_outcome(
+  p_attempt_id bigint,
+  p_claim_token uuid,
+  p_logical_resource_key text,
+  p_outcome text,
+  p_provider_resource_id text,
+  p_provider_parent_resource_id text,
+  p_provider_response jsonb,
+  p_error_details jsonb
+)
+returns public.ads_campaign_build_resources
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_attempt public.ads_campaign_gate_attempts%rowtype;
+  v_build public.ads_campaign_builds%rowtype;
+  v_resource public.ads_campaign_build_resources%rowtype;
+begin
+  select attempt.* into v_attempt
+  from public.ads_campaign_gate_attempts as attempt where attempt.id = p_attempt_id;
+  if not found then
+    raise exception 'Gate attempt was not found' using errcode = 'P0002';
+  end if;
+  select build.* into strict v_build
+  from public.ads_campaign_builds as build where build.id = v_attempt.build_id for update;
+  select attempt.* into strict v_attempt
+  from public.ads_campaign_gate_attempts as attempt where attempt.id = p_attempt_id for update;
+  if v_attempt.claim_token is distinct from p_claim_token
+    or v_attempt.status <> 'claimed' or v_attempt.released_at is not null
+    or v_attempt.claim_expires_at <= pg_catalog.clock_timestamp() then
+    raise exception 'Gate claim is not active' using errcode = '55000';
+  end if;
+  if pg_catalog.btrim(coalesce(p_logical_resource_key, '')) = '' then
+    raise exception 'Logical resource key is required' using errcode = '22023';
+  end if;
+  if p_outcome not in ('succeeded', 'failed', 'ambiguous', 'missing', 'found') then
+    raise exception 'Provider resource outcome is invalid' using errcode = '22023';
+  end if;
+
+  select resource.* into v_resource
+  from public.ads_campaign_build_resources as resource
+  where resource.build_id = v_build.id
+    and resource.logical_resource_key = p_logical_resource_key
+  for update;
+  if not found then
+    raise exception 'Logical resource was not declared by the persisted intent' using errcode = 'P0002';
+  end if;
+  if v_resource.provider_resource_id is not null
+    and p_provider_resource_id is not null
+    and v_resource.provider_resource_id <> p_provider_resource_id then
+    raise exception 'A non-null provider resource ID is immutable' using errcode = '55000';
+  end if;
+  if v_resource.provider_parent_resource_id is not null
+    and p_provider_parent_resource_id is not null
+    and v_resource.provider_parent_resource_id <> p_provider_parent_resource_id then
+    raise exception 'A non-null provider parent resource ID is immutable' using errcode = '55000';
+  end if;
+  if v_resource.verified_at is not null then
+    raise exception 'A verified campaign resource cannot regress' using errcode = '55000';
+  end if;
+
+  update public.ads_campaign_build_resources
+  set provider_resource_id = coalesce(provider_resource_id, nullif(pg_catalog.btrim(p_provider_resource_id), '')),
+      provider_parent_resource_id = coalesce(provider_parent_resource_id, nullif(pg_catalog.btrim(p_provider_parent_resource_id), '')),
+      provider_response = coalesce(p_provider_response, '{}'::jsonb) || pg_catalog.jsonb_build_object(
+        '_last_attempt_id', v_attempt.id, '_last_outcome', p_outcome
+      ),
+      updated_at = pg_catalog.clock_timestamp()
+  where id = v_resource.id returning * into v_resource;
+
+  update public.ads_campaign_gate_attempts
+  set provider_outcome = p_outcome,
+      outcome = outcome || pg_catalog.jsonb_build_object(p_logical_resource_key, coalesce(p_provider_response, '{}'::jsonb)),
+      error_details = coalesce(p_error_details, error_details),
+      updated_at = pg_catalog.clock_timestamp()
+  where id = v_attempt.id;
+
+  if p_outcome = 'ambiguous' then
+    update public.ads_campaign_gate_attempts
+    set status = 'reconciliation_required', released_at = pg_catalog.clock_timestamp(),
+        updated_at = pg_catalog.clock_timestamp()
+    where id = v_attempt.id;
+    update public.ads_campaign_builds
+    set status = case when v_attempt.gate = 1 then 'reconciliation_required' else 'delivery_unverified' end,
+        updated_at = pg_catalog.clock_timestamp(), lock_version = lock_version + 1
+    where id = v_build.id;
+  end if;
+  return v_resource;
+end;
+$$;
+
+create or replace function public.ads_append_campaign_qa_result(
+  p_attempt_id bigint,
+  p_claim_token uuid,
+  p_build_resource_id bigint,
+  p_phase text,
+  p_field_path text,
+  p_required boolean,
+  p_expected_value jsonb,
+  p_observed_value jsonb,
+  p_result text,
+  p_mismatch_code text,
+  p_mismatch_detail text,
+  p_readback_evidence jsonb
+)
+returns public.ads_campaign_qa_results
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_attempt public.ads_campaign_gate_attempts%rowtype;
+  v_resource public.ads_campaign_build_resources%rowtype;
+  v_result public.ads_campaign_qa_results%rowtype;
+begin
+  select attempt.* into v_attempt
+  from public.ads_campaign_gate_attempts as attempt where attempt.id = p_attempt_id for update;
+  if not found then
+    raise exception 'Gate attempt was not found' using errcode = 'P0002';
+  end if;
+  if v_attempt.claim_token is distinct from p_claim_token
+    or v_attempt.status <> 'claimed' or v_attempt.released_at is not null
+    or v_attempt.claim_expires_at <= pg_catalog.clock_timestamp() then
+    raise exception 'Gate claim is not active' using errcode = '55000';
+  end if;
+  if p_build_resource_id is not null then
+    select resource.* into v_resource
+    from public.ads_campaign_build_resources as resource where resource.id = p_build_resource_id;
+    if not found or v_resource.build_id <> v_attempt.build_id then
+      raise exception 'QA resource does not belong to the gate attempt build' using errcode = '22023';
+    end if;
+  end if;
+  if (p_phase = 'gate_1' and v_attempt.gate <> 1)
+    or (p_phase = 'gate_2' and v_attempt.gate <> 2)
+    or (p_phase = 'reconciliation' and v_attempt.action <> 'reconcile')
+    or p_phase not in ('gate_1', 'gate_2', 'reconciliation') then
+    raise exception 'QA phase does not match the active gate claim' using errcode = '22023';
+  end if;
+  if pg_catalog.btrim(coalesce(p_field_path, '')) = ''
+    or p_result not in ('match', 'mismatch', 'missing', 'unexpected', 'error') then
+    raise exception 'QA result is invalid' using errcode = '22023';
+  end if;
+  if p_phase = 'reconciliation' and p_result = 'missing'
+    and (p_readback_evidence is null or p_readback_evidence = '{}'::jsonb) then
+    raise exception 'Missing-resource reconciliation requires readback evidence' using errcode = '22023';
+  end if;
+
+  insert into public.ads_campaign_qa_results (
+    attempt_id, build_resource_id, phase, field_path, required,
+    expected_value, observed_value, result, mismatch_code, mismatch_detail,
+    readback_evidence
+  ) values (
+    v_attempt.id, p_build_resource_id, p_phase, p_field_path, coalesce(p_required, true),
+    p_expected_value, p_observed_value, p_result, p_mismatch_code, p_mismatch_detail,
+    coalesce(p_readback_evidence, '{}'::jsonb)
+  ) returning * into v_result;
+  return v_result;
+end;
+$$;
+
+create or replace function public.ads_finalize_campaign_gate_claim(
+  p_attempt_id bigint,
+  p_claim_token uuid,
+  p_provider_outcome text,
+  p_final_readback_evidence jsonb,
+  p_actor_id uuid,
+  p_trusted_ip inet,
+  p_trusted_user_agent text
+)
+returns public.ads_campaign_builds
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_attempt public.ads_campaign_gate_attempts%rowtype;
+  v_build public.ads_campaign_builds%rowtype;
+  v_actor_name text;
+  v_actor_email text;
+  v_actor_role text;
+  v_from_status text;
+  v_to_status text;
+  v_attempt_status text;
+  v_gate_qa_ready boolean;
+  v_verified_at timestamptz;
+begin
+  select actor.actor_name, actor.actor_email, actor.actor_role
+  into strict v_actor_name, v_actor_email, v_actor_role
+  from ads_internal.resolve_m04_actor(p_actor_id) as actor;
+  if p_provider_outcome not in ('succeeded', 'failed', 'ambiguous', 'unknown', 'missing') then
+    raise exception 'Gate provider outcome is invalid' using errcode = '22023';
+  end if;
+
+  select attempt.* into v_attempt
+  from public.ads_campaign_gate_attempts as attempt where attempt.id = p_attempt_id;
+  if not found then
+    raise exception 'Gate attempt was not found' using errcode = 'P0002';
+  end if;
+  select build.* into strict v_build
+  from public.ads_campaign_builds as build where build.id = v_attempt.build_id for update;
+  select attempt.* into strict v_attempt
+  from public.ads_campaign_gate_attempts as attempt where attempt.id = p_attempt_id for update;
+  if v_attempt.claim_token is distinct from p_claim_token
+    or v_attempt.status <> 'claimed' or v_attempt.released_at is not null
+    or v_attempt.claim_expires_at <= pg_catalog.clock_timestamp() then
+    raise exception 'Gate claim is not active' using errcode = '55000';
+  end if;
+  v_from_status := v_build.status;
+
+  if v_attempt.action = 'reconcile' then
+    if v_attempt.gate = 1 and p_provider_outcome = 'missing' and exists (
+      select 1 from public.ads_campaign_qa_results as qa
+      where qa.attempt_id = v_attempt.id and qa.phase = 'reconciliation'
+        and qa.result = 'missing' and qa.readback_evidence <> '{}'::jsonb
+    ) then
+      v_to_status := 'gate_1_failed';
+      v_attempt_status := 'succeeded';
+    elsif v_attempt.gate = 2 and p_provider_outcome = 'succeeded' then
+      select
+        p_final_readback_evidence is not null
+        and p_final_readback_evidence <> '{}'::jsonb
+        and exists (
+          select 1
+          from public.ads_campaign_qa_results as qa
+          join public.ads_campaign_build_resources as resource on resource.id = qa.build_resource_id
+          where qa.attempt_id = v_attempt.id and qa.phase = 'reconciliation'
+            and qa.required and qa.result = 'match'
+            and qa.readback_evidence <> '{}'::jsonb
+            and resource.resource_type = 'campaign' and resource.provider_resource_id is not null
+        )
+        and not exists (
+          select 1 from public.ads_campaign_qa_results as qa
+          where qa.attempt_id = v_attempt.id and qa.phase = 'reconciliation'
+            and qa.required and qa.result <> 'match'
+        )
+      into v_gate_qa_ready;
+      if v_gate_qa_ready then
+        v_to_status := 'verified';
+        v_attempt_status := 'succeeded';
+        v_verified_at := pg_catalog.clock_timestamp();
+        update public.ads_campaign_build_resources as resource
+        set verified_at = v_verified_at, updated_at = v_verified_at
+        where resource.build_id = v_build.id and resource.provider_resource_id is not null
+          and exists (
+            select 1 from public.ads_campaign_qa_results as qa
+            where qa.attempt_id = v_attempt.id and qa.build_resource_id = resource.id
+              and qa.phase = 'reconciliation' and qa.result = 'match'
+              and qa.readback_evidence <> '{}'::jsonb
+          );
+      else
+        v_to_status := 'delivery_unverified';
+        v_attempt_status := 'reconciliation_required';
+      end if;
+    elsif v_attempt.gate = 2 then
+      v_to_status := 'delivery_unverified';
+      v_attempt_status := 'reconciliation_required';
+    else
+      v_to_status := 'reconciliation_required';
+      v_attempt_status := 'reconciliation_required';
+    end if;
+  elsif v_attempt.gate = 1 then
+    if p_provider_outcome in ('ambiguous', 'unknown') then
+      v_to_status := 'reconciliation_required';
+      v_attempt_status := 'reconciliation_required';
+    elsif p_provider_outcome <> 'succeeded' then
+      v_to_status := 'gate_1_failed';
+      v_attempt_status := 'failed';
+    else
+      select
+        exists (
+          select 1 from public.ads_campaign_qa_results as qa
+          where qa.attempt_id = v_attempt.id and qa.phase = 'gate_1' and qa.required
+        )
+        and not exists (
+          select 1 from public.ads_campaign_qa_results as qa
+          where qa.attempt_id = v_attempt.id and qa.phase = 'gate_1'
+            and qa.required and qa.result <> 'match'
+        )
+        and not exists (
+          select 1
+          from pg_catalog.jsonb_array_elements(v_attempt.intent -> 'resources') as item(value)
+          left join public.ads_campaign_build_resources as resource
+            on resource.build_id = v_build.id
+           and resource.logical_resource_key = item.value ->> 'logical_resource_key'
+          where resource.provider_resource_id is null
+            or not exists (
+              select 1 from public.ads_campaign_qa_results as qa
+              where qa.attempt_id = v_attempt.id and qa.build_resource_id = resource.id
+                and qa.phase = 'gate_1' and qa.required and qa.result = 'match'
+            )
+        )
+      into v_gate_qa_ready;
+      if v_gate_qa_ready then
+        v_to_status := 'ready_to_deliver';
+        v_attempt_status := 'succeeded';
+      else
+        v_to_status := 'qa_failed';
+        v_attempt_status := 'failed';
+      end if;
+    end if;
+  else
+    if p_provider_outcome in ('ambiguous', 'unknown') then
+      v_to_status := 'delivery_unverified';
+      v_attempt_status := 'reconciliation_required';
+    elsif p_provider_outcome <> 'succeeded' then
+      v_to_status := 'gate_2_failed';
+      v_attempt_status := 'failed';
+    else
+      select
+        p_final_readback_evidence is not null
+        and p_final_readback_evidence <> '{}'::jsonb
+        and exists (
+          select 1
+          from public.ads_campaign_qa_results as qa
+          join public.ads_campaign_build_resources as resource on resource.id = qa.build_resource_id
+          where qa.attempt_id = v_attempt.id and qa.phase = 'gate_2' and qa.required
+            and qa.result = 'match' and qa.readback_evidence <> '{}'::jsonb
+            and resource.resource_type = 'campaign' and resource.provider_resource_id is not null
+        )
+        and not exists (
+          select 1 from public.ads_campaign_qa_results as qa
+          where qa.attempt_id = v_attempt.id and qa.phase = 'gate_2'
+            and qa.required and qa.result <> 'match'
+        )
+      into v_gate_qa_ready;
+      if v_gate_qa_ready then
+        v_to_status := 'verified';
+        v_attempt_status := 'succeeded';
+        v_verified_at := pg_catalog.clock_timestamp();
+        update public.ads_campaign_build_resources as resource
+        set verified_at = v_verified_at, updated_at = v_verified_at
+        where resource.build_id = v_build.id and resource.provider_resource_id is not null
+          and exists (
+            select 1 from public.ads_campaign_qa_results as qa
+            where qa.attempt_id = v_attempt.id and qa.build_resource_id = resource.id
+              and qa.phase = 'gate_2' and qa.result = 'match'
+              and qa.readback_evidence <> '{}'::jsonb
+          );
+      else
+        v_to_status := 'delivery_unverified';
+        v_attempt_status := 'failed';
+      end if;
+    end if;
+  end if;
+
+  update public.ads_campaign_gate_attempts
+  set status = v_attempt_status, released_at = pg_catalog.clock_timestamp(),
+      provider_outcome = p_provider_outcome,
+      outcome = outcome || pg_catalog.jsonb_build_object(
+        'final_readback_evidence', coalesce(p_final_readback_evidence, '{}'::jsonb)
+      ),
+      updated_at = pg_catalog.clock_timestamp()
+  where id = v_attempt.id;
+
+  update public.ads_campaign_builds
+  set status = v_to_status,
+      gate_1_completed_at = case when v_attempt.gate = 1 then pg_catalog.clock_timestamp() else gate_1_completed_at end,
+      gate_2_completed_at = case when v_attempt.gate = 2 then pg_catalog.clock_timestamp() else gate_2_completed_at end,
+      delivered_at = case when v_to_status = 'verified' then v_verified_at else delivered_at end,
+      verified_at = case when v_to_status = 'verified' then v_verified_at else verified_at end,
+      final_readback_evidence = case
+        when v_attempt.gate = 2 then coalesce(p_final_readback_evidence, '{}'::jsonb)
+        else final_readback_evidence
+      end,
+      updated_at = pg_catalog.clock_timestamp(), lock_version = lock_version + 1
+  where id = v_build.id returning * into v_build;
+
+  perform ads_internal.append_campaign_audit(
+    v_build.plan_id, v_build.revision_id, v_build.id, v_attempt.id,
+    'campaign_gate_claim_finalized', v_from_status, v_to_status,
+    p_actor_id, p_trusted_ip, p_trusted_user_agent,
+    pg_catalog.jsonb_build_object(
+      'gate', v_attempt.gate, 'action', v_attempt.action,
+      'provider_outcome', p_provider_outcome, 'attempt_status', v_attempt_status
+    )
+  );
+  return v_build;
+end;
+$$;
+
+create or replace function public.ads_create_campaign_monitoring_handoff(
+  p_build_id bigint,
+  p_expected_build_lock_version bigint,
+  p_expected_revision_hash text,
+  p_actor_id uuid,
+  p_trusted_ip inet,
+  p_trusted_user_agent text
+)
+returns public.ads_campaign_monitoring_handoffs
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_build public.ads_campaign_builds%rowtype;
+  v_existing public.ads_campaign_monitoring_handoffs%rowtype;
+  v_handoff public.ads_campaign_monitoring_handoffs%rowtype;
+  v_revision public.ads_campaign_plan_revisions%rowtype;
+  v_account public.ads_ad_accounts%rowtype;
+  v_campaign public.ads_campaign_build_resources%rowtype;
+  v_actor_name text;
+  v_actor_email text;
+  v_actor_role text;
+  v_child_ids jsonb;
+begin
+  select actor.actor_name, actor.actor_email, actor.actor_role
+  into strict v_actor_name, v_actor_email, v_actor_role
+  from ads_internal.resolve_m04_actor(p_actor_id) as actor;
+
+  select build.* into v_build
+  from public.ads_campaign_builds as build where build.id = p_build_id for update;
+  if not found then
+    raise exception 'Campaign build was not found' using errcode = 'P0002';
+  end if;
+  if p_expected_revision_hash is distinct from v_build.revision_hash then
+    raise exception 'Campaign build revision lock does not match' using errcode = '40001';
+  end if;
+
+  select handoff.* into v_existing
+  from public.ads_campaign_monitoring_handoffs as handoff where handoff.build_id = v_build.id;
+  if found then
+    return v_existing;
+  end if;
+
+  if p_expected_build_lock_version is null
+    or p_expected_build_lock_version is distinct from v_build.lock_version then
+    raise exception 'Campaign build lock version is stale' using errcode = '40001';
+  end if;
+  if v_build.status <> 'verified' or v_build.verified_at is null
+    or v_build.final_readback_evidence = '{}'::jsonb then
+    raise exception 'Monitoring handoff requires a verified build with final readback' using errcode = '55000';
+  end if;
+
+  select revision.* into strict v_revision
+  from public.ads_campaign_plan_revisions as revision where revision.id = v_build.revision_id;
+  select account.* into strict v_account
+  from public.ads_ad_accounts as account where account.id = v_build.ad_account_id;
+  select resource.* into v_campaign
+  from public.ads_campaign_build_resources as resource
+  where resource.build_id = v_build.id and resource.resource_type = 'campaign'
+    and resource.provider_resource_id is not null and resource.verified_at is not null
+  order by resource.id limit 1;
+  if not found or (
+    select pg_catalog.count(*) <> 1
+    from public.ads_campaign_build_resources as resource
+    where resource.build_id = v_build.id and resource.resource_type = 'campaign'
+      and resource.provider_resource_id is not null and resource.verified_at is not null
+  ) then
+    raise exception 'Monitoring handoff requires one verified campaign mapping' using errcode = '55000';
+  end if;
+
+  select coalesce(
+    pg_catalog.jsonb_agg(resource.provider_resource_id order by resource.logical_resource_key),
+    '[]'::jsonb
+  ) into v_child_ids
+  from public.ads_campaign_build_resources as resource
+  where resource.build_id = v_build.id and resource.resource_type <> 'campaign'
+    and resource.provider_resource_id is not null and resource.verified_at is not null;
+
+  insert into public.ads_campaign_monitoring_handoffs (
+    build_id, client_id, platform, ad_account_id, provider_account_id,
+    revision_id, revision_hash, provider_campaign_id, provider_child_ids,
+    start_date, end_date, currency, allocated_budget,
+    final_readback_evidence, verified_at
+  ) values (
+    v_build.id, v_revision.client_id, v_build.platform, v_build.ad_account_id,
+    v_account.provider_account_id, v_revision.id, v_revision.payload_hash,
+    v_campaign.provider_resource_id, v_child_ids, v_revision.start_date,
+    v_revision.end_date, v_revision.currency, v_revision.allocated_budget,
+    v_build.final_readback_evidence, v_build.verified_at
+  ) returning * into v_handoff;
+
+  update public.ads_campaign_builds
+  set status = 'handoff_complete', updated_at = pg_catalog.clock_timestamp(),
+      lock_version = lock_version + 1
+  where id = v_build.id;
+  update public.ads_campaign_plans
+  set status = 'launched', updated_at = pg_catalog.clock_timestamp(),
+      lock_version = lock_version + 1
+  where id = v_build.plan_id and status = 'launch_in_progress';
+  perform ads_internal.append_campaign_audit(
+    v_build.plan_id, v_build.revision_id, v_build.id, null,
+    'campaign_monitoring_handoff_created', 'verified', 'handoff_complete',
+    p_actor_id, p_trusted_ip, p_trusted_user_agent,
+    pg_catalog.jsonb_build_object(
+      'handoff_id', v_handoff.id,
+      'provider_campaign_id', v_handoff.provider_campaign_id
+    )
+  );
+  return v_handoff;
+end;
+$$;
+
 create trigger acpr_append_only before update or delete on public.ads_campaign_plan_revisions
 for each row execute function ads_internal.reject_m04_row_mutation();
 create trigger aca_append_only before update or delete on public.ads_campaign_approvals
 for each row execute function ads_internal.reject_m04_row_mutation();
+create trigger acbr_protect before update or delete on public.ads_campaign_build_resources
+for each row execute function ads_internal.protect_campaign_build_resource();
 create trigger acqr_append_only before update or delete on public.ads_campaign_qa_results
 for each row execute function ads_internal.reject_m04_row_mutation();
 create trigger acaud_append_only before update or delete on public.ads_campaign_audit_events
@@ -1117,6 +2050,7 @@ $$;
 
 revoke all on function ads_internal.is_approved_operator() from public, anon;
 revoke all on function ads_internal.reject_m04_row_mutation() from public, anon, authenticated;
+revoke all on function ads_internal.protect_campaign_build_resource() from public, anon, authenticated, service_role;
 revoke all on function ads_internal.resolve_m04_actor(uuid) from public, anon, authenticated, service_role;
 revoke all on function ads_internal.append_campaign_audit(bigint, bigint, bigint, bigint, text, text, text, uuid, inet, text, jsonb) from public, anon, authenticated, service_role;
 grant usage on schema ads_internal to authenticated, service_role;
@@ -1127,9 +2061,21 @@ revoke all on function public.ads_reserve_campaign_budget(bigint, bigint, text, 
 revoke all on function public.ads_release_campaign_budget(bigint, bigint, text, uuid, inet, text) from public, anon, authenticated, service_role;
 revoke all on function public.ads_approve_campaign_plan_revision(bigint, bigint, text, bigint, timestamptz, text, text, uuid, inet, text) from public, anon, authenticated, service_role;
 revoke all on function public.ads_transition_campaign_plan(bigint, bigint, text, text, text, uuid, inet, text) from public, anon, authenticated, service_role;
+revoke all on function public.ads_acquire_campaign_gate_claim(bigint, smallint, text, text, bigint, text, integer, jsonb, uuid, inet, text) from public, anon, authenticated, service_role;
+revoke all on function public.ads_acquire_campaign_retry_claim(bigint, bigint, text, text, integer, jsonb, uuid, inet, text) from public, anon, authenticated, service_role;
+revoke all on function public.ads_record_campaign_resource_outcome(bigint, uuid, text, text, text, text, jsonb, jsonb) from public, anon, authenticated, service_role;
+revoke all on function public.ads_append_campaign_qa_result(bigint, uuid, bigint, text, text, boolean, jsonb, jsonb, text, text, text, jsonb) from public, anon, authenticated, service_role;
+revoke all on function public.ads_finalize_campaign_gate_claim(bigint, uuid, text, jsonb, uuid, inet, text) from public, anon, authenticated, service_role;
+revoke all on function public.ads_create_campaign_monitoring_handoff(bigint, bigint, text, uuid, inet, text) from public, anon, authenticated, service_role;
 
 grant execute on function public.ads_create_campaign_plan_revision(bigint, bigint, jsonb, text, text, uuid, inet, text) to service_role;
 grant execute on function public.ads_reserve_campaign_budget(bigint, bigint, text, bigint, uuid, inet, text) to service_role;
 grant execute on function public.ads_release_campaign_budget(bigint, bigint, text, uuid, inet, text) to service_role;
 grant execute on function public.ads_approve_campaign_plan_revision(bigint, bigint, text, bigint, timestamptz, text, text, uuid, inet, text) to service_role;
 grant execute on function public.ads_transition_campaign_plan(bigint, bigint, text, text, text, uuid, inet, text) to service_role;
+grant execute on function public.ads_acquire_campaign_gate_claim(bigint, smallint, text, text, bigint, text, integer, jsonb, uuid, inet, text) to service_role;
+grant execute on function public.ads_acquire_campaign_retry_claim(bigint, bigint, text, text, integer, jsonb, uuid, inet, text) to service_role;
+grant execute on function public.ads_record_campaign_resource_outcome(bigint, uuid, text, text, text, text, jsonb, jsonb) to service_role;
+grant execute on function public.ads_append_campaign_qa_result(bigint, uuid, bigint, text, text, boolean, jsonb, jsonb, text, text, text, jsonb) to service_role;
+grant execute on function public.ads_finalize_campaign_gate_claim(bigint, uuid, text, jsonb, uuid, inet, text) to service_role;
+grant execute on function public.ads_create_campaign_monitoring_handoff(bigint, bigint, text, uuid, inet, text) to service_role;
