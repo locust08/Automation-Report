@@ -10,6 +10,7 @@ import { isAuthRole } from "@/lib/auth/roles";
 import { getAuthTableUrl, getSupabaseBaseUrl, getSupabasePublicKey, getSupabaseServerKey } from "@/lib/auth/config";
 import { checkLoginRateLimit, clearLoginFailures, getLoginAttemptKey, recordLoginFailure } from "@/lib/auth/login-rate-limit";
 import { isAllowedOrganizationEmail } from "@/lib/auth/allowed-email";
+import { fetchAuthUpstream, isAuthUpstreamTimeoutError } from "@/lib/auth/upstream-fetch";
 
 type LoginBody = {
   email?: unknown;
@@ -68,7 +69,7 @@ export async function POST(request: Request) {
       query.searchParams.set("select", "user_id,email,password_hash,full_name,role,is_active");
       query.searchParams.set("email", `eq.${email}`);
       query.searchParams.set("limit", "1");
-      const databaseResponse = await fetch(query, {
+      const databaseResponse = await fetchAuthUpstream(query, {
         headers: {
           apikey: secretKey,
           ...(secretKey === serviceRoleKey ? { Authorization: `Bearer ${serviceRoleKey}` } : {}),
@@ -124,7 +125,7 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Login is not configured on the server." }, { status: 503 });
     }
 
-    const authResponse = await fetch(`${supabaseUrl}/auth/v1/token?grant_type=password`, {
+    const authResponse = await fetchAuthUpstream(`${supabaseUrl}/auth/v1/token?grant_type=password`, {
       method: "POST",
       headers: { apikey: publicKey, "Content-Type": "application/json" },
       body: JSON.stringify({ email, password }),
@@ -154,7 +155,7 @@ export async function POST(request: Request) {
       headers.Authorization = `Bearer ${serviceRoleKey}`;
     }
 
-    const databaseResponse = await fetch(query, {
+    const databaseResponse = await fetchAuthUpstream(query, {
       headers,
       cache: "no-store",
     });
@@ -194,6 +195,9 @@ export async function POST(request: Request) {
     return response;
   } catch (error) {
     console.error("Login failed:", error);
-    return NextResponse.json({ error: "Login is temporarily unavailable." }, { status: 500 });
+    return NextResponse.json(
+      { error: "Login is temporarily unavailable. Please try again." },
+      { status: isAuthUpstreamTimeoutError(error) ? 503 : 500 },
+    );
   }
 }

@@ -7,7 +7,7 @@ import { AUTH_COOKIE_NAME } from "@/lib/auth/session";
 export async function proxy(request: NextRequest) {
   const token = request.cookies.get(AUTH_COOKIE_NAME)?.value;
   const isLoginPage = request.nextUrl.pathname === "/";
-  const session = token ? await getCurrentAuthSession(token) : null;
+  const session = await getCurrentAuthSession(token);
   const isDashboard = request.nextUrl.pathname.startsWith("/dashboard");
   const isBilling = request.nextUrl.pathname.startsWith("/billing");
   const isSearchTermOptimization = request.nextUrl.pathname.startsWith("/search-term-optimization");

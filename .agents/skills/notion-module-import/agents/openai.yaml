@@ -1,0 +1,4 @@
+interface:
+  display_name: "Notion Module Import"
+  short_description: "Build clear business-to-developer Notion modules"
+  default_prompt: "Use $notion-module-import to create or refresh a verified Notion module with adaptive business context, atomic features, UX and design behavior, developer test scenarios, technical mappings, and diagrams appropriate to the requirement."

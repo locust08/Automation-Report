@@ -1,6 +1,7 @@
 import { isAuthRole } from "@/lib/auth/roles";
-import { verifyAuthToken } from "@/lib/auth/session";
+import { getDevelopmentAuthSession, verifyAuthToken } from "@/lib/auth/session";
 import { getAuthTableUrl, getSupabaseServerKey } from "@/lib/auth/config";
+import { fetchAuthUpstream } from "@/lib/auth/upstream-fetch";
 
 type CurrentUserRow = {
   id: string;
@@ -16,7 +17,10 @@ type LegacyCurrentUserRow = {
   is_active: boolean;
 };
 
-export async function getCurrentAuthSession(token: string) {
+export async function getCurrentAuthSession(token?: string) {
+  const developmentSession = getDevelopmentAuthSession();
+  if (developmentSession) return developmentSession;
+  if (!token) return null;
   const tokenSession = await verifyAuthToken(token);
   if (!tokenSession) return null;
   const legacyAuthUrl = process.env.SUPABASE_ADS_REPORTING_AUTH_URL?.trim();
@@ -27,13 +31,8 @@ export async function getCurrentAuthSession(token: string) {
     query.searchParams.set("select", "user_id,full_name,role,is_active");
     query.searchParams.set("user_id", `eq.${tokenSession.sub}`);
     query.searchParams.set("limit", "1");
-    const response = await fetch(query, {
-      headers: {
-        apikey: secretKey,
-        ...(secretKey === serviceRoleKey ? { Authorization: `Bearer ${serviceRoleKey}` } : {}),
-      },
-      cache: "no-store",
-    });
+    const response = await fetchProfile(query, secretKey, serviceRoleKey);
+    if (!response) return null;
     if (!response.ok) return null;
     const [user] = (await response.json()) as LegacyCurrentUserRow[];
     if (!user?.is_active || !isAuthRole(user.role)) return null;
@@ -46,15 +45,25 @@ export async function getCurrentAuthSession(token: string) {
   query.searchParams.set("select", "id,full_name,role,is_active");
   query.searchParams.set("id", `eq.${tokenSession.sub}`);
   query.searchParams.set("limit", "1");
-  const response = await fetch(query, {
-    headers: {
-      apikey: secretKey,
-      ...(secretKey === serviceRoleKey ? { Authorization: `Bearer ${serviceRoleKey}` } : {}),
-    },
-    cache: "no-store",
-  });
+  const response = await fetchProfile(query, secretKey, serviceRoleKey);
+  if (!response) return null;
   if (!response.ok) return null;
   const [user] = (await response.json()) as CurrentUserRow[];
   if (!user?.is_active || !isAuthRole(user.role)) return null;
   return { ...tokenSession, fullName: user.full_name, role: user.role };
+}
+
+async function fetchProfile(query: URL, secretKey: string, serviceRoleKey: string | null) {
+  try {
+    return await fetchAuthUpstream(query, {
+      headers: {
+        apikey: secretKey,
+        ...(secretKey === serviceRoleKey ? { Authorization: `Bearer ${serviceRoleKey}` } : {}),
+      },
+      cache: "no-store",
+    });
+  } catch (error) {
+    console.error("Auth profile lookup failed:", error instanceof Error ? error.message : error);
+    return null;
+  }
 }

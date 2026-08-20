@@ -13,6 +13,19 @@ export type AuthSession = JWTPayload & {
   fullName: string | null;
 };
 
+export function getDevelopmentAuthSession(): AuthSession | null {
+  if (process.env.NODE_ENV === "production" || process.env.DEV_AUTH_BYPASS !== "true") {
+    return null;
+  }
+
+  return {
+    sub: "local-development-admin",
+    email: "dev-admin@localhost",
+    role: "admin",
+    fullName: "Local Development Admin",
+  };
+}
+
 function getJwtSecret() {
   const secret = process.env.ADS_REPORTING_JWT_SECRET || process.env.JWT_SECRET;
 
@@ -63,7 +76,6 @@ export async function verifyAuthToken(token: string): Promise<AuthSession | null
 
 export async function authSessionFromRequest(request: NextRequest): Promise<AuthSession | null> {
   const token = request.cookies.get(AUTH_COOKIE_NAME)?.value;
-  if (!token) return null;
   const { getCurrentAuthSession } = await import("@/lib/auth/current-session");
   return getCurrentAuthSession(token);
 }

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Notion Module Delivery"
+  short_description: "Deliver Notion modules with verified progress"
+  default_prompt: "Use $notion-module-delivery to study this Notion module, research official best practices, implement all safely achievable work, verify it, and keep lifecycle, checkboxes, and evidence current."

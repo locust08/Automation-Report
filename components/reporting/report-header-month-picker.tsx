@@ -2,9 +2,10 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { CalendarDaysIcon, ChevronDownIcon, ChevronLeftIcon, ChevronRightIcon } from "lucide-react";
+import type { DateRange } from "react-day-picker";
 
+import { Calendar02 } from "@/components/shadcn-studio/calendar/calendar-02";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 
 type DatePreset =
@@ -31,6 +32,11 @@ export function ReportHeaderMonthPicker({
   const [open, setOpen] = useState(false);
   const [draftStartDate, setDraftStartDate] = useState(normalizeIsoDate(startDate));
   const [draftEndDate, setDraftEndDate] = useState(normalizeIsoDate(endDate));
+  const [draftRange, setDraftRange] = useState<DateRange>(() => ({
+    from: parseIsoDate(startDate),
+    to: parseIsoDate(endDate),
+  }));
+  const [rangeSelectionStart, setRangeSelectionStart] = useState<Date | null>(null);
   const [preset, setPreset] = useState<DatePreset>("custom");
 
   const normalizedCurrent = useMemo(
@@ -81,11 +87,33 @@ export function ReportHeaderMonthPicker({
     const next = getPresetRange(nextPreset);
     setDraftStartDate(next.startDate);
     setDraftEndDate(next.endDate);
+    setDraftRange({
+      from: parseIsoDate(next.startDate),
+      to: parseIsoDate(next.endDate),
+    });
+    setRangeSelectionStart(null);
   }
 
   function applyDraftRange() {
     applyRange(draftStartDate, draftEndDate);
     setOpen(false);
+  }
+
+  function handleCalendarDayClick(day: Date) {
+    setPreset("custom");
+    if (!rangeSelectionStart) {
+      setRangeSelectionStart(day);
+      setDraftRange({ from: day, to: undefined });
+      setDraftStartDate(toCalendarIsoDate(day));
+      return;
+    }
+
+    const from = day < rangeSelectionStart ? day : rangeSelectionStart;
+    const to = day < rangeSelectionStart ? rangeSelectionStart : day;
+    setDraftRange({ from, to });
+    setDraftStartDate(toCalendarIsoDate(from));
+    setDraftEndDate(toCalendarIsoDate(to));
+    setRangeSelectionStart(null);
   }
 
   function togglePicker() {
@@ -96,6 +124,11 @@ export function ReportHeaderMonthPicker({
 
     setDraftStartDate(normalizedCurrent.startDate);
     setDraftEndDate(normalizedCurrent.endDate);
+    setDraftRange({
+      from: parseIsoDate(normalizedCurrent.startDate),
+      to: parseIsoDate(normalizedCurrent.endDate),
+    });
+    setRangeSelectionStart(null);
     setPreset("custom");
     setOpen(true);
   }
@@ -169,71 +202,58 @@ export function ReportHeaderMonthPicker({
       </Button>
 
       {open ? (
-        <div className="absolute left-0 top-[calc(100%+8px)] z-50 w-[min(420px,calc(100vw-2rem))] max-w-full overflow-hidden rounded-2xl bg-white shadow-[0_12px_32px_rgba(0,0,0,0.18)] sm:left-auto sm:right-0 sm:w-[420px]">
-          <div className="bg-[#4680de] p-4">
-            <label className="flex items-center justify-end">
+        <div className="absolute left-0 top-[calc(100%+8px)] z-50 max-h-[min(680px,calc(100vh-6rem))] w-[600px] max-w-[calc(100vw-2rem)] overflow-auto rounded-2xl border bg-white shadow-[0_12px_32px_rgba(0,0,0,0.18)] sm:left-auto sm:right-0">
+          <div className="flex items-center justify-between gap-3 border-b p-3">
+            <div>
+              <p className="text-sm font-semibold text-foreground">Select date range</p>
+              <p className="text-xs text-muted-foreground">Choose a preset or select dates from the calendar.</p>
+            </div>
+            <label className="flex shrink-0 items-center justify-end">
               <span className="sr-only">Quick date range</span>
               <select
                 value={preset}
                 onChange={(event) => handlePresetChange(event.target.value as DatePreset)}
-                className="h-9 w-full rounded-md border border-white/40 bg-transparent px-3 text-sm font-semibold text-white outline-none sm:w-auto"
+                className="h-9 rounded-md border bg-background px-3 text-sm font-medium text-foreground outline-none ring-offset-background focus:ring-2 focus:ring-ring"
                 aria-label="Quick date range"
               >
-                <option className="text-black" value="custom">
+                <option value="custom">
                   Custom
                 </option>
-                <option className="text-black" value="today">
+                <option value="today">
                   Today
                 </option>
-                <option className="text-black" value="yesterday">
+                <option value="yesterday">
                   Yesterday
                 </option>
-                <option className="text-black" value="last7Days">
+                <option value="last7Days">
                   Last 7 days
                 </option>
-                <option className="text-black" value="last30Days">
+                <option value="last30Days">
                   Last 30 days
                 </option>
-                <option className="text-black" value="thisMonth">
+                <option value="thisMonth">
                   This month
                 </option>
-                <option className="text-black" value="lastMonth">
+                <option value="lastMonth">
                   Last month
                 </option>
               </select>
             </label>
           </div>
 
-          <div className="space-y-4 p-4">
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-              <label className="space-y-1 text-sm">
-                <span className="font-medium text-[#4a4a4a]">Start Date</span>
-                <Input
-                  type="date"
-                  value={draftStartDate}
-                  max={draftEndDate}
-                  onChange={(event) => {
-                    setPreset("custom");
-                    setDraftStartDate(event.target.value);
-                  }}
-                  className="h-10"
-                  aria-label="Start date"
-                />
-              </label>
-              <label className="space-y-1 text-sm">
-                <span className="font-medium text-[#4a4a4a]">End Date</span>
-                <Input
-                  type="date"
-                  value={draftEndDate}
-                  min={draftStartDate}
-                  onChange={(event) => {
-                    setPreset("custom");
-                    setDraftEndDate(event.target.value);
-                  }}
-                  className="h-10"
-                  aria-label="End date"
-                />
-              </label>
+          <div className="space-y-3 p-3">
+            <Calendar02
+              mode="range"
+              defaultMonth={parseIsoDate(draftStartDate)}
+              selected={draftRange}
+              onDayClick={handleCalendarDayClick}
+              className="mx-auto w-fit"
+            />
+
+            <div className="flex items-center justify-center gap-2 text-sm text-muted-foreground">
+              <span>{formatLabelDate(draftStartDate)}</span>
+              <span aria-hidden="true">→</span>
+              <span>{formatLabelDate(draftEndDate)}</span>
             </div>
 
             <div className="flex flex-col-reverse gap-2 sm:flex-row sm:items-center sm:justify-end">
@@ -244,6 +264,11 @@ export function ReportHeaderMonthPicker({
                 onClick={() => {
                   setDraftStartDate(normalizedCurrent.startDate);
                   setDraftEndDate(normalizedCurrent.endDate);
+                  setDraftRange({
+                    from: parseIsoDate(normalizedCurrent.startDate),
+                    to: parseIsoDate(normalizedCurrent.endDate),
+                  });
+                  setRangeSelectionStart(null);
                   setPreset("custom");
                   setOpen(false);
                 }}
@@ -252,8 +277,9 @@ export function ReportHeaderMonthPicker({
               </Button>
               <Button
                 type="button"
-                className="h-9 w-full bg-[#4680de] px-4 hover:bg-[#326bc7] sm:w-auto"
+                className="h-9 w-full px-4 sm:w-auto"
                 onClick={applyDraftRange}
+                disabled={!draftRange.from || !draftRange.to}
               >
                 Apply
               </Button>
@@ -374,4 +400,11 @@ function addDays(date: Date, days: number): Date {
 function toIsoDate(date: Date): string {
   const utcDate = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
   return utcDate.toISOString().slice(0, 10);
+}
+
+function toCalendarIsoDate(date: Date): string {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
 }
