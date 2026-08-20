@@ -1,4 +1,5 @@
 import type { PlacementDashboardPayload, PlacementOptimizationRow } from "@/lib/placement-optimization/types";
+import { normalizeTrafficQualityRecommendation } from "@/lib/traffic-quality/contracts";
 
 export type PlacementCacheStatus = {
   id: string;
@@ -25,7 +26,7 @@ export type PlacementCacheStatus = {
   };
 };
 
-type CachedPlacementRow = Omit<PlacementOptimizationRow, "id" | "classification" | "recommendedAction" | "confidence" | "reason" | "confirmationRequired" | "aiStatus" | "reviewStatus" | "currentDecision" | "reviewHistory"> & { stableKey: string };
+type CachedPlacementRow = Omit<PlacementOptimizationRow, "id" | "classification" | "recommendedAction" | "confidence" | "reason" | "confirmationRequired" | "aiStatus" | "reviewStatus" | "currentDecision" | "reviewHistory"> & { stableKey: string; analysis?: unknown };
 
 function config() {
   const baseUrl = process.env.PLACEMENT_ANALYSIS_WORKER_URL?.replace(/\/$/, "");
@@ -75,7 +76,22 @@ export async function loadPlacementCacheRows(input: { accountId: string; startDa
   const payload = await response.json() as { rows?: CachedPlacementRow[]; page?: number; pageSize?: number; total?: number; pageCount?: number; generatedAt?: string; expiresAt?: string; error?: string; code?: string };
   if (!response.ok) throw Object.assign(new Error(payload.error ?? "Unable to load placements."), { code: payload.code, status: response.status });
   return {
-    rows: (payload.rows ?? []).map((row): PlacementOptimizationRow => ({ ...row, id: `live:${encodeURIComponent(row.stableKey)}`, classification: "Live Google Ads placement", recommendedAction: "keep", confidence: 0, reason: "Live placement data. Only published exclusions are saved.", confirmationRequired: true, aiStatus: "not_required", reviewStatus: "live", currentDecision: null, reviewHistory: [] })),
+    rows: (payload.rows ?? []).map((row): PlacementOptimizationRow => {
+      const recommendation = normalizeTrafficQualityRecommendation(row.analysis);
+      return {
+        ...row,
+        id: `live:${encodeURIComponent(row.stableKey)}`,
+        classification: recommendation.classification,
+        recommendedAction: recommendation.recommendedAction === "exclude" ? "exclude" : recommendation.recommendedAction === "keep" ? "keep" : "kiv",
+        confidence: recommendation.confidence,
+        reason: recommendation.reason,
+        confirmationRequired: recommendation.clientConfirmationRequired,
+        aiStatus: row.analysis ? (recommendation.confidence > 0 ? "generated" : "rules_fallback") : "rules_fallback",
+        reviewStatus: "live",
+        currentDecision: null,
+        reviewHistory: [],
+      };
+    }),
     page: payload.page ?? input.page,
     pageSize: payload.pageSize ?? input.pageSize,
     total: payload.total ?? 0,
