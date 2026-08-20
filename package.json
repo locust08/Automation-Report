@@ -36,6 +36,7 @@
     "tiktok:ads": "tsx .agents/skills/tiktok-ads-doppler/scripts/tiktok_ads.ts",
     "tiktok:ads:local": "node --env-file=.env.local --import tsx .agents/skills/tiktok-ads-doppler/scripts/tiktok_ads.ts",
     "tiktok:secrets:sync-local": "tsx scripts/sync-tiktok-secrets-local.ts",
+    "test:m01": "tsx --test lib/traffic-quality/*.test.ts lib/ads-management/google.test.ts lib/ads-management/service.test.ts",
     "vercel:env:sync": "node scripts/sync-vercel-env.mjs",
     "vercel:deploy:preview": "vercel deploy",
     "vercel:deploy:prod": "vercel deploy --prod",

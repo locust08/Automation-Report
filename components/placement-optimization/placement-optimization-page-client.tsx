@@ -1755,6 +1755,12 @@ function toExclusionPayload(row: PlacementOptimizationRow) {
     spend: row.spend,
     conversions: row.conversions,
     videoViews: row.videoViews,
+    classification: row.classification,
+    recommendedAction: row.recommendedAction === "kiv" ? "review" : row.recommendedAction,
+    recommendedNegativeMatchType: row.recommendedAction === "exclude" ? "exact" : null,
+    confidence: row.confidence,
+    reason: row.reason,
+    clientConfirmationRequired: row.confirmationRequired,
   };
 }
 function formatReportingDate(value: string) {

@@ -3,6 +3,7 @@ import path from "node:path";
 
 import { getCredentials } from "@/lib/reporting/env";
 import { calculateSafetyScore, evaluateHardGates } from "@/lib/search-term-optimization/scoring";
+import { normalizeTrafficQualityRecommendation } from "@/lib/traffic-quality/contracts";
 import type {
   OptimizationDashboardPayload,
   OptimizationResult,
@@ -28,6 +29,11 @@ type RawRow = {
   mismatchCategory: string;
   negativePhraseSeed?: string;
   reason: string;
+  classification?: string;
+  recommendedAction?: "keep" | "exclude" | "review";
+  recommendedNegativeMatchType?: "exact" | "phrase" | "broad" | null;
+  confidence?: number;
+  clientConfirmationRequired?: boolean;
   cost: number;
   impressions: number;
   clicks: number;
@@ -212,20 +218,26 @@ export async function generateSearchTermAnalysis(input: GenerateSearchTermAnalys
     const searchTerm = result.searchTermView?.searchTerm?.trim();
     if (!searchTerm) return [];
     const conversions = Number(result.metrics?.conversions ?? 0);
+    const recommendation = normalizeTrafficQualityRecommendation(null);
     return [{
       term_id: result.searchTermView?.resourceName ?? `${customerId}-${index}`,
       searchTerm,
       campaignName: result.campaign?.name ?? "Unknown campaign",
       adGroupName: result.adGroup?.name ?? "Unknown ad group",
       destinationUrl: "",
-      proposedAction: "no action",
+      proposedAction: "special review needed",
       specialReview: "yes",
-      relevance: "unclear",
+      relevance: recommendation.classification,
       mismatchIsClear: false,
-      mismatchCategory: "unclear_human_review",
+      mismatchCategory: recommendation.classification,
       reason: conversions > 0
         ? "The term produced conversions and requires human review before any exclusion."
-        : "Fresh Google Ads term awaiting conservative human classification.",
+        : recommendation.reason,
+      classification: recommendation.classification,
+      recommendedAction: recommendation.recommendedAction,
+      recommendedNegativeMatchType: recommendation.recommendedNegativeMatchType,
+      confidence: recommendation.confidence,
+      clientConfirmationRequired: recommendation.clientConfirmationRequired,
       cost: Number(result.metrics?.costMicros ?? 0) / 1_000_000,
       impressions: Number(result.metrics?.impressions ?? 0),
       clicks: Number(result.metrics?.clicks ?? 0),
@@ -456,7 +468,7 @@ function mapResult(input: {
     lastReviewedAt: null,
     dataRetrievedAt: input.generatedAt,
     previousDecision: null,
-    classification: row.mismatchIsClear ? row.mismatchCategory : row.relevance ?? "unclassified",
+    classification: row.classification ?? (row.mismatchIsClear ? row.mismatchCategory : row.relevance) ?? "Unclear or human review required",
     mismatchCategory: row.mismatchCategory,
     proposedAction: row.proposedAction,
     explanation: row.reason,
