@@ -136,10 +136,21 @@ select ok(has_function_privilege('authenticated', 'ads_internal.is_approved_oper
 
 insert into auth.users (id, email, aud, role) values
   ('00000000-0000-0000-0000-000000000041', 'operator@locus-t.com.my', 'authenticated', 'authenticated'),
-  ('00000000-0000-0000-0000-000000000042', 'blocked@example.test', 'authenticated', 'authenticated');
+  ('00000000-0000-0000-0000-000000000042', 'blocked@example.test', 'authenticated', 'authenticated'),
+  ('00000000-0000-0000-0000-000000000043', 'unconfirmed@digitalbee.ai', 'authenticated', 'authenticated'),
+  ('00000000-0000-0000-0000-000000000044', 'operator@locus-t.com.my@attacker.test', 'authenticated', 'authenticated');
+update auth.users
+set email_confirmed_at = clock_timestamp()
+where id in (
+  '00000000-0000-0000-0000-000000000041'::uuid,
+  '00000000-0000-0000-0000-000000000042'::uuid,
+  '00000000-0000-0000-0000-000000000044'::uuid
+);
 insert into public.ad_automation_report_users (id, full_name, role, is_active) values
   ('00000000-0000-0000-0000-000000000041', 'Approved operator', 'admin', true),
-  ('00000000-0000-0000-0000-000000000042', 'Blocked operator', 'admin', true);
+  ('00000000-0000-0000-0000-000000000042', 'Blocked operator', 'admin', true),
+  ('00000000-0000-0000-0000-000000000043', 'Unconfirmed operator', 'admin', true),
+  ('00000000-0000-0000-0000-000000000044', 'Malformed operator', 'admin', true);
 insert into public.ads_ad_accounts (client_id, platform, provider_account_id, account_name, currency, timezone)
 values ('00000000-0000-0000-0000-000000000001', 'google', '1000000000', 'Security test account', 'MYR', 'Asia/Kuala_Lumpur');
 
@@ -155,6 +166,16 @@ reset role;
 set local role authenticated;
 set local "request.jwt.claims" = '{"sub":"00000000-0000-0000-0000-000000000042","email":"blocked@example.test","role":"authenticated"}';
 select is((select count(*)::integer from public.ads_ad_accounts), 0, 'unapproved-domain operator sees no M04 rows');
+reset role;
+
+set local role authenticated;
+set local "request.jwt.claims" = '{"sub":"00000000-0000-0000-0000-000000000043","email":"unconfirmed@digitalbee.ai","role":"authenticated"}';
+select is((select count(*)::integer from public.ads_ad_accounts), 0, 'unconfirmed approved-domain operator sees no M04 rows');
+reset role;
+
+set local role authenticated;
+set local "request.jwt.claims" = '{"sub":"00000000-0000-0000-0000-000000000044","email":"operator@locus-t.com.my@attacker.test","role":"authenticated"}';
+select is((select count(*)::integer from public.ads_ad_accounts), 0, 'malformed multi-at address sees no M04 rows');
 reset role;
 
 set local role anon;

@@ -277,7 +277,9 @@ as $$
     join public.ad_automation_report_users as operator on operator.id = auth_user.id
     where auth_user.id = (select auth.uid())
       and operator.is_active
-      and lower(split_part(auth_user.email, '@', 2)) in ('locus-t.com.my', 'digitalbee.ai')
+      and auth_user.email_confirmed_at is not null
+      and auth_user.email = lower(auth_user.email)
+      and auth_user.email ~ '^[^@]+@(locus-t\.com\.my|digitalbee\.ai)$'
   );
 $$;
 
