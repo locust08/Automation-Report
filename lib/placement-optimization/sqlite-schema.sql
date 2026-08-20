@@ -59,3 +59,21 @@ CREATE TABLE IF NOT EXISTS ad_automation_content_suitability_snapshots (
   payload_json TEXT NOT NULL,
   refreshed_at TEXT NOT NULL
 );
+
+-- Legacy compatibility tables used by Team Lead monitoring. New exclusion
+-- drafts and verified reports are owned by the shared Supabase M03 workflow.
+CREATE TABLE IF NOT EXISTS ad_automation_placement_change_sets (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  google_customer_id TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'ready_for_publishing'
+    CHECK(status IN ('ready_for_publishing','publishing','published','failed','cancelled')),
+  approved_by_email TEXT NOT NULL,
+  approved_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS ad_automation_placement_pm_reports (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  google_customer_id TEXT NOT NULL,
+  customer_name TEXT NOT NULL,
+  generated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);

@@ -12,6 +12,8 @@ interface GoogleRow {
   campaignAsset?: { resourceName?: string; campaign?: string; asset?: string; fieldType?: string; status?: string; source?: string };
   adGroupAsset?: { resourceName?: string; adGroup?: string; asset?: string; fieldType?: string; status?: string; source?: string };
   recommendation?: { resourceName?: string; type?: string; dismissed?: boolean; campaign?: string; campaigns?: string[]; adGroup?: string; campaignBudget?: string; impact?: { baseMetrics?: ManagedRecommendationMetrics; potentialMetrics?: ManagedRecommendationMetrics }; [key: string]: unknown };
+  campaignCriterion?: GoogleCriterion;
+  adGroupCriterion?: GoogleCriterion;
   customer?: { optimizationScore?: number; currencyCode?: string };
   segments?: { date?: string; recommendationType?: string };
   metrics?: { costMicros?: string | number; impressions?: string | number; clicks?: string | number; conversions?: number; allConversions?: number; conversionsFromInteractionsRate?: number; interactions?: string | number; searchBudgetLostImpressionShare?: number; searchRankLostImpressionShare?: number; optimizationScoreUrl?: string; optimizationScoreUplift?: number };
@@ -292,6 +294,16 @@ export async function fetchManagedRecommendations(accountId: string): Promise<{ 
   return { recommendations, optimizationScore: typeof scoreRow?.customer?.optimizationScore === "number" ? scoreRow.customer.optimizationScore : null, optimizationScoreUrl: scoreRow?.metrics?.optimizationScoreUrl || null, synchronizedAt: new Date().toISOString() };
 }
 
+interface GoogleCriterion {
+  resourceName?: string;
+  negative?: boolean;
+  keyword?: { text?: string; matchType?: string };
+  placement?: { url?: string };
+  mobileApplication?: { appId?: string };
+  youtubeChannel?: { channelId?: string };
+  youtubeVideo?: { videoId?: string };
+}
+
 async function fetchRecommendationRowsWithFallback(ctx: GoogleContext, richQuery: string, baseQuery: string): Promise<Array<{ results?: GoogleRow[] }>> {
   try {
     return await googlePost<Array<{ results?: GoogleRow[] }>>(ctx, "googleAds:searchStream", { query: richQuery });
@@ -523,7 +535,7 @@ function humanize(value: string): string { return value.toLowerCase().split("_")
 
 export async function fetchOfficialValues(accountId: string, changes: AdsFieldChangeRecord[]): Promise<Map<string, unknown>> {
   const values = new Map<string, unknown>();
-  const normalChanges = changes.filter((change) => change.field_key !== "recommendation.apply");
+  const normalChanges = changes.filter((change) => change.field_key !== "recommendation.apply" && !isTrafficQualityCriterionChange(change));
   if (normalChanges.length) {
     const { campaigns } = await fetchManagedSearchCampaigns(accountId);
     for (const campaign of campaigns) {
@@ -541,13 +553,65 @@ export async function fetchOfficialValues(accountId: string, changes: AdsFieldCh
     const batches = await googlePost<Array<{ results?: GoogleRow[] }>>(ctx, "googleAds:searchStream", { query: "SELECT recommendation.resource_name FROM recommendation WHERE recommendation.dismissed = FALSE" });
     activeRecommendations = new Set(batches.flatMap((batch) => batch.results ?? []).flatMap((row) => row.recommendation?.resourceName ? [row.recommendation.resourceName] : []));
   }
+  const criterionChanges = changes.filter(isTrafficQualityCriterionChange);
+  if (criterionChanges.length) {
+    const ctx = await contextFor(accountId);
+    for (const change of criterionChanges) values.set(key(change.entity_type, change.entity_id, change.field_key), await fetchTrafficQualityCriterionValue(ctx, change));
+  }
   return new Map(changes.map((c) => [c.id, c.field_key === "recommendation.apply" ? (activeRecommendations.has(c.entity_id) ? "ACTIVE" : "APPLIED") : values.get(key(c.entity_type, c.entity_id, c.field_key))]));
+}
+
+async function fetchTrafficQualityCriterionValue(ctx: GoogleContext, change: AdsFieldChangeRecord) {
+  const adGroup = change.entity_type === "ad_group_negative_keyword";
+  const resource = adGroup ? "ad_group_criterion" : "campaign_criterion";
+  const owner = adGroup ? "ad_group" : "campaign";
+  const ownerId = change.entity_id.replace(/\D/g, "");
+  const fields = change.value_type === "negative_keyword"
+    ? `${resource}.resource_name, ${resource}.negative, ${resource}.keyword.text, ${resource}.keyword.match_type`
+    : `${resource}.resource_name, ${resource}.negative, ${resource}.placement.url, ${resource}.mobile_application.app_id, ${resource}.youtube_channel.channel_id, ${resource}.youtube_video.video_id`;
+  const query = `SELECT ${fields} FROM ${resource} WHERE ${owner}.id = ${ownerId} AND ${resource}.negative = TRUE`;
+  const batches = await googlePost<Array<{ results?: GoogleRow[] }>>(ctx, "googleAds:searchStream", { query });
+  const criteria = batches.flatMap((batch) => batch.results ?? []).flatMap((row) => {
+    const criterion = adGroup ? row.adGroupCriterion : row.campaignCriterion;
+    return criterion ? [criterion] : [];
+  });
+  const expected = change.proposed_value as Record<string, unknown>;
+  const duplicate = criteria.find((criterion) => criterionMatches(criterion, expected, change.value_type));
+  return duplicate ? { exists: true, resourceName: duplicate.resourceName, value: expected } : { exists: false };
+}
+
+function criterionMatches(criterion: GoogleCriterion, expected: Record<string, unknown>, valueType: string) {
+  if (valueType === "negative_keyword") return criterion.keyword?.text === expected.text && criterion.keyword?.matchType === expected.matchType;
+  const placementType = String(expected.placementType ?? "");
+  const placement = String(expected.placement ?? "").replace(/^mobileapp::/i, "");
+  if (placementType === "WEBSITE") return criterion.placement?.url === placement;
+  if (placementType === "MOBILE_APPLICATION" || placementType === "MOBILE_APP") return criterion.mobileApplication?.appId === placement;
+  if (placementType === "YOUTUBE_CHANNEL") return criterion.youtubeChannel?.channelId === placement;
+  if (placementType === "YOUTUBE_VIDEO") return criterion.youtubeVideo?.videoId === placement;
+  return false;
 }
 
 function key(type: string, id: string, field: string) { return `${type}:${id}:${field}`; }
 
 export function validateLocalChange(change: AdsFieldChangeRecord): string[] {
   const errors: string[] = [];
+  if (change.value_type === "negative_keyword") {
+    const value = change.proposed_value as { text?: unknown; matchType?: unknown; negative?: unknown; campaignId?: unknown; adGroupId?: unknown };
+    if (!String(value?.text ?? "").trim()) errors.push("Negative keyword text is required.");
+    if (!["EXACT", "PHRASE", "BROAD"].includes(String(value?.matchType))) errors.push("Negative keyword match type must be EXACT, PHRASE, or BROAD.");
+    if (value?.negative !== true) errors.push("Traffic-quality keyword criteria must be negative.");
+    if (change.entity_type === "ad_group_negative_keyword" && !/^\d+$/.test(String(value?.adGroupId ?? change.entity_id))) errors.push("A valid ad-group ID is required.");
+    if (change.entity_type === "campaign_negative_keyword" && !/^\d+$/.test(String(value?.campaignId ?? change.entity_id))) errors.push("A valid campaign ID is required.");
+    return errors;
+  }
+  if (change.value_type === "placement_exclusion") {
+    const value = change.proposed_value as { placement?: unknown; placementType?: unknown; negative?: unknown; campaignId?: unknown };
+    if (!String(value?.placement ?? "").trim()) errors.push("Placement value is required.");
+    if (!["WEBSITE", "MOBILE_APPLICATION", "MOBILE_APP", "YOUTUBE_CHANNEL", "YOUTUBE_VIDEO"].includes(String(value?.placementType))) errors.push("Placement type is not supported for controlled exclusion.");
+    if (value?.negative !== true) errors.push("Traffic-quality placement criteria must be negative.");
+    if (!/^\d+$/.test(String(value?.campaignId ?? change.entity_id))) errors.push("A valid campaign ID is required.");
+    return errors;
+  }
   if (change.field_key === "recommendation.apply") {
     if (!/^customers\/\d+\/recommendations\/[A-Za-z0-9_-]+$/.test(change.entity_id)) errors.push("Google recommendation resource name is invalid.");
     if (change.baseline_value !== "ACTIVE" || change.proposed_value !== "APPLIED") errors.push("Recommendation requests must change from ACTIVE to APPLIED.");
@@ -636,6 +700,12 @@ export async function mutateGoogleChanges(accountId: string, changes: AdsFieldCh
         results.set(change.id, response);
         continue;
       }
+      if (isTrafficQualityCriterionChange(change)) {
+        const mutation = buildTrafficQualityCriterionMutation(ctx.customerId, change);
+        const response = await googlePost(ctx, mutation.path, { operations: [mutation.operation], validateOnly, partialFailure: false, responseContentType: "MUTABLE_RESOURCE" });
+        results.set(change.id, response);
+        continue;
+      }
       const mapping = mutationFor(ctx.customerId, change);
       const response = await googlePost(ctx, mapping.path, { operations: [{ update: mapping.update, updateMask: mapping.mask }], validateOnly, partialFailure: false, responseContentType: "MUTABLE_RESOURCE" });
       results.set(change.id, response);
@@ -644,6 +714,44 @@ export async function mutateGoogleChanges(accountId: string, changes: AdsFieldCh
     }
   }
   return results;
+}
+
+export function buildTrafficQualityCriterionMutation(customerId: string, change: AdsFieldChangeRecord) {
+  if (change.value_type === "negative_keyword") {
+    const value = change.proposed_value as { text: string; matchType: string; campaignId?: string | null; adGroupId?: string | null };
+    if (change.entity_type === "ad_group_negative_keyword") return {
+      path: "adGroupCriteria:mutate",
+      operation: { create: { adGroup: `customers/${customerId}/adGroups/${value.adGroupId || change.entity_id}`, negative: true, status: "ENABLED", keyword: { text: value.text, matchType: value.matchType } } },
+    };
+    return {
+      path: "campaignCriteria:mutate",
+      operation: { create: { campaign: `customers/${customerId}/campaigns/${value.campaignId || change.entity_id}`, negative: true, keyword: { text: value.text, matchType: value.matchType } } },
+    };
+  }
+  if (change.value_type === "placement_exclusion") {
+    const value = change.proposed_value as { placement: string; placementType: string; campaignId?: string | null };
+    const criterion = placementCriterion(value.placementType, value.placement);
+    return { path: "campaignCriteria:mutate", operation: { create: { campaign: `customers/${customerId}/campaigns/${value.campaignId || change.entity_id}`, negative: true, ...criterion } } };
+  }
+  throw new Error("Unsupported traffic-quality criterion change.");
+}
+
+function placementCriterion(type: string, placement: string): Record<string, unknown> {
+  if (type === "WEBSITE") return { placement: { url: placement } };
+  if (type === "MOBILE_APPLICATION" || type === "MOBILE_APP") return { mobileApplication: { appId: placement.replace(/^mobileapp::/i, "") } };
+  if (type === "YOUTUBE_CHANNEL") return { youtubeChannel: { channelId: placement } };
+  if (type === "YOUTUBE_VIDEO") return { youtubeVideo: { videoId: placement } };
+  throw new Error(`Unsupported placement type: ${type}`);
+}
+
+export function criterionVerificationMatches(change: AdsFieldChangeRecord, observedValue: unknown): boolean {
+  if (!isTrafficQualityCriterionChange(change) || !observedValue || typeof observedValue !== "object") return false;
+  const observed = observedValue as { exists?: unknown; value?: unknown };
+  return observed.exists === true && JSON.stringify(observed.value) === JSON.stringify(change.published_value ?? change.proposed_value);
+}
+
+function isTrafficQualityCriterionChange(change: Pick<AdsFieldChangeRecord, "value_type">) {
+  return change.value_type === "negative_keyword" || change.value_type === "placement_exclusion";
 }
 
 function assertCompleteMutateResponse(response: unknown, expectedOperations: number) {

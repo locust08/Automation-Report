@@ -1,5 +1,4 @@
 import { createHash } from "node:crypto";
-import { publishSearchTermOptimizations } from "@/lib/optimization/google-ads-mutations";
 import { jsonBody, qs, supabaseRest, supabaseRestCount } from "@/lib/optimization/supabase-rest";
 import type { LeadQualityImportRow, LeadQualityValues } from "@/lib/search-term-optimization/lead-quality-repository";
 import { getSearchTermAccountSettings } from "@/lib/search-term-optimization/supabase-settings";
@@ -96,25 +95,14 @@ async function loadItems(ids:string[]){const parsed=ids.map(ref);if(new Set(pars
 async function save(ids:string[],status:string,decision:string,reviewer:{id:string;email:string;role:string},metadata:Record<string,unknown>={}){const {run,items}=await loadItems(ids);await supabaseRest("ad_automation_search_term_decisions?on_conflict=analysis_run_id,recommendation_key",{method:"POST",headers:{Prefer:"resolution=merge-duplicates,return=minimal"},body:jsonBody(items.map(i=>({analysis_run_id:run.id,recommendation_key:i.key,item_key:stableSearchTermKey(i.row),status,decision,reviewer_user_id:reviewer.id,reviewer_email:reviewer.email,reviewer_role:reviewer.role,reviewed_at:new Date().toISOString(),metadata,updated_at:new Date().toISOString()})))});return {updated:items.length,skipped:ids.length-items.length,decision};}
 export async function saveSpecialistDecision(input:{recommendationIds:string[];decision:SpecialistDecision;reviewer:{id:string;email:string;role:string}}){
  if(input.recommendationIds.every(id=>id.startsWith("rel:")))return saveRelationalDecision(input.recommendationIds,input.decision,input.reviewer);
- const {run,items}=await loadItems(input.recommendationIds);
- const action=input.decision==="approved"?"add exact":"negative exact";
- const keys=items.map(({key})=>key);
- const previous=keys.length?await supabaseRest<Decision[]>(`ad_automation_search_term_decisions?analysis_run_id=eq.${run.id}&recommendation_key=in.(${keys.join(",")})&select=*`):[];
- const completed=new Set(previous.filter((decision)=>decision.metadata?.publishedAction===action).map((decision)=>decision.recommendation_key));
- const pending=items.filter(({key})=>!completed.has(key));
- const publication=await publishSearchTermOptimizations(run.google_customer_id,pending.map(({row})=>({campaignId:row.campaignId,adGroupId:row.adGroupId,searchTerm:row.searchTerm,action})));
- const pendingIds=pending.map(({key})=>`${run.id}:${key}`);
- const saved=pendingIds.length?await save(pendingIds,input.decision==="approved"?"approved_for_publishing":"approver_rejected",input.decision==="approved"?"approver_approved":"approver_rejected",input.reviewer,{publishedCount:publication.published,publishedAction:action,googleResourceNames:publication.resourceNames}):{updated:0,skipped:0,decision:input.decision};
- return {...saved,published:publication.published,alreadyPublished:completed.size,deduplicated:publication.deduplicated,action};
+ return save(input.recommendationIds,input.decision==="approved"?"ready_for_m03":"rejected",input.decision==="approved"?"submit_for_m03":"reject",input.reviewer,{googleMutationRequested:false});
 }
-export async function saveApproverDecision(input:{recommendationIds:string[];decision:ApproverDecision;approver:{id:string;email:string;role:string}}){if(input.recommendationIds.every(id=>id.startsWith("rel:")))return saveRelationalDecision(input.recommendationIds,input.decision,input.approver);if(input.decision==="rejected")return save(input.recommendationIds,"returned_for_clarification","return_to_specialist",input.approver);const {run,items}=await loadItems(input.recommendationIds);const actionable=items.map(i=>i.row).filter(r=>["negative exact","negative phrase","add exact"].includes(r.proposedAction));await publishSearchTermOptimizations(run.google_customer_id,actionable.map(r=>({campaignId:r.campaignId,adGroupId:r.adGroupId,searchTerm:r.searchTerm,action:r.proposedAction})));return save(input.recommendationIds,"approved_for_publishing","approver_approved",input.approver,{publishedCount:actionable.length});}
+export async function saveApproverDecision(input:{recommendationIds:string[];decision:ApproverDecision;approver:{id:string;email:string;role:string}}){if(input.recommendationIds.every(id=>id.startsWith("rel:")))return saveRelationalDecision(input.recommendationIds,input.decision,input.approver);if(input.decision==="rejected")return save(input.recommendationIds,"returned_for_clarification","return_to_specialist",input.approver);return save(input.recommendationIds,"ready_for_m03","approver_approved_for_m03",input.approver,{googleMutationRequested:false});}
 async function saveRelationalDecision(ids:string[],decision:SpecialistDecision|ApproverDecision,reviewer:{id:string;email:string;role:string}){
  const rowIds=ids.map(id=>Number(id.slice(4))).filter(Number.isInteger);if(!rowIds.length)return{updated:0,skipped:ids.length,decision};
  const rows=await supabaseRest<Array<DurableRow&{job_id:string}>>(`ad_automation_search_term_analysis_rows?id=in.(${rowIds.join(",")})&select=id,job_id,result_json,review_status,review_decision,updated_at`);
  const jobs=await supabaseRest<DurableJob[]>(`ad_automation_search_term_analysis_jobs?id=eq.${qs(rows[0]?.job_id??"")}&select=*`);if(!jobs[0])throw new Error("Analysis job was not found.");
- const action=decision==="approved"?"add exact":decision==="rejected"?"negative exact":null;
- if(action)await publishSearchTermOptimizations(jobs[0].google_customer_id,rows.map(item=>item.result_json).map(row=>({campaignId:row.campaignId,adGroupId:row.adGroupId,searchTerm:row.searchTerm,action})));
- const reviewStatus=decision==="accepted"?"approved_for_publishing":decision==="rejected"?"approver_rejected":"approved_for_publishing";
+ const reviewStatus=decision==="accepted"?"ready_for_m03":decision==="rejected"?"rejected":"ready_for_m03";
  await supabaseRest(`ad_automation_search_term_analysis_rows?id=in.(${rowIds.join(",")})`,{method:"PATCH",body:jsonBody({review_status:reviewStatus,review_decision:decision,updated_at:new Date().toISOString()})});
  return{updated:rows.length,skipped:ids.length-rows.length,decision,reviewer:reviewer.email};
 }
