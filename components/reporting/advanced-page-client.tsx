@@ -21,7 +21,8 @@ import { CampaignNameFilterControl } from "@/components/reporting/campaign-name-
 import { ReportDownloadButton } from "@/components/reporting/screenshot-mode-toggle";
 import { AccountReportContent } from "@/components/reporting/overall-page-client";
 import { ReportShell } from "@/components/reporting/report-shell";
-import { useReportSectionQuery } from "@/components/reporting/use-report-data";
+import { useReportSectionQuery, useTikTokInsightsStage } from "@/components/reporting/use-report-data";
+import { TikTokInsightsPanel } from "@/components/reporting/tiktok-insights-panel";
 import { useScreenshotMode } from "@/components/reporting/use-screenshot-mode";
 import {
   ReportEmptyState,
@@ -59,6 +60,7 @@ import type {
   AdvancedSocialCalendarItem,
 } from "@/lib/reporting/advanced-types";
 import type { OverallReportPayload } from "@/lib/reporting/types";
+import { buildReportContextQuery } from "@/lib/reporting/report-navigation";
 
 const COUNTRIES = [
   { value: "MY", label: "🇲🇾 MY" },
@@ -79,6 +81,8 @@ interface ApiDebugRecord {
 
 interface AdvancedPageClientProps {
   initialAccountId?: string;
+  initialTikTokAccountId?: string;
+  initialPlatform?: string;
   initialCountry?: string;
   initialStartDate?: string;
   initialEndDate?: string;
@@ -87,6 +91,61 @@ interface AdvancedPageClientProps {
 }
 
 export function AdvancedPageClient({
+  initialTikTokAccountId,
+  initialPlatform,
+  ...props
+}: AdvancedPageClientProps) {
+  if (initialTikTokAccountId && initialPlatform === "tiktok") {
+    return <TikTokAdvancedPageClient {...props} initialAccountId={initialTikTokAccountId} />;
+  }
+  return <LegacyAdvancedPageClient {...props} />;
+}
+
+function TikTokAdvancedPageClient({
+  initialAccountId,
+  initialCountry,
+  initialStartDate,
+  initialEndDate,
+}: AdvancedPageClientProps) {
+  const queryString = useMemo(() => {
+    const params = new URLSearchParams();
+    if (initialAccountId) params.set("tiktokAccountId", initialAccountId);
+    params.set("platform", "tiktok");
+    if (initialCountry) params.set("country", initialCountry);
+    if (initialStartDate) params.set("startDate", initialStartDate);
+    if (initialEndDate) params.set("endDate", initialEndDate);
+    return buildReportContextQuery(params.toString());
+  }, [initialAccountId, initialCountry, initialStartDate, initialEndDate]);
+  const { data, error, loading, retry } = useTikTokInsightsStage(
+    initialAccountId ?? "-",
+    queryString,
+    Boolean(initialAccountId),
+  );
+
+  return (
+    <ReportShell
+      title={data?.account.advertiserName ? `${data.account.advertiserName} TikTok Insights` : "TikTok Ads Advanced Report"}
+      dateLabel={initialStartDate && initialEndDate ? `${initialStartDate} – ${initialEndDate}` : "Selected period"}
+      activeQuery={queryString}
+      reportReady={Boolean(data && !loading)}
+      headerBottomControl={<ReportDownloadButton />}
+    >
+      <div className="space-y-5">
+        {!initialAccountId ? <ReportEmptyState title="No TikTok account selected" message="Choose a TikTok Ads account to view its insights." /> : null}
+        {loading ? <ReportLoadingState kind="insights" message="Loading TikTok insights..." onRetry={retry} /> : null}
+        {error ? <ReportErrorState kind="insights" message={error} onRetry={retry} /> : null}
+        {data ? (
+          <>
+            <ReportWarnings warnings={data.warnings} />
+            <TikTokInsightsPanel payload={data} expanded />
+          </>
+        ) : null}
+      </div>
+    </ReportShell>
+  );
+}
+
+function LegacyAdvancedPageClient({
   initialAccountId,
   initialCountry,
   initialStartDate,

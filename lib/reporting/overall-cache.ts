@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import type { OverallReportPayload } from "@/lib/reporting/types";
 import { clonePlainData, MemoryCacheEntry, readThroughMemoryCache } from "@/lib/reporting/memory-cache";
 
-const OVERALL_REPORT_CACHE_SCHEMA_VERSION = 5;
+const OVERALL_REPORT_CACHE_SCHEMA_VERSION = 6;
 const localOverallReportCache = new Map<string, MemoryCacheEntry<OverallReportPayload>>();
 const DEFAULT_OVERALL_REPORT_CACHE_TTL_MS = 0;
 
@@ -37,6 +37,7 @@ export function buildOverallReportCacheKey(input: {
   accountId: string | null;
   metaAccountId: string | null;
   googleAccountId: string | null;
+  tiktokAccountId?: string | null;
   startDate: string | null;
   endDate: string | null;
 }): string {
@@ -45,6 +46,7 @@ export function buildOverallReportCacheKey(input: {
     accountId: normalizeCacheValue(input.accountId),
     metaAccountId: normalizeAccountList(input.metaAccountId),
     googleAccountId: normalizeAccountList(input.googleAccountId),
+    tiktokAccountId: normalizeAccountList(input.tiktokAccountId ?? null),
     startDate: normalizeCacheValue(input.startDate),
     endDate: normalizeCacheValue(input.endDate),
   };

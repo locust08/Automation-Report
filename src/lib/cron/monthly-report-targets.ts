@@ -6,6 +6,7 @@ export interface MonthlyReportTargetConfig {
   clientName?: string;
   googleAccountId?: string | null;
   metaAccountId?: string | null;
+  tiktokAccountId?: string | null;
   recipientEmail?: string | null;
   ccEmail?: string | null;
   reportType?: string | null;
@@ -72,10 +73,12 @@ function toMonthlyReportAccount(
 ): MonthlyReportAccount {
   const googleAccountId = normalizeId(target.googleAccountId, "google");
   const metaAccountId = normalizeId(target.metaAccountId, "meta");
+  const tiktokAccountId = normalizeId(target.tiktokAccountId, "tiktok");
   const clientName =
     target.clientName?.trim() ||
     googleAccountId ||
     metaAccountId ||
+    tiktokAccountId ||
     `Monthly Report Target ${index + 1}`;
 
   return {
@@ -83,18 +86,19 @@ function toMonthlyReportAccount(
     clientName,
     googleAdsAccountId: googleAccountId,
     metaAdsAccountId: metaAccountId,
+    tiktokAdsAccountId: tiktokAccountId,
     clientEmail: target.recipientEmail?.trim() || null,
     picEmail: target.ccEmail?.trim() || null,
     status: "Active",
     monthlyReportEnabled: true,
-    platform: target.platform?.trim() || (metaAccountId && !googleAccountId ? "Meta" : "Google"),
+    platform: target.platform?.trim() || (tiktokAccountId ? "TikTok" : metaAccountId && !googleAccountId ? "Meta" : "Google"),
     reportType: target.reportType?.trim() || "Overall",
-    isValid: Boolean(googleAccountId || metaAccountId),
-    skipReason: googleAccountId || metaAccountId ? null : "Missing account ID.",
+    isValid: Boolean(googleAccountId || metaAccountId || tiktokAccountId),
+    skipReason: googleAccountId || metaAccountId || tiktokAccountId ? null : "Missing account ID.",
   };
 }
 
-function normalizeId(value: string | null | undefined, platform: "google" | "meta"): string | null {
+function normalizeId(value: string | null | undefined, platform: "google" | "meta" | "tiktok"): string | null {
   if (!value?.trim()) {
     return null;
   }

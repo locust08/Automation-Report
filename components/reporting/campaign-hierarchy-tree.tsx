@@ -1,13 +1,20 @@
 "use client";
 
 import type { ReactNode } from "react";
-import { AdIcon, ChevronRightIcon, GroupIcon, LoaderCircleIcon, MegaphoneIcon } from "lucide-react";
+import {
+  AdIcon,
+  ChevronRightIcon,
+  GroupIcon,
+  LoaderCircleIcon,
+  MegaphoneIcon,
+} from "lucide-react";
 
 import { useReportSectionQuery } from "@/components/reporting/use-report-data";
 import { Button } from "@/components/ui/button";
 import { Collapsible, CollapsibleContent } from "@/components/ui/collapsible";
 import type {
   CampaignRow,
+  Platform,
   PreviewAdGroupNode,
   PreviewAdNode,
   PreviewReportPayload,
@@ -30,7 +37,7 @@ export function CampaignHierarchyTree({
   onExpandedAdGroupChange: (adGroupId: string | null) => void;
 }) {
   const baseQueryString = buildHierarchyQuery(queryString, {
-    platform: campaign.platform === "meta" ? "meta" : "google",
+    platform: hierarchyPlatform(campaign),
   });
   const adGroupsQuery = useReportSectionQuery<PreviewReportPayload>(
     `/api/campaigns/${encodeURIComponent(campaign.id)}/ad-groups`,
@@ -43,7 +50,7 @@ export function CampaignHierarchyTree({
   const selectedAdGroup =
     adGroups.find((adGroup) => adGroup.id === expandedAdGroupId) ?? null;
   const adsQueryString = buildHierarchyQuery(queryString, {
-    platform: campaign.platform === "meta" ? "meta" : "google",
+    platform: hierarchyPlatform(campaign),
     campaignId: campaign.id,
   });
   const adsQuery = useReportSectionQuery<PreviewReportPayload>(
@@ -99,7 +106,7 @@ export function CampaignHierarchyTree({
                         )}
                       />
                       <GroupIcon className="size-3.5 shrink-0" />
-                      <span className="truncate">{adGroup.name}</span>
+                      <span className="min-w-0 flex-1 truncate font-medium">{adGroup.name}</span>
                     </button>
                     {expanded ? (
                       <div className="ml-4 border-l border-[#d8dde7] py-1 pl-4">
@@ -115,10 +122,10 @@ export function CampaignHierarchyTree({
                         {ads.map((ad) => (
                           <div
                             key={ad.id}
-                            className="flex min-w-0 items-center gap-2 rounded-md px-2 py-1.5 text-sm text-[#555]"
+                            className="flex min-w-0 items-start gap-2 rounded-md px-2 py-2 text-sm text-[#555] hover:bg-[#f7f8fa]"
                           >
-                            <MegaphoneIcon className="size-3.5 shrink-0 text-[#6d7b98]" />
-                            <span className="truncate">{ad.name}</span>
+                            <MegaphoneIcon className="mt-0.5 size-3.5 shrink-0 text-[#6d7b98]" />
+                            <span className="min-w-0 flex-1 truncate">{ad.name}</span>
                           </div>
                         ))}
                       </div>
@@ -168,7 +175,7 @@ function HierarchyError({
 
 function buildHierarchyQuery(
   queryString: string,
-  values: { platform: "meta" | "google"; campaignId?: string }
+  values: { platform: HierarchyPlatform; campaignId?: string }
 ): string {
   const params = new URLSearchParams(
     queryString.startsWith("&") ? queryString.slice(1) : queryString
@@ -184,12 +191,12 @@ function getAdGroups(
   payload: PreviewReportPayload | null,
   campaign: CampaignRow
 ): PreviewAdGroupNode[] {
-  const platform = campaign.platform === "meta" ? "meta" : "google";
+  const platform = hierarchyPlatform(campaign);
   return (
     payload?.sections
       .find((section) => section.platform === platform)
       ?.campaigns.find((item) => item.id === campaign.id)?.children ?? []
-  );
+  ).filter((item) => isActiveStatus(item.status, platform === "tiktok"));
 }
 
 function getAds(
@@ -200,11 +207,36 @@ function getAds(
   if (!adGroup) {
     return [];
   }
-  const platform = campaign.platform === "meta" ? "meta" : "google";
+  const platform = hierarchyPlatform(campaign);
   return (
     payload?.sections
       .find((section) => section.platform === platform)
       ?.campaigns.find((item) => item.id === campaign.id)
       ?.children.find((item) => item.id === adGroup.id)?.ads ?? []
+  ).filter((item) => isActiveStatus(item.status, platform === "tiktok"));
+}
+
+type HierarchyPlatform = Extract<Platform, "meta" | "google" | "tiktok">;
+
+function hierarchyPlatform(campaign: CampaignRow): HierarchyPlatform {
+  if (campaign.platform === "meta" || campaign.platform === "tiktok") {
+    return campaign.platform;
+  }
+  return "google";
+}
+
+function isActiveStatus(
+  status: string | null | undefined,
+  requireExplicitActive = false
+): boolean {
+  const normalized = status?.trim().toLowerCase();
+  if (!normalized) {
+    return !requireExplicitActive;
+  }
+  if (requireExplicitActive) {
+    return normalized === "enable" || normalized === "enabled" || normalized === "active";
+  }
+  return !["paused", "deleted", "removed", "archived", "disable", "inactive"].some(
+    (blocked) => normalized.includes(blocked)
   );
 }

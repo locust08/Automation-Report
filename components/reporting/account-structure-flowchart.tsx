@@ -29,18 +29,19 @@ const VISIBLE_LIMIT = 5;
 
 interface AccountStructureFlowchartProps {
   sections: PreviewPlatformSection[];
-  requestedPlatform: "meta" | "google" | null;
+  requestedPlatform: "meta" | "google" | "tiktok" | null;
   loading: boolean;
   error: string | null;
   accountIds: {
     metaAccountId: string | null;
     googleAccountId: string | null;
+    tiktokAccountId?: string | null;
   };
   onRetry: () => void;
 }
 
 interface NormalizedStructure {
-  platform: "meta" | "google";
+  platform: "meta" | "google" | "tiktok";
   accountId: string | null;
   accountName: string | null;
   fetchedAt: string;
@@ -207,7 +208,7 @@ function FlowCampaignRow({
   platform,
 }: {
   campaign: NormalizedCampaign;
-  platform: "meta" | "google";
+  platform: "meta" | "google" | "tiktok";
 }) {
   const visibleChildren = campaign.children.slice(0, VISIBLE_LIMIT);
   const hiddenChildCount = Math.max(campaign.children.length - VISIBLE_LIMIT, 0);
@@ -353,7 +354,7 @@ function ColumnHeading({ icon, label }: { icon: ReactNode; label: string }) {
   );
 }
 
-function FlowLegend({ platform }: { platform: "meta" | "google" }) {
+function FlowLegend({ platform }: { platform: "meta" | "google" | "tiktok" }) {
   const items =
     platform === "google"
       ? [
@@ -390,7 +391,11 @@ function normalizeStructure(
     platform: section.platform,
     accountId:
       section.accountId ??
-      (section.platform === "google" ? accountIds.googleAccountId : accountIds.metaAccountId),
+      (section.platform === "google"
+        ? accountIds.googleAccountId
+        : section.platform === "tiktok"
+          ? accountIds.tiktokAccountId ?? null
+          : accountIds.metaAccountId),
     accountName: section.accountName ?? null,
     fetchedAt: section.fetchedAt ?? new Date().toISOString(),
     campaigns: section.campaigns.map((campaign) => ({
@@ -416,7 +421,7 @@ function normalizeStructure(
 }
 
 function resolveChildLevel(
-  platform: "meta" | "google",
+  platform: "meta" | "google" | "tiktok",
   campaign: PreviewPlatformSection["campaigns"][number],
   child: PreviewPlatformSection["campaigns"][number]["children"][number]
 ): NormalizedChild["level"] {
@@ -436,16 +441,20 @@ function getDetailValue(
   return node.details?.find((field) => field.label === label)?.value ?? null;
 }
 
-function getPlatformTitle(platform: "meta" | "google"): string {
-  return platform === "google" ? "Google Ads Structure Preview" : "Meta Ads Structure Preview";
+function getPlatformTitle(platform: "meta" | "google" | "tiktok"): string {
+  return platform === "google"
+    ? "Google Ads Structure Preview"
+    : platform === "tiktok"
+      ? "TikTok Ads Structure Preview"
+      : "Meta Ads Structure Preview";
 }
 
-function getChildColumnLabel(platform: "meta" | "google"): string {
+function getChildColumnLabel(platform: "meta" | "google" | "tiktok"): string {
   return platform === "google" ? "Ad Groups" : "Ad Sets";
 }
 
 function getCampaignTone(
-  platform: "meta" | "google",
+  platform: "meta" | "google" | "tiktok",
   value: string
 ): "blue" | "purple" | "orange" | "green" | "pink" | "neutral" {
   const normalized = value.toLowerCase();
@@ -465,7 +474,7 @@ function getCampaignTone(
   return "neutral";
 }
 
-function getCampaignIcon(platform: "meta" | "google", value: string): ReactNode {
+function getCampaignIcon(platform: "meta" | "google" | "tiktok", value: string): ReactNode {
   const normalized = value.toLowerCase();
   if (platform === "google" && normalized.includes("search")) {
     return <SearchIcon className="size-5" />;
@@ -485,7 +494,7 @@ function getCampaignIcon(platform: "meta" | "google", value: string): ReactNode 
   return <MegaphoneIcon className="size-5" />;
 }
 
-function getChildIcon(platform: "meta" | "google", value: string): ReactNode {
+function getChildIcon(platform: "meta" | "google" | "tiktok", value: string): ReactNode {
   if (platform === "meta") {
     return <UsersIcon className="size-5" />;
   }
@@ -497,7 +506,7 @@ function getChildIcon(platform: "meta" | "google", value: string): ReactNode {
   );
 }
 
-function getAdIcon(platform: "meta" | "google", value: string): ReactNode {
+function getAdIcon(platform: "meta" | "google" | "tiktok", value: string): ReactNode {
   const normalized = value.toLowerCase();
   if (platform === "meta" && normalized.includes("traffic")) {
     return <ArrowRightIcon className="size-5" />;

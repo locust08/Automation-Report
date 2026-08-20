@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { buildReportingErrorResponse } from "@/lib/reporting/api-error";
-import { parseRequestContext } from "@/lib/reporting/request";
+import { parseRequestContext, resolveRouteAccountFallback } from "@/lib/reporting/request";
 import { getOverallCampaignPerformanceStage } from "@/lib/reporting/service";
 import { getImportedOverallCampaignStage } from "@/lib/meta-import/reporting";
 
@@ -20,9 +20,10 @@ export async function GET(
   try {
     const load = context.source === "meta_csv" ? getImportedOverallCampaignStage : getOverallCampaignPerformanceStage;
     const payload = await load({
-      accountId: context.accountId ?? accountId,
+      accountId: resolveRouteAccountFallback(accountId, context),
       metaAccountId: context.metaAccountId,
       googleAccountId: context.googleAccountId,
+      tiktokAccountId: context.tiktokAccountId,
       startDate: context.startDate,
       endDate: context.endDate,
       cacheRefreshKey: searchParams.get("cacheRefresh") ?? searchParams.get("refresh"),

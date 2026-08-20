@@ -262,6 +262,32 @@ npm run typecheck
 npm run build
 ```
 
+## TikTok Ads reporting
+
+TikTok reporting is read-only and uses TikTok API for Business v1.3. Configure the
+`TIKTOK_BUSINESS_*` values in the shared Doppler project (`locus-t-ai-backend`, `dev`) and give
+deployed runtimes a scoped `DOPPLER_TOKEN`. Administrators connect or refresh authorization at
+`/auth/tiktok`; access tokens and the authorized advertiser inventory stay server-side.
+
+The dashboard accepts `tiktokAccountId` on `/overall` and `/preview`. Synchronous report requests
+are split into inclusive windows of at most 30 days and provider pagination is sequential. The
+Cloudflare monthly-report worker migration `0008_tiktok_accounts.sql` adds TikTok identity to the
+account directory and per-account queue items. Apply that migration only after deployment approval.
+
+For local development where the main application secrets remain in `locus-t-ai-backend/dev` but
+TikTok secrets are held in `ai-backend/dev`, copy only the allowlisted TikTok bundle into the
+git-ignored `.env.local` file:
+
+```powershell
+npm run tiktok:secrets:sync-local
+npm run dev:locus
+npm run tiktok:ads:local -- account list
+```
+
+The sync prompts securely for the scoped `ai-backend/dev` service token, never prints secret
+values, and only reads Doppler. The local TikTok block is read-only; refresh OAuth against the
+authoritative Doppler project and run the sync again when TikTok authorization changes.
+
 ## Advanced Report Production QA
 
 Advanced Report automation uses the Notion `Advanced Report` checkbox. Basic/Overall monthly automation continues to use `Monthly Email`, and bi-weekly Overall continues to use `Bi-Weekly`.

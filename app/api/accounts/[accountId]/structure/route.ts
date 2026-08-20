@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 
 import { buildReportingErrorResponse } from "@/lib/reporting/api-error";
 import { buildPreviewStructureStage } from "@/lib/reporting/preview-stages";
+import { resolvePreviewRouteAccountId } from "@/lib/reporting/preview-route-input";
 import { parseRequestContext } from "@/lib/reporting/request";
 import { getPreviewReport } from "@/lib/reporting/service";
 import { getImportedPreviewReport } from "@/lib/meta-import/reporting";
@@ -20,9 +21,10 @@ export async function GET(
   try {
     const load = context.source === "meta_csv" ? getImportedPreviewReport : getPreviewReport;
     const payload = await load({
-      accountId: context.accountId ?? normalizeRouteAccountId(routeParams.accountId),
+      accountId: resolvePreviewRouteAccountId(normalizeRouteAccountId(routeParams.accountId), context),
       metaAccountId: context.metaAccountId,
       googleAccountId: context.googleAccountId,
+      tiktokAccountId: context.tiktokAccountId,
       startDate: context.startDate,
       endDate: context.endDate,
       diagnosticsMode: searchParams.get("diagnostics") === "1",

@@ -442,7 +442,7 @@ async function resolveTargets(input: {
     throw new Error(notionAccounts.errorMessage);
   }
   return {
-    accounts: notionAccounts.accounts.filter((account) => Boolean(account.googleAdsAccountId || account.metaAdsAccountId)),
+    accounts: notionAccounts.accounts.filter((account) => Boolean(account.googleAdsAccountId || account.metaAdsAccountId || account.tiktokAdsAccountId)),
     totalNotionRows: notionAccounts.total,
     skippedMonthlyEmailUnchecked: notionAccounts.monthlyEmailSkippedCount,
     targetSource: "notion",
@@ -488,7 +488,7 @@ async function filterAlreadySentAccounts(
 }
 
 function resolvePrimaryAccountId(account: MonthlyReportAccount): string | null {
-  return account.googleAdsAccountId ?? account.metaAdsAccountId ?? null;
+  return account.googleAdsAccountId ?? account.metaAdsAccountId ?? account.tiktokAdsAccountId ?? null;
 }
 
 function applyScheduledReportType(

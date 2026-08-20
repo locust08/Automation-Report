@@ -7,6 +7,7 @@ import { OverallCampaignGroupsTable } from "@/components/reporting/campaign-tabl
 import { ReportSuccessScreen } from "@/components/reporting/report-loading-screen";
 import { ReportHeaderMonthPicker } from "@/components/reporting/report-header-month-picker";
 import { MetricSection } from "@/components/reporting/metric-grid";
+import { TikTokInsightsPanel } from "@/components/reporting/tiktok-insights-panel";
 import { ReportFiltersBar } from "@/components/reporting/report-filters-bar";
 import { ReportDownloadButton } from "@/components/reporting/screenshot-mode-toggle";
 import { ReportShell } from "@/components/reporting/report-shell";
@@ -24,16 +25,18 @@ import {
   useOverallCampaignPerformanceStage,
   useOverallReport,
   useOverallSummaryStage,
+  useTikTokInsightsStage,
 } from "@/components/reporting/use-report-data";
 import { useScreenshotMode } from "@/components/reporting/use-screenshot-mode";
 import { useReportReadyTransition } from "@/components/reporting/use-report-ready-transition";
 import type { CampaignNameFilter } from "@/lib/reporting/campaign-name-filter";
 import { getCampaignNameOptions } from "@/lib/reporting/campaign-name-filter";
 import { OverallReportPayload } from "@/lib/reporting/types";
+import { buildReportContextQuery } from "@/lib/reporting/report-navigation";
 
 type AccountReportEntry = {
   key: string;
-  platform: "meta" | "google";
+  platform: "meta" | "google" | "tiktok";
   accountId: string;
   queryString: string;
 };
@@ -84,17 +87,23 @@ export function OverallPageClient({
     if (filters.googleAccountId) {
       params.set("googleAccountId", filters.googleAccountId);
     }
+    if (filters.tiktokAccountId) {
+      params.set("tiktokAccountId", filters.tiktokAccountId);
+    }
     params.set("startDate", filters.startDate);
     params.set("endDate", filters.endDate);
     if (filters.source === "meta_csv") {
       params.set("source", "meta_csv");
     }
-    return params.toString();
+    params.set("platform", filters.platform);
+    return buildReportContextQuery(params.toString());
   }, [
     filters.accountId,
     filters.endDate,
     filters.googleAccountId,
     filters.metaAccountId,
+    filters.platform,
+    filters.tiktokAccountId,
     filters.startDate,
     filters.source,
   ]);
@@ -123,8 +132,8 @@ export function OverallPageClient({
   const splitByAccount = accountReportEntries.length > 1;
 
   const accountKey = useMemo(
-    () => filters.metaAccountId || filters.googleAccountId || filters.accountId || "-",
-    [filters.accountId, filters.googleAccountId, filters.metaAccountId]
+    () => filters.metaAccountId || filters.googleAccountId || filters.tiktokAccountId || filters.accountId || "-",
+    [filters.accountId, filters.googleAccountId, filters.metaAccountId, filters.tiktokAccountId]
   );
   const summaryQuery = useOverallSummaryStage(
     accountKey,
@@ -137,6 +146,16 @@ export function OverallPageClient({
     hasAccountId && !splitByAccount
   );
   const data = summaryQuery.data;
+  const isTikTokOnly = isTikTokOnlyFilters(filters);
+  const tiktokStageWarnings = useMemo(
+    () => isTikTokOnly
+      ? dedupeWarnings([
+          ...(summaryQuery.data?.warnings ?? []),
+          ...(campaignQuery.data?.warnings ?? []),
+        ])
+      : [],
+    [campaignQuery.data?.warnings, isTikTokOnly, summaryQuery.data?.warnings],
+  );
   const overallReady =
     hasAccountId &&
     !splitByAccount &&
@@ -235,6 +254,7 @@ export function OverallPageClient({
               next.accountId === filters.accountId &&
               next.metaAccountId === filters.metaAccountId &&
               next.googleAccountId === filters.googleAccountId &&
+              next.tiktokAccountId === filters.tiktokAccountId &&
               next.startDate === filters.startDate &&
               next.endDate === filters.endDate &&
               next.source === filters.source;
@@ -250,6 +270,7 @@ export function OverallPageClient({
               accountId: "",
               metaAccountId: "",
               googleAccountId: "",
+              tiktokAccountId: "",
             })
           }
         />
@@ -296,7 +317,10 @@ export function OverallPageClient({
             ) : null}
             {summaryQuery.data ? (
               <>
-                <ReportWarnings warnings={summaryQuery.data.warnings} />
+                <ReportWarnings warnings={isTikTokOnly ? tiktokStageWarnings : summaryQuery.data.warnings} />
+                {summaryQuery.data.tiktokAccounts?.map((account) => (
+                  <TikTokAccountContext key={account.advertiserId} account={account} />
+                ))}
                 {summaryQuery.data.summaries.map((section) => (
                   <MetricSection
                     key={section.platform}
@@ -323,7 +347,7 @@ export function OverallPageClient({
             ) : null}
             {campaignQuery.data ? (
               <>
-                <ReportWarnings warnings={campaignQuery.data.warnings} />
+                {!isTikTokOnly ? <ReportWarnings warnings={campaignQuery.data.warnings} /> : null}
                 <OverallCampaignGroupsTable
                   groups={campaignQuery.data.campaignGroups}
                   queryString={forwardQuery}
@@ -333,13 +357,17 @@ export function OverallPageClient({
               </>
             ) : null}
 
-            <LazyAudienceBreakdown
-              accountKey={accountKey}
-              queryString={stageQueryString}
-              enabled={hasAccountId}
-              screenshotMode={screenshotMode}
-              summaryData={summaryQuery.data}
-            />
+            {isTikTokOnly ? (
+              <LazyTikTokInsights accountKey={accountKey} queryString={stageQueryString} enabled={hasAccountId} screenshotMode={screenshotMode} />
+            ) : (
+              <LazyAudienceBreakdown
+                accountKey={accountKey}
+                queryString={stageQueryString}
+                enabled={hasAccountId}
+                screenshotMode={screenshotMode}
+                summaryData={summaryQuery.data}
+              />
+            )}
           </>
         ) : null}
       </div>
@@ -421,6 +449,7 @@ function SplitAccountOverallReport({
         <AccountReportContent
           data={data}
           queryString={forwardQuery}
+          screenshotMode={screenshotMode}
           campaignNameFilter={campaignNameFilter}
           onCampaignNameFilterChange={onCampaignNameFilterChange}
         />
@@ -434,15 +463,20 @@ export function AccountReportContent({
   queryString,
   campaignNameFilter = null,
   onCampaignNameFilterChange,
+  screenshotMode = false,
 }: {
   data: OverallReportPayload;
   queryString: string;
   campaignNameFilter?: CampaignNameFilter | null;
   onCampaignNameFilterChange?: (filter: CampaignNameFilter | null) => void;
+  screenshotMode?: boolean;
 }) {
   return (
     <>
       <ReportWarnings warnings={data.warnings} />
+      {data.tiktokAccounts?.map((account) => (
+        <TikTokAccountContext key={account.advertiserId} account={account} />
+      ))}
       {data.summaries.map((section) => (
         <MetricSection key={section.platform} section={section} dateRange={data.dateRange} />
       ))}
@@ -452,10 +486,19 @@ export function AccountReportContent({
         campaignNameFilter={campaignNameFilter}
         onCampaignNameFilterChange={onCampaignNameFilterChange}
       />
-      <AudienceClickBreakdownSection
-        breakdown={data.audienceClickBreakdown}
-        pdfLocationTab={resolvePdfAudienceLocationTab(data)}
-      />
+      {isTikTokOnlyPayload(data) ? (
+        <LazyTikTokInsights
+          accountKey={data.accountIds.tiktokAccountIds?.[0] ?? data.accountIds.tiktokAccountId ?? "-"}
+          queryString={queryString.replace(/^&/, "")}
+          enabled
+          screenshotMode={screenshotMode}
+        />
+      ) : (
+        <AudienceClickBreakdownSection
+          breakdown={data.audienceClickBreakdown}
+          pdfLocationTab={resolvePdfAudienceLocationTab(data)}
+        />
+      )}
     </>
   );
 }
@@ -561,6 +604,10 @@ function buildAccountReportEntries(filters: ReportFilters, fallbackQueryString: 
     entries.push(createAccountReportEntry("google", accountId, filters));
   });
 
+  splitAccountIdList(filters.tiktokAccountId).forEach((accountId) => {
+    entries.push(createAccountReportEntry("tiktok", accountId, filters));
+  });
+
   splitAccountIdList(filters.accountId).forEach((token) => {
     const classified = classifyAccountIdToken(token);
     entries.push(createAccountReportEntry(classified.platform, classified.accountId, filters));
@@ -581,8 +628,10 @@ function createAccountReportEntry(
   const params = new URLSearchParams();
   if (platform === "meta") {
     params.set("metaAccountId", accountId);
-  } else {
+  } else if (platform === "google") {
     params.set("googleAccountId", accountId);
+  } else {
+    params.set("tiktokAccountId", accountId);
   }
   params.set("startDate", filters.startDate);
   params.set("endDate", filters.endDate);
@@ -626,6 +675,10 @@ function classifyAccountIdToken(token: string): Pick<AccountReportEntry, "platfo
     return { platform: "google", accountId: trimmed.split(":").slice(1).join(":").trim() };
   }
 
+  if (lowered.startsWith("tiktok:") || lowered.startsWith("tt:")) {
+    return { platform: "tiktok", accountId: trimmed.split(":").slice(1).join(":").trim() };
+  }
+
   if (lowered.startsWith("act_")) {
     return { platform: "meta", accountId: trimmed };
   }
@@ -638,5 +691,66 @@ function classifyAccountIdToken(token: string): Pick<AccountReportEntry, "platfo
 }
 
 function platformDisplayName(platform: AccountReportEntry["platform"]): string {
-  return platform === "meta" ? "Meta Ads" : "Google Ads";
+  return platform === "meta" ? "Meta Ads" : platform === "tiktok" ? "TikTok Ads" : "Google Ads";
+}
+
+function LazyTikTokInsights({
+  accountKey,
+  queryString,
+  enabled,
+  screenshotMode,
+}: {
+  accountKey: string;
+  queryString: string;
+  enabled: boolean;
+  screenshotMode: boolean;
+}) {
+  const [visible, setVisible] = useState(screenshotMode);
+  const shouldLoad = enabled && (visible || screenshotMode);
+  const { data, error, loading, retry } = useTikTokInsightsStage(accountKey, queryString, shouldLoad);
+  const markerRef = useCallback((node: HTMLDivElement | null) => {
+    if (!node || screenshotMode) return;
+    const observer = new IntersectionObserver((entries) => {
+      if (entries.some((entry) => entry.isIntersecting)) {
+        setVisible(true);
+        observer.disconnect();
+      }
+    }, { rootMargin: "320px 0px" });
+    observer.observe(node);
+  }, [screenshotMode]);
+
+  return (
+    <div ref={markerRef} className="space-y-5">
+      {!shouldLoad ? <ReportLoadingState kind="overall" message="TikTok insights will load when this section is visible." /> : null}
+      {loading ? <ReportLoadingState kind="overall" message="Loading TikTok insights..." onRetry={retry} /> : null}
+      {error ? <ReportErrorState kind="overall" message={error} onRetry={retry} /> : null}
+      {data ? <TikTokInsightsPanel payload={data} /> : null}
+    </div>
+  );
+}
+
+function isTikTokOnlyFilters(filters: ReportFilters): boolean {
+  return Boolean(filters.tiktokAccountId) && !filters.accountId && !filters.metaAccountId && !filters.googleAccountId;
+}
+
+function isTikTokOnlyPayload(data: OverallReportPayload): boolean {
+  const tiktokIds = data.accountIds.tiktokAccountIds ?? [];
+  return tiktokIds.length > 0 && data.accountIds.metaAccountIds.length === 0 && data.accountIds.googleAccountIds.length === 0;
+}
+
+function dedupeWarnings(warnings: string[]): string[] {
+  return Array.from(new Set(warnings.map((warning) => warning.trim()).filter(Boolean)));
+}
+
+function TikTokAccountContext({
+  account,
+}: {
+  account: NonNullable<OverallReportPayload["tiktokAccounts"]>[number];
+}) {
+  return (
+    <div className="rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-700">
+      <span className="font-semibold text-slate-950">{account.advertiserName}</span>
+      {` · TikTok advertiser ${account.advertiserId} · ${account.currency} · ${account.timezone}`}
+    </div>
+  );
 }

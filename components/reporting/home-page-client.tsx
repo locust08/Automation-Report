@@ -29,6 +29,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import {
+  buildReportAccountQuery,
   extractAdAccountIdFromAccountSearchInput,
   formatAccountSuggestionLabel,
 } from "@/components/reporting/home-account-search";
@@ -50,6 +51,7 @@ type AccountSearchSuggestion = {
   adAccountId: string;
   country: string | null;
   notionPageId: string;
+  platform?: "meta" | "google" | "tiktok" | null;
 };
 
 type AccountSearchState = "idle" | "loading" | "success" | "error";
@@ -135,6 +137,7 @@ export function HomePageClient({ displayName, role }: HomePageClientProps) {
   const initialCountry = useMemo(() => searchParams.get("country") ?? "MY", [searchParams]);
   const [accountName, setAccountName] = useState("");
   const [accountId, setAccountId] = useState("");
+  const [accountPlatform, setAccountPlatform] = useState<AccountSearchSuggestion["platform"]>(null);
   const [accountSearchQuery, setAccountSearchQuery] = useState("");
   const [country, setCountry] = useState(initialCountry);
   const [accountSuggestions, setAccountSuggestions] = useState<AccountSearchSuggestion[]>([]);
@@ -220,13 +223,8 @@ export function HomePageClient({ displayName, role }: HomePageClientProps) {
   }, [selectedReportType, workerJobId, isSending]);
 
   const reportQueryString = useMemo(() => {
-    const params = new URLSearchParams();
-    if (accountId.trim()) {
-      params.set("accountId", accountId.trim());
-    }
-    params.set("country", country);
-    return params.toString();
-  }, [accountId, country]);
+    return buildReportAccountQuery({ adAccountId: accountId, platform: accountPlatform, country });
+  }, [accountId, accountPlatform, country]);
 
   const overallHref = `/overall${reportQueryString ? `?${reportQueryString}` : ""}`;
   const previewHref = `/preview${reportQueryString ? `?${reportQueryString}` : ""}`;
@@ -308,7 +306,7 @@ export function HomePageClient({ displayName, role }: HomePageClientProps) {
         }
 
         if (!response.ok || !payload) {
-          throw new Error(payload?.error ?? payload?.message ?? "Unable to search Notion accounts.");
+          throw new Error(payload?.error ?? payload?.message ?? "Unable to search accounts.");
         }
 
         const accounts = Array.isArray(payload.accounts) ? payload.accounts : [];
@@ -323,7 +321,7 @@ export function HomePageClient({ displayName, role }: HomePageClientProps) {
         setAccountSuggestions([]);
         setAccountSearchState("error");
         setHighlightedAccountIndex(-1);
-        setAccountSearchError(error instanceof Error ? error.message : "Unable to search Notion accounts.");
+        setAccountSearchError(error instanceof Error ? error.message : "Unable to search accounts.");
       }
     }, ACCOUNT_SEARCH_DEBOUNCE_MS);
 
@@ -352,6 +350,7 @@ export function HomePageClient({ displayName, role }: HomePageClientProps) {
   function selectAccountSuggestion(suggestion: AccountSearchSuggestion) {
     setAccountName(formatAccountSuggestionLabel(suggestion));
     setAccountId(suggestion.adAccountId);
+    setAccountPlatform(suggestion.platform ?? null);
     if (suggestion.country && SUPPORTED_COUNTRIES.has(suggestion.country)) {
       setCountry(suggestion.country);
     }
@@ -410,6 +409,7 @@ export function HomePageClient({ displayName, role }: HomePageClientProps) {
         event.preventDefault();
         setAccountName(directAccountId);
         setAccountId(directAccountId);
+        setAccountPlatform(null);
         setAccountSearchQuery("");
         setIsAccountDropdownOpen(false);
         setHighlightedAccountIndex(-1);
@@ -618,16 +618,16 @@ export function HomePageClient({ displayName, role }: HomePageClientProps) {
                   </div>
                   {normalizedAccountSearchQuery.length < 2 ? (
                     <p className="px-2 py-2 text-sm text-white/55">
-                      Type at least 2 characters to search Notion.
+                      Type at least 2 characters to search accounts.
                     </p>
                   ) : accountSearchState === "loading" ? (
                     <div className="flex items-center gap-2 px-3 py-3 text-sm text-white/75">
                     <Loader2Icon className="size-4 animate-spin" />
-                    Searching Notion accounts...
+                    Searching accounts...
                   </div>
                   ) : accountSearchState === "error" ? (
                     <div className="px-3 py-3 text-sm text-red-200">
-                    {accountSearchError ?? "Unable to search Notion accounts."}
+                    {accountSearchError ?? "Unable to search accounts."}
                   </div>
                   ) : accountSearchState === "success" && accountSuggestions.length === 0 ? (
                     <div className="px-3 py-3 text-sm text-white/60">

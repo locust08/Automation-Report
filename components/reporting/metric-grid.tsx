@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { CircleHelpIcon, TrendingDownIcon, TrendingUpIcon, XIcon } from "lucide-react";
+import { CircleHelpIcon, Music2Icon, TrendingDownIcon, TrendingUpIcon, XIcon } from "lucide-react";
 
 import { getMetricExplanation } from "@/components/reporting/metric-explanation";
 import { formatDelta, formatMetricValue } from "@/lib/reporting/format";
@@ -61,16 +61,7 @@ function MetricSectionContent({
   return (
     <article className="rounded-[1.5rem] bg-[#e7e7e7] p-3 shadow-sm sm:p-4">
       <div className="mb-3 flex items-center gap-3">
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img
-          src={section.logoPath}
-          alt={`${section.title} logo`}
-          width={112}
-          height={32}
-          className="h-8 w-auto object-contain"
-          loading="eager"
-          decoding="sync"
-        />
+        <PlatformBadge section={section} />
       </div>
 
       <div className="space-y-3 md:hidden">
@@ -103,7 +94,7 @@ function MetricSectionContent({
         />
       </div>
 
-      <div className="hidden items-start gap-2 md:grid md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-7">
+      <div className="hidden items-start gap-2 md:grid md:grid-cols-[repeat(auto-fit,minmax(8rem,1fr))]">
         {metrics.map((metric, index) => (
           <MetricCard
             key={metric.key}
@@ -128,6 +119,47 @@ function MetricSectionContent({
         />
       ) : null}
     </article>
+  );
+}
+
+function PlatformBadge({ section }: { section: SummarySection }) {
+  if (section.platform === "tiktok") {
+    return (
+      <div className="inline-flex h-9 items-center gap-2 rounded-full bg-[#17171b] px-3 text-sm font-semibold text-white" aria-label="TikTok Ads">
+        <span className="relative grid size-5 place-items-center rounded-full bg-white text-[#17171b]">
+          <Music2Icon className="size-3.5" aria-hidden="true" />
+          <span className="absolute -left-0.5 top-0.5 size-1.5 rounded-full bg-[#25f4ee]" aria-hidden="true" />
+          <span className="absolute -right-0.5 bottom-0.5 size-1.5 rounded-full bg-[#fe2c55]" aria-hidden="true" />
+        </span>
+        TikTok Ads
+      </div>
+    );
+  }
+
+  if (section.platform === "meta") {
+    return (
+      <div className="inline-flex h-9 items-center gap-2 rounded-full bg-[#0866FF] px-3 text-sm font-semibold text-white" aria-label="Meta Ads">
+        <span className="grid size-5 place-items-center rounded-full bg-white/15 text-xl font-semibold leading-none" aria-hidden="true">
+          ∞
+        </span>
+        Meta Ads
+      </div>
+    );
+  }
+
+  return (
+    <div className="inline-flex h-9 items-center gap-2 rounded-full bg-[#34A853] px-3 text-sm font-semibold text-white" aria-label="Google Ads">
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img
+        src="/google-ads-logo.svg"
+        alt=""
+        width={20}
+        height={20}
+        className="size-5 rounded-full object-cover"
+        aria-hidden="true"
+      />
+      Google Ads
+    </div>
   );
 }
 

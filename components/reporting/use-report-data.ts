@@ -13,6 +13,7 @@ import {
   PreviewReportPayload,
   TopKeywordsPayload,
 } from "@/lib/reporting/types";
+import type { TikTokInsightsPayload } from "@/lib/reporting/tiktok-insights";
 import type {
   OverallAudienceBreakdownStagePayload as ServiceOverallAudienceBreakdownStagePayload,
   OverallCampaignPerformanceStagePayload as ServiceOverallCampaignPerformanceStagePayload,
@@ -288,6 +289,20 @@ export function useOverallAudienceBreakdownStage(
     enabled,
     "Unable to load breakdown tables.",
     OVERALL_STAGE_QUERY_CACHE_TTL_MS
+  );
+}
+
+export function useTikTokInsightsStage(
+  accountKey: string,
+  queryString: string,
+  enabled: boolean,
+): LoadingState<TikTokInsightsPayload> {
+  return useReportQuery<TikTokInsightsPayload>(
+    `/api/reports/${encodeURIComponent(accountKey || "-")}/tiktok-insights`,
+    queryString,
+    enabled,
+    "Unable to load TikTok insights.",
+    OVERALL_STAGE_QUERY_CACHE_TTL_MS,
   );
 }
 

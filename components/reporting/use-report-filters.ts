@@ -7,9 +7,10 @@ export interface ReportFilters {
   accountId: string;
   metaAccountId: string;
   googleAccountId: string;
+  tiktokAccountId: string;
   startDate: string;
   endDate: string;
-  platform: "meta" | "google" | "googleYoutube";
+  platform: "meta" | "google" | "googleYoutube" | "tiktok";
   campaignNameFilterMode: "include" | "exclude";
   campaignNameFilterValues: string[];
   source: "api" | "meta_csv";
@@ -20,7 +21,7 @@ const DEFAULT_PLATFORM: ReportFilters["platform"] = "meta";
 export function useReportFilters(initialFilters?: Partial<ReportFilters>): {
   filters: ReportFilters;
   hasAccountId: boolean;
-  setFilters: (next: Partial<ReportFilters>, options?: { push?: boolean }) => void;
+  setFilters: (next: Partial<ReportFilters>, options?: { push?: boolean; clearParams?: string[] }) => void;
 } {
   const router = useRouter();
   const pathname = usePathname();
@@ -38,12 +39,14 @@ export function useReportFilters(initialFilters?: Partial<ReportFilters>): {
         searchParams.get("metaAccountId") ?? initialFilters?.metaAccountId ?? "",
       googleAccountId:
         searchParams.get("googleAccountId") ?? initialFilters?.googleAccountId ?? "",
+      tiktokAccountId:
+        searchParams.get("tiktokAccountId") ?? initialFilters?.tiktokAccountId ?? "",
       startDate:
         searchParams.get("startDate") ?? initialFilters?.startDate ?? defaults.startDate,
       endDate:
         searchParams.get("endDate") ?? initialFilters?.endDate ?? defaults.endDate,
       platform:
-        platform === "meta" || platform === "google" || platform === "googleYoutube"
+        platform === "meta" || platform === "google" || platform === "googleYoutube" || platform === "tiktok"
           ? platform
           : DEFAULT_PLATFORM,
       campaignNameFilterMode:
@@ -63,22 +66,24 @@ export function useReportFilters(initialFilters?: Partial<ReportFilters>): {
   }, [initialFilters, searchParams]);
 
   const hasAccountId = Boolean(
-    filters.accountId || filters.metaAccountId || filters.googleAccountId
+    filters.accountId || filters.metaAccountId || filters.googleAccountId || filters.tiktokAccountId
   );
 
-  function setFilters(next: Partial<ReportFilters>, options?: { push?: boolean }) {
+  function setFilters(next: Partial<ReportFilters>, options?: { push?: boolean; clearParams?: string[] }) {
     const merged = { ...filters, ...next };
     const params = new URLSearchParams(searchParams.toString());
 
     setParam(params, "accountId", merged.accountId);
     setParam(params, "metaAccountId", merged.metaAccountId);
     setParam(params, "googleAccountId", merged.googleAccountId);
+    setParam(params, "tiktokAccountId", merged.tiktokAccountId);
     setParam(params, "startDate", merged.startDate);
     setParam(params, "endDate", merged.endDate);
     setParam(params, "platform", merged.platform);
     setParam(params, "campaignNameFilterMode", merged.campaignNameFilterValues.length ? merged.campaignNameFilterMode : "");
     setParamValues(params, "campaignNameFilterValue", merged.campaignNameFilterValues);
     setParam(params, "source", merged.source === "meta_csv" ? "meta_csv" : "");
+    options?.clearParams?.forEach((key) => params.delete(key));
 
     const query = params.toString();
     const target = query ? `${pathname}?${query}` : pathname;

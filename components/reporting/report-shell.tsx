@@ -27,6 +27,7 @@ import {
 } from "@/components/ui/tooltip";
 import { useScreenshotMode } from "@/components/reporting/use-screenshot-mode";
 import { isAdminRole, type AuthRole } from "@/lib/auth/roles";
+import { buildReportContextQuery } from "@/lib/reporting/report-navigation";
 
 interface ReportShellProps {
   title: string;
@@ -69,16 +70,17 @@ export function ReportShell({
     return () => controller.abort();
   }, []);
   const isAdmin = isAdminRole(currentRole);
+  const reportContextQuery = buildReportContextQuery(activeQuery);
   const hrefs = {
     home: "/",
-    overall: withQuery("/overall", activeQuery),
-    preview: withQuery("/preview", activeQuery),
-    advanced: withQuery("/advanced", activeQuery),
-    mediaPlan: withQuery("/dashboard/media-plan", activeQuery),
+    overall: withQuery("/overall", reportContextQuery),
+    preview: withQuery("/preview", reportContextQuery),
+    advanced: withQuery("/advanced", reportContextQuery),
+    mediaPlan: withQuery("/dashboard/media-plan", reportContextQuery),
     metaImport: "/meta-import",
     billing: "/billing",
     googleOptimization: "/google-optimization",
-    googleManagement: withQuery("/manage/google", activeQuery),
+    googleManagement: "/manage/google",
     userManagement: "/user-management",
     optimizationScheduling: "/optimization-scheduling",
   };
@@ -417,6 +419,9 @@ function getExportAccountItems(query: string): Array<{ platform: string; account
 
   splitAccountList(params.get("googleAccountId")).forEach((accountId) => {
     items.push({ platform: "Google Ads", accountId });
+  });
+  splitAccountList(params.get("tiktokAccountId")).forEach((accountId) => {
+    items.push({ platform: "TikTok Ads", accountId });
   });
 
   splitAccountList(params.get("accountId")).forEach((accountId) => {

@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 
 import { buildReportingErrorResponse } from "@/lib/reporting/api-error";
 import { buildPreviewDetailsStage } from "@/lib/reporting/preview-stages";
+import { getPreviewExplicitAccountIds, normalizePreviewPlatform } from "@/lib/reporting/preview-route-input";
 import { parseRequestContext } from "@/lib/reporting/request";
 import { getPreviewReport } from "@/lib/reporting/service";
 import { getImportedPreviewReport } from "@/lib/meta-import/reporting";
@@ -16,14 +17,13 @@ export async function GET(
   const searchParams = new URL(request.url).searchParams;
   const context = parseRequestContext(searchParams);
   const routeParams = await params;
-  const platform = normalizePlatform(searchParams.get("platform"));
+  const platform = normalizePreviewPlatform(searchParams.get("platform"));
 
   try {
     const load = context.source === "meta_csv" ? getImportedPreviewReport : getPreviewReport;
     const payload = await load({
       accountId: context.accountId,
-      metaAccountId: context.metaAccountId,
-      googleAccountId: context.googleAccountId,
+      ...getPreviewExplicitAccountIds(context),
       startDate: context.startDate,
       endDate: context.endDate,
       diagnosticsMode: searchParams.get("diagnostics") === "1",
@@ -47,8 +47,4 @@ export async function GET(
   } catch (error) {
     return buildReportingErrorResponse(error, "Unexpected error while loading preview details.");
   }
-}
-
-function normalizePlatform(value: string | null): "meta" | "google" | null {
-  return value === "meta" || value === "google" ? value : null;
 }

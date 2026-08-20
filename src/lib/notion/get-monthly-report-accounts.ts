@@ -12,6 +12,7 @@ export interface MonthlyReportAccount {
   clientName: string;
   googleAdsAccountId: string | null;
   metaAdsAccountId: string | null;
+  tiktokAdsAccountId?: string | null;
   clientEmail: string | null;
   picEmail: string | null;
   status: string | null;
@@ -39,6 +40,7 @@ export interface MonthlyReportTargetLookupInput {
   clientName?: string | null;
   googleAccountId?: string | null;
   metaAccountId?: string | null;
+  tiktokAccountId?: string | null;
   recipientEmail?: string | null;
   ccEmail?: string | null;
   reportType?: string | null;
@@ -157,6 +159,11 @@ export async function resolveMonthlyReportTargetsFromNotion(
       .filter((account) => Boolean(account.metaAdsAccountId))
       .map((account) => [account.metaAdsAccountId as string, account])
   );
+  const accountsByTikTokId = new Map(
+    allAccounts
+      .filter((account) => Boolean(account.tiktokAdsAccountId))
+      .map((account) => [account.tiktokAdsAccountId as string, account])
+  );
   const relatedClientNameCache = new Map<string, Promise<string | null>>();
 
   return Promise.all(targets.map(async (target, index) => {
@@ -168,9 +175,14 @@ export async function resolveMonthlyReportTargetsFromNotion(
       .filter((accountId): accountId is string => Boolean(accountId));
     const googleAccountId = googleAccountIds.join(",") || null;
     const metaAccountId = metaAccountIds.join(",") || null;
+    const tiktokAccountIds = splitTargetAccountIds(target.tiktokAccountId)
+      .map((accountId) => normalizeOptionalAccountId(accountId, "tiktok"))
+      .filter((accountId): accountId is string => Boolean(accountId));
+    const tiktokAccountId = tiktokAccountIds.join(",") || null;
     const matchedAccounts = [
       ...googleAccountIds.map((accountId) => accountsByGoogleId.get(accountId) ?? null),
       ...metaAccountIds.map((accountId) => accountsByMetaId.get(accountId) ?? null),
+      ...tiktokAccountIds.map((accountId) => accountsByTikTokId.get(accountId) ?? null),
     ].filter((account): account is MonthlyReportAccount => Boolean(account));
     const matchedAccount = matchedAccounts[0] ?? null;
     const clientName =
@@ -179,6 +191,7 @@ export async function resolveMonthlyReportTargetsFromNotion(
       target.clientName?.trim() ??
       googleAccountId ??
       metaAccountId ??
+      tiktokAccountId ??
       `Monthly Report Target ${index + 1}`;
 
     return {
@@ -186,6 +199,7 @@ export async function resolveMonthlyReportTargetsFromNotion(
       clientName,
       googleAdsAccountId: googleAccountId ?? matchedAccount?.googleAdsAccountId ?? null,
       metaAdsAccountId: metaAccountId ?? matchedAccount?.metaAdsAccountId ?? null,
+      tiktokAdsAccountId: tiktokAccountId ?? matchedAccount?.tiktokAdsAccountId ?? null,
       clientEmail: isAdvancedReport
         ? matchedAccount?.clientEmail || null
         : target.recipientEmail?.trim() || matchedAccount?.clientEmail || null,
@@ -197,13 +211,13 @@ export async function resolveMonthlyReportTargetsFromNotion(
       platform:
         target.platform?.trim() ||
         matchedAccount?.platform ||
-        (metaAccountId && !googleAccountId ? "Meta" : googleAccountId && !metaAccountId ? "Google" : "Google + Meta"),
+        (tiktokAccountId ? "TikTok" : metaAccountId && !googleAccountId ? "Meta" : googleAccountId && !metaAccountId ? "Google" : "Google + Meta"),
       reportType: isAdvancedReport
         ? "Advanced"
         : target.reportType?.trim() || matchedAccount?.reportType || "Overall",
-      isValid: Boolean(googleAccountId || metaAccountId || matchedAccount?.isValid),
+      isValid: Boolean(googleAccountId || metaAccountId || tiktokAccountId || matchedAccount?.isValid),
       skipReason:
-        googleAccountId || metaAccountId || matchedAccount?.isValid ? null : "Missing account ID.",
+        googleAccountId || metaAccountId || tiktokAccountId || matchedAccount?.isValid ? null : "Missing account ID.",
     };
   }));
 }
@@ -357,6 +371,9 @@ function mapMonthlyReportAccount(
 
   const status = getPropertyValue(properties, ["Status", "status"]);
   const monthlyReportEnabled = getBooleanPropertyValue(properties, [confirmationCheckboxProperty]);
+  const platform = getPropertyValue(properties, ["Platform", "platform"]);
+  const normalizedPlatform = platform?.trim().toLowerCase() ?? "";
+  const genericAccountId = getPropertyValue(properties, ["Account ID", "ID", "account id", "id"]);
   const googleAdsAccountId = normalizeOptionalAccountId(
     getPropertyValue(properties, [
       "Google Ads Account ID",
@@ -364,15 +381,12 @@ function mapMonthlyReportAccount(
       "Google Account ID",
       "Google Ads Customer ID",
       "Google Ads Account",
-      "Account ID",
-      "ID",
       "google ads account id",
       "google ads id",
       "google account id",
       "google ads customer id",
       "google ads account",
-      "account id",
-      "id",
+      ...(normalizedPlatform.includes("google") ? ["Account ID", "ID", "account id", "id"] : []),
     ]),
     "google"
   );
@@ -384,26 +398,27 @@ function mapMonthlyReportAccount(
       "Facebook Ads Account ID",
       "Facebook Account ID",
       "Meta Ads Account",
-      "Account ID",
-      "ID",
       "meta ads account id",
       "meta ads id",
       "meta account id",
       "facebook ads account id",
       "facebook account id",
       "meta ads account",
-      "account id",
-      "id",
+      ...(normalizedPlatform.includes("meta") || normalizedPlatform.includes("facebook") ? ["Account ID", "ID", "account id", "id"] : []),
     ]),
     "meta"
+  );
+  const tiktokAdsAccountId = normalizeOptionalAccountId(
+    normalizedPlatform.includes("tiktok") ? genericAccountId : null,
+    "tiktok"
   );
   const clientName =
     getPropertyValue(properties, ["Client Name", "Name", "Client", "Account Name", "client name"]) ??
     googleAdsAccountId ??
     metaAdsAccountId ??
+    tiktokAdsAccountId ??
     `Notion ${notionPageId.slice(0, 8)}`;
   const clientRelationPageIds = getPropertyRelationIds(properties, ["Client", "client"]);
-  const platform = getPropertyValue(properties, ["Platform", "platform"]);
   const reportType = getPropertyValue(properties, [
     "Platform Report Type",
     "Platform/Report Type",
@@ -412,13 +427,14 @@ function mapMonthlyReportAccount(
     "platform/report type",
     "report type",
   ]);
-  const isValid = Boolean(googleAdsAccountId || metaAdsAccountId);
+  const isValid = Boolean(googleAdsAccountId || metaAdsAccountId || tiktokAdsAccountId);
 
   return {
     notionPageId,
     clientName,
     googleAdsAccountId,
     metaAdsAccountId,
+    tiktokAdsAccountId,
     clientEmail: getPropertyValue(properties, [
       "Recipient Email",
       "Monthly Report Recipient",
@@ -826,14 +842,17 @@ function getStringValue(value: unknown): string | null {
 
 function normalizeOptionalAccountId(
   value: string | null,
-  platform: "google" | "meta"
+  platform: "google" | "meta" | "tiktok"
 ): string | null {
   if (!value) {
     return null;
   }
 
-  const normalized =
-    platform === "google" ? normalizeGoogleAccountId(value) : normalizeMetaAccountId(value);
+  const normalized = platform === "google"
+    ? normalizeGoogleAccountId(value)
+    : platform === "meta"
+      ? normalizeMetaAccountId(value)
+      : value.replace(/\D/g, "");
 
   return normalized || null;
 }

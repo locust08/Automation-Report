@@ -1,4 +1,4 @@
-export type Platform = "meta" | "google" | "googleYoutube";
+export type Platform = "meta" | "google" | "googleYoutube" | "tiktok";
 
 export type MetricFormat = "number" | "currency" | "percent";
 
@@ -38,6 +38,7 @@ export interface CampaignRow {
   ctr: number;
   cpm: number;
   results: number;
+  resultLabel?: string;
   costPerResult: number;
   spend: number;
   conversions: number;
@@ -126,8 +127,10 @@ export interface OverallReportPayload {
   accountIds: {
     metaAccountId: string | null;
     googleAccountId: string | null;
+    tiktokAccountId?: string | null;
     metaAccountIds: string[];
     googleAccountIds: string[];
+    tiktokAccountIds?: string[];
   };
   summaries: SummarySection[];
   campaignGroups: CampaignGroup[];
@@ -135,6 +138,18 @@ export interface OverallReportPayload {
   warnings: string[];
   diagnostics?: ReportPerformanceDiagnostic[];
   dataSource?: "meta_api" | "meta_csv";
+  tiktokAccounts?: TikTokAccountMetadata[];
+}
+
+export interface TikTokAccountMetadata {
+  advertiserId: string;
+  advertiserName: string;
+  currency: string;
+  timezone: string;
+  connectionState: "connected" | "reconnect_required";
+  apiVersion: "v1.3";
+  providerRequestIds: string[];
+  requestProvenance: "tiktok_api_v1.3";
 }
 
 export interface ReportPerformanceDiagnostic {
@@ -272,8 +287,10 @@ export interface TopKeywordsPayload {
   accountIds: {
     metaAccountId: string | null;
     googleAccountId: string | null;
+    tiktokAccountId?: string | null;
     metaAccountIds: string[];
     googleAccountIds: string[];
+    tiktokAccountIds?: string[];
   };
   rows: TopKeywordRow[];
   totals: TopKeywordRow;
@@ -381,6 +398,39 @@ export interface PreviewPlatformDistributionRow {
   costPerResult: number | null;
 }
 
+export interface TikTokSelectedAdMetrics {
+  spend: number | null;
+  impressions: number | null;
+  reach: number | null;
+  frequency: number | null;
+  destinationClicks: number | null;
+  allClicks: number | null;
+  destinationCtr: number | null;
+  allClickCtr: number | null;
+  destinationCpc: number | null;
+  cpm: number | null;
+  videoViews: number | null;
+}
+
+export interface TikTokSelectedAdDailyPoint extends TikTokSelectedAdMetrics {
+  date: string;
+}
+
+export interface TikTokSelectedAdDetail {
+  adId: string;
+  adName: string;
+  identityName: string | null;
+  identityType: string | null;
+  source: string | null;
+  durationSeconds: number | null;
+  currency: string;
+  timezone: string;
+  metrics: TikTokSelectedAdMetrics;
+  daily: TikTokSelectedAdDailyPoint[];
+  warnings: string[];
+  providerRequestIds: string[];
+}
+
 export interface PreviewCreativeAsset {
   id: string;
   name?: string | null;
@@ -450,6 +500,7 @@ export interface PreviewAdNode {
   businessName?: string | null;
   businessLogoUrl?: string | null;
   sitelinks?: PreviewSitelinkAsset[];
+  tiktokDetail?: TikTokSelectedAdDetail | null;
 }
 
 export interface PreviewAdGroupNode {
@@ -477,7 +528,7 @@ export interface PreviewCampaignNode {
 }
 
 export interface PreviewPlatformSection {
-  platform: "meta" | "google";
+  platform: "meta" | "google" | "tiktok";
   title: string;
   logoPath: string;
   accountId?: string | null;
@@ -605,8 +656,10 @@ export interface PreviewReportPayload {
   accountIds: {
     metaAccountId: string | null;
     googleAccountId: string | null;
+    tiktokAccountId?: string | null;
     metaAccountIds: string[];
     googleAccountIds: string[];
+    tiktokAccountIds?: string[];
   };
   sections: PreviewPlatformSection[];
   warnings: string[];
@@ -619,12 +672,14 @@ export interface PreviewReportPayload {
     google: GooglePreviewDiagnostics[];
   };
   dataSource?: "meta_api" | "meta_csv";
+  tiktokAccounts?: TikTokAccountMetadata[];
 }
 
 export interface RequestContext {
   accountId: string | null;
   metaAccountId: string | null;
   googleAccountId: string | null;
+  tiktokAccountId: string | null;
   startDate: string | null;
   endDate: string | null;
   campaignType: string | null;

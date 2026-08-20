@@ -104,7 +104,7 @@ export function buildPreviewDetailsStage(
 }
 
 export function getFirstPreviewCampaign(payload: PreviewReportPayload): {
-  platform: "meta" | "google";
+  platform: "meta" | "google" | "tiktok";
   campaign: PreviewCampaignNode;
 } | null {
   for (const section of payload.sections) {
@@ -143,7 +143,7 @@ export function getFirstPreviewAd(payload: PreviewReportPayload): PreviewAdNode 
 }
 
 export interface PreviewStageSelection {
-  platform: "meta" | "google" | null;
+  platform: "meta" | "google" | "tiktok" | null;
   campaignId: string | null;
   adGroupId: string | null;
   adId: string | null;
@@ -198,7 +198,7 @@ function isActiveStatus(status: string | null | undefined): boolean {
     "deleted",
     "removed",
     "archived",
-    "disabled",
+    "disable",
     "inactive",
   ].some((blocked) => normalized.includes(blocked));
 }

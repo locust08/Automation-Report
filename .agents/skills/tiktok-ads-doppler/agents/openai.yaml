@@ -1,0 +1,4 @@
+interface:
+  display_name: "TikTok Ads via Doppler"
+  short_description: "Safely analyze and manage TikTok Ads via Doppler"
+  default_prompt: "Use $tiktok-ads-doppler to inspect a TikTok advertiser and prepare a safe action preview."
