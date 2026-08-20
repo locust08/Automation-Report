@@ -264,8 +264,10 @@ export function GoogleManagementPageClient({ currentUser }: { currentUser: Authe
             : {
                 accountId,
                 accountName,
+                campaignId: campaign?.id || selectedId,
                 title: `${campaign?.name || "Campaign"} changes`,
                 reason: "",
+                evidence: { summary: "" },
                 baselineCapturedAt: syncedAt,
                 changes,
                 editorContext,
@@ -346,7 +348,7 @@ export function GoogleManagementPageClient({ currentUser }: { currentUser: Authe
     setAdEditorOpen(context.view === "ads");
     setSettingsEditorOpen(context.view !== "ads");
   }
-  function openEditor(context: DraftEditorContext) {
+  async function openEditor(context: DraftEditorContext) {
     setError(null);
     const activeDraft = requestRef.current;
     if (activeDraft && draftMatchesContext(activeDraft, context, campaigns)) {
@@ -359,7 +361,29 @@ export function GoogleManagementPageClient({ currentUser }: { currentUser: Authe
         return;
       }
     }
-    openFreshEditor(context);
+    const campaignToEdit = campaigns.find((item) => item.id === context.campaignId);
+    if (!campaignToEdit) return;
+    try {
+      const eligibilityResponse = await fetch(`/api/ads-management/google/launch-eligibility?accountId=${encodeURIComponent(accountId)}&campaignId=${encodeURIComponent(context.campaignId)}`, { cache: "no-store" });
+      const eligibility = await eligibilityResponse.json();
+      if (!eligibilityResponse.ok) throw new Error(eligibility.error);
+      if (!eligibility.eligible) {
+        const reason = window.prompt("This campaign predates verified Module 4 launch records. Enter the business reason for authorizing it as an LT Paid Media legacy campaign:");
+        if (!reason?.trim()) return;
+        const evidenceSummary = window.prompt("Enter the evidence used to confirm that this campaign belongs to LT Paid Media:");
+        if (!evidenceSummary?.trim()) return;
+        const adoptionResponse = await fetch("/api/ads-management/google/launch-eligibility", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ accountId, campaignId: context.campaignId, campaignName: campaignToEdit.name, reason, evidence: { summary: evidenceSummary, sourceType: "manual" } }),
+        });
+        const adopted = await adoptionResponse.json();
+        if (!adoptionResponse.ok) throw new Error(adopted.error);
+      }
+      openFreshEditor(context);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Unable to verify campaign launch eligibility.");
+    }
   }
   function resumeDraftInContext(savedRequest: AdsChangeSetRecord, context: DraftEditorContext) {
     const targetCampaign = campaigns.find((item) => item.id === context.campaignId);

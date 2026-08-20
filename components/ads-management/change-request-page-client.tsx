@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 import posthog from "posthog-js";
 import { AlertTriangleIcon, CheckCircle2Icon, CopyIcon, Loader2Icon, XIcon } from "lucide-react";
@@ -12,12 +13,14 @@ import type { AdsChangeSetRecord, AdsFieldChangeRecord } from "@/lib/ads-managem
 import { formatFocusedSitelinkAuditValue, formatSitelinkCompletionValue, summarizeSitelinkChanges } from "@/lib/ads-management/sitelink-display";
 
 export function ChangeRequestPageClient({ id, currentUser, embedded = false, open = true, onClose, onProgressChange }: { id: string; currentUser: AuthenticatedAdsUser; embedded?: boolean; open?: boolean; onClose?: (keepAlive?: boolean) => void; onProgressChange?: (busy: boolean, status: string) => void }) {
+  const router = useRouter();
   const [data, setData] = useState<AdsChangeSetRecord | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [completionMessage, setCompletionMessage] = useState("");
+  const [reason, setReason] = useState("");
+  const [evidenceSummary, setEvidenceSummary] = useState("");
   const canEdit = canEditAds(currentUser.role);
-  const canApprove = ["approver", "tl", "admin"].includes(currentUser.role);
 
   const load = useCallback(async () => {
     const response = await fetch(`/api/ads-management/change-requests/${id}`, { cache: "no-store" });
@@ -25,6 +28,8 @@ export function ChangeRequestPageClient({ id, currentUser, embedded = false, ope
     if (!response.ok) throw new Error(payload.error);
     setData(payload);
     setCompletionMessage((current) => current || buildCompletionMessage(payload));
+    setReason(payload.reason || "");
+    setEvidenceSummary(payload.evidence?.summary || "");
   }, [id]);
 
   useEffect(() => { void load().catch((cause) => setError(cause instanceof Error ? cause.message : "Unable to load request.")); }, [load]);
@@ -41,7 +46,7 @@ export function ChangeRequestPageClient({ id, currentUser, embedded = false, ope
   async function act(url: string, body: unknown = {}) {
     setBusy(true);
     setError(null);
-    const trackProgress = url.endsWith("/submit") || url.endsWith("/publish") || url.endsWith("/retry-verification") || url.endsWith("/retry-publish");
+    const trackProgress = url.endsWith("/submit") || url.endsWith("/publish") || url.endsWith("/retry-publish") || url.endsWith("/retry-verification");
     let polling = trackProgress;
     let pollTimer: number | undefined;
     if (trackProgress) {
@@ -59,6 +64,10 @@ export function ChangeRequestPageClient({ id, currentUser, embedded = false, ope
       const payload = await response.json();
       if (!response.ok) throw new Error(payload.error);
       polling = false;
+      if (url.endsWith("/rollback")) {
+        router.push(`/manage/google/change-requests/${payload.id}`);
+        return;
+      }
       setData(payload);
       if (url.endsWith("/submit")) {
         posthog.capture("ads_change_request_submitted", {
@@ -77,10 +86,38 @@ export function ChangeRequestPageClient({ id, currentUser, embedded = false, ope
     }
   }
 
+  async function saveReviewContext() {
+    if (!data) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const response = await fetch(`/api/ads-management/change-requests/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          version: data.version,
+          reason,
+          evidence: { ...(data.evidence ?? {}), summary: evidenceSummary, sourceType: data.evidence?.sourceType ?? "manual" },
+          changes: (data.ads_field_changes ?? []).map((change) => ({
+            entityType: change.entity_type, entityId: change.entity_id, entityName: change.entity_name,
+            fieldKey: change.field_key, fieldLabel: change.field_label, valueType: change.value_type,
+            baselineValue: change.baseline_value, proposedValue: change.proposed_value,
+          })),
+        }),
+      });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error);
+      setData(payload);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Unable to save review context.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   if (!data) return embedded ? <div className={`${open ? "fixed inset-0 z-[60] flex justify-end" : "hidden"}`}><button type="button" className="absolute inset-0 bg-slate-950/45" aria-label="Close review" onClick={() => onClose?.(busy)} /><aside className="relative z-10 grid h-full w-full max-w-[1100px] place-items-center bg-slate-50 shadow-2xl"><div>{error || "Loading change request…"}</div></aside></div> : <main className="grid min-h-screen place-items-center"><div>{error || "Loading change request…"}</div></main>;
 
   const changes = data.ads_field_changes ?? [];
-  const recommendationOnly = changes.length > 0 && changes.every((change) => change.field_key === "recommendation.apply");
   const notification = data.ads_change_notifications?.[0] as { message?: string } | undefined;
   const content = <div className={`${embedded ? "space-y-5 p-4 sm:p-5" : "mx-auto max-w-6xl space-y-5"}`}>
     <header className="rounded-2xl border bg-white p-5 shadow-sm"><div className="flex flex-wrap justify-between gap-4"><div><p className="text-sm text-slate-500">Change request · {data.status.replaceAll("_", " ")}</p><h1 className="text-2xl font-semibold">{data.title}</h1><p className="mt-1 text-sm text-slate-500">{data.account_name} · created by {data.created_by_name} · version {data.version}</p><p className="mt-1 text-xs text-slate-500">Signed in as {currentUser.displayName} · {adsRoleLabel(currentUser.role)}</p></div><div className="flex gap-2">{embedded ? <Button type="button" variant="outline" onClick={() => onClose?.(busy)}><XIcon />{busy ? "Continue in background" : "Close"}</Button> : <><Button asChild variant="outline"><Link href={`/manage/google?accountId=${data.account_id}&accountName=${encodeURIComponent(data.account_name)}`}>Manage account</Link></Button><Button asChild variant="outline"><Link href={`/manage/google/history?accountId=${data.account_id}&accountName=${encodeURIComponent(data.account_name)}`}>History</Link></Button></>}</div></div></header>
@@ -88,21 +125,25 @@ export function ChangeRequestPageClient({ id, currentUser, embedded = false, ope
     {busy ? <section className="rounded-2xl border border-blue-200 bg-blue-50 p-4 text-blue-900"><div className="flex items-center gap-3"><Loader2Icon className="size-5 animate-spin" /><div><strong className="block">{workflowProgressLabel(data.status)}</strong><span className="text-sm text-blue-700">This panel updates automatically while Google processes the request.</span></div></div></section> : null}
     <section className="overflow-hidden rounded-2xl border bg-white shadow-sm"><div className="border-b p-4"><h2 className="font-semibold">Proposed edits</h2></div><div className="overflow-x-auto"><table className="w-full min-w-[850px] text-left text-sm"><thead className="bg-slate-50"><tr><th className="p-3">Entity / field</th><th className="p-3">Synchronized original</th><th className="p-3">Latest Google</th><th className="p-3">Proposed</th><th className="p-3">Result</th></tr></thead><tbody>{changes.map((change) => <ChangeRow key={change.id} change={change} conflict={data.status === "conflict_detected"} canResolve={canEdit} busy={busy} resolve={(resolution, newValue) => act(`/api/ads-management/change-requests/${id}/conflicts/${change.id}`, { resolution, newValue })} />)}</tbody></table></div></section>
 
-    {["draft", "validation_failed", "awaiting_approval", "approved", "conflict_detected"].includes(data.status) ? <section className="rounded-2xl border bg-white p-5 shadow-sm"><label className="space-y-2"><span className="block font-semibold">Completion email message</span><span className="block text-sm text-slate-500">Edit the message before publishing. It is saved for the daily PIC email only after Google confirms the changes.</span><Textarea className="min-h-28" maxLength={5000} value={completionMessage} onChange={(event) => setCompletionMessage(event.target.value)} /></label><p className="mt-2 text-right text-xs text-slate-400">{completionMessage.length}/5000</p></section> : null}
+    {["draft", "validation_failed", "conflict_detected"].includes(data.status) ? <section className="rounded-2xl border bg-white p-5 shadow-sm"><h2 className="font-semibold">Reason and review evidence</h2><p className="mt-1 text-sm text-slate-500">Both fields are required before validation. Saving creates a new immutable revision and invalidates any earlier approval.</p><div className="mt-4 grid gap-4"><label className="space-y-2"><span className="text-sm font-medium">Business reason</span><Textarea value={reason} onChange={(event) => setReason(event.target.value)} placeholder="Why is this post-launch change needed?" /></label><label className="space-y-2"><span className="text-sm font-medium">Evidence summary</span><Textarea value={evidenceSummary} onChange={(event) => setEvidenceSummary(event.target.value)} placeholder="What data, ticket, or observation supports it?" /></label></div>{canEdit ? <Button className="mt-4" variant="outline" disabled={busy || !reason.trim() || !evidenceSummary.trim()} onClick={() => void saveReviewContext()}>Save review context</Button> : <RoleNotice text="Only administrators can edit review context." />}</section> : null}
 
-    {recommendationOnly && ["draft", "validation_failed"].includes(data.status) ? <section className="rounded-2xl border border-blue-200 bg-blue-50 p-5"><h2 className="font-semibold text-blue-900">Validate Google recommendation</h2><p className="mt-1 text-sm text-blue-800">Confirm the recommendation is still active in Google without changing the account. Approval and publishing remain separate actions.</p>{canEdit ? <Button className="mt-4 bg-blue-600 text-white hover:bg-blue-700" disabled={busy} onClick={() => void act(`/api/ads-management/change-requests/${id}/submit`)}>{busy ? <Loader2Icon className="animate-spin" /> : null}{busy ? "Validating…" : "Validate"}</Button> : <RoleNotice text="Your role cannot validate Google Ads changes." />}</section> : null}
+    {data.approved_payload_hash ? <section className="rounded-2xl border border-blue-200 bg-blue-50 p-4 text-sm text-blue-950"><strong>Approved immutable revision</strong><div className="mt-1 break-all font-mono text-xs">{data.approved_payload_hash}</div><div className="mt-1 text-xs">Approval expires {data.approval_expires_at ? new Date(data.approval_expires_at).toLocaleString() : "—"}</div></section> : null}
 
-    {!recommendationOnly && ["draft", "validation_failed"].includes(data.status) ? <section className="rounded-2xl border bg-white p-5 shadow-sm"><h2 className="font-semibold">Validate changes</h2><p className="mt-1 text-sm text-slate-500">The dashboard refreshes Google, checks conflicts, and uses validate-only requests. This action cannot mutate Google Ads.</p>{canEdit ? <Button className="mt-4" disabled={busy} onClick={() => void act(`/api/ads-management/change-requests/${id}/submit`)}>{busy ? <Loader2Icon className="animate-spin" /> : null}{busy ? "Validating…" : "Validate"}</Button> : <RoleNotice text="Your role cannot validate Google Ads changes." />}</section> : null}
+    {["draft", "validation_failed", "ready_to_publish", "awaiting_approval", "conflict_detected"].includes(data.status) ? <section className="rounded-2xl border bg-white p-5 shadow-sm"><label className="space-y-2"><span className="block font-semibold">Completion email message</span><span className="block text-sm text-slate-500">Edit the message before publishing. It is saved for the daily PIC email only after Google confirms the changes.</span><Textarea className="min-h-28" maxLength={5000} value={completionMessage} onChange={(event) => setCompletionMessage(event.target.value)} /></label><p className="mt-2 text-right text-xs text-slate-400">{completionMessage.length}/5000</p></section> : null}
 
-    {data.status === "awaiting_approval" ? <section className="rounded-2xl border border-amber-200 bg-amber-50 p-5"><h2 className="font-semibold text-amber-900">Approve validated changes</h2><p className="mt-1 text-sm text-amber-800">Approval records an attributable authorization. It does not call Google Ads.</p>{canApprove ? <Button className="mt-4" disabled={busy} onClick={() => void act(`/api/ads-management/change-requests/${id}/approve`)}>{busy ? <Loader2Icon className="animate-spin" /> : null}{busy ? "Approving…" : "Approve"}</Button> : <RoleNotice text="An approver, team lead, or administrator must approve this request." />}</section> : null}
+    {["draft", "validation_failed"].includes(data.status) ? <section className="rounded-2xl border bg-white p-5 shadow-sm"><h2 className="font-semibold">1. Validate</h2><p className="mt-1 text-sm text-slate-500">Runs local rules, Google validate-only, and a synchronized conflict check. It does not publish.</p>{canEdit ? <Button className="mt-4" disabled={busy || !reason.trim() || !evidenceSummary.trim()} onClick={() => void act(`/api/ads-management/change-requests/${id}/submit`)}>{busy ? <Loader2Icon className="animate-spin" /> : null}Validate request</Button> : <RoleNotice text="Only administrators can validate Google Ads changes." />}</section> : null}
 
-    {data.status === "approved" ? <section className="rounded-2xl border bg-white p-5 shadow-sm"><h2 className="font-semibold">Publish approved changes</h2><p className="mt-1 text-sm text-slate-500">Google is refreshed once more before per-item publishing. Any new conflict blocks the mutation; successful items are read back and verified.</p>{canEdit ? <Button className="mt-4" disabled={busy || !completionMessage.trim()} onClick={() => void act(`/api/ads-management/change-requests/${id}/publish`, { completionMessage })}>{busy ? <Loader2Icon className="animate-spin" /> : null}{busy ? "Publishing and verifying…" : "Publish Changes"}</Button> : <RoleNotice text="Your role cannot publish Google Ads changes." />}</section> : null}
+    {data.status === "awaiting_approval" ? <section className="rounded-2xl border border-indigo-200 bg-indigo-50 p-5"><h2 className="font-semibold text-indigo-950">2. Approve immutable revision</h2><p className="mt-1 text-sm text-indigo-800">Approval binds the current revision hash and Google preflight state for 24 hours. Any edit requires a new validation and approval.</p>{canEdit ? <Button className="mt-4" disabled={busy} onClick={() => void act(`/api/ads-management/change-requests/${id}/approve`, { comment: "Approved from Google Ads change review." })}>Approve revision</Button> : <RoleNotice text="Only administrators can approve Google Ads changes." />}</section> : null}
+
+    {data.status === "approved" ? <section className="rounded-2xl border border-green-200 bg-green-50 p-5"><h2 className="font-semibold text-green-950">3. Publish and verify</h2><p className="mt-1 text-sm text-green-800">Claims this exact approved revision, rechecks Google for drift, publishes sequentially, and reads each result back.</p>{canEdit ? <Button className="mt-4" disabled={busy || !completionMessage.trim()} onClick={() => void act(`/api/ads-management/change-requests/${id}/publish`, { completionMessage })}>Publish approved revision</Button> : <RoleNotice text="Only administrators can publish Google Ads changes." />}</section> : null}
+
+    {["failed", "partially_completed"].includes(data.status) && changes.some((change) => change.publish_status !== "succeeded") ? <section className="rounded-2xl border border-red-200 bg-red-50 p-5"><h2 className="font-semibold text-red-950">Retry failed items</h2><p className="mt-1 text-sm text-red-800">Only failed or unattempted items are retried. Successful mutations remain durable and are never repeated.</p>{canEdit ? <Button className="mt-4" disabled={busy} onClick={() => void act(`/api/ads-management/change-requests/${id}/retry-publish`, { completionMessage })}>Retry failed items</Button> : <RoleNotice text="Only administrators can retry failed items." />}</section> : null}
 
     {data.status === "conflict_detected" && !canEdit ? <RoleNotice text="A user with Google Ads editing permission must resolve these conflicts." /> : null}
     {data.status === "partially_completed" && changes.some((change) => change.publish_status === "succeeded" && change.verification_status === "failed") ? <section className="rounded-2xl border border-amber-200 bg-amber-50 p-5"><h2 className="font-semibold text-amber-900">Published changes need verification</h2><p className="mt-1 text-sm text-amber-800">This only reads Google again. It will not publish or repeat a successful mutation.</p>{canEdit ? <Button className="mt-4" disabled={busy} onClick={() => void act(`/api/ads-management/change-requests/${id}/retry-verification`)}>{busy ? <Loader2Icon className="animate-spin" /> : null}Retry verification</Button> : <RoleNotice text="Your role cannot retry verification." />}</section> : null}
-    {["failed", "partially_completed"].includes(data.status) && changes.some((change) => change.publish_status === "failed") ? <section className="rounded-2xl border border-red-200 bg-red-50 p-5"><h2 className="font-semibold text-red-900">Some changes failed to publish</h2><p className="mt-1 text-sm text-red-800">Retry checks Google again first and mutates only items that are still failed and conflict-free.</p>{canEdit ? <Button className="mt-4" disabled={busy} onClick={() => void act(`/api/ads-management/change-requests/${id}/retry-publish`)}>{busy ? <Loader2Icon className="animate-spin" /> : null}Retry failed items</Button> : <RoleNotice text="Your role cannot retry failed items." />}</section> : null}
     {data.status === "cancelled" ? <section className="rounded-2xl border bg-slate-50 p-5"><h2 className="font-semibold text-slate-800">Request cancelled</h2><p className="mt-1 text-sm text-slate-600">This request was cancelled and will not be published. Create a new request if edits are still needed.</p></section> : null}
-    {data.status === "verified" ? <section className="rounded-2xl border border-green-200 bg-green-50 p-5"><h2 className="flex items-center gap-2 font-semibold text-green-800"><CheckCircle2Icon />Published and verified</h2>{notification?.message ? <div className="mt-3 rounded-xl bg-white p-4 text-sm"><p>{notification.message}</p><Button variant="outline" className="mt-3" onClick={() => navigator.clipboard.writeText(notification.message || "")}><CopyIcon />Copy completion message</Button></div> : null}</section> : null}
+    {data.status === "verified" ? <section className="rounded-2xl border border-green-200 bg-green-50 p-5"><h2 className="flex items-center gap-2 font-semibold text-green-800"><CheckCircle2Icon />Published and verified</h2>{notification?.message ? <div className="mt-3 rounded-xl bg-white p-4 text-sm"><p>{notification.message}</p><Button variant="outline" className="mt-3" onClick={() => navigator.clipboard.writeText(notification.message || "")}><CopyIcon />Copy completion message</Button></div> : null}{canEdit ? <Button className="mt-4" variant="outline" disabled={busy || !reason.trim() || !evidenceSummary.trim()} onClick={() => void act(`/api/ads-management/change-requests/${id}/rollback`, { reason: `Rollback: ${reason}`, evidence: { summary: evidenceSummary, sourceType: "manual", sourceId: data.id } })}>Create rollback request</Button> : null}</section> : null}
+    {(data.ads_change_follow_ups ?? []).length ? <section className="rounded-2xl border bg-white p-5"><h2 className="font-semibold">Module 5 follow-ups</h2><ul className="mt-3 space-y-2 text-sm">{(data.ads_change_follow_ups ?? []).map((followUp) => <li key={followUp.id} className="rounded-lg bg-slate-50 p-3"><strong>{followUp.follow_up_window}</strong> · due {new Date(followUp.due_at).toLocaleString()} · {followUp.status}</li>)}</ul></section> : null}
     <section className="rounded-2xl border bg-white p-5"><h2 className="font-semibold">Activity history</h2><ol className="mt-3 space-y-3">{(data.ads_change_events ?? []).sort((left, right) => String(left.created_at).localeCompare(String(right.created_at))).map((event) => <li key={String(event.id)} className="border-l-2 pl-3 text-sm"><strong>{String(event.message)}</strong><div className="text-slate-500">{String(event.actor_name)} · {new Date(String(event.created_at)).toLocaleString()}</div></li>)}</ol></section>
   </div>;
   if (!embedded) return <main className="min-h-screen bg-slate-50 p-5">{content}</main>;
