@@ -26,7 +26,8 @@ insert into public.ads_budget_packages (
 ) values
   ('00000000-0000-0000-0000-000000000001', 'workflow-main', 'Workflow Main', 'MYR', '2026-08-01', '2026-08-31', 1000, 'active'),
   ('00000000-0000-0000-0000-000000000001', 'workflow-release', 'Workflow Release', 'MYR', '2026-08-01', '2026-08-31', 1000, 'active'),
-  ('00000000-0000-0000-0000-000000000001', 'workflow-launched', 'Workflow Launched', 'MYR', '2026-08-01', '2026-08-31', 1000, 'active');
+  ('00000000-0000-0000-0000-000000000001', 'workflow-launched', 'Workflow Launched', 'MYR', '2026-08-01', '2026-08-31', 1000, 'active'),
+  ('00000000-0000-0000-0000-000000000001', 'workflow-awaiting-audit', 'Workflow Awaiting Audit', 'MYR', '2026-08-01', '2026-08-31', 1000, 'active');
 
 insert into public.ads_campaign_plans (
   client_id, budget_package_id, ad_account_id, platform, created_by_id, created_by_name
@@ -42,7 +43,8 @@ from (values
   ('Unavailable fixture', 'workflow-main', 'workflow-unavailable'),
   ('Unauthorized fixture', 'workflow-main', 'workflow-main'),
   ('Release fixture', 'workflow-release', 'workflow-main'),
-  ('Launched fixture', 'workflow-launched', 'workflow-main')
+  ('Launched fixture', 'workflow-launched', 'workflow-main'),
+  ('Awaiting audit fixture', 'workflow-awaiting-audit', 'workflow-main')
 ) as fixture(creator, package_key, provider_account_id)
 join public.ads_budget_packages as package on package.package_key = fixture.package_key
 join public.ads_ad_accounts as account on account.provider_account_id = fixture.provider_account_id;
@@ -232,6 +234,16 @@ select throws_ok(
   $$select public.ads_reserve_campaign_budget(
     (select id from public.ads_campaign_plans where created_by_name = 'Main fixture'),
     (select active_revision_id from public.ads_campaign_plans where created_by_name = 'Main fixture'),
+    '22bb20288774b76d21425209b1e9916c5b04232bd1915b73b4d2ee1f8ff0b438', null,
+    '00000000-0000-0000-0000-000000000051', null, null
+  )$$,
+  '40001', 'Campaign plan lock version is stale',
+  'an identical reservation retry rejects a null expected lock version'
+);
+select throws_ok(
+  $$select public.ads_reserve_campaign_budget(
+    (select id from public.ads_campaign_plans where created_by_name = 'Main fixture'),
+    (select active_revision_id from public.ads_campaign_plans where created_by_name = 'Main fixture'),
     null, 2, '00000000-0000-0000-0000-000000000051', null, null
   )$$,
   '22023', 'Campaign plan revision hash does not match',
@@ -339,6 +351,17 @@ select throws_ok(
   $$select public.ads_approve_campaign_plan_revision(
     (select id from public.ads_campaign_plans where created_by_name = 'Main fixture'),
     (select active_revision_id from public.ads_campaign_plans where created_by_name = 'Main fixture'),
+    '22bb20288774b76d21425209b1e9916c5b04232bd1915b73b4d2ee1f8ff0b438', null,
+    clock_timestamp() + interval '2 hours', 'approval-main-v2', null,
+    '00000000-0000-0000-0000-000000000051', null, null
+  )$$,
+  '40001', 'Campaign plan lock version is stale',
+  'an identical approval retry rejects a null expected lock version'
+);
+select throws_ok(
+  $$select public.ads_approve_campaign_plan_revision(
+    (select id from public.ads_campaign_plans where created_by_name = 'Main fixture'),
+    (select active_revision_id from public.ads_campaign_plans where created_by_name = 'Main fixture'),
     null, 3, clock_timestamp() + interval '2 hours', 'approval-main-v2', null,
     '00000000-0000-0000-0000-000000000051', null, null
   )$$,
@@ -400,6 +423,36 @@ select ok(
    join public.ads_campaign_approvals as old_approval on old_approval.request_idempotency_key = 'approval-main-v2'
    where new_approval.request_idempotency_key = 'approval-main-v3'),
   'the new immutable approval links to the superseded decision'
+);
+
+select lives_ok(
+  $$select public.ads_create_campaign_plan_revision(
+    (select id from public.ads_campaign_plans where created_by_name = 'Awaiting audit fixture'), 0,
+    $json${"allocated_budget":400,"daily_budget":20,"destination":"https://example.test/landing","end_date":"2026-08-20","increment_amount":0,"objective":"leads","projected_total":400,"start_date":"2026-08-01"}$json$::jsonb,
+    $json${"allocated_budget":400,"daily_budget":20,"destination":"https://example.test/landing","end_date":"2026-08-20","increment_amount":0,"objective":"leads","projected_total":400,"start_date":"2026-08-01"}$json$,
+    '4de43ffc59a2e30653465f2a1521003623076f9aab294d6f7d7debf632128baf',
+    '00000000-0000-0000-0000-000000000051', null, null
+  )$$,
+  'awaiting-audit fixture revision is created'
+);
+update public.ads_campaign_plans
+set status = 'awaiting_approval'
+where created_by_name = 'Awaiting audit fixture';
+select lives_ok(
+  $$select public.ads_reserve_campaign_budget(
+    (select id from public.ads_campaign_plans where created_by_name = 'Awaiting audit fixture'),
+    (select active_revision_id from public.ads_campaign_plans where created_by_name = 'Awaiting audit fixture'),
+    '4de43ffc59a2e30653465f2a1521003623076f9aab294d6f7d7debf632128baf', 1,
+    '00000000-0000-0000-0000-000000000051', null, 'workflow-tests/reserve-from-awaiting'
+  )$$,
+  'a plan already awaiting approval can reserve its active revision'
+);
+select is(
+  (select from_status from public.ads_campaign_audit_events
+   where plan_id = (select id from public.ads_campaign_plans where created_by_name = 'Awaiting audit fixture')
+     and event_type = 'campaign_budget_reserved'),
+  'awaiting_approval',
+  'reservation audit preserves the locked pre-update source status'
 );
 
 select lives_ok(

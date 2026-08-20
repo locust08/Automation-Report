@@ -553,6 +553,7 @@ declare
   v_actor_email text;
   v_actor_role text;
   v_delta numeric(20,6);
+  v_from_status text;
 begin
   select actor.actor_name, actor.actor_email, actor.actor_role
   into strict v_actor_name, v_actor_email, v_actor_role
@@ -567,6 +568,12 @@ begin
   if not found then
     raise exception 'Campaign plan was not found' using errcode = 'P0002';
   end if;
+
+  if p_expected_plan_lock_version is null then
+    raise exception 'Campaign plan lock version is stale' using errcode = '40001';
+  end if;
+
+  v_from_status := v_plan.status;
 
   select revision.*
   into v_revision
@@ -669,7 +676,7 @@ begin
 
   perform ads_internal.append_campaign_audit(
     v_plan.id, v_revision.id, null, null,
-    'campaign_budget_reserved', 'draft', 'awaiting_approval',
+    'campaign_budget_reserved', v_from_status, 'awaiting_approval',
     p_actor_id, p_trusted_ip, p_trusted_user_agent,
     pg_catalog.jsonb_build_object(
       'payload_hash', v_revision.payload_hash,
@@ -832,6 +839,10 @@ begin
 
   if not found then
     raise exception 'Campaign plan was not found' using errcode = 'P0002';
+  end if;
+
+  if p_expected_plan_lock_version is null then
+    raise exception 'Campaign plan lock version is stale' using errcode = '40001';
   end if;
 
   select approval.*
