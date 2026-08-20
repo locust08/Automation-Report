@@ -31,6 +31,8 @@ enabled = false
 # key_path = "../certs/my-key.pem"
 
 [db]
+# The M04 focused runner copies this local configuration into an isolated temp
+# workdir and starts only its disposable Postgres container.
 # Port to use for the local database URL.
 port = 54322
 # Port used by db diff command to initialize the shadow database.
