@@ -70,11 +70,25 @@ import {
   TopKeywordsPayload,
 } from "@/lib/reporting/types";
 import { isNotionIntegrationError, resolveGoogleAccountsFromNotion } from "@/lib/reporting/notion";
+import {
+  fetchTikTokCampaignReport,
+  fetchTikTokInsights,
+  fetchTikTokPreviewHierarchy,
+  isTikTokReconnectError,
+  type TikTokAccountMetadata,
+} from "@/lib/reporting/tiktok";
+import {
+  buildTikTokCoreSummary,
+  type TikTokCoreTotals,
+  type TikTokInsightsPayload,
+} from "@/lib/reporting/tiktok-insights";
+import { resolveTikTokInsightsWithCache } from "@/lib/reporting/tiktok-insights-cache";
 
 export interface OverallInput {
   accountId: string | null;
   metaAccountId: string | null;
   googleAccountId: string | null;
+  tiktokAccountId?: string | null;
   startDate: string | null;
   endDate: string | null;
   diagnosticsMode?: boolean;
@@ -91,7 +105,7 @@ interface CampaignInput extends OverallInput {
 export type PreviewFetchStage = "campaigns" | "ad-groups" | "ads" | "preview" | "assets" | "full";
 
 export interface PreviewFetchSelection {
-  platform: "meta" | "google" | null;
+  platform: "meta" | "google" | "tiktok" | null;
   campaignId: string | null;
   adGroupId: string | null;
   adId: string | null;
@@ -100,6 +114,7 @@ export interface PreviewFetchSelection {
 interface ResolvedAccountIds {
   metaAccountIds: string[];
   googleAccountIds: string[];
+  tiktokAccountIds: string[];
 }
 
 type GoogleLoginCustomerIdMap = Record<string, string | null>;
@@ -111,6 +126,7 @@ export interface OverallSummaryStagePayload {
   summaries: SummarySection[];
   warnings: string[];
   diagnostics?: ReportPerformanceDiagnostic[];
+  tiktokAccounts?: TikTokAccountMetadata[];
 }
 
 export interface OverallCampaignPerformanceStagePayload {
@@ -120,6 +136,7 @@ export interface OverallCampaignPerformanceStagePayload {
   campaignGroups: CampaignGroup[];
   warnings: string[];
   diagnostics?: ReportPerformanceDiagnostic[];
+  tiktokAccounts?: TikTokAccountMetadata[];
 }
 
 export interface OverallAudienceBreakdownStagePayload {
@@ -130,6 +147,8 @@ export interface OverallAudienceBreakdownStagePayload {
   warnings: string[];
   diagnostics?: ReportPerformanceDiagnostic[];
 }
+
+export type OverallTikTokInsightsStagePayload = TikTokInsightsPayload;
 
 interface OverallReportBaseContext {
   credentials: ReturnType<typeof getCredentials>;
@@ -155,6 +174,12 @@ interface OverallPerformanceData extends Omit<OverallReportBaseContext, "reportS
   googlePrevious: CampaignRow[];
   youtubeCurrent: CampaignRow[];
   youtubePrevious: CampaignRow[];
+  tiktokCurrent: CampaignRow[];
+  tiktokPrevious: CampaignRow[];
+  tiktokAccounts: TikTokAccountMetadata[];
+  tiktokCurrentTotals: TikTokCoreTotals;
+  tiktokPreviousTotals: TikTokCoreTotals;
+  tiktokUnavailable: boolean;
 }
 
 const GOOGLE_FETCH_CACHE_TTL_MS = parsePositiveIntegerEnv(
@@ -366,6 +391,24 @@ const MANUAL_AUCTION_INSIGHT_ROWS_BY_ACCOUNT: Record<string, AuctionInsightRow[]
 };
 
 export async function getOverallReport(input: OverallInput): Promise<OverallReportPayload> {
+  if (input.tiktokAccountId?.trim()) {
+    const [summary, campaigns, audience] = await Promise.all([
+      getOverallSummaryStage(input),
+      getOverallCampaignPerformanceStage(input),
+      getOverallAudienceBreakdownStage(input),
+    ]);
+    return {
+      companyName: summary.companyName,
+      dateRange: summary.dateRange,
+      accountIds: summary.accountIds,
+      summaries: summary.summaries,
+      campaignGroups: campaigns.campaignGroups,
+      audienceClickBreakdown: audience.audienceClickBreakdown,
+      warnings: dedupeWarnings([...summary.warnings, ...campaigns.warnings, ...audience.warnings]),
+      diagnostics: summary.diagnostics,
+      tiktokAccounts: summary.tiktokAccounts,
+    };
+  }
   const reportRequestId = createReportRequestId();
   const reportStartedAt = Date.now();
   const diagnostics: ReportPerformanceDiagnostic[] = [];
@@ -612,6 +655,14 @@ export async function getOverallSummaryStage(
       logoPath: "/GoogleLogo.png",
       metrics: buildGoogleSummary(googleAccountCurrent, googleAccountPrevious),
     },
+    ...(performance.resolvedAccountIds.tiktokAccountIds.length > 0 ? [{
+      platform: "tiktok" as const,
+      title: "TikTok Ads",
+      logoPath: "/TikTokLogo.png",
+      metrics: performance.tiktokUnavailable
+        ? buildUnavailableTikTokSummary()
+        : buildTikTokCoreSummary(performance.tiktokCurrentTotals, performance.tiktokPreviousTotals),
+    }] : []),
   ];
 
   return {
@@ -621,6 +672,7 @@ export async function getOverallSummaryStage(
     summaries,
     warnings: dedupeWarnings(performance.warnings),
     diagnostics: performance.diagnostics,
+    tiktokAccounts: performance.tiktokAccounts,
   };
 }
 
@@ -632,6 +684,7 @@ export async function getOverallCampaignPerformanceStage(
     ...performance.metaCurrent,
     ...performance.googleCurrent,
     ...performance.youtubeCurrent,
+    ...performance.tiktokCurrent,
   ]);
   const warnings = [...performance.warnings];
 
@@ -648,6 +701,7 @@ export async function getOverallCampaignPerformanceStage(
     campaignGroups,
     warnings: dedupeWarnings(warnings),
     diagnostics: performance.diagnostics,
+    tiktokAccounts: performance.tiktokAccounts,
   };
 }
 
@@ -720,6 +774,7 @@ async function getOverallPerformanceStageData(input: OverallInput): Promise<Over
     accountId: input.accountId,
     metaAccountId: input.metaAccountId,
     googleAccountId: input.googleAccountId,
+    tiktokAccountId: input.tiktokAccountId,
     startDate: input.startDate,
     endDate: input.endDate,
     diagnosticsMode: Boolean(input.diagnosticsMode),
@@ -827,6 +882,27 @@ async function fetchOverallPerformanceStageData(input: OverallInput): Promise<Ov
       )
   );
 
+  const tiktokCurrentResult = await timeOverallReportStage(
+    reportRequestId,
+    diagnostics,
+    "tiktok_current",
+    () => tryFetchTikTokForAccounts(
+      resolvedAccountIds.tiktokAccountIds,
+      dateRange.startDate,
+      dateRange.endDate,
+    ),
+  );
+  const tiktokPreviousResult = await timeOverallReportStage(
+    reportRequestId,
+    diagnostics,
+    "tiktok_previous",
+    () => tryFetchTikTokForAccounts(
+      resolvedAccountIds.tiktokAccountIds,
+      dateRange.previousStartDate,
+      dateRange.previousEndDate,
+    ),
+  );
+
   const warnings = finalizeOverallStageWarnings(
     [
       ...base.warnings,
@@ -834,6 +910,8 @@ async function fetchOverallPerformanceStageData(input: OverallInput): Promise<Ov
       ...metaPreviousResult.warnings,
       ...googleCurrentResult.warnings,
       ...googlePreviousResult.warnings,
+      ...tiktokCurrentResult.warnings,
+      ...tiktokPreviousResult.warnings,
     ],
     diagnostics,
     base.reportStartedAt,
@@ -867,6 +945,13 @@ async function fetchOverallPerformanceStageData(input: OverallInput): Promise<Ov
     googlePrevious: googlePreviousResult.rows.filter((row) => row.platform === "google"),
     youtubeCurrent: googleCurrentResult.rows.filter((row) => row.platform === "googleYoutube"),
     youtubePrevious: googlePreviousResult.rows.filter((row) => row.platform === "googleYoutube"),
+    tiktokCurrent: tiktokCurrentResult.rows,
+    tiktokPrevious: tiktokPreviousResult.rows,
+    tiktokAccounts: tiktokCurrentResult.accounts,
+    tiktokCurrentTotals: tiktokCurrentResult.totals,
+    tiktokPreviousTotals: tiktokPreviousResult.totals,
+    tiktokUnavailable:
+      resolvedAccountIds.tiktokAccountIds.length > 0 && tiktokCurrentResult.accounts.length === 0,
   };
 }
 
@@ -937,8 +1022,10 @@ function buildOverallAccountIds(resolvedAccountIds: ResolvedAccountIds): Overall
   return {
     metaAccountId: firstOrNull(resolvedAccountIds.metaAccountIds),
     googleAccountId: firstOrNull(resolvedAccountIds.googleAccountIds),
+    tiktokAccountId: firstOrNull(resolvedAccountIds.tiktokAccountIds),
     metaAccountIds: resolvedAccountIds.metaAccountIds,
     googleAccountIds: resolvedAccountIds.googleAccountIds,
+    tiktokAccountIds: resolvedAccountIds.tiktokAccountIds,
   };
 }
 
@@ -987,7 +1074,7 @@ export async function getPreviewReport(input: OverallInput): Promise<PreviewRepo
   const companyName = previewNames.companyName;
   const fetchedAt = new Date().toISOString();
 
-  const [metaSections, googleSections] = await Promise.all([
+  const [metaSections, googleSections, tiktokSections] = await Promise.all([
     tryFetchMetaPreviewSections(
       resolvedAccountIds.metaAccountIds,
       credentials.metaAccessToken,
@@ -1013,9 +1100,16 @@ export async function getPreviewReport(input: OverallInput): Promise<PreviewRepo
       previewStage,
       previewSelection
     ),
+    tryFetchTikTokPreviewSections(
+      resolvedAccountIds.tiktokAccountIds,
+      dateRange.startDate,
+      dateRange.endDate,
+      previewStage,
+      previewSelection,
+    ),
   ]);
 
-  warnings.push(...metaSections.warnings, ...googleSections.warnings);
+  warnings.push(...metaSections.warnings, ...googleSections.warnings, ...tiktokSections.warnings);
   if (resolvedAccountIds.googleAccountIds.length > 0 && googleSections.campaigns.length === 0) {
     warnings.push(
       "Google Ads preview returned no enabled campaigns/ad groups/ads for the selected account and date range. If the account should have data, verify that the selected Access Path can read it and that the campaigns are enabled."
@@ -1043,6 +1137,16 @@ export async function getPreviewReport(input: OverallInput): Promise<PreviewRepo
       childLabel: "Ad Group",
       campaigns: googleSections.campaigns,
     },
+    {
+      platform: "tiktok",
+      title: "TikTok Ads Preview",
+      logoPath: "/TikTokLogo.png",
+      accountId: firstOrNull(resolvedAccountIds.tiktokAccountIds),
+      accountName: tiktokSections.accounts[0]?.advertiserName ?? null,
+      fetchedAt,
+      childLabel: "Ad Group",
+      campaigns: tiktokSections.campaigns,
+    },
   ] satisfies PreviewPlatformSection[];
 
   const activeSections = sections.filter((section) => section.campaigns.length > 0);
@@ -1059,8 +1163,10 @@ export async function getPreviewReport(input: OverallInput): Promise<PreviewRepo
     accountIds: {
       metaAccountId: firstOrNull(resolvedAccountIds.metaAccountIds),
       googleAccountId: firstOrNull(resolvedAccountIds.googleAccountIds),
+      tiktokAccountId: firstOrNull(resolvedAccountIds.tiktokAccountIds),
       metaAccountIds: resolvedAccountIds.metaAccountIds,
       googleAccountIds: resolvedAccountIds.googleAccountIds,
+      tiktokAccountIds: resolvedAccountIds.tiktokAccountIds,
     },
     sections,
     warnings: dedupeWarnings(warnings),
@@ -1068,6 +1174,7 @@ export async function getPreviewReport(input: OverallInput): Promise<PreviewRepo
     metaFatalErrors: metaSections.fatalErrors,
     googleWarnings: googleSections.structuredWarnings,
     googleFatalErrors: googleSections.fatalErrors,
+    tiktokAccounts: tiktokSections.accounts,
     diagnostics:
       metaSections.diagnostics.length || googleSections.diagnostics.length
         ? {
@@ -1653,6 +1760,121 @@ function buildGoogleSummary(currentRows: CampaignRow[], previousRows: CampaignRo
   ];
 }
 
+function buildUnavailableTikTokSummary(): SummaryMetric[] {
+  return [
+    ["spend", "Ads Spent", "currency"],
+    ["impressions", "Impressions", "number"],
+    ["reach", "Reach", "number"],
+    ["cpm", "CPM", "currency"],
+    ["ctr", "CTR (destination)", "percent"],
+  ].map(([key, label, format]) => ({
+    key,
+    label,
+    value: null,
+    previousValue: null,
+    delta: null,
+    format: format as SummaryMetric["format"],
+  }));
+}
+
+async function tryFetchTikTokForAccounts(
+  accountIds: string[],
+  startDate: string,
+  endDate: string,
+): Promise<{ rows: CampaignRow[]; accounts: TikTokAccountMetadata[]; totals: TikTokCoreTotals; warnings: string[] }> {
+  const rows: CampaignRow[] = [];
+  const accounts: TikTokAccountMetadata[] = [];
+  const warnings: string[] = [];
+  const totals: TikTokCoreTotals = { spend: 0, impressions: 0, reach: 0, clicks: 0 };
+  for (const accountId of accountIds) {
+    try {
+      const result = await fetchTikTokCampaignReport({ advertiserId: accountId, startDate, endDate });
+      accounts.push(result.account);
+      totals.spend = (totals.spend ?? 0) + (result.totals.spend ?? 0);
+      totals.impressions = (totals.impressions ?? 0) + (result.totals.impressions ?? 0);
+      totals.reach = (totals.reach ?? 0) + (result.totals.reach ?? 0);
+      totals.clicks = (totals.clicks ?? 0) + (result.totals.clicks ?? 0);
+      rows.push(...result.rows.map((row): CampaignRow => ({
+        id: row.id,
+        platform: "tiktok",
+        campaignType: "TikTok Auction",
+        campaignName: row.name,
+        impressions: row.impressions,
+        clicks: row.clicks,
+        ctr: row.ctr,
+        cpm: row.cpm,
+        results: row.conversions,
+        resultLabel: row.resultLabel,
+        costPerResult: row.costPerResult,
+        spend: row.spend,
+        conversions: row.conversions,
+        avgCpc: row.cpc,
+        youtubeEarnedLikes: 0,
+        youtubeEarnedShares: 0,
+      })));
+    } catch (error) {
+      const reconnect = isTikTokReconnectError(error);
+      const message = error instanceof Error ? error.message : "TikTok reporting failed.";
+      warnings.push(
+        reconnect
+          ? `TikTok Ads (${accountId}): authorization is missing or revoked. An administrator must reconnect TikTok.`
+          : `TikTok Ads (${accountId}): ${message}`,
+      );
+    }
+  }
+  return { rows, accounts, totals, warnings };
+}
+
+export async function getOverallTikTokInsightsStage(input: OverallInput): Promise<OverallTikTokInsightsStagePayload> {
+  const base = await resolveOverallReportBaseContext(input);
+  const advertiserId = base.resolvedAccountIds.tiktokAccountIds[0];
+  if (!advertiserId || base.resolvedAccountIds.tiktokAccountIds.length !== 1) {
+    throw new Error("Select exactly one TikTok advertiser to load TikTok insights.");
+  }
+  const cacheInput = {
+    advertiserId,
+    startDate: base.dateRange.startDate,
+    endDate: base.dateRange.endDate,
+  };
+  return resolveTikTokInsightsWithCache(cacheInput, () => fetchTikTokInsights(cacheInput));
+}
+
+async function tryFetchTikTokPreviewSections(
+  accountIds: string[],
+  startDate: string,
+  endDate: string,
+  previewStage: PreviewFetchStage,
+  previewSelection: PreviewFetchSelection,
+): Promise<{ campaigns: PreviewCampaignNode[]; accounts: TikTokAccountMetadata[]; warnings: string[] }> {
+  const campaigns: PreviewCampaignNode[] = [];
+  const accounts: TikTokAccountMetadata[] = [];
+  const warnings: string[] = [];
+  for (const accountId of accountIds) {
+    try {
+      const result = await fetchTikTokPreviewHierarchy({
+        advertiserId: accountId,
+        startDate,
+        endDate,
+        selectedAdId:
+          (previewStage === "preview" || previewStage === "assets" || previewStage === "full") &&
+          previewSelection.platform === "tiktok"
+            ? previewSelection.adId
+            : null,
+      });
+      campaigns.push(...result.campaigns);
+      accounts.push(result.account);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "TikTok preview failed.";
+      warnings.push(
+        isTikTokReconnectError(error)
+          ? `TikTok Ads (${accountId}): authorization is missing or revoked. An administrator must reconnect TikTok.`
+          : `TikTok Ads (${accountId}): ${message}`,
+      );
+    }
+  }
+  return { campaigns, accounts, warnings };
+}
+
 function metric(
   key: string,
   label: string,
@@ -1801,7 +2023,10 @@ async function tryFetchMetaPreview(
           startDate,
           endDate,
           previewStage,
-          previewSelection,
+          previewSelection: {
+            ...previewSelection,
+            platform: previewSelection.platform === "tiktok" ? null : previewSelection.platform,
+          },
         }),
       {
         ttlMs: GOOGLE_FETCH_CACHE_TTL_MS,
@@ -2149,7 +2374,10 @@ async function tryFetchGooglePreview(
           endDate,
           accessPath,
           previewStage,
-          previewSelection,
+          previewSelection: {
+            ...previewSelection,
+            platform: previewSelection.platform === "tiktok" ? null : previewSelection.platform,
+          },
         }),
       {
         ttlMs: GOOGLE_FETCH_CACHE_TTL_MS,
@@ -3130,10 +3358,12 @@ async function tryFetchGoogleAuctionInsightsForAccounts(
 function resolveAccountIds(
   accountId: string | null,
   metaAccountId: string | null,
-  googleAccountId: string | null
+  googleAccountId: string | null,
+  tiktokAccountId: string | null = null,
 ): ResolvedAccountIds {
   const metaOverrides = normalizeAccountIdList(metaAccountId, normalizeMetaAccountId);
   const googleOverrides = normalizeAccountIdList(googleAccountId, normalizeGoogleAccountId);
+  const tiktokAccountIds = normalizeAccountIdList(tiktokAccountId, normalizeTikTokAccountId);
   const hasMetaOverride = metaOverrides.length > 0;
   const hasGoogleOverride = googleOverrides.length > 0;
 
@@ -3152,7 +3382,12 @@ function resolveAccountIds(
     }
   }
 
-  return { metaAccountIds, googleAccountIds };
+  return { metaAccountIds, googleAccountIds, tiktokAccountIds };
+}
+
+function normalizeTikTokAccountId(value: string): string {
+  const digits = value.trim().replace(/^(?:tiktok|tt):/i, "").replace(/\D/g, "");
+  return /^\d{1,32}$/.test(digits) ? digits : "";
 }
 
 function splitAccountIdList(value: string | null): string[] {
@@ -3228,7 +3463,7 @@ function firstOrNull(values: string[]): string | null {
 }
 
 async function resolveReportAccountContext(
-  input: Pick<OverallInput, "accountId" | "metaAccountId" | "googleAccountId">,
+  input: Pick<OverallInput, "accountId" | "metaAccountId" | "googleAccountId" | "tiktokAccountId">,
   credentials: ReturnType<typeof getCredentials>
 ): Promise<{
   resolvedAccountIds: ResolvedAccountIds;
@@ -3243,6 +3478,7 @@ async function resolveReportAccountContext(
     input.accountId,
     input.metaAccountId,
     input.googleAccountId
+    , input.tiktokAccountId ?? null
   );
   const googleAccountContext = await resolveGoogleManagerContext(input, resolvedAccountIds, credentials);
 

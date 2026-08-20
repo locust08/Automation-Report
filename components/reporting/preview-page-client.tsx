@@ -16,8 +16,12 @@ import {
 } from "@/components/reporting/report-state";
 import { useReportSectionQuery } from "@/components/reporting/use-report-data";
 import { useReportFilters } from "@/components/reporting/use-report-filters";
-import { formatGoogleAdsAccessPathErrorMessage } from "@/lib/reporting/google-access-path";
 import { resolvePreviewEntry } from "@/lib/reporting/preview-selection";
+import { formatPreviewFatalError, formatPreviewLoadError } from "@/lib/reporting/preview-user-error";
+import {
+  resolvePreviewPlatform,
+  shouldPreservePreviewHierarchySelection,
+} from "@/lib/reporting/preview-platform-context";
 import type {
   PreviewAdGroupNode,
   PreviewAdNode,
@@ -33,14 +37,24 @@ export function PreviewPageClient() {
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
-  const selectedPlatform = searchParams.get("platform");
+  const selectedPlatformParam = searchParams.get("platform");
+  const selectedPlatform = resolvePreviewPlatform({
+    requestedPlatform: selectedPlatformParam,
+    metaAccountId: searchParams.get("metaAccountId"),
+    googleAccountId: searchParams.get("googleAccountId"),
+    tiktokAccountId: searchParams.get("tiktokAccountId"),
+  });
   const hasExplicitDateRange =
     Boolean(searchParams.get("startDate")?.trim()) ||
     Boolean(searchParams.get("endDate")?.trim());
-  const selectedCampaignId = hasExplicitDateRange
+  const preserveHierarchySelection = shouldPreservePreviewHierarchySelection(
+    selectedPlatformParam,
+    selectedPlatform,
+  );
+  const selectedCampaignId = hasExplicitDateRange && preserveHierarchySelection
     ? searchParams.get("campaignId")?.trim() || null
     : null;
-  const selectedCampaignName = hasExplicitDateRange
+  const selectedCampaignName = hasExplicitDateRange && preserveHierarchySelection
     ? searchParams.get("campaignName")?.trim() ?? ""
     : "";
   const googlePreviewDefaultDates = useMemo(() => {
@@ -65,6 +79,12 @@ export function PreviewPageClient() {
     if (filters.googleAccountId) {
       params.set("googleAccountId", filters.googleAccountId);
     }
+    if (filters.tiktokAccountId) {
+      params.set("tiktokAccountId", filters.tiktokAccountId);
+    }
+    if (selectedPlatform) {
+      params.set("platform", selectedPlatform);
+    }
     params.set("startDate", filters.startDate);
     params.set("endDate", filters.endDate);
     if (filters.source === "meta_csv") {
@@ -76,11 +96,13 @@ export function PreviewPageClient() {
     filters.endDate,
     filters.googleAccountId,
     filters.metaAccountId,
+    filters.tiktokAccountId,
     filters.startDate,
     filters.source,
+    selectedPlatform,
   ]);
 
-  const accountKey = filters.metaAccountId || filters.googleAccountId || filters.accountId || "-";
+  const accountKey = filters.metaAccountId || filters.googleAccountId || filters.tiktokAccountId || filters.accountId || "-";
   const campaignsQuery = useReportSectionQuery<PreviewReportPayload>(
     `/api/accounts/${encodeURIComponent(accountKey)}/campaigns`,
     queryString,
@@ -102,9 +124,7 @@ export function PreviewPageClient() {
       campaignsQuery.data
         ? resolvePreviewEntry(campaignsQuery.data.sections, {
             platform:
-              selectedPlatform === "meta" || selectedPlatform === "google"
-                ? selectedPlatform
-                : null,
+              selectedPlatform,
             campaignId: selectedCampaignId,
             campaignName: selectedCampaignName || null,
           })
@@ -133,8 +153,22 @@ export function PreviewPageClient() {
       selectedStagePlatform,
       selectedCampaign?.id ?? null
     );
-    return children.find((child) => child.id === selectedChildId) ?? children[0] ?? null;
-  }, [adGroupsQuery.data, selectedCampaign?.id, selectedChildId, selectedStagePlatform]);
+    const reportMonth = (
+      searchParams.get("endDate") ?? searchParams.get("startDate") ?? filters.endDate ?? filters.startDate
+    ).slice(0, 7);
+    const monthMatchedChild = selectedStagePlatform === "tiktok"
+      ? children.find((child) => child.name.trim() === reportMonth)
+      : null;
+    return children.find((child) => child.id === selectedChildId) ?? monthMatchedChild ?? children[0] ?? null;
+  }, [
+    adGroupsQuery.data,
+    filters.endDate,
+    filters.startDate,
+    searchParams,
+    selectedCampaign?.id,
+    selectedChildId,
+    selectedStagePlatform,
+  ]);
   const adsQueryString = useMemo(
     () =>
       buildPreviewStageQuery(queryString, {
@@ -227,9 +261,7 @@ export function PreviewPageClient() {
       displayData
         ? resolvePreviewEntry(displayData.sections, {
             platform:
-              selectedPlatform === "meta" || selectedPlatform === "google"
-                ? selectedPlatform
-                : null,
+              selectedPlatform,
             campaignId: selectedCampaignId,
             campaignName: selectedCampaignName || null,
           })
@@ -241,7 +273,7 @@ export function PreviewPageClient() {
   const dateLabel =
     displayData?.dateRange.currentLabel ?? `${filters.startDate} - ${filters.endDate}`;
   function handleCampaignChange(next: {
-    platform: "meta" | "google";
+    platform: "meta" | "google" | "tiktok";
     campaignId: string;
     campaignName: string;
   }) {
@@ -280,6 +312,15 @@ export function PreviewPageClient() {
     setSelectedAdId(adId);
   }
 
+  function handleDateRangeChange(next: { startDate: string; endDate: string }) {
+    setSelectedChildId("");
+    setSelectedAdId("");
+    setFilters(
+      { startDate: next.startDate, endDate: next.endDate },
+      { clearParams: ["adGroupId", "adGroupName", "adId", "adName"] },
+    );
+  }
+
   if (hasAccountId && campaignsQuery.loading && !campaignsQuery.data) {
     return (
       <ReportLoadingState
@@ -300,9 +341,7 @@ export function PreviewPageClient() {
         <ReportHeaderMonthPicker
           startDate={filters.startDate}
           endDate={filters.endDate}
-          onChange={(next) =>
-            setFilters({ startDate: next.startDate, endDate: next.endDate })
-          }
+          onChange={handleDateRangeChange}
         />
       }
       headerBottomControl={
@@ -314,12 +353,15 @@ export function PreviewPageClient() {
           submitLabel="Reload"
           compact
           footerContent={<ReportDownloadButton fileNamePrefix={title} />}
-          onApply={(next) => setFilters(next)}
+          onApply={(next) => setFilters(next, {
+            clearParams: ["campaignId", "campaignName", "adGroupId", "adGroupName", "adId", "adName"],
+          })}
           onReset={() =>
             setFilters({
               accountId: "",
               metaAccountId: "",
               googleAccountId: "",
+              tiktokAccountId: "",
             })
           }
         />
@@ -337,22 +379,20 @@ export function PreviewPageClient() {
           <ReportLoadingState kind="preview" message="Loading active campaigns..." onRetry={campaignsQuery.retry} />
         ) : null}
         {campaignsQuery.error ? (
-          <ReportErrorState kind="preview" message={campaignsQuery.error} onRetry={campaignsQuery.retry} />
+          <ReportErrorState kind="preview" message={formatPreviewLoadError("campaigns")} onRetry={campaignsQuery.retry} />
         ) : null}
 
         {adGroupsQuery.error ? (
-          <ReportErrorState kind="preview" message={adGroupsQuery.error} onRetry={adGroupsQuery.retry} />
+          <ReportErrorState kind="preview" message={formatPreviewLoadError("adGroups")} onRetry={adGroupsQuery.retry} />
         ) : null}
         {adsQuery.error ? (
-          <ReportErrorState kind="preview" message={adsQuery.error} onRetry={adsQuery.retry} />
+          <ReportErrorState kind="preview" message={formatPreviewLoadError("ads")} onRetry={adsQuery.retry} />
         ) : null}
 
         {displayData && metaFatalError ? (
           <ReportErrorState
             kind="preview"
-            message={`Required Meta block failed: [${metaFatalError.label}] fields=${metaFatalError.fields.join(",")} code=${
-              metaFatalError.errorCode ?? "n/a"
-            } subcode=${metaFatalError.errorSubcode ?? "n/a"} message=${metaFatalError.message}`}
+            message={formatPreviewFatalError("meta", metaFatalError)}
             onRetry={retry}
           />
         ) : null}
@@ -360,23 +400,7 @@ export function PreviewPageClient() {
         {displayData && googleFatalError ? (
           <ReportErrorState
             kind="preview"
-            message={
-              googleFatalError.code === "google-account-resolution-failed"
-                ? formatGoogleAdsAccessPathErrorMessage({
-                    accountId: googleFatalError.customerId,
-                    originalAccessPath: googleFatalError.originalAccessPath,
-                    resolvedAccessPath: googleFatalError.resolvedAccessPath,
-                    fallbackUsed: googleFatalError.fallbackUsed,
-                    errorCode: googleFatalError.errorCode ?? "UNKNOWN",
-                    errorMessage:
-                    googleFatalError.errorMessage ??
-                      googleFatalError.reason ??
-                      googleFatalError.message,
-                  })
-                : `Required Google block failed: [${googleFatalError.label}] code=${
-                    googleFatalError.errorCode ?? "n/a"
-                  } message=${googleFatalError.message}`
-            }
+            message={formatPreviewFatalError("google", googleFatalError)}
             onRetry={retry}
           />
         ) : null}
@@ -400,10 +424,10 @@ export function PreviewPageClient() {
               />
             ) : null}
             {previewQuery.error ? (
-              <ReportErrorState kind="preview" message={previewQuery.error} onRetry={previewQuery.retry} />
+              <ReportErrorState kind="preview" message={formatPreviewLoadError("details")} onRetry={previewQuery.retry} />
             ) : null}
             {assetsQuery.error ? (
-              <ReportErrorState kind="preview" message={assetsQuery.error} onRetry={assetsQuery.retry} />
+              <ReportErrorState kind="preview" message={formatPreviewLoadError("assets")} onRetry={assetsQuery.retry} />
             ) : null}
             {previewResolution?.status === "ready" && previewResolution.section && previewResolution.campaign ? (
               <PreviewHierarchy
@@ -422,6 +446,9 @@ export function PreviewPageClient() {
                 onCampaignChange={handleCampaignChange}
                 onChildChange={handleChildChange}
                 onAdChange={handleAdChange}
+                startDate={filters.startDate}
+                endDate={filters.endDate}
+                onDateRangeChange={handleDateRangeChange}
               />
             ) : null}
           </>
@@ -434,7 +461,7 @@ export function PreviewPageClient() {
 function buildPreviewStageQuery(
   queryString: string,
   selection: {
-    platform?: "meta" | "google" | null;
+    platform?: "meta" | "google" | "tiktok" | null;
     campaignId?: string | null;
     adGroupId?: string | null;
   }
@@ -442,7 +469,7 @@ function buildPreviewStageQuery(
   const params = new URLSearchParams(queryString);
   // Increment when the preview metric contract changes so long-lived client
   // sessions do not keep displaying an older in-memory stage response.
-  params.set("previewMetricsVersion", "3");
+  params.set("previewMetricsVersion", "4");
   if (selection.platform) {
     params.set("platform", selection.platform);
   }

@@ -44,7 +44,7 @@ export async function POST(request: Request): Promise<NextResponse> {
       );
       return NextResponse.json({
         success: true,
-        ...resolveMonthlyReportDateRange(),
+        ...resolveMonthlyReportDateRange(new Date(), reportType),
         reportType,
         scheduleDay,
         confirmationCheckboxProperty,
@@ -66,7 +66,7 @@ export async function POST(request: Request): Promise<NextResponse> {
       Array.isArray(body?.overrideTargets)
         ? body.overrideTargets
         : parseTargetList(typeof body?.overrideTargetsJson === "string" ? body.overrideTargetsJson : undefined);
-    const dateRange = resolveMonthlyReportDateRange();
+    const dateRange = resolveMonthlyReportDateRange(new Date(), reportType);
     const resolvedTargets = await resolveReportTargets({
       overrideTargets,
       forceTestMode,
@@ -94,6 +94,7 @@ export async function POST(request: Request): Promise<NextResponse> {
           clientName: target.clientName,
           googleAccountId: accountIds.googleAccountId,
           metaAccountId: accountIds.metaAccountId,
+          tiktokAccountId: accountIds.tiktokAccountId,
           recipientEmail: forceTestMode
             ? process.env.MONTHLY_REPORT_TEST_RECIPIENT?.trim() || "amirulshahrul1775@gmail.com"
             : target.clientEmail,
@@ -172,7 +173,7 @@ async function resolveReportTargets(input: {
   console.info(
     `[monthly-report-targets] notion rows fetched=${notionResult.total} confirmation_checkbox="${notionResult.confirmationCheckboxProperty}" checkbox_approved=${notionResult.monthlyEmailApprovedCount} checkbox_unchecked_skipped=${notionResult.monthlyEmailSkippedCount}`
   );
-  return notionResult.accounts.filter((account) => Boolean(account.googleAdsAccountId || account.metaAdsAccountId));
+  return notionResult.accounts.filter((account) => Boolean(account.googleAdsAccountId || account.metaAdsAccountId || account.tiktokAdsAccountId));
 }
 
 function isAuthorized(request: Request): boolean {
@@ -213,9 +214,11 @@ function resolveTargetAccountIds(target: {
   platform: string | null;
   googleAdsAccountId: string | null;
   metaAdsAccountId: string | null;
+  tiktokAdsAccountId?: string | null;
 }): {
   googleAccountId: string | null;
   metaAccountId: string | null;
+  tiktokAccountId: string | null;
 } {
   const platform = target.platform?.trim().toLowerCase() ?? "";
 
@@ -223,6 +226,7 @@ function resolveTargetAccountIds(target: {
     return {
       googleAccountId: null,
       metaAccountId: target.metaAdsAccountId,
+      tiktokAccountId: null,
     };
   }
 
@@ -230,11 +234,21 @@ function resolveTargetAccountIds(target: {
     return {
       googleAccountId: target.googleAdsAccountId,
       metaAccountId: null,
+      tiktokAccountId: null,
+    };
+  }
+
+  if (platform.includes("tiktok")) {
+    return {
+      googleAccountId: null,
+      metaAccountId: null,
+      tiktokAccountId: target.tiktokAdsAccountId ?? null,
     };
   }
 
   return {
     googleAccountId: target.googleAdsAccountId,
     metaAccountId: target.metaAdsAccountId,
+    tiktokAccountId: target.tiktokAdsAccountId ?? null,
   };
 }

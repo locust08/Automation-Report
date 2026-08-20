@@ -55,6 +55,7 @@ export function mergeCampaignRows(base: CampaignRow, incoming: CampaignRow): Cam
     clicks: base.clicks + incoming.clicks,
     spend: base.spend + incoming.spend,
     results: base.results + incoming.results,
+    resultLabel: mergeResultLabels(base, incoming),
     conversions: base.conversions + incoming.conversions,
     youtubeEarnedLikes: base.youtubeEarnedLikes + incoming.youtubeEarnedLikes,
     youtubeEarnedShares: base.youtubeEarnedShares + incoming.youtubeEarnedShares,
@@ -69,6 +70,14 @@ export function mergeCampaignRows(base: CampaignRow, incoming: CampaignRow): Cam
   merged.avgCpc = safeDivide(merged.spend, merged.clicks);
 
   return merged;
+}
+
+function mergeResultLabels(base: CampaignRow, incoming: CampaignRow): string | undefined {
+  const baseLabel = base.results > 0 ? base.resultLabel : undefined;
+  const incomingLabel = incoming.results > 0 ? incoming.resultLabel : undefined;
+  if (!baseLabel) return incomingLabel;
+  if (!incomingLabel) return baseLabel;
+  return baseLabel === incomingLabel ? baseLabel : "Mixed";
 }
 
 function resolveCostPerResultScale(base: CampaignRow, incoming: CampaignRow): number {
@@ -143,7 +152,7 @@ export function buildGroups(rows: CampaignRow[]): CampaignGroup[] {
 }
 
 function rowPlatform(value: string): CampaignRow["platform"] {
-  if (value === "meta" || value === "google" || value === "googleYoutube") {
+  if (value === "meta" || value === "google" || value === "googleYoutube" || value === "tiktok") {
     return value;
   }
   return "meta";

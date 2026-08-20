@@ -315,7 +315,7 @@ function buildPropertyValue(type: string, value: string | null): Record<string, 
 }
 
 function resolvePrimaryAccountId(account: MonthlyReportAccount): string | null {
-  return account.googleAdsAccountId ?? account.metaAdsAccountId;
+  return account.googleAdsAccountId ?? account.metaAdsAccountId ?? account.tiktokAdsAccountId ?? null;
 }
 
 function buildMonthlyReportIdempotencyKey(input: {

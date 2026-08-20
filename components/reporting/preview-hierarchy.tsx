@@ -30,6 +30,7 @@ import {
   MegaphoneIcon,
   MessageCircleIcon,
   MonitorIcon,
+  Music2Icon,
   PauseIcon,
   PencilIcon,
   PlayIcon,
@@ -53,6 +54,8 @@ import {
   PreviewPlatformDistributionRow,
   PreviewPlatformSection,
 } from "@/lib/reporting/types";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { TikTokSelectedAdDetailsPanel } from "@/components/reporting/tiktok-selected-ad-details";
 
 export function PreviewHierarchy({
   section,
@@ -64,6 +67,9 @@ export function PreviewHierarchy({
   onCampaignChange,
   onChildChange,
   onAdChange,
+  startDate,
+  endDate,
+  onDateRangeChange,
 }: {
   section: PreviewPlatformSection;
   initialCampaignId: string;
@@ -72,12 +78,15 @@ export function PreviewHierarchy({
   companyName?: string | null;
   detailsLoading?: boolean;
   onCampaignChange?: (next: {
-    platform: "meta" | "google";
+    platform: "meta" | "google" | "tiktok";
     campaignId: string;
     campaignName: string;
   }) => void;
   onChildChange?: (childId: string) => void;
   onAdChange?: (adId: string) => void;
+  startDate?: string;
+  endDate?: string;
+  onDateRangeChange?: (next: { startDate: string; endDate: string }) => void;
 }) {
   if (section.platform === "meta") {
     return (
@@ -95,6 +104,24 @@ export function PreviewHierarchy({
     );
   }
 
+  if (section.platform === "tiktok") {
+    return (
+      <TikTokAdsPreviewWorkspace
+        section={section}
+        initialCampaignId={initialCampaignId}
+        initialChildId={initialChildId}
+        initialAdId={initialAdId}
+        detailsLoading={detailsLoading}
+        onCampaignChange={onCampaignChange}
+        onChildChange={onChildChange}
+        onAdChange={onAdChange}
+        startDate={startDate}
+        endDate={endDate}
+        onDateRangeChange={onDateRangeChange}
+      />
+    );
+  }
+
   return (
     <GoogleAdsPreviewWorkspace
       section={section}
@@ -106,6 +133,128 @@ export function PreviewHierarchy({
       onChildChange={onChildChange}
       onAdChange={onAdChange}
     />
+  );
+}
+
+function TikTokAdsPreviewWorkspace({
+  section,
+  initialCampaignId,
+  initialChildId,
+  initialAdId,
+  detailsLoading = false,
+  onCampaignChange,
+  onChildChange,
+  onAdChange,
+  startDate,
+  endDate,
+  onDateRangeChange,
+}: WorkspaceProps) {
+  const searchParams = useSearchParams();
+  const reportMonth = (searchParams?.get("endDate") ?? searchParams?.get("startDate") ?? "").slice(0, 7);
+  const initialCampaign =
+    section.campaigns.find((campaign) => campaign.id === initialCampaignId) ?? section.campaigns[0] ?? null;
+  const monthMatchedChildId = reportMonth
+    ? initialCampaign?.children.find((child) => child.name.trim() === reportMonth)?.id ?? ""
+    : "";
+  const effectiveInitialChildId = initialChildId || monthMatchedChildId;
+  const {
+    selectedCampaign,
+    selectedChild,
+    selectedAd,
+    children,
+    ads,
+    selectCampaign,
+    selectChild,
+    selectAd,
+  } = usePreviewSelection(
+    section,
+    initialCampaignId,
+    onCampaignChange,
+    effectiveInitialChildId,
+    initialAdId,
+    onChildChange,
+    onAdChange,
+  );
+  const adGroupCount = section.campaigns.reduce((count, campaign) => count + campaign.children.length, 0);
+  const adCount = section.campaigns.reduce(
+    (count, campaign) => count + campaign.children.reduce((sum, child) => sum + child.ads.length, 0),
+    0,
+  );
+  useEffect(() => {
+    if (searchParams?.get("adGroupId") || !reportMonth) return;
+    const monthMatchedChild = children.find((child) => child.name.trim() === reportMonth);
+    if (monthMatchedChild && monthMatchedChild.id !== selectedChild?.id) {
+      selectChild(monthMatchedChild.id);
+    }
+  }, [children, reportMonth, searchParams, selectChild, selectedChild?.id]);
+
+  return (
+    <section className="w-full space-y-6">
+      <div
+        data-tiktok-preview-workspace="true"
+        className="rounded-[28px] border border-[#e7edf5] bg-white p-4 shadow-[0_20px_55px_rgba(15,23,42,0.06)] sm:p-5"
+      >
+        <div className="rounded-[26px] border border-[#eef3f8] bg-[linear-gradient(180deg,#ffffff_0%,#fbfdff_100%)] p-5 shadow-[inset_0_1px_0_rgba(255,255,255,0.9)] sm:p-6">
+          <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
+            <div className="flex min-w-0 items-center gap-4">
+              <span className="grid size-12 shrink-0 place-items-center rounded-2xl border border-[#dfe6f0] bg-white text-[#0f172a] shadow-sm">
+                <Music2Icon className="size-6" aria-hidden="true" />
+              </span>
+              <div className="min-w-0">
+                <h2 className="text-[2rem] font-semibold leading-tight tracking-[-0.04em] text-[#0f172a] sm:text-[2.15rem]">
+                  TikTok Ads Preview
+                </h2>
+                <p className="mt-2 max-w-4xl text-[1rem] leading-7 text-[#64748b]">
+                  Review the selected TikTok campaign, ad group, and ad hierarchy.
+                </p>
+                <div className="mt-5 flex flex-wrap gap-3">
+                  <MetricPill label="Campaigns" value={section.campaigns.length} accent="blue" />
+                  <MetricPill label="Ad Groups" value={adGroupCount} accent="green" />
+                  <MetricPill label="Ads" value={adCount} accent="amber" />
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <MetaCampaignStructureSelector
+          campaigns={section.campaigns}
+          selectedCampaign={selectedCampaign}
+          adSets={children}
+          selectedAdSet={selectedChild}
+          ads={ads}
+          selectedAd={selectedAd}
+          onCampaignSelect={selectCampaign}
+          onAdSetSelect={selectChild}
+          onAdSelect={selectAd}
+          childLabel="Ad group"
+          scrollChildren
+        />
+      </div>
+
+      {detailsLoading ? (
+        <div className="rounded-2xl border border-[#e2e8f0] bg-white px-5 py-4 text-sm text-[#64748b]">
+          Refreshing the selected TikTok ad details…
+        </div>
+      ) : null}
+
+      {selectedAd ? (
+        <TikTokSelectedAdDetailsPanel
+          campaignName={selectedCampaign?.name ?? "—"}
+          adGroupName={selectedChild?.name ?? "—"}
+          ad={selectedAd}
+          detail={selectedAd.tiktokDetail ?? null}
+          loading={detailsLoading}
+          startDate={startDate}
+          endDate={endDate}
+          onDateRangeChange={onDateRangeChange}
+        />
+      ) : (
+        <div className="rounded-2xl border border-dashed border-[#cbd5e1] bg-white px-5 py-16 text-center text-sm text-[#64748b]">
+          Choose a TikTok ad to view its details, creative, and performance.
+        </div>
+      )}
+    </section>
   );
 }
 
@@ -385,6 +534,8 @@ function MetaCampaignStructureSelector({
   onCampaignSelect,
   onAdSetSelect,
   onAdSelect,
+  childLabel = "Ad set",
+  scrollChildren = false,
 }: {
   campaigns: PreviewCampaignNode[];
   selectedCampaign: PreviewCampaignNode | null;
@@ -395,6 +546,8 @@ function MetaCampaignStructureSelector({
   onCampaignSelect: (id: string) => void;
   onAdSetSelect: (id: string) => void;
   onAdSelect: (id: string) => void;
+  childLabel?: "Ad set" | "Ad group";
+  scrollChildren?: boolean;
 }) {
   const [campaignsOpen, setCampaignsOpen] = useState(false);
   const campaignCanCollapse = campaigns.length > 1;
@@ -412,19 +565,20 @@ function MetaCampaignStructureSelector({
             Campaign structure
           </p>
 
-          <div className="relative mt-3">
-            <button
-              type="button"
-              onClick={() => campaignCanCollapse && setCampaignsOpen((current) => !current)}
-              className={`flex w-full items-center gap-3 rounded-[16px] border border-[#bfd1ff] bg-[#f3f6ff] px-4 py-4 text-left transition ${
-                campaignCanCollapse
-                  ? "cursor-pointer hover:border-[#86a8ff]"
-                  : "cursor-default"
-              }`}
-              aria-expanded={campaignCanCollapse ? campaignsOpen : undefined}
-              aria-controls={campaignCanCollapse ? "meta-active-campaign-options" : undefined}
-              title={selectedCampaign?.name ?? undefined}
-            >
+          <Popover
+            open={campaignCanCollapse ? campaignsOpen : false}
+            onOpenChange={(nextOpen) => campaignCanCollapse && setCampaignsOpen(nextOpen)}
+          >
+            <PopoverTrigger asChild disabled={!campaignCanCollapse}>
+              <button
+                type="button"
+                className={`flex w-full items-center gap-3 rounded-[16px] border border-[#bfd1ff] bg-[#f3f6ff] px-4 py-4 text-left transition ${
+                  campaignCanCollapse
+                    ? "cursor-pointer hover:border-[#86a8ff]"
+                    : "cursor-default"
+                }`}
+                title={selectedCampaign?.name ?? undefined}
+              >
               <span className="flex size-10 shrink-0 items-center justify-center rounded-[12px] bg-[#e5edff] text-[#2864ff]">
                 <FolderIcon className="size-[1.1rem]" />
               </span>
@@ -433,19 +587,22 @@ function MetaCampaignStructureSelector({
                   {selectedCampaign?.name ?? "Choose campaign"}
                 </span>
                 <span className="mt-0.5 block text-xs text-[#68738f]">
-                  {adSets.length} ad {adSets.length === 1 ? "set" : "sets"} ·{" "}
+                  {adSets.length} {adSets.length === 1 ? childLabel.toLowerCase() : `${childLabel.toLowerCase()}s`} ·{" "}
                   {adSets.reduce((total, adSet) => total + adSet.ads.length, 0)} ads
                 </span>
               </span>
               {campaignCanCollapse ? (
                 <ChevronDownIcon className={`size-5 text-[#7d89a5] transition ${campaignsOpen ? "rotate-180" : ""}`} />
               ) : null}
-            </button>
+              </button>
+            </PopoverTrigger>
 
-            {campaignCanCollapse && campaignsOpen ? (
-              <div
+            {campaignCanCollapse ? (
+              <PopoverContent
                 id="meta-active-campaign-options"
-                className="absolute inset-x-0 z-20 mt-2 rounded-[16px] border border-[#dce4f0] bg-white p-2 shadow-[0_18px_45px_rgba(15,23,42,0.14)]"
+                align="start"
+                sideOffset={8}
+                className="max-h-72 w-[var(--radix-popover-trigger-width)] overflow-y-auto rounded-[16px] border border-[#dce4f0] bg-white p-2 shadow-[0_18px_45px_rgba(15,23,42,0.14)]"
               >
                 {campaigns.map((campaign) => (
                   <button
@@ -464,12 +621,15 @@ function MetaCampaignStructureSelector({
                     {campaign.name}
                   </button>
                 ))}
-              </div>
+              </PopoverContent>
             ) : null}
-          </div>
+          </Popover>
 
           <div className="mt-4 border-l-2 border-[#e1e7f0] pl-4">
-            <div className="space-y-2">
+            <div
+              data-hierarchy-scroll={scrollChildren ? "true" : undefined}
+              className={`space-y-2 ${scrollChildren ? "max-h-[260px] overflow-y-auto pr-2" : ""}`}
+            >
               {adSets.map((adSet) => {
                 const selected = adSet.id === selectedAdSet?.id;
                 return (
@@ -506,13 +666,13 @@ function MetaCampaignStructureSelector({
           <div>
             <div>
               <p className="text-[0.68rem] font-semibold uppercase tracking-[0.14em] text-[#74809a]">
-                Selected ad set
+                Selected {childLabel.toLowerCase()}
               </p>
               <h2 className="mt-2 text-[1.3rem] font-semibold tracking-[-0.02em] text-[#14204b]">
                 {selectedAdSet?.name ?? "No ad set selected"}
               </h2>
               <p className="mt-1 text-xs text-[#68738f]">
-                {ads.length} {ads.length === 1 ? "ad" : "ads"} under this ad set
+                {ads.length} {ads.length === 1 ? "ad" : "ads"} under this {childLabel.toLowerCase()}
               </p>
             </div>
           </div>
@@ -560,7 +720,7 @@ function MetaCampaignStructureSelector({
               </div>
             ) : (
               <p className="px-5 py-8 text-sm text-[#68738f]">
-                No ads were returned for the selected ad set.
+                No ads were returned for the selected {childLabel.toLowerCase()}.
               </p>
             )}
           </div>
@@ -2455,12 +2615,15 @@ interface WorkspaceProps {
   initialAdId?: string;
   detailsLoading?: boolean;
   onCampaignChange?: (next: {
-    platform: "meta" | "google";
+    platform: "meta" | "google" | "tiktok";
     campaignId: string;
     campaignName: string;
   }) => void;
   onChildChange?: (childId: string) => void;
   onAdChange?: (adId: string) => void;
+  startDate?: string;
+  endDate?: string;
+  onDateRangeChange?: (next: { startDate: string; endDate: string }) => void;
 }
 
 function usePreviewSelection(
@@ -2605,26 +2768,29 @@ function SelectionPicker({
         <span>{title}</span>
       </div>
       {items.length > 0 ? (
-        <div className="space-y-2">
-          <button
-            type="button"
-            onClick={() => setOpen((current) => !current)}
-            className={triggerClassName}
-            aria-expanded={open}
-          >
-            <div className="min-w-0">
-              <p className={selectedLabelClassName}>{selectedLabel}</p>
-              <p className={helperClassName}>
-                {open ? `Hide ${title.toLowerCase()} options` : `Choose ${title.toLowerCase()}`}
-              </p>
-            </div>
-            <ChevronDownIcon
-              className={`size-4 shrink-0 text-[#64748b] transition ${open ? "rotate-180" : ""}`}
-            />
-          </button>
+        <Popover open={open} onOpenChange={setOpen}>
+          <PopoverTrigger asChild>
+            <button
+              type="button"
+              className={triggerClassName}
+            >
+              <div className="min-w-0">
+                <p className={selectedLabelClassName}>{selectedLabel}</p>
+                <p className={helperClassName}>
+                  {open ? `Hide ${title.toLowerCase()} options` : `Choose ${title.toLowerCase()}`}
+                </p>
+              </div>
+              <ChevronDownIcon
+                className={`size-4 shrink-0 text-[#64748b] transition ${open ? "rotate-180" : ""}`}
+              />
+            </button>
+          </PopoverTrigger>
 
-          {open ? (
-            <div className="max-h-64 space-y-2 overflow-y-auto pr-1">
+          <PopoverContent
+            align="start"
+            sideOffset={8}
+            className="max-h-64 w-[var(--radix-popover-trigger-width)] space-y-2 overflow-y-auto rounded-[14px] border border-[#d4deea] bg-white p-2 shadow-[0_18px_45px_rgba(15,23,42,0.14)]"
+          >
               {items.map((item) => {
                 const isSelected = item.id === selectedId;
                 const isPaused = isPausedStatus(item.status);
@@ -2654,9 +2820,8 @@ function SelectionPicker({
                   </button>
                 );
               })}
-            </div>
-          ) : null}
-        </div>
+          </PopoverContent>
+        </Popover>
       ) : (
         <EmptyState message={emptyMessage ?? `No ${title.toLowerCase()} returned.`} />
       )}

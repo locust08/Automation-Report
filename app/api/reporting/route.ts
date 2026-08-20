@@ -22,6 +22,7 @@ export async function GET(request: Request): Promise<NextResponse> {
     accountId: context.accountId,
     metaAccountId: context.metaAccountId,
     googleAccountId: context.googleAccountId,
+    tiktokAccountId: context.tiktokAccountId,
     startDate: context.startDate,
     endDate: context.endDate,
   });
@@ -35,6 +36,7 @@ export async function GET(request: Request): Promise<NextResponse> {
           accountId: context.accountId,
           metaAccountId: context.metaAccountId,
           googleAccountId: null,
+          tiktokAccountId: null,
           startDate: context.startDate,
           endDate: context.endDate,
         })
@@ -55,6 +57,7 @@ export async function GET(request: Request): Promise<NextResponse> {
         accountId: context.accountId,
         metaAccountId: context.metaAccountId,
         googleAccountId: context.googleAccountId,
+        tiktokAccountId: context.tiktokAccountId,
         startDate: context.startDate,
         endDate: context.endDate,
       })

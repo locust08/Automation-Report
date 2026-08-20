@@ -57,6 +57,7 @@ export interface NotionAccountSearchSuggestion {
   adAccountId: string;
   country: "MY" | "SG" | "AU" | "US" | null;
   notionPageId: string;
+  platform?: "meta" | "google" | "tiktok" | "linkedin" | null;
   accessPath?: string | null;
 }
 
@@ -707,6 +708,9 @@ function mapNotionAccountSearchSuggestion(
     "Google Manager Account",
     "Manager Account",
   ]);
+  const platform = normalizeAccountPlatform(
+    getNotionPropertyTextByAliases(properties, ["Platform", "platform"])
+  );
 
   return {
     accountName,
@@ -715,8 +719,20 @@ function mapNotionAccountSearchSuggestion(
       getNotionPropertyTextByAliases(properties, ["Country", "country", "Market", "Location"])
     ),
     notionPageId: page.id,
+    ...(platform ? { platform } : {}),
     ...(accessPath ? { accessPath } : {}),
   };
+}
+
+function normalizeAccountPlatform(
+  value: string | null
+): NonNullable<NotionAccountSearchSuggestion["platform"]> | null {
+  const normalized = normalizePropertyKey(value ?? "");
+  if (normalized === "facebook" || normalized === "meta") return "meta";
+  if (normalized === "google" || normalized === "google ads") return "google";
+  if (normalized === "tiktok" || normalized === "tik tok") return "tiktok";
+  if (normalized === "linkedin" || normalized === "linked in") return "linkedin";
+  return null;
 }
 
 function getNotionPropertyTextByAliases(

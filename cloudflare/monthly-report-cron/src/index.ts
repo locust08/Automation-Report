@@ -1,5 +1,6 @@
 import puppeteer from "@cloudflare/puppeteer";
 import type { BrowserWorker, Page } from "@cloudflare/puppeteer";
+import { createAdAccountDirectorySearch, mapAdAccountDirectorySearchRows } from "./account-directory";
 
 interface Env {
   REPORT_JOBS_DB: D1Database;
@@ -117,6 +118,7 @@ interface ReportTarget {
   clientName: string;
   googleAccountId?: string | null;
   metaAccountId?: string | null;
+  tiktokAccountId?: string | null;
   recipientEmail?: string | null;
   ccEmail?: string | null;
   platform?: string | null;
@@ -188,6 +190,7 @@ interface JobItemRow {
   idempotency_key: string | null;
   google_account_id: string | null;
   meta_account_id: string | null;
+  tiktok_account_id: string | null;
   recipient_email: string | null;
   cc_email: string | null;
   attempts: number;
@@ -580,9 +583,9 @@ async function createReportJob(
       : liveIdempotencyKey;
     await env.REPORT_JOBS_DB.prepare(
       `INSERT INTO report_job_items (
-        id, job_id, status, client_name, platform, report_type, country, google_account_id, meta_account_id,
+        id, job_id, status, client_name, platform, report_type, country, google_account_id, meta_account_id, tiktok_account_id,
         idempotency_key, recipient_email, cc_email, attempts, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     )
       .bind(
         itemId,
@@ -594,6 +597,7 @@ async function createReportJob(
         normalizeAdvancedCountry(target.country),
         normalizeOptional(target.googleAccountId),
         normalizeOptional(target.metaAccountId),
+        normalizeOptional(target.tiktokAccountId),
         idempotencyKey,
         resolveRecipientEmail(env, target, testMode),
         testMode ? null : normalizeOptional(target.ccEmail),
@@ -830,7 +834,7 @@ async function getReportJob(env: Env, jobId: string): Promise<Record<string, unk
   }
 
   const itemsResult = await env.REPORT_JOBS_DB.prepare(
-    `SELECT id, job_id, status, client_name, platform, report_type, country, google_account_id, meta_account_id,
+    `SELECT id, job_id, status, client_name, platform, report_type, country, google_account_id, meta_account_id, tiktok_account_id,
       idempotency_key, recipient_email, cc_email, attempts, r2_key, report_url, resend_email_id, error_message, updated_at
      FROM report_job_items
      WHERE job_id = ?
@@ -859,7 +863,7 @@ async function retryFailedItems(env: Env, jobId: string): Promise<Record<string,
   }
 
   const failedResult = await env.REPORT_JOBS_DB.prepare(
-    `SELECT id, client_name, platform, report_type, country, google_account_id, meta_account_id, idempotency_key, recipient_email, cc_email
+    `SELECT id, client_name, platform, report_type, country, google_account_id, meta_account_id, tiktok_account_id, idempotency_key, recipient_email, cc_email
      FROM report_job_items
      WHERE job_id = ? AND status = ?`
   )
@@ -884,6 +888,7 @@ async function retryFailedItems(env: Env, jobId: string): Promise<Record<string,
         country: item.country,
         googleAccountId: item.google_account_id,
         metaAccountId: item.meta_account_id,
+        tiktokAccountId: item.tiktok_account_id,
         recipientEmail: item.recipient_email,
         ccEmail: item.cc_email,
       },
@@ -1046,6 +1051,7 @@ async function enrichTargetsFromNotion(
     const rows = await fetchD1AdAccountRows(env);
     const rowsByGoogleId = new Map(rows.filter((row) => row.googleAccountId).map((row) => [row.googleAccountId as string, row]));
     const rowsByMetaId = new Map(rows.filter((row) => row.metaAccountId).map((row) => [row.metaAccountId as string, row]));
+    const rowsByTikTokId = new Map(rows.filter((row) => row.tiktokAccountId).map((row) => [row.tiktokAccountId as string, row]));
 
     return Promise.all(
       targets.map(async (target) => {
@@ -1055,9 +1061,13 @@ async function enrichTargetsFromNotion(
         const metaAccountIds = splitAccountIds(target.metaAccountId)
           .map((accountId) => normalizeMetaAccountId(accountId))
           .filter((accountId): accountId is string => Boolean(accountId));
+        const tiktokAccountIds = splitAccountIds(target.tiktokAccountId)
+          .map((accountId) => normalizeTikTokAccountId(accountId))
+          .filter((accountId): accountId is string => Boolean(accountId));
         const matchedRows = [
           ...googleAccountIds.map((accountId) => rowsByGoogleId.get(accountId) ?? null),
           ...metaAccountIds.map((accountId) => rowsByMetaId.get(accountId) ?? null),
+          ...tiktokAccountIds.map((accountId) => rowsByTikTokId.get(accountId) ?? null),
         ].filter((row): row is NotionAdAccountRow => Boolean(row));
         const clientName = matchedRows.map((row) => row.accountName).find((name): name is string => Boolean(name)) ?? null;
         const isAdvancedTarget = normalizeReportType(target.reportType ?? requestedReportType) === "advanced";
@@ -1067,6 +1077,7 @@ async function enrichTargetsFromNotion(
           clientName: clientName ?? target.clientName,
           googleAccountId: target.googleAccountId ?? matchedRows.find((row) => row.googleAccountId)?.googleAccountId ?? null,
           metaAccountId: target.metaAccountId ?? matchedRows.find((row) => row.metaAccountId)?.metaAccountId ?? null,
+          tiktokAccountId: target.tiktokAccountId ?? matchedRows.find((row) => row.tiktokAccountId)?.tiktokAccountId ?? null,
           recipientEmail: isAdvancedTarget
             ? matchedRows.find((row) => row.clientEmail)?.clientEmail ?? null
             : target.recipientEmail ?? matchedRows.find((row) => row.clientEmail)?.clientEmail ?? null,
@@ -1087,9 +1098,11 @@ async function enrichTargetsFromNotion(
 
 interface NotionAdAccountRow {
   notionPageId: string;
+  country: string | null;
   platform: string | null;
   googleAccountId: string | null;
   metaAccountId: string | null;
+  tiktokAccountId: string | null;
   accountName: string | null;
   clientEmail: string | null;
   ccEmail: string | null;
@@ -1168,12 +1181,17 @@ function mapNotionAdAccountRow(
   const googleAccountId =
     platform.includes("google") || !platform ? normalizeGoogleAccountId(rawId) : null;
   const metaAccountId = platform.includes("meta") || !platform ? normalizeMetaAccountId(rawId) : null;
+  const tiktokAccountId = platform.includes("tiktok") ? normalizeTikTokAccountId(rawId) : null;
 
   return {
     ...metadata,
+    country: normalizeAdvancedCountry(
+      getNotionText(properties, ["Country", "Market", "Location"]),
+    ),
     platform: platform || null,
     googleAccountId,
     metaAccountId,
+    tiktokAccountId,
     accountName: getNotionText(properties, ["Account Name", "Name", "Client Name"]),
     clientEmail: getNotionText(properties, [
       "Recipient Email",
@@ -1233,10 +1251,12 @@ async function notionRequest(
 
 interface D1AdAccountRow {
   notion_page_id: string;
+  country: string | null;
   account_name: string;
   platform: string | null;
   google_account_id: string | null;
   meta_account_id: string | null;
+  tiktok_account_id: string | null;
   access_path: string | null;
   client_email: string | null;
   cc_email: string | null;
@@ -1252,10 +1272,12 @@ async function fetchD1AdAccountRows(env: Env): Promise<NotionAdAccountRow[]> {
   const result = await env.REPORT_JOBS_DB.prepare("SELECT * FROM ad_accounts WHERE active = 1").all<D1AdAccountRow>();
   return (result.results ?? []).map((row) => ({
     notionPageId: row.notion_page_id,
+    country: row.country,
     accountName: row.account_name,
     platform: row.platform,
     googleAccountId: row.google_account_id,
     metaAccountId: row.meta_account_id,
+    tiktokAccountId: row.tiktok_account_id,
     accessPath: row.access_path,
     clientEmail: row.client_email,
     ccEmail: row.cc_email,
@@ -1298,7 +1320,7 @@ async function syncNotionAdAccounts(env: Env, mode: "full" | "incremental") {
 
   try {
     const rows = await fetchNotionAdAccountRows(notionToken, databaseId, editedAfter);
-    const eligibleRows = rows.filter((row) => Boolean(row.googleAccountId || row.metaAccountId));
+    const eligibleRows = rows.filter((row) => Boolean(row.googleAccountId || row.metaAccountId || row.tiktokAccountId));
     await upsertAdAccountRows(env, eligibleRows, startedAt);
     if (effectiveMode === "full") {
       await env.REPORT_JOBS_DB.prepare(
@@ -1315,14 +1337,14 @@ async function syncNotionAdAccounts(env: Env, mode: "full" | "incremental") {
 
 async function upsertAdAccountRows(env: Env, rows: NotionAdAccountRow[], syncedAt: string): Promise<void> {
   const sql = `INSERT INTO ad_accounts (
-      notion_page_id, account_name, account_name_normalized, platform, google_account_id, meta_account_id,
+      notion_page_id, account_name, account_name_normalized, platform, country, google_account_id, meta_account_id, tiktok_account_id,
       access_path, client_email, cc_email, monthly_email_enabled, advanced_report_enabled,
       client_relation_page_ids_json, active, notion_created_time, notion_last_edited_time, synced_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(notion_page_id) DO UPDATE SET
       account_name = excluded.account_name, account_name_normalized = excluded.account_name_normalized,
-      platform = excluded.platform, google_account_id = excluded.google_account_id,
-      meta_account_id = excluded.meta_account_id, access_path = excluded.access_path,
+      platform = excluded.platform, country = excluded.country, google_account_id = excluded.google_account_id,
+      meta_account_id = excluded.meta_account_id, tiktok_account_id = excluded.tiktok_account_id, access_path = excluded.access_path,
       client_email = excluded.client_email, cc_email = excluded.cc_email,
       monthly_email_enabled = excluded.monthly_email_enabled,
       advanced_report_enabled = excluded.advanced_report_enabled,
@@ -1331,8 +1353,8 @@ async function upsertAdAccountRows(env: Env, rows: NotionAdAccountRow[], syncedA
       notion_last_edited_time = excluded.notion_last_edited_time, synced_at = excluded.synced_at`;
   for (let offset = 0; offset < rows.length; offset += 50) {
     const statements = rows.slice(offset, offset + 50).map((row) => env.REPORT_JOBS_DB.prepare(sql).bind(
-      row.notionPageId, row.accountName?.trim() || `Google Ads ${row.googleAccountId ?? row.metaAccountId ?? row.notionPageId}`,
-      normalizeDirectoryText(row.accountName ?? ""), row.platform, row.googleAccountId, row.metaAccountId,
+      row.notionPageId, row.accountName?.trim() || `Ad Account ${row.googleAccountId ?? row.metaAccountId ?? row.tiktokAccountId ?? row.notionPageId}`,
+      normalizeDirectoryText(row.accountName ?? ""), row.platform, row.country, row.googleAccountId, row.metaAccountId, row.tiktokAccountId,
       row.accessPath, row.clientEmail, row.ccEmail, row.monthlyEmailEnabled ? 1 : 0,
       row.advancedReportEnabled ? 1 : 0, JSON.stringify(row.clientRelationPageIds), row.active ? 1 : 0,
       row.notionCreatedTime, row.notionLastEditedTime, syncedAt
@@ -1344,28 +1366,11 @@ async function upsertAdAccountRows(env: Env, rows: NotionAdAccountRow[], syncedA
 async function searchAdAccounts(env: Env, rawQuery: string): Promise<Response> {
   const query = rawQuery.trim();
   if (query.length < 2) return jsonResponse({ success: true, accounts: [] });
-  const normalizedText = normalizeDirectoryText(query);
-  const normalizedId = normalizeGoogleAccountId(query);
-  const idLike = normalizedId ? `%${escapeSqlLike(normalizedId)}%` : "";
-  const nameLike = `%${escapeSqlLike(normalizedText)}%`;
-  const result = await env.REPORT_JOBS_DB.prepare(`SELECT account_name, google_account_id, access_path, platform
-      FROM ad_accounts
-      WHERE active = 1 AND google_account_id IS NOT NULL
-        AND (account_name_normalized LIKE ? ESCAPE '\\' OR google_account_id LIKE ? ESCAPE '\\')
-      ORDER BY CASE WHEN google_account_id = ? THEN 0 WHEN account_name_normalized = ? THEN 1 ELSE 2 END,
-        account_name COLLATE NOCASE
-      LIMIT 20`)
-    .bind(nameLike, idLike, normalizedId ?? "", normalizedText).all<{
-      account_name: string; google_account_id: string; access_path: string | null; platform: string | null;
-    }>();
+  const search = createAdAccountDirectorySearch(query);
+  const result = await env.REPORT_JOBS_DB.prepare(search.sql).bind(...search.bindings).all();
   return jsonResponse({
     success: true,
-    accounts: (result.results ?? []).map((row) => ({
-      accountName: row.account_name,
-      adAccountId: row.google_account_id,
-      accessPath: row.access_path,
-      platform: row.platform,
-    })),
+    accounts: mapAdAccountDirectorySearchRows(result.results ?? []),
   });
 }
 
@@ -1408,7 +1413,7 @@ async function handleNotionWebhook(request: Request, env: Env): Promise<Response
         .bind(receivedAt, pageId).run();
     } else if (["page.created", "page.content_updated", "page.undeleted", "page.restored"].includes(eventType)) {
       const row = await fetchNotionAdAccountPage(env, pageId);
-      if (row && (row.googleAccountId || row.metaAccountId)) {
+      if (row && (row.googleAccountId || row.metaAccountId || row.tiktokAccountId)) {
         await upsertAdAccountRows(env, [row], receivedAt);
       } else {
         await env.REPORT_JOBS_DB.prepare("UPDATE ad_accounts SET active = 0, synced_at = ? WHERE notion_page_id = ?")
@@ -1481,10 +1486,6 @@ function subtractCheckpointOverlap(value: string | null | undefined): string | n
 
 function normalizeDirectoryText(value: string): string {
   return value.trim().toLocaleLowerCase("en").replace(/\s+/g, " ");
-}
-
-function escapeSqlLike(value: string): string {
-  return value.replace(/[\\%_]/g, (character) => `\\${character}`);
 }
 
 function parseStringArray(value: string): string[] {
@@ -1601,6 +1602,11 @@ function normalizeGoogleAccountId(value: string | null | undefined): string | nu
 function normalizeMetaAccountId(value: string | null | undefined): string | null {
   const normalized = value?.replace(/\D/g, "") ?? "";
   return normalized || null;
+}
+
+function normalizeTikTokAccountId(value: string | null | undefined): string | null {
+  const digits = value?.replace(/\D/g, "") ?? "";
+  return /^\d{1,32}$/.test(digits) ? digits : null;
 }
 
 function normalizePropertyName(value: string): string {
@@ -2498,7 +2504,7 @@ async function maybeSendJobCompletionNotification(env: Env, jobId: string): Prom
   }
 
   const itemsResult = await env.REPORT_JOBS_DB.prepare(
-    `SELECT id, job_id, status, client_name, platform, report_type, country, google_account_id, meta_account_id,
+    `SELECT id, job_id, status, client_name, platform, report_type, country, google_account_id, meta_account_id, tiktok_account_id,
       idempotency_key, recipient_email, cc_email, attempts, r2_key, report_url, resend_email_id, error_message, updated_at
      FROM report_job_items
      WHERE job_id = ?
@@ -2568,9 +2574,11 @@ function buildReportUrl(
 
   const googleAccountId = normalizeOptional(target.googleAccountId);
   const metaAccountId = normalizeOptional(target.metaAccountId);
+  const tiktokAccountId = normalizeOptional(target.tiktokAccountId);
   const platform = target.platform?.trim().toLowerCase() ?? "";
   const shouldUseMetaOnly = platform === "meta";
   const shouldUseGoogleOnly = platform === "google";
+  const shouldUseTikTokOnly = platform === "tiktok";
 
   if (reportType === "advanced") {
     url.searchParams.set("reportMode", "advanced");
@@ -2597,6 +2605,13 @@ function buildReportUrl(
     }
   }
 
+  if (tiktokAccountId) {
+    url.searchParams.set("tiktokAccountId", tiktokAccountId);
+    if (shouldUseTikTokOnly || (!googleAccountId && !metaAccountId)) {
+      url.searchParams.set("platform", "tiktok");
+    }
+  }
+
   return url.toString();
 }
 
@@ -2606,7 +2621,7 @@ function buildR2Key(message: ReportQueueMessage): string {
   const platform = sections.length > 1 ? "combined" : inferPlatform(message.target).toLowerCase();
   const accountId =
     sections
-    .map((section) => normalizeOptional(section.googleAccountId) ?? normalizeOptional(section.metaAccountId))
+    .map((section) => normalizeOptional(section.googleAccountId) ?? normalizeOptional(section.metaAccountId) ?? normalizeOptional(section.tiktokAccountId))
     .filter((id): id is string => Boolean(id))
       .join("-") || "unknown";
   return `reports/${message.reportMonthKey}/${reportType}/${platform}/${accountId.replace(/[^a-z0-9-]+/gi, "")}/${message.jobId}/${message.itemId}/${reportType}.pdf`;
@@ -2626,6 +2641,7 @@ function buildDownloadUrl(env: Env, r2Key: string): string | null {
 function buildReportSections(target: ReportTarget): ReportSectionTarget[] {
   const metaAccountIds = splitAccountIds(target.metaAccountId);
   const googleAccountIds = splitAccountIds(target.googleAccountId);
+  const tiktokAccountIds = splitAccountIds(target.tiktokAccountId);
   const sections: ReportSectionTarget[] = [];
 
   metaAccountIds.forEach((accountId) => {
@@ -2645,6 +2661,17 @@ function buildReportSections(target: ReportTarget): ReportSectionTarget[] {
       metaAccountId: null,
       platform: "Google",
       sectionLabel: `${target.clientName} - Google ${accountId}`,
+    });
+  });
+
+  tiktokAccountIds.forEach((accountId) => {
+    sections.push({
+      ...target,
+      googleAccountId: null,
+      metaAccountId: null,
+      tiktokAccountId: accountId,
+      platform: "TikTok",
+      sectionLabel: `${target.clientName} - TikTok ${accountId}`,
     });
   });
 
@@ -2678,13 +2705,14 @@ function normalizeTargets(targets: ReportTarget[], defaults: Pick<CreateJobReque
       clientName: target.clientName?.trim(),
       googleAccountId: normalizeOptional(target.googleAccountId),
       metaAccountId: normalizeOptional(target.metaAccountId),
+      tiktokAccountId: normalizeOptional(target.tiktokAccountId),
       recipientEmail: normalizeOptional(target.recipientEmail),
       ccEmail: normalizeOptional(target.ccEmail),
       reportType: normalizeReportType(target.reportType ?? defaults.reportType),
       country: normalizeAdvancedCountry(target.country ?? defaults.country),
       platform: target.platform?.trim() || inferPlatform(target),
     }))
-    .filter((target) => Boolean(target.clientName && (target.googleAccountId || target.metaAccountId)));
+    .filter((target) => Boolean(target.clientName && (target.googleAccountId || target.metaAccountId || target.tiktokAccountId)));
 }
 
 function expandAdvancedTargets(targets: ReportTarget[]): ReportTarget[] {
@@ -2723,7 +2751,7 @@ function resolveRecipientEmail(env: Env, target: ReportTarget, testMode: boolean
 }
 
 function resolveTargetAccountId(target: ReportTarget): string {
-  return normalizeOptional(target.googleAccountId) ?? normalizeOptional(target.metaAccountId) ?? "missing";
+  return normalizeOptional(target.googleAccountId) ?? normalizeOptional(target.metaAccountId) ?? normalizeOptional(target.tiktokAccountId) ?? "missing";
 }
 
 function buildReportIdempotencyKey(
@@ -2737,6 +2765,7 @@ function buildReportIdempotencyKey(
   const accountId =
     normalizeOptional(target.googleAccountId) ??
     normalizeOptional(target.metaAccountId) ??
+    normalizeOptional(target.tiktokAccountId) ??
     "unknown";
 
   return [
@@ -2748,6 +2777,7 @@ function buildReportIdempotencyKey(
 }
 
 function inferPlatform(target: ReportTarget): string {
+  if (target.tiktokAccountId && !target.googleAccountId && !target.metaAccountId) return "TikTok";
   return target.metaAccountId && !target.googleAccountId ? "Meta" : "Google";
 }
 
@@ -3148,6 +3178,7 @@ function readMetadataNumber(metadata: Record<string, unknown> | null, key: strin
 function formatAccountIdForEmail(item: JobItemRow): string {
   const googleAccountId = normalizeOptional(item.google_account_id);
   const metaAccountId = normalizeOptional(item.meta_account_id);
+  const tiktokAccountId = normalizeOptional(item.tiktok_account_id);
 
   if (googleAccountId && metaAccountId && googleAccountId === metaAccountId) {
     return googleAccountId;
@@ -3157,7 +3188,7 @@ function formatAccountIdForEmail(item: JobItemRow): string {
     return `Google: ${googleAccountId}, Meta: ${metaAccountId}`;
   }
 
-  return googleAccountId ?? metaAccountId ?? "-";
+  return googleAccountId ?? metaAccountId ?? tiktokAccountId ?? "-";
 }
 
 function buildAccountStatusBadge(item: JobItemRow, testMode: boolean): string {

@@ -2,9 +2,21 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  buildReportAccountQuery,
   extractAdAccountIdFromAccountSearchInput,
   formatAccountSuggestionLabel,
 } from "./home-account-search";
+
+test("routes a selected TikTok advertiser through tiktokAccountId", () => {
+  assert.equal(
+    buildReportAccountQuery({
+      adAccountId: "7512267932496560146",
+      platform: "tiktok",
+      country: "MY",
+    }),
+    "tiktokAccountId=7512267932496560146&platform=tiktok&country=MY",
+  );
+});
 
 test("formats account search suggestion as name pipe id", () => {
   assert.equal(

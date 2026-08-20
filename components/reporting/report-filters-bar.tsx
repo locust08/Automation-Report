@@ -37,6 +37,7 @@ import {
   formatAccountSuggestionLabel,
 } from "@/components/reporting/home-account-search";
 import { cn } from "@/lib/utils";
+import { switchReportAccountEntryPlatform } from "@/lib/reporting/preview-platform-context";
 
 interface ReportFiltersBarProps {
   filters: ReportFilters;
@@ -51,7 +52,7 @@ interface ReportFiltersBarProps {
   footerContent?: ReactNode;
 }
 
-type SearchPlatform = "meta" | "google";
+type SearchPlatform = "meta" | "google" | "tiktok";
 
 interface SearchEntry {
   key: string;
@@ -65,6 +66,7 @@ interface AccountSearchSuggestion {
   adAccountId: string;
   country: string | null;
   notionPageId: string;
+  platform?: "meta" | "google" | "tiktok" | null;
 }
 
 const ACCOUNT_SEARCH_DEBOUNCE_MS = 300;
@@ -115,6 +117,7 @@ export function ReportFiltersBar({
       accountId: serialized.accountId,
       metaAccountId: serialized.metaAccountId,
       googleAccountId: serialized.googleAccountId,
+      tiktokAccountId: serialized.tiktokAccountId,
       startDate: dateMode === "month" ? monthDateRange.startDate : startDate,
       endDate: dateMode === "month" ? monthDateRange.endDate : endDate,
       platform,
@@ -139,6 +142,17 @@ export function ReportFiltersBar({
     );
   }
 
+  function switchSearchRowPlatform(key: string, nextPlatform: SearchPlatform) {
+    setPlatform(nextPlatform);
+    setSearchEntries((prev) =>
+      prev.map((entry) =>
+        entry.key === key
+          ? switchReportAccountEntryPlatform(entry, nextPlatform)
+          : entry
+      )
+    );
+  }
+
   function updateSearchRowAccountId(key: string, value: string) {
     const accountId = extractAdAccountIdFromAccountSearchInput(value);
     const detected = detectAccountIdInputPlatform(accountId);
@@ -147,15 +161,23 @@ export function ReportFiltersBar({
       accountId: detected?.accountId ?? accountId,
       ...(detected?.platform ? { platform: detected.platform } : {}),
     });
+    if (detected?.platform) {
+      setPlatform(detected.platform);
+    }
   }
 
   function selectSearchRowAccount(key: string, suggestion: AccountSearchSuggestion) {
-    const detected = detectAccountIdInputPlatform(suggestion.adAccountId);
+    const detected = suggestion.platform
+      ? { platform: suggestion.platform, accountId: suggestion.adAccountId }
+      : detectAccountIdInputPlatform(suggestion.adAccountId);
     updateSearchRow(key, {
       searchText: formatAccountSuggestionLabel(suggestion),
       accountId: suggestion.adAccountId,
       ...(detected?.platform ? { platform: detected.platform } : {}),
     });
+    if (detected?.platform) {
+      setPlatform(detected.platform);
+    }
   }
 
   function removeSearchRow(key: string) {
@@ -189,9 +211,7 @@ export function ReportFiltersBar({
           <div key={entry.key} className="flex min-w-0 flex-wrap items-center gap-2 sm:flex-nowrap">
             <Select
               value={entry.platform}
-              onValueChange={(value) =>
-                updateSearchRow(entry.key, { platform: value as SearchPlatform })
-              }
+              onValueChange={(value) => switchSearchRowPlatform(entry.key, value as SearchPlatform)}
             >
               <SelectTrigger className="h-10 w-full sm:w-[130px]">
                 <SelectValue placeholder="Platform" />
@@ -199,6 +219,7 @@ export function ReportFiltersBar({
               <SelectContent>
                 <SelectItem value="meta">Meta Ads</SelectItem>
                 <SelectItem value="google">Google Ads</SelectItem>
+                <SelectItem value="tiktok">TikTok Ads</SelectItem>
               </SelectContent>
             </Select>
 
@@ -304,6 +325,7 @@ export function ReportFiltersBar({
             <SelectItem value="meta">Meta</SelectItem>
             <SelectItem value="google">Google Ads</SelectItem>
             <SelectItem value="googleYoutube">Google Ads YouTube</SelectItem>
+            <SelectItem value="tiktok">TikTok Ads</SelectItem>
           </SelectContent>
         </Select>
       ) : (
@@ -528,7 +550,7 @@ function ReportAccountSearchInput({
           setHighlightedId(recentAccounts[0]?.notionPageId ?? null);
         }}
         className="flex h-10 w-full min-w-0 items-center gap-2 rounded-md border border-input bg-background px-3 text-left text-sm shadow-xs outline-none transition focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50"
-        aria-label={`${entry.platform === "meta" ? "Meta Ads" : "Google Ads"} account`}
+        aria-label={`${entry.platform === "meta" ? "Meta Ads" : entry.platform === "tiktok" ? "TikTok Ads" : "Google Ads"} account`}
         aria-expanded={isOpen}
         aria-haspopup="listbox"
       >
@@ -591,12 +613,12 @@ function ReportAccountSearchInput({
             </div>
             {query.length < 2 ? (
               <p className="px-2 py-2 text-sm text-muted-foreground">
-                Type at least 2 characters to search Notion.
+                Type at least 2 characters to search accounts.
               </p>
             ) : searchState === "loading" ? (
               <div className="flex items-center gap-2 px-3 py-3 text-sm text-muted-foreground">
                 <Loader2Icon className="size-4 animate-spin" />
-                Searching Notion accounts...
+                Searching accounts...
               </div>
             ) : searchState === "error" ? (
               <div className="px-3 py-3 text-sm text-destructive">
@@ -722,7 +744,7 @@ function getDefaultMonthValue(): string {
   return `${lastMonth.getUTCFullYear()}-${String(lastMonth.getUTCMonth() + 1).padStart(2, "0")}`;
 }
 
-function parseSearchEntries(filters: Pick<ReportFilters, "accountId" | "metaAccountId" | "googleAccountId">): Array<{
+function parseSearchEntries(filters: Pick<ReportFilters, "accountId" | "metaAccountId" | "googleAccountId" | "tiktokAccountId">): Array<{
   platform: SearchPlatform;
   accountId: string;
 }> {
@@ -734,6 +756,10 @@ function parseSearchEntries(filters: Pick<ReportFilters, "accountId" | "metaAcco
 
   splitAccountIdList(filters.googleAccountId).forEach((value) => {
     entries.push({ platform: "google", accountId: value });
+  });
+
+  splitAccountIdList(filters.tiktokAccountId).forEach((value) => {
+    entries.push({ platform: "tiktok", accountId: value });
   });
 
   splitAccountIdList(filters.accountId).forEach((token) => {
@@ -749,9 +775,11 @@ function serializeSearchEntries(entries: SearchEntry[]): {
   accountId: string;
   metaAccountId: string;
   googleAccountId: string;
+  tiktokAccountId: string;
 } {
   const metaIds: string[] = [];
   const googleIds: string[] = [];
+  const tiktokIds: string[] = [];
 
   entries.forEach((entry) => {
     const trimmed = entry.accountId.trim();
@@ -764,6 +792,11 @@ function serializeSearchEntries(entries: SearchEntry[]): {
       return;
     }
 
+    if (entry.platform === "tiktok") {
+      tiktokIds.push(trimmed);
+      return;
+    }
+
     googleIds.push(trimmed);
   });
 
@@ -771,6 +804,7 @@ function serializeSearchEntries(entries: SearchEntry[]): {
     accountId: "",
     metaAccountId: metaIds.join(","),
     googleAccountId: googleIds.join(","),
+    tiktokAccountId: tiktokIds.join(","),
   };
 }
 
@@ -795,6 +829,10 @@ function classifyAccountIdToken(token: string): {
 
   if (lowered.startsWith("google:") || lowered.startsWith("g:")) {
     return { platform: "google", accountId: trimmed.split(":").slice(1).join(":").trim() };
+  }
+
+  if (lowered.startsWith("tiktok:") || lowered.startsWith("tt:")) {
+    return { platform: "tiktok", accountId: trimmed.split(":").slice(1).join(":").trim() };
   }
 
   if (lowered.startsWith("act_")) {
@@ -823,12 +861,12 @@ function detectAccountIdInputPlatform(value: string): {
   const trimmed = value.trim();
   const lowered = trimmed.toLowerCase();
   const digitsOnly = trimmed.replace(/\D/g, "");
-  const prefixed = /^(meta|m|google|g)\s*:\s*(.+)$/i.exec(trimmed);
+  const prefixed = /^(meta|m|google|g|tiktok|tt)\s*:\s*(.+)$/i.exec(trimmed);
 
   if (prefixed) {
     const prefix = prefixed[1].toLowerCase();
     return {
-      platform: prefix === "google" || prefix === "g" ? "google" : "meta",
+      platform: prefix === "google" || prefix === "g" ? "google" : prefix === "tiktok" || prefix === "tt" ? "tiktok" : "meta",
       accountId: prefixed[2].trim(),
     };
   }

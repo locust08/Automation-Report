@@ -105,5 +105,7 @@ function normalizeName(value: string | null | undefined): string {
 }
 
 function platformLabel(platform: PreviewPlatformSection["platform"]): string {
-  return platform === "meta" ? "Meta Ads" : "Google Ads";
+  if (platform === "meta") return "Meta Ads";
+  if (platform === "tiktok") return "TikTok Ads";
+  return "Google Ads";
 }

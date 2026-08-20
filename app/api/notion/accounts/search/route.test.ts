@@ -9,6 +9,9 @@ const ORIGINAL_ENV = { ...process.env };
 test("GET returns safe account suggestions from Notion search", async () => {
   process.env.NOTION_TOKEN = "secret_test_token";
   process.env.NOTION_DATABASE_ID = "11111111111111111111111111111111";
+  delete process.env.MONTHLY_REPORT_WORKER_URL;
+  delete process.env.REPORT_AUTOMATION_WORKER_URL;
+  delete process.env.WORKER_API_SECRET;
 
   let notionQueryCount = 0;
   globalThis.fetch = (async (input: RequestInfo | URL) => {
@@ -78,6 +81,49 @@ test("GET returns safe account suggestions from Notion search", async () => {
     );
     assert.equal(cachedResponse.status, 200);
     assert.equal(notionQueryCount, 1);
+  } finally {
+    globalThis.fetch = ORIGINAL_FETCH;
+    process.env = { ...ORIGINAL_ENV };
+  }
+});
+
+test("GET uses the Cloudflare account directory for a TikTok account", async () => {
+  process.env.MONTHLY_REPORT_WORKER_URL = "https://directory.example.test";
+  process.env.WORKER_API_SECRET = "worker-secret";
+  let notionCalled = false;
+  globalThis.fetch = (async (input: RequestInfo | URL) => {
+    const url = String(input);
+    if (url.startsWith("https://directory.example.test/ad-accounts/search")) {
+      return new Response(JSON.stringify({
+        success: true,
+        accounts: [{
+          accountName: "Bellamy TikTok SG",
+          adAccountId: "7485938233214353409",
+          country: "SG",
+          notionPageId: "tiktok-page",
+          platform: "tiktok",
+          accessPath: null,
+        }],
+      }), { status: 200 });
+    }
+    notionCalled = true;
+    throw new Error(`Unexpected Notion request: ${url}`);
+  }) as typeof fetch;
+
+  try {
+    const response = await GET(new Request("https://example.test/api/notion/accounts/search?q=bellamy"));
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), {
+      accounts: [{
+        accountName: "Bellamy TikTok SG",
+        adAccountId: "7485938233214353409",
+        country: "SG",
+        notionPageId: "tiktok-page",
+        platform: "tiktok",
+        accessPath: null,
+      }],
+    });
+    assert.equal(notionCalled, false);
   } finally {
     globalThis.fetch = ORIGINAL_FETCH;
     process.env = { ...ORIGINAL_ENV };

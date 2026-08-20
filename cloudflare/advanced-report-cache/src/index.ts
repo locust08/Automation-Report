@@ -79,11 +79,17 @@ const worker = {
     const url = new URL(request.url);
     const advancedMatch = url.pathname.match(/^\/advanced-report-cache\/(.+)$/);
     const overallMatch = url.pathname.match(/^\/overall-report-cache\/(.+)$/);
-    if (!advancedMatch && !overallMatch) {
+    const tiktokMatch = url.pathname.match(/^\/tiktok-insights-cache\/(.+)$/);
+    if (!advancedMatch && !overallMatch && !tiktokMatch) {
       return json({ ok: true, service: "ads-dashboard-advanced-report-cache" });
     }
 
-    const cacheKey = decodeURIComponent((advancedMatch ?? overallMatch)![1]);
+    const cacheKey = decodeURIComponent((advancedMatch ?? overallMatch ?? tiktokMatch)![1]);
+    if (tiktokMatch) {
+      if (request.method === "GET") return handleTikTokInsightsGet(cacheKey, env);
+      if (request.method === "PUT") return handleTikTokInsightsPut(cacheKey, request, env);
+      return json({ error: "Method not allowed" }, 405);
+    }
     if (overallMatch) {
       if (request.method === "GET") {
         return handleOverallGet(cacheKey, env);
@@ -230,6 +236,49 @@ async function handleOverallPut(cacheKey: string, request: Request, env: Env): P
     .run();
 
   return json({ ok: true, cacheKey, expiresAt });
+}
+
+async function handleTikTokInsightsGet(cacheKey: string, env: Env): Promise<Response> {
+  const row = await env.ADVANCED_REPORT_DB.prepare(
+    "SELECT cache_key, r2_key, expires_at FROM tiktok_insights_cache WHERE cache_key = ?"
+  ).bind(cacheKey).first<OverallCacheRow>();
+  if (!row || Date.parse(row.expires_at) <= Date.now()) return json({ error: "Not found" }, 404);
+  const object = await env.ADVANCED_REPORTS.get(row.r2_key);
+  if (!object) return json({ error: "Stored payload not found" }, 404);
+  return new Response(await object.text(), {
+    headers: { "Content-Type": "application/json", "Cache-Control": "private, no-store" },
+  });
+}
+
+async function handleTikTokInsightsPut(cacheKey: string, request: Request, env: Env): Promise<Response> {
+  const envelope = await request.json() as {
+    payload?: { account?: { advertiserId?: string }; dateRange?: { startDate?: string; endDate?: string } };
+    expiresAt?: string;
+  };
+  if (!envelope.payload || !envelope.expiresAt || Date.parse(envelope.expiresAt) <= Date.now()) {
+    return json({ error: "Invalid or expired payload" }, 400);
+  }
+  const now = new Date().toISOString();
+  const advertiserId = envelope.payload.account?.advertiserId ?? "unknown";
+  const reportPeriod = `${envelope.payload.dateRange?.startDate ?? "unknown"}_${envelope.payload.dateRange?.endDate ?? "unknown"}`;
+  const r2Key = `tiktok-insights/${cacheKey}`;
+  await env.ADVANCED_REPORTS.put(r2Key, JSON.stringify(envelope), {
+    httpMetadata: { contentType: "application/json" },
+    customMetadata: { advertiserId, reportPeriod, expiresAt: envelope.expiresAt },
+  });
+  await env.ADVANCED_REPORT_DB.prepare(`
+    INSERT INTO tiktok_insights_cache (
+      cache_key, r2_key, advertiser_id, report_period, generated_at, expires_at, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(cache_key) DO UPDATE SET
+      r2_key = excluded.r2_key,
+      advertiser_id = excluded.advertiser_id,
+      report_period = excluded.report_period,
+      generated_at = excluded.generated_at,
+      expires_at = excluded.expires_at,
+      updated_at = excluded.updated_at
+  `).bind(cacheKey, r2Key, advertiserId, reportPeriod, now, envelope.expiresAt, now, now).run();
+  return json({ ok: true, cacheKey, expiresAt: envelope.expiresAt });
 }
 
 async function handlePut(cacheKey: string, request: Request, env: Env): Promise<Response> {

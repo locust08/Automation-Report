@@ -537,6 +537,10 @@ function buildPrintReportUrl(account: MonthlyReportAccount, dateRange: MonthlyRe
   if (account.metaAdsAccountId && reportType !== "google") {
     query.set("metaAccountId", account.metaAdsAccountId);
   }
+  if (account.tiktokAdsAccountId) {
+    query.set("tiktokAccountId", account.tiktokAdsAccountId);
+    query.set("platform", "tiktok");
+  }
 
   if (reportType !== "overall") {
     query.set("platform", reportType);
@@ -596,7 +600,7 @@ function resolveMonthlyReportPdfOutputDir(): string {
 }
 
 function resolvePrimaryAccountId(account: MonthlyReportAccount): string | null {
-  return account.googleAdsAccountId ?? account.metaAdsAccountId ?? null;
+  return account.googleAdsAccountId ?? account.metaAdsAccountId ?? account.tiktokAdsAccountId ?? null;
 }
 
 function normalizeReportType(value: string | null | undefined): "overall" | "google" | "meta" | "advanced" {

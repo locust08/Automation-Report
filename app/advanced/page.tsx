@@ -38,13 +38,16 @@ export default async function AdvancedPage({
   const initialAccountId = getFirstAccountId(
     getSingleValue(resolvedSearchParams?.accountId),
     getSingleValue(resolvedSearchParams?.metaAccountId),
-    getSingleValue(resolvedSearchParams?.googleAccountId)
+    getSingleValue(resolvedSearchParams?.googleAccountId),
+    getSingleValue(resolvedSearchParams?.tiktokAccountId)
   );
 
   return (
     <Suspense fallback={<ReportRouteLoading kind="insights" />}>
       <AdvancedPageClient
         initialAccountId={initialAccountId}
+        initialTikTokAccountId={getSingleValue(resolvedSearchParams?.tiktokAccountId)}
+        initialPlatform={getSingleValue(resolvedSearchParams?.platform)}
         initialCountry={getSingleValue(resolvedSearchParams?.country)}
         initialStartDate={getSingleValue(resolvedSearchParams?.startDate)}
         initialEndDate={getSingleValue(resolvedSearchParams?.endDate)}

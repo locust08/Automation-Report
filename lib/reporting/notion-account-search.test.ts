@@ -109,3 +109,24 @@ test("account search leaves unsupported countries null and excludes raw properti
   assert.equal("properties" in response.accounts[0], false);
   assert.equal(JSON.stringify(response).includes("notion-token-like-value"), false);
 });
+
+test("account search preserves TikTok platform and advertiser ID", () => {
+  const response = buildNotionAccountSearchResponse("bellamy", [
+    page("page-tiktok", {
+      "Account Name": title("TikTok - Bellamy Malaysia"),
+      ID: text("7512267932496560146"),
+      Platform: select("TikTok"),
+      Country: select("Malaysia"),
+    }),
+  ]);
+
+  assert.deepEqual(response.accounts, [
+    {
+      accountName: "TikTok - Bellamy Malaysia",
+      adAccountId: "7512267932496560146",
+      country: "MY",
+      notionPageId: "page-tiktok",
+      platform: "tiktok",
+    },
+  ]);
+});

@@ -222,8 +222,14 @@ export function OverallCampaignGroupsTable({
                           <td className="px-1.5 py-2 text-center tabular-nums whitespace-nowrap">{formatCompactNumber(row.clicks)}</td>
                           <td className="px-1.5 py-2 text-center tabular-nums whitespace-nowrap">{formatCompactNumber(row.ctr)}</td>
                           <td className="px-1.5 py-2 text-center tabular-nums whitespace-nowrap">{formatCompactNumber(row.cpm)}</td>
-                          <td className="px-1.5 py-2 text-center tabular-nums whitespace-nowrap">{formatCompactNumber(row.results)}</td>
-                          <td className="px-1.5 py-2 text-center tabular-nums whitespace-nowrap">{formatCompactNumber(row.costPerResult)}</td>
+                          <td className="px-1.5 py-2 text-center tabular-nums whitespace-nowrap">
+                            {formatOutcomeValue(row, "results")}
+                            {tiktokOutcomeCaption(row, "results")}
+                          </td>
+                          <td className="px-1.5 py-2 text-center tabular-nums whitespace-nowrap">
+                            {formatOutcomeValue(row, "costPerResult")}
+                            {tiktokOutcomeCaption(row, "costPerResult")}
+                          </td>
                           <td className="px-1.5 py-2 text-center tabular-nums whitespace-nowrap">{formatCompactNumber(row.spend)}</td>
                           <td
                             className="px-1.5 py-2 text-center whitespace-nowrap"
@@ -260,8 +266,8 @@ export function OverallCampaignGroupsTable({
                     <td className="px-1.5 py-2 text-center tabular-nums whitespace-nowrap">{formatCompactNumber(group.totals.clicks)}</td>
                     <td className="px-1.5 py-2 text-center tabular-nums whitespace-nowrap">{formatCompactNumber(group.totals.ctr)}</td>
                     <td className="px-1.5 py-2 text-center tabular-nums whitespace-nowrap">{formatCompactNumber(group.totals.cpm)}</td>
-                    <td className="px-1.5 py-2 text-center tabular-nums whitespace-nowrap">{formatCompactNumber(group.totals.results)}</td>
-                    <td className="px-1.5 py-2 text-center tabular-nums whitespace-nowrap">{formatCompactNumber(group.totals.costPerResult)}</td>
+                    <td className="px-1.5 py-2 text-center tabular-nums whitespace-nowrap">{formatOutcomeValue(group.totals, "results")}</td>
+                    <td className="px-1.5 py-2 text-center tabular-nums whitespace-nowrap">{formatOutcomeValue(group.totals, "costPerResult")}</td>
                     <td className="px-1.5 py-2 text-center tabular-nums whitespace-nowrap">{formatCompactNumber(group.totals.spend)}</td>
                     <td
                       className="px-1.5 py-2 text-center whitespace-nowrap"
@@ -361,8 +367,8 @@ export function CampaignComparisonTable({
                 <td className="px-1.5 py-2 text-center tabular-nums whitespace-nowrap">{formatCompactNumber(row.clicks)}</td>
                 <td className="px-1.5 py-2 text-center tabular-nums whitespace-nowrap">{formatCompactNumber(row.ctr)}</td>
                 <td className="px-1.5 py-2 text-center tabular-nums whitespace-nowrap">{formatCompactNumber(row.cpm)}</td>
-                <td className="px-1.5 py-2 text-center tabular-nums whitespace-nowrap">{formatCompactNumber(row.results)}</td>
-                <td className="px-1.5 py-2 text-center tabular-nums whitespace-nowrap">{formatCompactNumber(row.costPerResult)}</td>
+                <td className="px-1.5 py-2 text-center tabular-nums whitespace-nowrap">{formatOutcomeValue(row, "results")}</td>
+                <td className="px-1.5 py-2 text-center tabular-nums whitespace-nowrap">{formatOutcomeValue(row, "costPerResult")}</td>
                 <td className="px-1.5 py-2 text-center tabular-nums whitespace-nowrap">{formatCompactNumber(row.spend)}</td>
               </tr>
             ))}
@@ -372,8 +378,8 @@ export function CampaignComparisonTable({
               <td className="px-1.5 py-2 text-center tabular-nums whitespace-nowrap">{formatCompactNumber(totalsWithSpend.clicks)}</td>
               <td className="px-1.5 py-2 text-center tabular-nums whitespace-nowrap">{formatCompactNumber(totalsWithSpend.ctr)}</td>
               <td className="px-1.5 py-2 text-center tabular-nums whitespace-nowrap">{formatCompactNumber(totalsWithSpend.cpm)}</td>
-              <td className="px-1.5 py-2 text-center tabular-nums whitespace-nowrap">{formatCompactNumber(totalsWithSpend.results)}</td>
-              <td className="px-1.5 py-2 text-center tabular-nums whitespace-nowrap">{formatCompactNumber(totalsWithSpend.costPerResult)}</td>
+              <td className="px-1.5 py-2 text-center tabular-nums whitespace-nowrap">{formatOutcomeValue(totalsWithSpend, "results")}</td>
+              <td className="px-1.5 py-2 text-center tabular-nums whitespace-nowrap">{formatOutcomeValue(totalsWithSpend, "costPerResult")}</td>
               <td className="px-1.5 py-2 text-center tabular-nums whitespace-nowrap">{formatCompactNumber(totalsWithSpend.spend)}</td>
             </tr>
           </tbody>
@@ -426,6 +432,9 @@ function platformLabel(platform: Platform): string {
   if (platform === "meta") {
     return "Meta";
   }
+  if (platform === "tiktok") {
+    return "TikTok Ads";
+  }
   if (platform === "googleYoutube") {
     return "Google YouTube";
   }
@@ -435,14 +444,14 @@ function platformLabel(platform: Platform): string {
 const CAMPAIGN_MOBILE_METRICS: Array<{
   key: string;
   label: string;
-  value: (row: CampaignRow) => number;
+  value: (row: CampaignRow) => number | string;
 }> = [
   { key: "impressions", label: "Impression", value: (row) => row.impressions },
   { key: "clicks", label: "Clicks", value: (row) => row.clicks },
   { key: "ctr", label: "CTR (%)", value: (row) => row.ctr },
   { key: "cpm", label: "CPM", value: (row) => row.cpm },
-  { key: "results", label: "Results", value: (row) => row.results },
-  { key: "costPerResult", label: "Cost/Results", value: (row) => row.costPerResult },
+  { key: "results", label: "Results", value: (row) => formatOutcomeValue(row, "results") },
+  { key: "costPerResult", label: "Cost/Results", value: (row) => formatOutcomeValue(row, "costPerResult") },
   { key: "spend", label: "Ads Spent", value: (row) => row.spend },
 ];
 
@@ -505,8 +514,8 @@ function CampaignMobileCard({
       <dl className="mt-2 grid grid-cols-2 gap-x-3 gap-y-2 text-xs">
         {CAMPAIGN_MOBILE_METRICS.map((metric) => (
           <div key={`${row.id}-${metric.key}`} className="space-y-0.5">
-            <dt className="text-[#7a7a7a]">{metric.label}</dt>
-            <dd className="font-semibold text-[#37363e]">{formatCompactNumber(metric.value(row))}</dd>
+            <dt className="text-[#7a7a7a]">{mobileMetricLabel(row, metric.key, metric.label)}</dt>
+            <dd className="font-semibold text-[#37363e]">{formatMobileMetricValue(metric.value(row))}</dd>
           </div>
         ))}
       </dl>
@@ -531,12 +540,34 @@ function CampaignMobileCard({
   );
 }
 
+function formatOutcomeValue(row: CampaignRow, key: "results" | "costPerResult"): string {
+  if (row.resultLabel === "Mixed") return "Mixed";
+  return formatCompactNumber(row[key]);
+}
+
+function formatMobileMetricValue(value: number | string): string {
+  return typeof value === "number" ? formatCompactNumber(value) : value;
+}
+
+function tiktokOutcomeCaption(row: CampaignRow, key: "results" | "costPerResult") {
+  if (row.platform !== "tiktok" || !row.resultLabel || row.resultLabel === "Mixed") return null;
+  const label = key === "results" ? row.resultLabel : `Cost/${row.resultLabel}`;
+  return <span className="block text-[10px] font-normal text-[#777]">{label}</span>;
+}
+
+function mobileMetricLabel(row: CampaignRow, key: string, fallback: string): string {
+  if (row.platform !== "tiktok" || !row.resultLabel || row.resultLabel === "Mixed") return fallback;
+  if (key === "results") return row.resultLabel;
+  if (key === "costPerResult") return `Cost/${row.resultLabel}`;
+  return fallback;
+}
+
 function withPositiveSpend(rows: CampaignRow[]): CampaignRow[] {
   return rows.filter(hasReportableCampaignSpend);
 }
 
 function buildTotalsFromRows(rows: CampaignRow[], fallback: CampaignRow): CampaignRow {
-  return rows.reduce(
+  const totals = rows.reduce(
     (acc, row) => mergeCampaignRows(acc, row),
     emptyCampaignRow(
       `${fallback.id}-filtered`,
@@ -545,6 +576,16 @@ function buildTotalsFromRows(rows: CampaignRow[], fallback: CampaignRow): Campai
       "Grand Total"
     )
   );
+  const outcomeLabels = new Set(
+    rows.filter((row) => row.results > 0 && row.resultLabel).map((row) => row.resultLabel as string)
+  );
+  return {
+    ...totals,
+    resultLabel:
+      outcomeLabels.size > 1
+        ? "Mixed"
+        : outcomeLabels.values().next().value ?? totals.resultLabel,
+  };
 }
 
 function buildPreviewHref(row: CampaignRow, queryString: string): string | null {
