@@ -198,7 +198,7 @@ function isActiveStatus(status: string | null | undefined): boolean {
     "deleted",
     "removed",
     "archived",
-    "disabled",
+    "disable",
     "inactive",
   ].some((blocked) => normalized.includes(blocked));
 }

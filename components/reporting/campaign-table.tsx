@@ -224,11 +224,9 @@ export function OverallCampaignGroupsTable({
                           <td className="px-1.5 py-2 text-center tabular-nums whitespace-nowrap">{formatCompactNumber(row.cpm)}</td>
                           <td className="px-1.5 py-2 text-center tabular-nums whitespace-nowrap">
                             {formatOutcomeValue(row, "results")}
-                            {tiktokOutcomeCaption(row, "results")}
                           </td>
                           <td className="px-1.5 py-2 text-center tabular-nums whitespace-nowrap">
                             {formatOutcomeValue(row, "costPerResult")}
-                            {tiktokOutcomeCaption(row, "costPerResult")}
                           </td>
                           <td className="px-1.5 py-2 text-center tabular-nums whitespace-nowrap">{formatCompactNumber(row.spend)}</td>
                           <td
@@ -549,12 +547,6 @@ function formatMobileMetricValue(value: number | string): string {
   return typeof value === "number" ? formatCompactNumber(value) : value;
 }
 
-function tiktokOutcomeCaption(row: CampaignRow, key: "results" | "costPerResult") {
-  if (row.platform !== "tiktok" || !row.resultLabel || row.resultLabel === "Mixed") return null;
-  const label = key === "results" ? row.resultLabel : `Cost/${row.resultLabel}`;
-  return <span className="block text-[10px] font-normal text-[#777]">{label}</span>;
-}
-
 function mobileMetricLabel(row: CampaignRow, key: string, fallback: string): string {
   if (row.platform !== "tiktok" || !row.resultLabel || row.resultLabel === "Mixed") return fallback;
   if (key === "results") return row.resultLabel;
@@ -602,7 +594,11 @@ function buildPreviewHref(row: CampaignRow, queryString: string): string | null 
 }
 
 function supportsCampaignHierarchy(row: CampaignRow): boolean {
-  return row.platform === "meta" || row.platform === "google";
+  return (
+    row.platform === "meta" ||
+    row.platform === "google" ||
+    row.platform === "tiktok"
+  );
 }
 
 function campaignHierarchyKey(row: CampaignRow): string {
