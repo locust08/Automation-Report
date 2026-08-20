@@ -115,6 +115,32 @@ export interface AdsFieldChangeRecord {
   published_value: unknown | null; verified_value: unknown | null; conflict_resolution: string | null;
   validation_errors: string[]; publish_status: string; verification_status: string;
   platform_response: unknown | null; last_error_message: string | null; publish_attempts: number;
+  idempotency_key?: string | null; execution_claim_id?: string | null;
+}
+
+export interface AdsChangeSetRevisionRecord {
+  id: string; change_set_id: string; version: number; canonical_payload: Record<string, unknown>;
+  payload_hash: string; reason: string; evidence: ChangeEvidence; source_reference: Record<string, unknown>;
+  created_by_id: string | null; created_by_name: string; created_at: string;
+}
+
+export interface AdsChangeFollowUpRecord {
+  id: string; change_set_id: string; source_optimization_action_id: number | null;
+  follow_up_window: "7d" | "14d"; due_at: string; status: "pending" | "completed" | "cancelled";
+  handoff_payload: Record<string, unknown>; created_at: string; completed_at: string | null;
+}
+
+export interface ChangeEvidence {
+  summary: string;
+  references?: string[];
+  sourceType?: "manual" | "module_5_recommendation";
+  sourceId?: string;
+}
+
+export interface LaunchEligibility {
+  eligible: boolean;
+  source: "verified_build" | "legacy_adoption" | "unverified";
+  sourceId: string | null;
 }
 
 export interface AdsChangeSetRecord {
@@ -122,8 +148,13 @@ export interface AdsChangeSetRecord {
   status: AdsManagementStatus; created_by_id: string | null; created_by_name: string;
   baseline_captured_at: string; version: number; approved_at: string | null; published_at: string | null;
   verified_at: string | null; created_at: string; updated_at: string;
+  evidence?: ChangeEvidence; campaign_id?: string | null; contract_version?: number; project_key?: "lt_paid_media" | null;
+  approved_revision_id?: string | null; approved_payload_hash?: string | null;
+  preflight_state_hash?: string | null; approval_expires_at?: string | null;
+  reverts_change_set_id?: string | null; source_optimization_action_id?: number | null;
   ads_field_changes?: AdsFieldChangeRecord[]; ads_change_approvals?: Array<Record<string, unknown>>;
   ads_change_events?: Array<Record<string, unknown>>; ads_change_notifications?: Array<Record<string, unknown>>;
+  ads_change_set_revisions?: AdsChangeSetRevisionRecord[]; ads_change_follow_ups?: AdsChangeFollowUpRecord[];
 }
 
 export interface DraftChangeInput {

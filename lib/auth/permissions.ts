@@ -31,7 +31,7 @@ export function normalizeAdsRole(role: string): AdsRole {
 }
 
 export function canEditAds(role: string): boolean {
-  return ["admin", "paid_media_specialist", "campaign_optimizer", "specialist", "team_lead", "project_manager"].includes(normalizeAdsRole(role));
+  return normalizeAdsRole(role) === "admin";
 }
 
 export function adsRoleLabel(role: string): string {
