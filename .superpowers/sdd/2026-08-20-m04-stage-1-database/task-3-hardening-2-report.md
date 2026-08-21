@@ -11,6 +11,8 @@ Implemented the second Task 3 safety-hardening round in the existing M04 additiv
 - Review-fix commit: `fix(m04): validate causal recovery evidence`
 - Review-fix 2 base: `15989b224284ab6bc4ee3056777d02bc1b0de328`
 - Review-fix 2 commit subject: `fix(m04): classify concurrent transitions stale`
+- Task 5 lint-fixture base: `d2744606d5f5c1de1bba1c758a3f01e821442422`
+- Task 5 lint-fixture commit subject: `test(m04): lint curated m03 prerequisite`
 - Date: 2026-08-21
 
 No unrelated Task 4 artifact, historical migration, provider/API/UI file, credential, remote Supabase project, deployment, activation, Notion object, Task 5 item, or Stage 2 behavior was touched. The shared state-concurrency runner and its disposable fixtures were intentionally extended because the review-fix brief requires runtime lock-order proof and simultaneous state stress.
@@ -261,6 +263,39 @@ All final runs used fresh disposable local Supabase projects and pinned CLI `2.1
 
 Every final project stop completed with `--no-backup` at exit `0`. All recorded stage, state, and budget temporary roots were absent afterward; the final inventory found zero `psql` processes and zero matching M04 Supabase containers. No interrupted or failed run was reused as evidence.
 
+## Task 5 lint discovery — faithful curated M03 prerequisite
+
+Task 5 held the curated prerequisite and M04 migration database open after all pgTAP transactions completed. Although the pre-fix suite passed 434/434, pinned Supabase CLI `2.115.0` lint then reported SQLSTATE `42P01` for `public.ads_get_campaign_launch_eligibility(text,text)`: its permanent body references `public.ads_campaign_legacy_adoptions`, but the curated prerequisite did not create that M03 table. The M03 compatibility test had masked the omission by creating a weaker table inside its own `BEGIN` transaction and rolling it back after the test.
+
+The existing held lint result was accepted as the clean behavioral RED. The regression removes test ownership of the prerequisite and adds five catalog-backed assertions for:
+
+- permanent table presence before the M04 compatibility test;
+- the exact thirteen columns, types, nullability, and UUID primary key;
+- the three exact defaults and three M03 validation checks;
+- the active-adoption unique partial index on `(project_key, account_id, campaign_id) where revoked_at is null`; and
+- enabled RLS with the M03 ACL: service-role `SELECT`/`INSERT`/`UPDATE`, no service-role `DELETE`, and no anon/authenticated read or write privilege.
+
+The curated pre-M04 fixture now carries the faithful table, checks, defaults, partial index, RLS, revoke, and grant statements copied from `20260820035059_m03_google_change_control_contract.sql`. The M04 production migration and every public function remain byte-for-byte unchanged.
+
+### Lint-fixture changed files
+
+- `supabase/tests/fixtures/m04_m03_prerequisites.sql`
+- `supabase/tests/m04_m03_compatibility.test.sql`
+- `.superpowers/sdd/2026-08-20-m04-stage-1-database/task-3-hardening-2-report.md`
+- `.superpowers/sdd/2026-08-20-m04-stage-1-database/progress.md` (updated as the repository-ignored local SDD ledger; not force-added)
+
+### Lint-fixture verification
+
+| Command | Result |
+| --- | --- |
+| `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test-m04-stage1.ps1 -Suite m03` | PASS, 28/28; project `m04_stage1_0f8e293c37fa4c14` |
+| `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test-m04-stage1.ps1 -Suite all` | PASS, 439/439; project `m04_stage1_a82132b43ac44d15` |
+| Held fixture → M04 → all pgTAP on explicit `postgresql://postgres:postgres@127.0.0.1:54322/postgres` | PASS, 439/439; project `m04_lint_2a1e79d8e17b4ab1` |
+| `npx --yes supabase@2.115.0 db lint --db-url postgresql://postgres:postgres@127.0.0.1:54322/postgres --level error --fail-on error` on that same held database | PASS, exit `0`, exact result `{"results":[],"message":"db lint"}` |
+| PowerShell parser and `git diff --check` | PASS |
+
+Each disposable project stopped with `--no-backup` at exit `0`. Exact post-stop checks found no matching child process or container, and every validated temporary root was absent. No remote, linked-project, provider, deployment, production-credential, production-migration, or continuing Task 5 action was used.
+
 ## Residual concerns
 
-No known correctness issue remains inside review fix 2 scope, but this commit intentionally stops for scoped independent re-review (fix round 2/5). The concurrency evidence is bounded local PostgreSQL evidence, not a proof over every possible scheduler interleaving. Real provider/API behavior remains Stage 2 work and was not exercised.
+No known correctness issue remains inside this narrow lint-fixture scope. The work intentionally stops for scoped re-review and a clean Task 5 restart. The concurrency evidence remains bounded local PostgreSQL evidence, not a proof over every possible scheduler interleaving. Real provider/API behavior remains Stage 2 work and was not exercised.

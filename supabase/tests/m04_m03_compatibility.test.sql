@@ -3,26 +3,145 @@ begin;
 create extension if not exists pgtap with schema extensions;
 select no_plan();
 
--- The focused M04 runner intentionally omits the historical migration chain.
--- Recreate only the M03 fixture that existed before M04 when it is absent so
--- the RED run exercises the original eligibility query. Once M04 supplies its
--- additive override, this block leaves that production function untouched.
-create table if not exists public.ads_campaign_legacy_adoptions (
-  id uuid primary key default gen_random_uuid(),
-  project_key text not null default 'lt_paid_media',
-  account_id text not null,
-  campaign_id text not null,
-  campaign_name text not null,
-  reason text not null,
-  evidence jsonb not null,
-  adopted_by_id text not null,
-  adopted_by_name text not null,
-  adopted_at timestamptz not null default clock_timestamp(),
-  revoked_at timestamptz,
-  revoked_by_id text,
-  revoked_by_name text
+select has_table(
+  'public', 'ads_campaign_legacy_adoptions',
+  'the curated M03 prerequisite owns the legacy-adoptions table before M04'
 );
 
+select ok(
+  (
+    select pg_catalog.array_agg(attribute.attname order by attribute.attnum) = array[
+      'id','project_key','account_id','campaign_id','campaign_name','reason',
+      'evidence','adopted_by_id','adopted_by_name','adopted_at','revoked_at',
+      'revoked_by_id','revoked_by_name'
+    ]::name[]
+      and pg_catalog.array_agg(
+        pg_catalog.format_type(attribute.atttypid, attribute.atttypmod)
+        order by attribute.attnum
+      ) = array[
+        'uuid','text','text','text','text','text','jsonb','text','text',
+        'timestamp with time zone','timestamp with time zone','text','text'
+      ]::text[]
+      and pg_catalog.array_agg(attribute.attnotnull order by attribute.attnum) = array[
+        true,true,true,true,true,true,true,true,true,true,false,false,false
+      ]::boolean[]
+    from pg_catalog.pg_attribute as attribute
+    where attribute.attrelid = pg_catalog.to_regclass('public.ads_campaign_legacy_adoptions')
+      and attribute.attnum > 0
+      and not attribute.attisdropped
+  )
+  and exists (
+    select 1
+    from pg_catalog.pg_constraint as constraint_row
+    where constraint_row.conrelid = pg_catalog.to_regclass('public.ads_campaign_legacy_adoptions')
+      and constraint_row.conname = 'ads_campaign_legacy_adoptions_pkey'
+      and constraint_row.contype = 'p'
+  ),
+  'the curated M03 legacy-adoptions table has the exact column, type, nullability, and primary-key contract'
+);
+
+select ok(
+  (
+    with expected(column_name, default_expression) as (values
+      ('id'::name, 'gen_random_uuid()'::text),
+      ('project_key'::name, '''lt_paid_media''::text'::text),
+      ('adopted_at'::name, 'now()'::text)
+    )
+    select pg_catalog.count(*) = 3
+      and pg_catalog.bool_and(
+        pg_catalog.pg_get_expr(default_row.adbin, default_row.adrelid)
+          = expected.default_expression
+      )
+    from expected
+    join pg_catalog.pg_attribute as attribute
+      on attribute.attrelid = pg_catalog.to_regclass('public.ads_campaign_legacy_adoptions')
+     and attribute.attname = expected.column_name
+    join pg_catalog.pg_attrdef as default_row
+      on default_row.adrelid = attribute.attrelid
+     and default_row.adnum = attribute.attnum
+  )
+  and (
+    select pg_catalog.count(*) = 3
+      and pg_catalog.bool_or(expression = '(project_key = ''lt_paid_media''::text)')
+      and pg_catalog.bool_or(expression = '(btrim(reason) <> ''''::text)')
+      and pg_catalog.bool_or(
+        expression = '(btrim(COALESCE((evidence ->> ''summary''::text), ''''::text)) <> ''''::text)'
+      )
+    from (
+      select pg_catalog.pg_get_expr(constraint_row.conbin, constraint_row.conrelid) as expression
+      from pg_catalog.pg_constraint as constraint_row
+      where constraint_row.conrelid = pg_catalog.to_regclass('public.ads_campaign_legacy_adoptions')
+        and constraint_row.contype = 'c'
+    ) as checks
+  )
+  and (
+    select pg_catalog.count(*) = 3
+    from pg_catalog.pg_attrdef as default_row
+    where default_row.adrelid = pg_catalog.to_regclass('public.ads_campaign_legacy_adoptions')
+  ),
+  'the curated M03 legacy-adoptions table preserves the exact defaults and validation checks'
+);
+
+select ok(
+  coalesce((
+    select index_row.indisunique
+      and pg_catalog.pg_get_indexdef(index_row.indexrelid) =
+        'CREATE UNIQUE INDEX ads_campaign_legacy_adoptions_active_unique ON public.ads_campaign_legacy_adoptions USING btree (project_key, account_id, campaign_id) WHERE (revoked_at IS NULL)'
+    from pg_catalog.pg_index as index_row
+    join pg_catalog.pg_class as index_class on index_class.oid = index_row.indexrelid
+    where index_class.relname = 'ads_campaign_legacy_adoptions_active_unique'
+      and index_row.indrelid = pg_catalog.to_regclass('public.ads_campaign_legacy_adoptions')
+  ), false),
+  'the curated M03 legacy-adoptions table preserves the active-adoption unique partial index'
+);
+
+select ok(
+  coalesce((
+    select table_row.relrowsecurity
+    from pg_catalog.pg_class as table_row
+    where table_row.oid = pg_catalog.to_regclass('public.ads_campaign_legacy_adoptions')
+  ), false)
+  and coalesce(pg_catalog.has_table_privilege(
+    'service_role', pg_catalog.to_regclass('public.ads_campaign_legacy_adoptions'), 'SELECT'
+  ), false)
+  and coalesce(pg_catalog.has_table_privilege(
+    'service_role', pg_catalog.to_regclass('public.ads_campaign_legacy_adoptions'), 'INSERT'
+  ), false)
+  and coalesce(pg_catalog.has_table_privilege(
+    'service_role', pg_catalog.to_regclass('public.ads_campaign_legacy_adoptions'), 'UPDATE'
+  ), false)
+  and not coalesce(pg_catalog.has_table_privilege(
+    'service_role', pg_catalog.to_regclass('public.ads_campaign_legacy_adoptions'), 'DELETE'
+  ), false)
+  and not coalesce(pg_catalog.has_table_privilege(
+    'anon', pg_catalog.to_regclass('public.ads_campaign_legacy_adoptions'), 'SELECT'
+  ), false)
+  and not coalesce(pg_catalog.has_table_privilege(
+    'anon', pg_catalog.to_regclass('public.ads_campaign_legacy_adoptions'), 'INSERT'
+  ), false)
+  and not coalesce(pg_catalog.has_table_privilege(
+    'anon', pg_catalog.to_regclass('public.ads_campaign_legacy_adoptions'), 'UPDATE'
+  ), false)
+  and not coalesce(pg_catalog.has_table_privilege(
+    'anon', pg_catalog.to_regclass('public.ads_campaign_legacy_adoptions'), 'DELETE'
+  ), false)
+  and not coalesce(pg_catalog.has_table_privilege(
+    'authenticated', pg_catalog.to_regclass('public.ads_campaign_legacy_adoptions'), 'SELECT'
+  ), false)
+  and not coalesce(pg_catalog.has_table_privilege(
+    'authenticated', pg_catalog.to_regclass('public.ads_campaign_legacy_adoptions'), 'INSERT'
+  ), false)
+  and not coalesce(pg_catalog.has_table_privilege(
+    'authenticated', pg_catalog.to_regclass('public.ads_campaign_legacy_adoptions'), 'UPDATE'
+  ), false)
+  and not coalesce(pg_catalog.has_table_privilege(
+    'authenticated', pg_catalog.to_regclass('public.ads_campaign_legacy_adoptions'), 'DELETE'
+  ), false),
+  'the curated M03 legacy-adoptions table enables RLS and preserves its service-role-only write ACL'
+);
+
+-- The curated prerequisite owns the pre-M04 table contract. This block keeps
+-- only the historical function fallback used when the M04 override is absent.
 do $fixture$
 begin
   if to_regprocedure('public.ads_get_campaign_launch_eligibility(text,text)') is null then
