@@ -5,14 +5,14 @@ M04 is the shared database boundary for cross-platform campaign launch orchestra
 It is deliberately distinct from:
 
 - **M03 — Cross-Platform Post-Launch Change Control and Verification**, which owns cross-platform post-launch change control, verification, and rollback. M04 provides verified launch evidence that M03 can use; it does not replace M03's change workflow.
-- Future Google, Meta, and TikTok campaign creators, which are server-side clients of M04. No provider adapter, provider call, UI, or platform `plan_payload` schema exists in Stage 1.
+- Future Google, Meta, and TikTok campaign creators, which are server-side clients of M04. Stage 2 stores validated drafts and platform revision details, but it does not contain a provider adapter or make provider calls.
 
 ## Relationship map
 
 | Concern | Tables | Role |
 | --- | --- | --- |
 | Account and budget roots | `ads_ad_accounts`, `ads_budget_packages` | Operational account directory and bounded budget package. |
-| Plan and revision | `ads_campaign_plans`, `ads_campaign_plan_revisions` | Operational plan pointer plus immutable, hash-bound revision snapshot. |
+| Plan and revision | `ads_campaign_plans`, `ads_campaign_plan_revisions`, and the three `ads_*_campaign_revision_details` tables | Operational plan pointer plus immutable, hash-bound shared and platform-specific revision snapshots. |
 | Approval | `ads_campaign_approvals` | Append-only approval and expiry evidence bound to a revision hash. |
 | Build and resources | `ads_campaign_builds`, `ads_campaign_build_resources` | Operational approved build, logical resource intent, provider IDs, hierarchy, and final verification timestamp. |
 | Claims and QA | `ads_campaign_gate_attempts`, `ads_campaign_qa_results` | Persisted gate intent/lease and immutable expected-versus-observed QA evidence. |
@@ -20,11 +20,32 @@ It is deliberately distinct from:
 
 The immutable evidence rows are revisions, approvals, QA results, audit events, and monitoring handoffs. Plans, builds, active claims, resources, accounts, and budget packages are the operational rows; resource identity and recorded provider IDs have their own immutability protections.
 
-## One shared platform data model
+## Stage 2 draft data model
 
-Every revision captures normalized shared fields: client, account and provider account, platform, budget package, currency/timezone, flight dates, allocation and budgets, objective, destination, canonical JSON, and hash. `ads_campaign_plan_revisions.plan_payload` preserves the immutable platform-specific details for the approved revision.
+Every revision captures normalized shared fields: client, account and provider account, platform, budget package, currency/timezone, flight dates, allocation and budgets, objective, destination, canonical JSON, and hash. `ads_campaign_plan_revisions.plan_payload` preserves the complete immutable Stage 2 plan.
 
-This is one database architecture, not three duplicate provider databases. `platform` is `google`, `meta`, or `tiktok`; later stages define the platform schemas inside `plan_payload` and supply the actual adapters.
+Three additive, immutable detail tables make provider-specific draft data explicit without duplicating the shared workflow:
+
+- `ads_google_campaign_revision_details` for Search, Performance Max, and Demand Gen.
+- `ads_meta_campaign_revision_details` for website Traffic, Leads, and Sales.
+- `ads_tiktok_campaign_revision_details` for Auction Traffic, Web Conversions, and Lead Generation using regular non-Spark video ads.
+
+`ads_create_campaign_plan_draft(...)` is the only Stage 2 write boundary. It atomically creates the draft plan, revision 1, exactly one matching detail row, and its audit event. The function is executable only by `service_role`; browser roles cannot write these tables.
+
+This is one database architecture, not three duplicate provider workflows. `platform` is `google`, `meta`, or `tiktok`; a future adapter reads the shared revision and its one matching detail row.
+
+## Local Stage 2 workbench
+
+The `/campaigns` workbench uses an isolated local Supabase project. It can list and create validated drafts; approval, builds, Gate 1, Gate 2, handoff, and all advertising-platform operations are intentionally disabled.
+
+```powershell
+npm run dev:m04-stage2
+npm run m04:stage2:stop
+```
+
+The start command creates only the scoped local M04 stack, applies the curated prerequisite plus M04 migrations, seeds mock Google/Meta/TikTok account and package rows, and launches the dashboard with dedicated `M04_SUPABASE_*` variables. The normal stop command preserves its local data. Use `npm run m04:stage2:reset` only when that scoped local data should be discarded.
+
+The repository refuses production and non-loopback Supabase URLs. Never place `M04_SUPABASE_SERVICE_ROLE_KEY` in browser code or reuse it for a hosted project.
 
 Build resources use a deterministic logical key per build, extensible non-empty `resource_type`, provider resource ID, and provider parent resource ID for hierarchy. Examples:
 
@@ -90,4 +111,4 @@ The Gate 2 manifest exactly covers every persisted build resource, has no duplic
 - Do not write M04 tables directly; use the public RPCs so locks, hashes, claims, audit rows, and invariants stay atomic.
 - Do not make provider calls inside database transactions, automatically retry after an ambiguous timeout, or create provider-specific duplicate workflow tables.
 
-`plan_payload` platform schemas and Google/Meta/TikTok adapters are later-stage work. This README describes the stable Stage 1 database boundary only; it does not claim provider integration exists.
+Stage 2 now defines and stores the platform draft schemas. Google/Meta/TikTok adapters, provider connection checks, approval APIs, build execution, Gate operations, launch UI, and deployment remain later-stage work. Nothing in the Stage 2 workbench creates or changes a real advertising campaign.

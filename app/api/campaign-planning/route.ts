@@ -2,7 +2,12 @@ import { NextResponse } from "next/server";
 import { ZodError } from "zod";
 
 import { getServerAuthSession } from "@/lib/auth/server-session";
-import { CampaignLocalModelError, createCampaignPlan, listCampaignPlans } from "@/lib/campaign-planning/sqlite-repository";
+import {
+  CampaignPlanningRepositoryError,
+  createCampaignPlanDraft,
+  disconnectedStage2Meta,
+  listCampaignPlans,
+} from "@/lib/campaign-planning/supabase-repository";
 import { createCampaignPlanSchema } from "@/lib/campaign-planning/validation";
 
 export const dynamic = "force-dynamic";
@@ -11,24 +16,41 @@ export const runtime = "nodejs";
 export async function GET() {
   const session = await getServerAuthSession();
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  if (session.role === "user") return NextResponse.json({ error: "Campaign access is required." }, { status: 403 });
-  try { return NextResponse.json(listCampaignPlans()); }
-  catch (error) { return localError(error, "Unable to load local campaigns."); }
+  if (session.role === "user") {
+    return NextResponse.json({ error: "Campaign access is required." }, { status: 403 });
+  }
+  try {
+    return NextResponse.json(await listCampaignPlans());
+  } catch (error) {
+    const response = repositoryError(error, "Unable to load local Supabase campaign drafts.");
+    return NextResponse.json({ ...disconnectedStage2Meta(), error: response.message }, { status: response.status });
+  }
 }
 
 export async function POST(request: Request) {
   const session = await getServerAuthSession();
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  if (session.role !== "admin") return NextResponse.json({ error: "Administrator access is required." }, { status: 403 });
+  if (session.role !== "admin") {
+    return NextResponse.json({ error: "Administrator access is required." }, { status: 403 });
+  }
   try {
     const input = createCampaignPlanSchema.parse(await request.json());
-    return NextResponse.json(createCampaignPlan(input, { id: session.sub, email: session.email }), { status: 201 });
-  } catch (error) { return localError(error, "Unable to create the local campaign."); }
+    const detail = await createCampaignPlanDraft(input, {
+      userAgent: request.headers.get("user-agent"),
+    });
+    return NextResponse.json(detail, { status: 201 });
+  } catch (error) {
+    if (error instanceof ZodError) {
+      return NextResponse.json({ error: error.issues[0]?.message || "Invalid campaign draft." }, { status: 400 });
+    }
+    const response = repositoryError(error, "Unable to create the local Supabase campaign draft.");
+    return NextResponse.json({ error: response.message }, { status: response.status });
+  }
 }
 
-function localError(error: unknown, fallback: string) {
-  if (error instanceof ZodError) return NextResponse.json({ error: error.issues[0]?.message || "Invalid request." }, { status: 400 });
-  if (error instanceof CampaignLocalModelError) return NextResponse.json({ error: error.message }, { status: error.status });
-  return NextResponse.json({ error: error instanceof Error ? error.message : fallback }, { status: 500 });
+function repositoryError(error: unknown, fallback: string): { message: string; status: number } {
+  if (error instanceof CampaignPlanningRepositoryError) {
+    return { message: error.message, status: error.status };
+  }
+  return { message: error instanceof Error ? error.message : fallback, status: 500 };
 }
-
