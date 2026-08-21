@@ -13,8 +13,9 @@ export async function proxy(request: NextRequest) {
   const isSearchTermOptimization = request.nextUrl.pathname.startsWith("/search-term-optimization");
   const isUserManagement = request.nextUrl.pathname.startsWith("/user-management");
   const isGoogleManagement = request.nextUrl.pathname.startsWith("/manage/google");
+  const isCampaigns = request.nextUrl.pathname.startsWith("/campaigns") || request.nextUrl.pathname.startsWith("/api/campaign-planning");
 
-  if (!session && (isDashboard || isBilling || isSearchTermOptimization || isUserManagement || isGoogleManagement)) {
+  if (!session && (isDashboard || isBilling || isSearchTermOptimization || isUserManagement || isGoogleManagement || isCampaigns)) {
     return NextResponse.redirect(new URL("/", request.url));
   }
 

@@ -13,6 +13,7 @@ import {
   ListChecksIcon,
   Loader2Icon,
   LogOutIcon,
+  MegaphoneIcon,
   SearchIcon,
   SendIcon,
   SlidersHorizontalIcon,
@@ -776,6 +777,19 @@ export function HomePageClient({ displayName, role }: HomePageClientProps) {
             </span>
           </a>
         </div>
+
+        <section className="mt-5" aria-labelledby="campaigns-heading">
+          <h2 id="campaigns-heading" className="mb-3 text-sm font-semibold uppercase tracking-[0.18em] text-white/70">Campaigns</h2>
+          <Link
+            href="/campaigns"
+            className="flex items-center rounded-2xl border border-white/25 bg-white/10 p-4 text-white transition hover:bg-white/15"
+          >
+            <span className="flex items-center gap-2 text-base font-semibold">
+              <MegaphoneIcon className="size-5" />
+              Campaign Planning &amp; Launch
+            </span>
+          </Link>
+        </section>
 
         <section className="mt-5" aria-labelledby="google-tools-heading">
           <h2 id="google-tools-heading" className="mb-3 text-sm font-semibold uppercase tracking-[0.18em] text-white/70">Google</h2>

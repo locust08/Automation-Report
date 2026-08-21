@@ -12,6 +12,7 @@ import {
   IdCardIcon,
   ListChecksIcon,
   LogOutIcon,
+  MegaphoneIcon,
   SearchCheckIcon,
   SlidersHorizontalIcon,
   SparklesIcon,
@@ -83,6 +84,7 @@ export function ReportShell({
     googleManagement: "/manage/google",
     userManagement: "/user-management",
     optimizationScheduling: "/optimization-scheduling",
+    campaigns: "/campaigns",
   };
 
   return (
@@ -155,6 +157,13 @@ export function ReportShell({
                       active={pathname === "/dashboard/media-plan"}
                     >
                       <ClipboardListIcon className="size-5" />
+                    </ReportNavLink>
+                    <ReportNavLink
+                      href={hrefs.campaigns}
+                      label="Campaigns"
+                      active={pathname === "/campaigns"}
+                    >
+                      <MegaphoneIcon className="size-5" />
                     </ReportNavLink>
                     <ReportNavLink
                       href={hrefs.metaImport}
