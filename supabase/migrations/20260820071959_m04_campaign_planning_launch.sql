@@ -293,6 +293,17 @@ begin
 end;
 $$;
 
+create or replace function ads_internal.is_nonempty_json_object(p_value jsonb)
+returns boolean
+language sql
+immutable
+set search_path = ''
+as $$
+  select p_value is not null
+    and pg_catalog.jsonb_typeof(p_value) = 'object'
+    and p_value <> '{}'::jsonb;
+$$;
+
 create or replace function ads_internal.protect_campaign_build_resource()
 returns trigger
 language plpgsql
@@ -301,6 +312,20 @@ as $$
 begin
   if tg_op = 'DELETE' then
     raise exception 'Campaign build resources cannot be deleted' using errcode = '55000';
+  end if;
+
+  if tg_op = 'INSERT' then
+    if new.verified_at is not null
+      and coalesce(pg_catalog.current_setting('ads_internal.gate_2_finalizer', true), '') <> 'on' then
+      raise exception 'Campaign resource verification requires Gate 2 finalizer context' using errcode = '55000';
+    end if;
+    return new;
+  end if;
+
+  if new.build_id is distinct from old.build_id
+    or new.logical_resource_key is distinct from old.logical_resource_key
+    or new.resource_type is distinct from old.resource_type then
+    raise exception 'Campaign resource logical identity is immutable' using errcode = '55000';
   end if;
 
   if old.provider_resource_id is not null
@@ -316,6 +341,11 @@ begin
   if old.verified_at is not null
     and new.verified_at is distinct from old.verified_at then
     raise exception 'A verified campaign resource cannot regress' using errcode = '55000';
+  end if;
+
+  if old.verified_at is null and new.verified_at is not null
+    and coalesce(pg_catalog.current_setting('ads_internal.gate_2_finalizer', true), '') <> 'on' then
+    raise exception 'Campaign resource verification requires Gate 2 finalizer context' using errcode = '55000';
   end if;
 
   return new;
@@ -1128,6 +1158,9 @@ declare
   v_actor_role text;
   v_attempt_number integer;
   v_expired_count integer;
+  v_expired_gate_1_mutation boolean := false;
+  v_expired_gate_2_delivery boolean := false;
+  v_latest_mutation_intent jsonb;
   v_from_status text;
 begin
   select actor.actor_name, actor.actor_email, actor.actor_role
@@ -1197,12 +1230,33 @@ begin
     return v_attempt;
   end if;
 
+  select
+    coalesce(pg_catalog.bool_or(attempt.gate = 1 and attempt.action in ('create', 'retry')), false),
+    coalesce(pg_catalog.bool_or(attempt.gate = 2 and attempt.action = 'deliver'), false)
+  into v_expired_gate_1_mutation, v_expired_gate_2_delivery
+  from public.ads_campaign_gate_attempts as attempt
+  where attempt.build_id = v_build.id and attempt.gate = p_gate
+    and attempt.status = 'claimed' and attempt.released_at is null
+    and attempt.claim_expires_at <= pg_catalog.clock_timestamp();
+
   update public.ads_campaign_gate_attempts
   set status = 'expired', released_at = pg_catalog.clock_timestamp(),
       updated_at = pg_catalog.clock_timestamp()
   where build_id = v_build.id and gate = p_gate and status = 'claimed'
     and released_at is null and claim_expires_at <= pg_catalog.clock_timestamp();
   get diagnostics v_expired_count = row_count;
+
+  if v_expired_count > 0 and p_gate = 1 then
+    v_build.status := 'reconciliation_required';
+    if v_expired_gate_1_mutation and p_action <> 'reconcile' then
+      raise exception 'Expired Gate 1 mutation requires reconciliation before another mutation' using errcode = '55000';
+    end if;
+  elsif v_expired_count > 0 and p_gate = 2 then
+    v_build.status := 'delivery_unverified';
+    if v_expired_gate_2_delivery and p_action <> 'reconcile' then
+      raise exception 'Expired Gate 2 delivery requires reconciliation before another delivery' using errcode = '55000';
+    end if;
+  end if;
 
   if exists (
     select 1 from public.ads_campaign_gate_attempts as attempt
@@ -1246,6 +1300,40 @@ begin
       where resource.resource_type <> item.value ->> 'resource_type'
     ) then
       raise exception 'Logical resource type conflicts with persisted intent' using errcode = '22023';
+    end if;
+    if p_action = 'reconcile' then
+      select attempt.intent into v_latest_mutation_intent
+      from public.ads_campaign_gate_attempts as attempt
+      where attempt.build_id = v_build.id and attempt.gate = 1
+        and attempt.action in ('create', 'retry')
+        and attempt.revision_id = v_build.revision_id
+        and attempt.revision_hash = v_build.revision_hash
+      order by attempt.attempt_number desc, attempt.id desc
+      limit 1;
+      if not found then
+        raise exception 'Gate 1 reconciliation requires a prior mutation intent' using errcode = '55000';
+      end if;
+      if exists (
+        select 1
+        from pg_catalog.jsonb_array_elements(p_intent -> 'resources') as reconciliation_item(value)
+        where not exists (
+          select 1
+          from pg_catalog.jsonb_array_elements(v_latest_mutation_intent -> 'resources') as mutation_item(value)
+          where mutation_item.value ->> 'logical_resource_key' = reconciliation_item.value ->> 'logical_resource_key'
+            and mutation_item.value ->> 'resource_type' = reconciliation_item.value ->> 'resource_type'
+        )
+      ) or exists (
+        select 1
+        from pg_catalog.jsonb_array_elements(v_latest_mutation_intent -> 'resources') as mutation_item(value)
+        where not exists (
+          select 1
+          from pg_catalog.jsonb_array_elements(p_intent -> 'resources') as reconciliation_item(value)
+          where reconciliation_item.value ->> 'logical_resource_key' = mutation_item.value ->> 'logical_resource_key'
+            and reconciliation_item.value ->> 'resource_type' = mutation_item.value ->> 'resource_type'
+        )
+      ) then
+        raise exception 'Gate 1 reconciliation intent must match the latest mutation intent' using errcode = '22023';
+      end if;
     end if;
   else
     if p_action = 'deliver' and v_build.status <> 'ready_to_deliver' then
@@ -1379,6 +1467,11 @@ begin
 
   select plan.* into strict v_plan from public.ads_campaign_plans as plan where plan.id = v_build.plan_id;
   select approval.* into strict v_approval from public.ads_campaign_approvals as approval where approval.id = v_build.approval_id;
+  if v_approval.plan_id is distinct from v_build.plan_id
+    or v_approval.revision_id is distinct from v_build.revision_id
+    or v_approval.revision_hash is distinct from v_build.revision_hash then
+    raise exception 'Campaign build approval revision lock does not match the build' using errcode = '55000';
+  end if;
   if v_approval.decision <> 'approved' or v_approval.expires_at <= pg_catalog.clock_timestamp()
     or v_plan.approved_revision_id <> v_build.revision_id
     or v_plan.approved_revision_hash <> v_build.revision_hash
@@ -1410,17 +1503,8 @@ begin
       where parent_item.value ->> 'logical_resource_key' = retry_item.value ->> 'logical_resource_key'
         and parent_item.value ->> 'resource_type' = retry_item.value ->> 'resource_type'
     )
-  ) or exists (
-    select 1
-    from pg_catalog.jsonb_array_elements(v_parent.intent -> 'resources') as parent_item(value)
-    where not exists (
-      select 1
-      from pg_catalog.jsonb_array_elements(p_intent -> 'resources') as retry_item(value)
-      where retry_item.value ->> 'logical_resource_key' = parent_item.value ->> 'logical_resource_key'
-        and retry_item.value ->> 'resource_type' = parent_item.value ->> 'resource_type'
-    )
   ) then
-    raise exception 'Retry intent must match the parent logical resources' using errcode = '22023';
+    raise exception 'Retry resources must be a key/type subset of the parent mutation intent' using errcode = '22023';
   end if;
 
   select attempt.* into v_attempt
@@ -1439,39 +1523,72 @@ begin
   end if;
 
   if exists (
-    select 1
-    from pg_catalog.jsonb_array_elements(p_intent -> 'resources') as item(value)
-    left join public.ads_campaign_build_resources as resource
-      on resource.build_id = v_build.id
-     and resource.logical_resource_key = item.value ->> 'logical_resource_key'
-    where resource.id is null
-      or resource.provider_resource_id is not null
-      or not exists (
-        select 1
-        from public.ads_campaign_qa_results as qa
-        join public.ads_campaign_gate_attempts as evidence_attempt on evidence_attempt.id = qa.attempt_id
-        where qa.build_resource_id = resource.id
-          and evidence_attempt.build_id = v_build.id
-          and evidence_attempt.action = 'reconcile'
-          and evidence_attempt.claimed_at > v_parent.claimed_at
-          and qa.phase = 'reconciliation'
-          and qa.result = 'missing'
-          and qa.readback_evidence <> '{}'::jsonb
-      )
+    select 1 from public.ads_campaign_gate_attempts as attempt
+    where attempt.build_id = v_build.id and attempt.gate = 1
+      and attempt.status = 'claimed' and attempt.released_at is null
+      and attempt.claim_expires_at <= pg_catalog.clock_timestamp()
+      and attempt.action in ('create', 'retry')
   ) then
-    raise exception 'Mutation retry requires every intended resource to be proven missing by reconciliation readback' using errcode = '55000';
+    raise exception 'Expired Gate 1 mutation requires reconciliation before another mutation' using errcode = '55000';
   end if;
-
-  update public.ads_campaign_gate_attempts
-  set status = 'expired', released_at = pg_catalog.clock_timestamp(), updated_at = pg_catalog.clock_timestamp()
-  where build_id = v_build.id and gate = 1 and status = 'claimed'
-    and released_at is null and claim_expires_at <= pg_catalog.clock_timestamp();
+  if exists (
+    select 1 from public.ads_campaign_gate_attempts as attempt
+    where attempt.build_id = v_build.id and attempt.gate = 1
+      and attempt.status = 'claimed' and attempt.released_at is null
+      and attempt.claim_expires_at <= pg_catalog.clock_timestamp()
+  ) then
+    raise exception 'Expired Gate 1 reconciliation must be reacquired before mutation retry' using errcode = '55000';
+  end if;
   if exists (
     select 1 from public.ads_campaign_gate_attempts as attempt
     where attempt.build_id = v_build.id and attempt.gate = 1
       and attempt.status = 'claimed' and attempt.released_at is null
   ) then
     raise exception 'A different active gate claim already exists' using errcode = '55P03';
+  end if;
+
+  if exists (
+    select 1
+    from pg_catalog.jsonb_array_elements(p_intent -> 'resources') as item(value)
+    left join public.ads_campaign_build_resources as resource
+      on resource.build_id = v_build.id
+     and resource.logical_resource_key = item.value ->> 'logical_resource_key'
+    where resource.id is null
+      or resource.resource_type is distinct from item.value ->> 'resource_type'
+      or resource.provider_resource_id is not null
+      or (
+        select evidence_attempt.status = 'succeeded'
+          and exists (
+            select 1 from public.ads_campaign_qa_results as qa
+            where qa.attempt_id = evidence_attempt.id
+              and qa.build_resource_id = resource.id
+              and qa.phase = 'reconciliation' and qa.required
+              and qa.result = 'missing'
+              and ads_internal.is_nonempty_json_object(qa.readback_evidence)
+          )
+          and not exists (
+            select 1 from public.ads_campaign_qa_results as qa
+            where qa.attempt_id = evidence_attempt.id
+              and qa.build_resource_id = resource.id
+              and qa.phase = 'reconciliation' and qa.required
+              and (qa.result <> 'missing'
+                or not ads_internal.is_nonempty_json_object(qa.readback_evidence))
+          )
+        from public.ads_campaign_gate_attempts as evidence_attempt
+        where evidence_attempt.build_id = v_build.id
+          and evidence_attempt.action = 'reconcile'
+          and evidence_attempt.claimed_at > v_parent.claimed_at
+          and exists (
+            select 1
+            from pg_catalog.jsonb_array_elements(evidence_attempt.intent -> 'resources') as evidence_item(value)
+            where evidence_item.value ->> 'logical_resource_key' = item.value ->> 'logical_resource_key'
+              and evidence_item.value ->> 'resource_type' = item.value ->> 'resource_type'
+          )
+        order by evidence_attempt.claimed_at desc, evidence_attempt.id desc
+        limit 1
+      ) is distinct from true
+  ) then
+    raise exception 'Mutation retry requires every selected resource to be proven missing by newer reconciliation readback' using errcode = '55000';
   end if;
 
   select coalesce(pg_catalog.max(attempt.attempt_number), 0) + 1 into v_attempt_number
@@ -1651,9 +1768,9 @@ begin
     or p_result not in ('match', 'mismatch', 'missing', 'unexpected', 'error') then
     raise exception 'QA result is invalid' using errcode = '22023';
   end if;
-  if p_phase = 'reconciliation' and p_result = 'missing'
-    and (p_readback_evidence is null or p_readback_evidence = '{}'::jsonb) then
-    raise exception 'Missing-resource reconciliation requires readback evidence' using errcode = '22023';
+  if p_phase in ('gate_2', 'reconciliation')
+    and not ads_internal.is_nonempty_json_object(p_readback_evidence) then
+    raise exception 'Authorization-grade readback evidence must be a non-empty JSON object' using errcode = '22023';
   end if;
 
   insert into public.ads_campaign_qa_results (
@@ -1693,6 +1810,8 @@ declare
   v_to_status text;
   v_attempt_status text;
   v_gate_qa_ready boolean;
+  v_reconciliation_all_found boolean := false;
+  v_reconciliation_all_resolved boolean := false;
   v_verified_at timestamptz;
 begin
   select actor.actor_name, actor.actor_email, actor.actor_role
@@ -1719,36 +1838,115 @@ begin
   v_from_status := v_build.status;
 
   if v_attempt.action = 'reconcile' then
-    if v_attempt.gate = 1 and p_provider_outcome = 'missing' and exists (
-      select 1 from public.ads_campaign_qa_results as qa
-      where qa.attempt_id = v_attempt.id and qa.phase = 'reconciliation'
-        and qa.result = 'missing' and qa.readback_evidence <> '{}'::jsonb
-    ) then
-      v_to_status := 'gate_1_failed';
-      v_attempt_status := 'succeeded';
-    elsif v_attempt.gate = 2 and p_provider_outcome = 'succeeded' then
+    if v_attempt.gate = 1 then
       select
-        p_final_readback_evidence is not null
-        and p_final_readback_evidence <> '{}'::jsonb
+        not exists (
+          select 1
+          from pg_catalog.jsonb_array_elements(v_attempt.intent -> 'resources') as item(value)
+          left join public.ads_campaign_build_resources as resource
+            on resource.build_id = v_build.id
+           and resource.logical_resource_key = item.value ->> 'logical_resource_key'
+           and resource.resource_type = item.value ->> 'resource_type'
+          where resource.id is null
+            or resource.provider_resource_id is null
+            or not exists (
+              select 1 from public.ads_campaign_qa_results as qa
+              where qa.attempt_id = v_attempt.id and qa.build_resource_id = resource.id
+                and qa.phase = 'reconciliation' and qa.required and qa.result = 'match'
+                and ads_internal.is_nonempty_json_object(qa.readback_evidence)
+            )
+            or exists (
+              select 1 from public.ads_campaign_qa_results as qa
+              where qa.attempt_id = v_attempt.id and qa.build_resource_id = resource.id
+                and qa.phase = 'reconciliation' and qa.required
+                and (qa.result <> 'match'
+                  or not ads_internal.is_nonempty_json_object(qa.readback_evidence))
+            )
+        ),
+        not exists (
+          select 1
+          from pg_catalog.jsonb_array_elements(v_attempt.intent -> 'resources') as item(value)
+          left join public.ads_campaign_build_resources as resource
+            on resource.build_id = v_build.id
+           and resource.logical_resource_key = item.value ->> 'logical_resource_key'
+           and resource.resource_type = item.value ->> 'resource_type'
+          where resource.id is null
+            or not (
+              (
+                resource.provider_resource_id is not null
+                and exists (
+                  select 1 from public.ads_campaign_qa_results as qa
+                  where qa.attempt_id = v_attempt.id and qa.build_resource_id = resource.id
+                    and qa.phase = 'reconciliation' and qa.required and qa.result = 'match'
+                    and ads_internal.is_nonempty_json_object(qa.readback_evidence)
+                )
+                and not exists (
+                  select 1 from public.ads_campaign_qa_results as qa
+                  where qa.attempt_id = v_attempt.id and qa.build_resource_id = resource.id
+                    and qa.phase = 'reconciliation' and qa.required
+                    and (qa.result <> 'match'
+                      or not ads_internal.is_nonempty_json_object(qa.readback_evidence))
+                )
+              )
+              or (
+                resource.provider_resource_id is null
+                and exists (
+                  select 1 from public.ads_campaign_qa_results as qa
+                  where qa.attempt_id = v_attempt.id and qa.build_resource_id = resource.id
+                    and qa.phase = 'reconciliation' and qa.required and qa.result = 'missing'
+                    and ads_internal.is_nonempty_json_object(qa.readback_evidence)
+                )
+                and not exists (
+                  select 1 from public.ads_campaign_qa_results as qa
+                  where qa.attempt_id = v_attempt.id and qa.build_resource_id = resource.id
+                    and qa.phase = 'reconciliation' and qa.required
+                    and (qa.result <> 'missing'
+                      or not ads_internal.is_nonempty_json_object(qa.readback_evidence))
+                )
+              )
+            )
+        )
+      into v_reconciliation_all_found, v_reconciliation_all_resolved;
+
+      if p_provider_outcome in ('succeeded', 'missing')
+        and ads_internal.is_nonempty_json_object(p_final_readback_evidence)
+        and v_reconciliation_all_found then
+        v_to_status := 'ready_to_deliver';
+        v_attempt_status := 'succeeded';
+      elsif p_provider_outcome in ('succeeded', 'missing')
+        and ads_internal.is_nonempty_json_object(p_final_readback_evidence)
+        and v_reconciliation_all_resolved then
+        v_to_status := 'gate_1_failed';
+        v_attempt_status := 'succeeded';
+      else
+        v_to_status := 'reconciliation_required';
+        v_attempt_status := 'reconciliation_required';
+      end if;
+    elsif p_provider_outcome = 'succeeded' then
+      select
+        ads_internal.is_nonempty_json_object(p_final_readback_evidence)
         and exists (
           select 1
           from public.ads_campaign_qa_results as qa
           join public.ads_campaign_build_resources as resource on resource.id = qa.build_resource_id
           where qa.attempt_id = v_attempt.id and qa.phase = 'reconciliation'
             and qa.required and qa.result = 'match'
-            and qa.readback_evidence <> '{}'::jsonb
+            and ads_internal.is_nonempty_json_object(qa.readback_evidence)
             and resource.resource_type = 'campaign' and resource.provider_resource_id is not null
         )
         and not exists (
           select 1 from public.ads_campaign_qa_results as qa
           where qa.attempt_id = v_attempt.id and qa.phase = 'reconciliation'
-            and qa.required and qa.result <> 'match'
+            and qa.required
+            and (qa.result <> 'match'
+              or not ads_internal.is_nonempty_json_object(qa.readback_evidence))
         )
       into v_gate_qa_ready;
       if v_gate_qa_ready then
         v_to_status := 'verified';
         v_attempt_status := 'succeeded';
         v_verified_at := pg_catalog.clock_timestamp();
+        perform pg_catalog.set_config('ads_internal.gate_2_finalizer', 'on', true);
         update public.ads_campaign_build_resources as resource
         set verified_at = v_verified_at, updated_at = v_verified_at
         where resource.build_id = v_build.id and resource.provider_resource_id is not null
@@ -1756,17 +1954,15 @@ begin
             select 1 from public.ads_campaign_qa_results as qa
             where qa.attempt_id = v_attempt.id and qa.build_resource_id = resource.id
               and qa.phase = 'reconciliation' and qa.result = 'match'
-              and qa.readback_evidence <> '{}'::jsonb
+              and ads_internal.is_nonempty_json_object(qa.readback_evidence)
           );
+        perform pg_catalog.set_config('ads_internal.gate_2_finalizer', 'off', true);
       else
         v_to_status := 'delivery_unverified';
         v_attempt_status := 'reconciliation_required';
       end if;
-    elsif v_attempt.gate = 2 then
-      v_to_status := 'delivery_unverified';
-      v_attempt_status := 'reconciliation_required';
     else
-      v_to_status := 'reconciliation_required';
+      v_to_status := 'delivery_unverified';
       v_attempt_status := 'reconciliation_required';
     end if;
   elsif v_attempt.gate = 1 then
@@ -1818,26 +2014,29 @@ begin
       v_attempt_status := 'failed';
     else
       select
-        p_final_readback_evidence is not null
-        and p_final_readback_evidence <> '{}'::jsonb
+        ads_internal.is_nonempty_json_object(p_final_readback_evidence)
         and exists (
           select 1
           from public.ads_campaign_qa_results as qa
           join public.ads_campaign_build_resources as resource on resource.id = qa.build_resource_id
           where qa.attempt_id = v_attempt.id and qa.phase = 'gate_2' and qa.required
-            and qa.result = 'match' and qa.readback_evidence <> '{}'::jsonb
+            and qa.result = 'match'
+            and ads_internal.is_nonempty_json_object(qa.readback_evidence)
             and resource.resource_type = 'campaign' and resource.provider_resource_id is not null
         )
         and not exists (
           select 1 from public.ads_campaign_qa_results as qa
           where qa.attempt_id = v_attempt.id and qa.phase = 'gate_2'
-            and qa.required and qa.result <> 'match'
+            and qa.required
+            and (qa.result <> 'match'
+              or not ads_internal.is_nonempty_json_object(qa.readback_evidence))
         )
       into v_gate_qa_ready;
       if v_gate_qa_ready then
         v_to_status := 'verified';
         v_attempt_status := 'succeeded';
         v_verified_at := pg_catalog.clock_timestamp();
+        perform pg_catalog.set_config('ads_internal.gate_2_finalizer', 'on', true);
         update public.ads_campaign_build_resources as resource
         set verified_at = v_verified_at, updated_at = v_verified_at
         where resource.build_id = v_build.id and resource.provider_resource_id is not null
@@ -1845,11 +2044,12 @@ begin
             select 1 from public.ads_campaign_qa_results as qa
             where qa.attempt_id = v_attempt.id and qa.build_resource_id = resource.id
               and qa.phase = 'gate_2' and qa.result = 'match'
-              and qa.readback_evidence <> '{}'::jsonb
+              and ads_internal.is_nonempty_json_object(qa.readback_evidence)
           );
+        perform pg_catalog.set_config('ads_internal.gate_2_finalizer', 'off', true);
       else
         v_to_status := 'delivery_unverified';
-        v_attempt_status := 'failed';
+        v_attempt_status := 'reconciliation_required';
       end if;
     end if;
   end if;
@@ -1870,7 +2070,10 @@ begin
       delivered_at = case when v_to_status = 'verified' then v_verified_at else delivered_at end,
       verified_at = case when v_to_status = 'verified' then v_verified_at else verified_at end,
       final_readback_evidence = case
-        when v_attempt.gate = 2 then coalesce(p_final_readback_evidence, '{}'::jsonb)
+        when v_attempt.gate = 2
+          and ads_internal.is_nonempty_json_object(p_final_readback_evidence)
+          then p_final_readback_evidence
+        when v_attempt.gate = 2 then '{}'::jsonb
         else final_readback_evidence
       end,
       updated_at = pg_catalog.clock_timestamp(), lock_version = lock_version + 1
@@ -1927,19 +2130,22 @@ begin
     raise exception 'Campaign build revision lock does not match' using errcode = '40001';
   end if;
 
+  if p_expected_build_lock_version is null then
+    raise exception 'Campaign build lock version is required for handoff' using errcode = '40001';
+  end if;
+
   select handoff.* into v_existing
   from public.ads_campaign_monitoring_handoffs as handoff where handoff.build_id = v_build.id;
   if found then
     return v_existing;
   end if;
 
-  if p_expected_build_lock_version is null
-    or p_expected_build_lock_version is distinct from v_build.lock_version then
+  if p_expected_build_lock_version is distinct from v_build.lock_version then
     raise exception 'Campaign build lock version is stale' using errcode = '40001';
   end if;
   if v_build.status <> 'verified' or v_build.verified_at is null
-    or v_build.final_readback_evidence = '{}'::jsonb then
-    raise exception 'Monitoring handoff requires a verified build with final readback' using errcode = '55000';
+    or not ads_internal.is_nonempty_json_object(v_build.final_readback_evidence) then
+    raise exception 'Monitoring handoff requires non-empty-object final readback evidence' using errcode = '55000';
   end if;
 
   select revision.* into strict v_revision
@@ -2006,7 +2212,7 @@ create trigger acpr_append_only before update or delete on public.ads_campaign_p
 for each row execute function ads_internal.reject_m04_row_mutation();
 create trigger aca_append_only before update or delete on public.ads_campaign_approvals
 for each row execute function ads_internal.reject_m04_row_mutation();
-create trigger acbr_protect before update or delete on public.ads_campaign_build_resources
+create trigger acbr_protect before insert or update or delete on public.ads_campaign_build_resources
 for each row execute function ads_internal.protect_campaign_build_resource();
 create trigger acqr_append_only before update or delete on public.ads_campaign_qa_results
 for each row execute function ads_internal.reject_m04_row_mutation();
@@ -2037,9 +2243,9 @@ begin
     'ads_campaign_gate_attempts','ads_campaign_qa_results','ads_campaign_audit_events',
     'ads_campaign_monitoring_handoffs'
   ] loop
-    execute format('revoke all on table public.%I from public, anon, authenticated', table_name);
+    execute format('revoke all on table public.%I from public, anon, authenticated, service_role', table_name);
     execute format('grant select on table public.%I to authenticated', table_name);
-    execute format('grant select, insert, update, delete on table public.%I to service_role', table_name);
+    execute format('grant select on table public.%I to service_role', table_name);
     execute format(
       'create policy %I on public.%I for select to authenticated using ((select ads_internal.is_approved_operator()))',
       table_name || '_approved_operator_select', table_name
@@ -2050,6 +2256,7 @@ $$;
 
 revoke all on function ads_internal.is_approved_operator() from public, anon;
 revoke all on function ads_internal.reject_m04_row_mutation() from public, anon, authenticated;
+revoke all on function ads_internal.is_nonempty_json_object(jsonb) from public, anon, authenticated, service_role;
 revoke all on function ads_internal.protect_campaign_build_resource() from public, anon, authenticated, service_role;
 revoke all on function ads_internal.resolve_m04_actor(uuid) from public, anon, authenticated, service_role;
 revoke all on function ads_internal.append_campaign_audit(bigint, bigint, bigint, bigint, text, text, text, uuid, inet, text, jsonb) from public, anon, authenticated, service_role;
