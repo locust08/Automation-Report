@@ -46,6 +46,3 @@ $$;
 
 revoke all on function m04_ads_internal.resolve_m04_actor(uuid) from public, anon, authenticated;
 grant execute on function m04_ads_internal.resolve_m04_actor(uuid) to service_role;
-
-
-
