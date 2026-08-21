@@ -16,7 +16,7 @@ export type CampaignDatabaseConnection = {
 };
 
 export type LocalSupabaseStage2Meta = {
-  mode: "local-supabase-stage2";
+  mode: "crm08-mock-workflow";
   providerWrites: false;
   connection: CampaignDatabaseConnection;
 };

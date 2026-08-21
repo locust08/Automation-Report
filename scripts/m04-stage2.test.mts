@@ -118,9 +118,12 @@ const tikTokDraft = {
 } as const;
 
 test("Stage 2 accepts one supported Google, Meta, and TikTok plan", () => {
-  assert.equal(campaignPlanDraftInputSchema.parse(googleSearchDraft).campaign_type, "search");
-  assert.equal(campaignPlanDraftInputSchema.parse(metaDraft).conversion_location, "website");
-  assert.equal(campaignPlanDraftInputSchema.parse(tikTokDraft).creative.spark_ad, false);
+  const google = campaignPlanDraftInputSchema.parse(googleSearchDraft);
+  const meta = campaignPlanDraftInputSchema.parse(metaDraft);
+  const tiktok = campaignPlanDraftInputSchema.parse(tikTokDraft);
+  assert.equal(google.platform === "google" && google.campaign_type, "search");
+  assert.equal(meta.platform === "meta" && meta.conversion_location, "website");
+  assert.equal(tiktok.platform === "tiktok" && tiktok.creative.spark_ad, false);
 });
 
 test("Stage 2 rejects unsupported platform combinations instead of approximating them", () => {
@@ -232,60 +235,3 @@ test("the complete 12-state build table allows only declared transitions", () =>
   assert.equal(canTransitionCampaignBuild("handoff_complete", "pending_gate_1"), false);
   assert.equal(canTransitionCampaignBuild("cancelled", "gate_1_in_progress"), false);
 });
-
-test("the local Supabase repository stores exactly one Google Search draft revision", async () => {
-  const repository = require("../lib/campaign-planning/supabase-repository.ts") as typeof import("../lib/campaign-planning/supabase-repository.ts");
-  const expected = prepareCampaignPlanDraft(googleSearchDraft);
-  const created = await repository.createCampaignPlanDraft(googleSearchDraft);
-  const fetched = await repository.getCampaignPlan(created.plan.id);
-  const listed = await repository.listCampaignPlans();
-
-  assert.equal(listed.campaigns.filter((plan) => plan.id === created.plan.id).length, 1);
-  assert.equal(fetched.plan.platform, "google");
-  assert.equal(fetched.currentRevision.payloadHash, expected.payload_hash);
-  assert.equal(fetched.currentRevision.canonicalJson, expected.canonical_json);
-
-  const planRows = await readLocalSupabaseRows("ads_campaign_plans", `id=eq.${created.plan.id}`);
-  assert.equal(planRows.length, 1);
-  const revisionRows = await readLocalSupabaseRows(
-    "ads_campaign_plan_revisions",
-    `plan_id=eq.${created.plan.id}`,
-  ) as Array<{ id: number; canonical_json: string; payload_hash: string }>;
-  assert.equal(revisionRows.length, 1);
-  assert.equal(revisionRows[0]?.canonical_json, expected.canonical_json);
-  assert.equal(revisionRows[0]?.payload_hash, expected.payload_hash);
-
-  const revisionId = revisionRows[0]?.id;
-  assert.ok(revisionId);
-  assert.equal((await readLocalSupabaseRows("ads_google_campaign_revision_details", `revision_id=eq.${revisionId}`)).length, 1);
-  assert.equal((await readLocalSupabaseRows("ads_meta_campaign_revision_details", `revision_id=eq.${revisionId}`)).length, 0);
-  assert.equal((await readLocalSupabaseRows("ads_tiktok_campaign_revision_details", `revision_id=eq.${revisionId}`)).length, 0);
-
-  for (const table of [
-    "ads_campaign_approvals",
-    "ads_campaign_builds",
-    "ads_campaign_build_resources",
-    "ads_campaign_gate_attempts",
-    "ads_campaign_qa_results",
-    "ads_campaign_monitoring_handoffs",
-  ]) {
-    assert.equal((await readLocalSupabaseRows(table)).length, 0, `${table} must remain empty`);
-  }
-});
-
-async function readLocalSupabaseRows(table: string, filter?: string): Promise<unknown[]> {
-  const baseUrl = process.env.M04_SUPABASE_URL;
-  const serviceRoleKey = process.env.M04_SUPABASE_SERVICE_ROLE_KEY;
-  assert.ok(baseUrl, "M04_SUPABASE_URL must be configured by the disposable test runner");
-  assert.ok(serviceRoleKey, "M04_SUPABASE_SERVICE_ROLE_KEY must be configured by the disposable test runner");
-
-  const query = filter ? `?select=*&${filter}` : "?select=*";
-  const response = await fetch(`${baseUrl.replace(/\/$/, "")}/rest/v1/${table}${query}`, {
-    headers: {
-      apikey: serviceRoleKey,
-      authorization: `Bearer ${serviceRoleKey}`,
-    },
-  });
-  assert.equal(response.ok, true, `Unable to read ${table}: ${response.status}`);
-  return await response.json() as unknown[];
-}

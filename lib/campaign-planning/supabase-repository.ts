@@ -20,7 +20,6 @@ type JsonObject = Record<string, unknown>;
 type LocalSupabaseConfig = {
   restUrl: string;
   serviceRoleKey: string;
-  actorId: string;
   label: string;
 };
 
@@ -34,9 +33,9 @@ type DraftRpcRow = {
 };
 
 const PLATFORM_DETAIL_TABLE = {
-  google: "ads_google_campaign_revision_details",
-  meta: "ads_meta_campaign_revision_details",
-  tiktok: "ads_tiktok_campaign_revision_details",
+  google: "m04_ads_google_campaign_revision_details",
+  meta: "m04_ads_meta_campaign_revision_details",
+  tiktok: "m04_ads_tiktok_campaign_revision_details",
 } as const;
 
 export class CampaignPlanningRepositoryError extends Error {
@@ -48,32 +47,32 @@ export class CampaignPlanningRepositoryError extends Error {
 
 export function disconnectedStage2Meta(): LocalSupabaseStage2Meta {
   return {
-    mode: "local-supabase-stage2",
+    mode: "crm08-mock-workflow",
     providerWrites: false,
-    connection: { status: "disconnected", label: "Local Supabase" },
+    connection: { status: "disconnected", label: "CRM08 Supabase" },
   };
 }
 
 export async function listCampaignPlans(): Promise<CampaignPlanningListPayload> {
   const config = getLocalSupabaseConfig();
   const [accountRows, packageRows, planRows, revisionRows] = await Promise.all([
-    readRows(config, "ads_ad_accounts", {
+    readRows(config, "m04_ads_ad_accounts", {
       select: "id,client_id,platform,provider_account_id,account_name,currency,timezone,access_status,access_evidence,access_verified_at,is_active",
       is_active: "eq.true",
       access_status: "eq.verified",
       order: "account_name.asc,id.asc",
     }),
-    readRows(config, "ads_budget_packages", {
+    readRows(config, "m04_ads_budget_packages", {
       select: "id,client_id,package_name,currency,start_date,end_date,envelope_amount,committed_amount,status",
       status: "eq.active",
       order: "package_name.asc,id.asc",
     }),
-    readRows(config, "ads_campaign_plans", {
+    readRows(config, "m04_ads_campaign_plans", {
       select: "id,client_id,budget_package_id,ad_account_id,platform,active_revision_id,status,created_by_name,created_at,updated_at,lock_version",
       active_revision_id: "not.is.null",
       order: "updated_at.desc,id.desc",
     }),
-    readRows(config, "ads_campaign_plan_revisions", {
+    readRows(config, "m04_ads_campaign_plan_revisions", {
       select: revisionSelect(),
       order: "created_at.desc,id.desc",
     }),
@@ -109,7 +108,7 @@ export async function getCampaignPlan(planId: number): Promise<CampaignPlanDetai
   }
 
   const config = getLocalSupabaseConfig();
-  const planRows = await readRows(config, "ads_campaign_plans", {
+  const planRows = await readRows(config, "m04_ads_campaign_plans", {
     select: "id,client_id,budget_package_id,ad_account_id,platform,active_revision_id,status,created_by_name,created_at,updated_at,lock_version",
     id: `eq.${planId}`,
     limit: "1",
@@ -120,17 +119,17 @@ export async function getCampaignPlan(planId: number): Promise<CampaignPlanDetai
   const accountId = numberValue(planRow.ad_account_id, "ad account id");
   const packageId = numberValue(planRow.budget_package_id, "budget package id");
   const [revisionRows, accountRows, packageRows] = await Promise.all([
-    readRows(config, "ads_campaign_plan_revisions", {
+    readRows(config, "m04_ads_campaign_plan_revisions", {
       select: revisionSelect(),
       plan_id: `eq.${planId}`,
       order: "revision_number.desc,id.desc",
     }),
-    readRows(config, "ads_ad_accounts", {
+    readRows(config, "m04_ads_ad_accounts", {
       select: "id,client_id,platform,provider_account_id,account_name,currency,timezone,access_status,access_evidence,access_verified_at,is_active",
       id: `eq.${accountId}`,
       limit: "1",
     }),
-    readRows(config, "ads_budget_packages", {
+    readRows(config, "m04_ads_budget_packages", {
       select: "id,client_id,package_name,currency,start_date,end_date,envelope_amount,committed_amount,status",
       id: `eq.${packageId}`,
       limit: "1",
@@ -187,7 +186,7 @@ export async function getCampaignPlan(planId: number): Promise<CampaignPlanDetai
 
 export async function createCampaignPlanDraft(
   input: CampaignPlanDraftInput,
-  requestContext?: { userAgent?: string | null },
+  requestContext: { actorId: string; userAgent?: string | null },
 ): Promise<CampaignPlanDetail> {
   const config = getLocalSupabaseConfig();
   const selection = await loadSelectedAccountAndPackage(config, input.ad_account_id, input.budget_package_id);
@@ -210,7 +209,7 @@ export async function createCampaignPlanDraft(
     client_name: selection.account.clientName,
   });
   const platformDetail = serializePlatformDetail(prepared.plan);
-  const rpcRows = await supabaseRequest<DraftRpcRow[]>(config, "rpc/ads_create_campaign_plan_draft", {
+  const rpcRows = await supabaseRequest<DraftRpcRow[]>(config, "rpc/m04_ads_create_campaign_plan_draft", {
     method: "POST",
     body: {
       p_client_id: prepared.plan.client_id,
@@ -221,22 +220,38 @@ export async function createCampaignPlanDraft(
       p_canonical_json: prepared.canonical_json,
       p_expected_payload_hash: prepared.payload_hash,
       p_platform_detail: platformDetail,
-      p_actor_id: config.actorId,
+      p_actor_id: requestContext.actorId,
       p_trusted_ip: null,
-      p_trusted_user_agent: requestContext?.userAgent?.trim().slice(0, 1_000) || "m04-local-stage2",
+      p_trusted_user_agent: requestContext.userAgent?.trim().slice(0, 1_000) || "m04-crm08-mock",
     },
   });
 
   const result = rpcRows[0];
   if (!result || result.platform !== prepared.plan.platform || result.payload_hash !== prepared.payload_hash) {
-    throw new CampaignPlanningRepositoryError("Local Supabase returned an invalid draft result.", 500);
+    throw new CampaignPlanningRepositoryError("CRM08 Supabase returned an invalid draft result.", 500);
   }
   return getCampaignPlan(numberValue(result.plan_id, "created plan id"));
 }
 
+export async function runMockCampaignWorkflow(planId: number, actorId: string): Promise<CampaignPlanDetail> {
+  if (!Number.isSafeInteger(planId) || planId < 1) {
+    throw new CampaignPlanningRepositoryError("Invalid campaign ID.", 400);
+  }
+  const config = getLocalSupabaseConfig();
+  await supabaseRequest<JsonObject[]>(config, "rpc/m04_ads_run_mock_workflow", {
+    method: "POST",
+    body: {
+      p_plan_id: planId,
+      p_actor_id: actorId,
+      p_request_idempotency_key: `mock-workflow:${planId}`,
+    },
+  });
+  return getCampaignPlan(planId);
+}
+
 function connectedStage2Meta(config: LocalSupabaseConfig): LocalSupabaseStage2Meta {
   return {
-    mode: "local-supabase-stage2",
+    mode: "crm08-mock-workflow",
     providerWrites: false,
     connection: { status: "connected", label: config.label },
   };
@@ -246,45 +261,36 @@ function getLocalSupabaseConfig(): LocalSupabaseConfig {
   if (typeof window !== "undefined") {
     throw new CampaignPlanningRepositoryError("The M04 Supabase repository is server-only.", 500);
   }
-  if (process.env.NODE_ENV === "production") {
-    throw new CampaignPlanningRepositoryError("M04 Stage 2 local Supabase is disabled in production.", 403);
-  }
-
-  const configuredUrl = process.env.M04_SUPABASE_URL?.trim();
-  const serviceRoleKey = process.env.M04_SUPABASE_SERVICE_ROLE_KEY?.trim();
-  const actorId = process.env.M04_LOCAL_ACTOR_ID?.trim();
-  if (!configuredUrl || !serviceRoleKey || !actorId) {
+  const configuredUrl = process.env.SUPABASE_URL?.trim() || process.env.NEXT_PUBLIC_SUPABASE_URL?.trim();
+  const serviceRoleKey = process.env.SUPABASE_SECRET_KEY?.trim() || process.env.SUPABASE_SERVICE_ROLE_KEY?.trim();
+  if (!configuredUrl || !serviceRoleKey) {
     throw new CampaignPlanningRepositoryError(
-      "M04_SUPABASE_URL, M04_SUPABASE_SERVICE_ROLE_KEY, and M04_LOCAL_ACTOR_ID are required.",
+      "SUPABASE_URL and a server-only Supabase secret key are required.",
       503,
     );
-  }
-  if (!isPostgresUuid(actorId)) {
-    throw new CampaignPlanningRepositoryError("M04_LOCAL_ACTOR_ID must be a UUID.", 503);
   }
 
   let url: URL;
   try {
     url = new URL(configuredUrl);
   } catch {
-    throw new CampaignPlanningRepositoryError("M04_SUPABASE_URL is invalid.", 503);
+    throw new CampaignPlanningRepositoryError("SUPABASE_URL is invalid.", 503);
   }
   const hostname = url.hostname.toLowerCase();
-  if (!["127.0.0.1", "localhost", "::1", "[::1]"].includes(hostname)) {
-    throw new CampaignPlanningRepositoryError("M04 Stage 2 accepts loopback Supabase URLs only.", 403);
+  if (hostname !== "gsmxeosdjsbujhiwhbzk.supabase.co") {
+    throw new CampaignPlanningRepositoryError("M04 is restricted to the CRM08 Supabase project.", 403);
   }
   if ((url.protocol !== "http:" && url.protocol !== "https:")
     || url.username || url.password || url.search || url.hash
     || (url.pathname !== "/" && url.pathname !== "")) {
-    throw new CampaignPlanningRepositoryError("M04_SUPABASE_URL must be a loopback HTTP origin.", 503);
+    throw new CampaignPlanningRepositoryError("SUPABASE_URL must be the CRM08 HTTPS origin.", 503);
   }
 
   const port = url.port ? `:${url.port}` : "";
   return {
     restUrl: `${url.origin}/rest/v1`,
     serviceRoleKey,
-    actorId,
-    label: `Local Supabase (${hostname}${port})`,
+    label: `CRM08 Supabase (${hostname}${port})`,
   };
 }
 
@@ -294,12 +300,12 @@ async function loadSelectedAccountAndPackage(
   packageId: number,
 ): Promise<{ account: CampaignAccountOption; budgetPackage: CampaignPackageOption }> {
   const [accountRows, packageRows] = await Promise.all([
-    readRows(config, "ads_ad_accounts", {
+    readRows(config, "m04_ads_ad_accounts", {
       select: "id,client_id,platform,provider_account_id,account_name,currency,timezone,access_status,access_evidence,access_verified_at,is_active",
       id: `eq.${accountId}`,
       limit: "1",
     }),
-    readRows(config, "ads_budget_packages", {
+    readRows(config, "m04_ads_budget_packages", {
       select: "id,client_id,package_name,currency,start_date,end_date,envelope_amount,committed_amount,status",
       id: `eq.${packageId}`,
       limit: "1",
@@ -497,8 +503,8 @@ async function supabaseRequest<T>(
   } catch (error) {
     throw new CampaignPlanningRepositoryError(
       error instanceof Error && error.name === "TimeoutError"
-        ? "Local Supabase connection timed out."
-        : "Unable to connect to local Supabase.",
+        ? "CRM08 Supabase connection timed out."
+        : "Unable to connect to CRM08 Supabase.",
       503,
     );
   }
@@ -508,7 +514,7 @@ async function supabaseRequest<T>(
   if (!response.ok) {
     const errorPayload = objectValue(payload);
     const code = optionalString(errorPayload.code);
-    const message = optionalString(errorPayload.message) || `Local Supabase request failed (${response.status}).`;
+    const message = optionalString(errorPayload.message) || `CRM08 Supabase request failed (${response.status}).`;
     throw new CampaignPlanningRepositoryError(message, databaseErrorStatus(code, response.status));
   }
   return payload as T;
@@ -519,7 +525,7 @@ function parseResponse(value: string): unknown {
   try {
     return JSON.parse(value) as unknown;
   } catch {
-    throw new CampaignPlanningRepositoryError("Local Supabase returned invalid JSON.", 502);
+    throw new CampaignPlanningRepositoryError("CRM08 Supabase returned invalid JSON.", 502);
   }
 }
 
@@ -569,8 +575,4 @@ function objectValue(value: unknown): JsonObject {
   return typeof value === "object" && value !== null && !Array.isArray(value)
     ? value as JsonObject
     : {};
-}
-
-function isPostgresUuid(value: string): boolean {
-  return /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(value);
 }

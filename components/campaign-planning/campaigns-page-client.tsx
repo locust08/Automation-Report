@@ -111,7 +111,7 @@ const baseForm: FormState = {
 
 export function CampaignsPageClient({ initialRole }: { initialRole: AuthRole }) {
   const [data, setData] = useState<CampaignPlanningListPayload | null>(null);
-  const [connection, setConnection] = useState<CampaignDatabaseConnection>({ status: "disconnected", label: "Local Supabase" });
+  const [connection, setConnection] = useState<CampaignDatabaseConnection>({ status: "disconnected", label: "CRM08 Supabase" });
   const [selected, setSelected] = useState<CampaignPlanDetail | null>(null);
   const [platformFilter, setPlatformFilter] = useState<"all" | CampaignPlatform>("all");
   const [showCreate, setShowCreate] = useState(false);
@@ -145,6 +145,17 @@ export function CampaignsPageClient({ initialRole }: { initialRole: AuthRole }) 
     } finally {
       setBusy(false);
     }
+  }
+
+  async function runMockWorkflow(id: number) {
+    setBusy(true); setError(null);
+    try {
+      const response = await fetch(`/api/campaign-planning/${id}/actions`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ action: "run_full_mock" }) });
+      const payload = await response.json() as CampaignPlanDetail & { error?: string };
+      if (!response.ok) throw new Error(payload.error || "Mock workflow failed.");
+      setSelected(payload); await load();
+    } catch (cause) { setError(cause instanceof Error ? cause.message : "Mock workflow failed."); }
+    finally { setBusy(false); }
   }
 
   async function createDraft(event: React.FormEvent) {
@@ -182,10 +193,10 @@ export function CampaignsPageClient({ initialRole }: { initialRole: AuthRole }) 
   )) ?? [], [data, platformFilter]);
 
   return (
-    <ReportShell title="Campaign Planning" dateLabel="Local Supabase Stage 2" initialRole={initialRole} reportReady={Boolean(data)}>
+    <ReportShell title="Campaign Planning" dateLabel="CRM08 Mock Workflow" initialRole={initialRole} reportReady={Boolean(data)}>
       <div className="space-y-5 py-6">
         <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-amber-300 bg-amber-50 px-5 py-4 text-sm text-amber-950">
-          <div><strong>Local Supabase Stage 2 — no provider calls.</strong> Draft storage only; approval, build, Gate, handoff, and launch actions are disabled.</div>
+          <div><strong>CRM08 Supabase — Mock workflow, no provider calls.</strong> All simulated provider identifiers use the <code>mock-</code> prefix.</div>
           <Badge variant="outline" className={connection.status === "connected" ? "border-emerald-400 bg-emerald-50 text-emerald-800" : "border-red-300 bg-red-50 text-red-800"}>
             <DatabaseIcon /> {connection.status === "connected" ? `Connected · ${connection.label}` : "Database disconnected"}
           </Badge>
@@ -218,7 +229,7 @@ export function CampaignsPageClient({ initialRole }: { initialRole: AuthRole }) 
             <div className="grid gap-3 lg:grid-cols-2">
               {campaigns.map((campaign) => (
                 <button key={campaign.id} type="button" onClick={() => void openPlan(campaign.id)} className="rounded-xl border bg-white p-4 text-left transition hover:border-red-300 hover:shadow-sm">
-                  <div className="flex items-start justify-between gap-4"><div><p className="font-semibold">{campaign.campaignName}</p><p className="mt-1 text-sm text-muted-foreground">{campaign.clientName} · {campaign.accountName}</p></div><Badge variant="outline">Draft</Badge></div>
+                  <div className="flex items-start justify-between gap-4"><div><p className="font-semibold">{campaign.campaignName}</p><p className="mt-1 text-sm text-muted-foreground">{campaign.clientName} · {campaign.accountName}</p></div><Badge variant="outline">{humanize(campaign.status)}</Badge></div>
                   <div className="mt-4 flex items-center justify-between text-sm"><span className="uppercase tracking-wide text-muted-foreground">{campaign.platform}</span><span>{money(campaign.allocatedBudget, campaign.currency)}</span></div>
                 </button>
               ))}
@@ -227,7 +238,7 @@ export function CampaignsPageClient({ initialRole }: { initialRole: AuthRole }) 
           </CardContent>
         </Card>
 
-        {selected ? <CampaignDetail detail={selected} /> : null}
+        {selected ? <CampaignDetail detail={selected} busy={busy} runMockWorkflow={runMockWorkflow} /> : null}
       </div>
     </ReportShell>
   );
@@ -347,10 +358,11 @@ function CreativeFields({ form, set, google = false }: { form: FormState; set: (
   </>;
 }
 
-function CampaignDetail({ detail }: { detail: CampaignPlanDetail }) {
-  return <Card><CardHeader><div className="flex items-start justify-between gap-3"><div><CardTitle>{detail.plan.campaignName}</CardTitle><CardDescription>{detail.plan.platform.toUpperCase()} · Revision {detail.currentRevision.revisionNo} · immutable draft</CardDescription></div><Badge>Draft</Badge></div></CardHeader><CardContent className="space-y-5">
+function CampaignDetail({ detail, busy, runMockWorkflow }: { detail: CampaignPlanDetail; busy: boolean; runMockWorkflow: (id: number) => void }) {
+  return <Card><CardHeader><div className="flex items-start justify-between gap-3"><div><CardTitle>{detail.plan.campaignName}</CardTitle><CardDescription>{detail.plan.platform.toUpperCase()} · Revision {detail.currentRevision.revisionNo} · immutable revision</CardDescription></div><Badge>{humanize(detail.plan.status)}</Badge></div></CardHeader><CardContent className="space-y-5">
     <div className="grid gap-3 text-sm sm:grid-cols-2 lg:grid-cols-4"><Fact label="Objective" value={humanize(detail.plan.objective)} /><Fact label="Flight" value={`${detail.plan.startDate} → ${detail.plan.endDate}`} /><Fact label="Budget" value={money(detail.plan.allocatedBudget, detail.plan.currency)} /><Fact label="Destination" value={detail.plan.destination} /></div>
     <div className="grid gap-4 lg:grid-cols-2"><Panel title="Stored revision" rows={[`Hash: ${detail.currentRevision.payloadHash}`, `Daily budget: ${money(detail.currentRevision.dailyBudget, detail.plan.currency)}`, `Projected total: ${money(detail.currentRevision.projectedTotal, detail.plan.currency)}`, `Author: ${detail.currentRevision.authorName}`]} /><div className="rounded-xl border bg-slate-50 p-4"><p className="font-medium">{humanize(detail.platformDetail.platform)} detail row</p><pre className="mt-2 max-h-64 overflow-auto whitespace-pre-wrap text-xs text-muted-foreground">{JSON.stringify(detail.platformDetail.values, null, 2)}</pre></div></div>
+    {detail.plan.status === "draft" ? <Button type="button" className="w-full" disabled={busy} onClick={() => runMockWorkflow(detail.plan.id)}>Run complete offline mock workflow</Button> : <div className="rounded-xl border border-emerald-300 bg-emerald-50 p-4 text-sm text-emerald-900">Mock workflow complete. No provider request was made and no M03/M05 record was published.</div>}
   </CardContent></Card>;
 }
 

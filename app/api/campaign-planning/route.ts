@@ -36,6 +36,7 @@ export async function POST(request: Request) {
   try {
     const input = createCampaignPlanSchema.parse(await request.json());
     const detail = await createCampaignPlanDraft(input, {
+      actorId: session.sub,
       userAgent: request.headers.get("user-agent"),
     });
     return NextResponse.json(detail, { status: 201 });
