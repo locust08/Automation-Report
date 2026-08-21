@@ -520,6 +520,403 @@ select throws_ok(
   'release is forbidden after launch'
 );
 
+create function pg_temp.make_hardening_approved_build(
+  p_fixture text,
+  p_plan_status text,
+  p_build_status text
+)
+returns bigint
+language plpgsql
+as $$
+declare
+  v_account_id bigint;
+  v_package_id bigint;
+  v_plan_id bigint;
+  v_revision_id bigint;
+  v_approval_id bigint;
+  v_build_id bigint;
+begin
+  insert into public.ads_ad_accounts (
+    client_id, platform, provider_account_id, account_name, currency, timezone,
+    access_status, access_evidence, access_verified_at, is_active
+  ) values (
+    '00000000-0000-0000-0000-000000000001', 'google',
+    'hardening-' || p_fixture, 'Hardening ' || p_fixture, 'MYR', 'Asia/Kuala_Lumpur',
+    'verified', '{"source":"workflow-hardening"}', clock_timestamp(), true
+  ) returning id into v_account_id;
+
+  insert into public.ads_budget_packages (
+    client_id, package_key, package_name, currency, start_date, end_date,
+    envelope_amount, committed_amount, status
+  ) values (
+    '00000000-0000-0000-0000-000000000001', 'hardening-' || p_fixture,
+    'Hardening ' || p_fixture, 'MYR', '2026-08-01', '2026-08-31',
+    1000, 100, 'active'
+  ) returning id into v_package_id;
+
+  insert into public.ads_campaign_plans (
+    client_id, budget_package_id, ad_account_id, platform, reserved_budget,
+    status, created_by_id, created_by_name, lock_version
+  ) values (
+    '00000000-0000-0000-0000-000000000001', v_package_id, v_account_id,
+    'google', 100, p_plan_status,
+    '00000000-0000-0000-0000-000000000051', p_fixture, 10
+  ) returning id into v_plan_id;
+
+  insert into public.ads_campaign_plan_revisions (
+    plan_id, revision_number, client_id, ad_account_id, budget_package_id,
+    platform, provider_account_id, currency, timezone, start_date, end_date,
+    allocated_budget, increment_amount, daily_budget, projected_total,
+    objective, destination, plan_payload, canonical_json, payload_hash,
+    created_by_id, created_by_name
+  ) values (
+    v_plan_id, 1, '00000000-0000-0000-0000-000000000001',
+    v_account_id, v_package_id, 'google', 'hardening-' || p_fixture,
+    'MYR', 'Asia/Kuala_Lumpur', '2026-08-01', '2026-08-20',
+    100, 0, 5, 100, 'leads', 'https://example.test/hardening',
+    '{"fixture":true}', '{"fixture":true}', repeat('d', 64),
+    '00000000-0000-0000-0000-000000000051', 'Workflow Operator'
+  ) returning id into v_revision_id;
+
+  update public.ads_campaign_plans
+  set active_revision_id = v_revision_id,
+      reserved_revision_id = v_revision_id,
+      approved_revision_id = v_revision_id,
+      approved_revision_hash = repeat('d', 64)
+  where id = v_plan_id;
+
+  insert into public.ads_campaign_approvals (
+    plan_id, revision_id, revision_hash, decision, expires_at,
+    request_idempotency_key, approved_by_id, approved_by_name
+  ) values (
+    v_plan_id, v_revision_id, repeat('d', 64), 'approved',
+    clock_timestamp() + interval '1 hour', 'initial-' || p_fixture,
+    '00000000-0000-0000-0000-000000000051', 'Workflow Operator'
+  ) returning id into v_approval_id;
+
+  insert into public.ads_campaign_builds (
+    plan_id, revision_id, revision_hash, approval_id, budget_package_id,
+    ad_account_id, platform, status, lock_version
+  ) values (
+    v_plan_id, v_revision_id, repeat('d', 64), v_approval_id,
+    v_package_id, v_account_id, 'google', p_build_status, 4
+  ) returning id into v_build_id;
+
+  return v_build_id;
+end;
+$$;
+
+select pg_temp.make_hardening_approved_build(fixture, plan_status, build_status)
+from (values
+  ('approval-expired-key', 'approved', 'pending_gate_1'),
+  ('renew-before-gate', 'approved', 'pending_gate_1'),
+  ('renew-launch-recovery', 'launch_in_progress', 'gate_1_failed'),
+  ('renew-expiry-reject', 'approved', 'pending_gate_1'),
+  ('renew-shorter-expiry', 'approved', 'pending_gate_1'),
+  ('renew-stale-lock', 'approved', 'pending_gate_1'),
+  ('renew-snapshot-drift', 'approved', 'pending_gate_1'),
+  ('renew-inactive-package', 'approved', 'pending_gate_1'),
+  ('renew-invalid-approved-build', 'approved', 'gate_1_failed'),
+  ('renew-terminal', 'launch_in_progress', 'verified'),
+  ('renew-cancelled', 'cancelled', 'cancelled'),
+  ('renewed-old-key', 'approved', 'pending_gate_1'),
+  ('approved-release-reject', 'approved', 'pending_gate_1'),
+  ('transition-release', 'approved', 'pending_gate_1')
+) as fixtures(fixture, plan_status, build_status);
+
+set local session_replication_role = replica;
+update public.ads_campaign_approvals
+set expires_at = clock_timestamp() - interval '1 minute'
+where request_idempotency_key = 'initial-approval-expired-key';
+set local session_replication_role = origin;
+
+select lives_ok(
+  $$select public.ads_approve_campaign_plan_revision(
+    plan.id, plan.active_revision_id, repeat('d', 64), 10,
+    clock_timestamp() + interval '1 day', 'initial-approval-expired-key', null,
+    '00000000-0000-0000-0000-000000000051', null, null
+  ) from public.ads_campaign_plans as plan
+  where plan.created_by_name = 'approval-expired-key'$$,
+  'an exact approval key returns its build after the immutable approval expires'
+);
+select throws_ok(
+  $$select public.ads_approve_campaign_plan_revision(
+    plan.id, plan.active_revision_id, repeat('d', 64), 10,
+    clock_timestamp() + interval '1 day', 'initial-approval-expired-key', null,
+    '00000000-0000-0000-0000-000000000052', null, null
+  ) from public.ads_campaign_plans as plan
+  where plan.created_by_name = 'approval-expired-key'$$,
+  '22023', 'Approval idempotency key conflicts with an existing request',
+  'an approval key cannot be replayed by a different actor'
+);
+select throws_ok(
+  $$select public.ads_approve_campaign_plan_revision(
+    plan.id, plan.active_revision_id + 1, repeat('f', 64), 10,
+    clock_timestamp() + interval '1 day', 'initial-approval-expired-key', null,
+    '00000000-0000-0000-0000-000000000051', null, null
+  ) from public.ads_campaign_plans as plan
+  where plan.created_by_name = 'approval-expired-key'$$,
+  '22023', 'Approval idempotency key conflicts with an existing request',
+  'an expired approval cannot hide a revision identity conflict on its existing key'
+);
+
+create function pg_temp.renewal_is_atomic(p_fixture text, p_request_key text)
+returns boolean
+language plpgsql
+as $$
+declare
+  v_plan public.ads_campaign_plans%rowtype;
+  v_build_before public.ads_campaign_builds%rowtype;
+  v_build_after public.ads_campaign_builds%rowtype;
+  v_old_approval public.ads_campaign_approvals%rowtype;
+  v_new_approval public.ads_campaign_approvals%rowtype;
+begin
+  select * into strict v_plan from public.ads_campaign_plans where created_by_name = p_fixture;
+  select * into strict v_build_before from public.ads_campaign_builds where plan_id = v_plan.id;
+  select * into strict v_old_approval from public.ads_campaign_approvals where id = v_build_before.approval_id;
+
+  perform public.ads_approve_campaign_plan_revision(
+    v_plan.id, v_plan.active_revision_id, v_plan.approved_revision_hash,
+    v_plan.lock_version, v_old_approval.expires_at + interval '1 hour',
+    p_request_key, 'renewed atomically',
+    '00000000-0000-0000-0000-000000000051',
+    '203.0.113.57', 'workflow-tests/renewal'
+  );
+
+  select * into strict v_plan from public.ads_campaign_plans where id = v_plan.id;
+  select * into strict v_build_after from public.ads_campaign_builds where id = v_build_before.id;
+  select * into strict v_new_approval from public.ads_campaign_approvals where id = v_build_after.approval_id;
+  return v_build_after.id = v_build_before.id
+    and v_build_after.status = v_build_before.status
+    and v_build_after.lock_version = v_build_before.lock_version + 1
+    and v_plan.lock_version = 11
+    and v_new_approval.superseded_approval_id = v_old_approval.id
+    and v_new_approval.expires_at > v_old_approval.expires_at
+    and (select count(*) from public.ads_campaign_builds where plan_id = v_plan.id) = 1
+    and (select count(*) from public.ads_campaign_approvals where plan_id = v_plan.id) = 2
+    and exists (
+      select 1 from public.ads_campaign_audit_events as audit
+      where audit.plan_id = v_plan.id
+        and audit.event_type = 'campaign_approval_renewed'
+        and (audit.metadata ->> 'old_approval_id')::bigint = v_old_approval.id
+        and (audit.metadata ->> 'new_approval_id')::bigint = v_new_approval.id
+        and audit.metadata ? 'old_expires_at'
+        and audit.metadata ? 'new_expires_at'
+    );
+exception when others then
+  return false;
+end;
+$$;
+
+select ok(
+  pg_temp.renewal_is_atomic('renew-before-gate', 'renew-before-gate-v2'),
+  'approval renewal before Gate 1 appends evidence, repoints one build, and advances both CAS locks'
+);
+select ok(
+  pg_temp.renewal_is_atomic('renew-launch-recovery', 'renew-launch-recovery-v2'),
+  'approval renewal preserves an exact nonterminal launch-recovery build'
+);
+
+select throws_ok(
+  $$select public.ads_approve_campaign_plan_revision(
+    plan.id, plan.active_revision_id, plan.approved_revision_hash, plan.lock_version,
+    approval.expires_at, 'renew-equal-expiry', null,
+    '00000000-0000-0000-0000-000000000051', null, null
+  ) from public.ads_campaign_plans as plan
+  join public.ads_campaign_builds as build on build.plan_id = plan.id
+  join public.ads_campaign_approvals as approval on approval.id = build.approval_id
+  where plan.created_by_name = 'renew-expiry-reject'$$,
+  '22023', 'Approval renewal expiry must be strictly later than the current approval',
+  'approval renewal rejects an equal expiry'
+);
+select throws_ok(
+  $$select public.ads_approve_campaign_plan_revision(
+    plan.id, plan.active_revision_id, plan.approved_revision_hash, plan.lock_version,
+    approval.expires_at - interval '1 minute', 'renew-shorter-expiry-v2', null,
+    '00000000-0000-0000-0000-000000000051', null, null
+  ) from public.ads_campaign_plans as plan
+  join public.ads_campaign_builds as build on build.plan_id = plan.id
+  join public.ads_campaign_approvals as approval on approval.id = build.approval_id
+  where plan.created_by_name = 'renew-shorter-expiry'$$,
+  '22023', 'Approval renewal expiry must be strictly later than the current approval',
+  'approval renewal rejects a shorter expiry'
+);
+select throws_ok(
+  $$select public.ads_approve_campaign_plan_revision(
+    plan.id, plan.active_revision_id, plan.approved_revision_hash, plan.lock_version - 1,
+    approval.expires_at + interval '1 hour', 'renew-stale-lock-v2', null,
+    '00000000-0000-0000-0000-000000000051', null, null
+  ) from public.ads_campaign_plans as plan
+  join public.ads_campaign_builds as build on build.plan_id = plan.id
+  join public.ads_campaign_approvals as approval on approval.id = build.approval_id
+  where plan.created_by_name = 'renew-stale-lock'$$,
+  '40001', 'Campaign plan lock version is stale',
+  'approval renewal enforces the supplied plan CAS after locking build then plan'
+);
+
+update public.ads_ad_accounts as account
+set provider_account_id = provider_account_id || '-drifted'
+from public.ads_campaign_plans as plan
+where plan.ad_account_id = account.id and plan.created_by_name = 'renew-snapshot-drift';
+select throws_ok(
+  $$select public.ads_approve_campaign_plan_revision(
+    plan.id, plan.active_revision_id, plan.approved_revision_hash, plan.lock_version,
+    approval.expires_at + interval '1 hour', 'renew-snapshot-drift-v2', null,
+    '00000000-0000-0000-0000-000000000051', null, null
+  ) from public.ads_campaign_plans as plan
+  join public.ads_campaign_builds as build on build.plan_id = plan.id
+  join public.ads_campaign_approvals as approval on approval.id = build.approval_id
+  where plan.created_by_name = 'renew-snapshot-drift'$$,
+  '22023', 'Approval renewal requires an unchanged revision, build, account, and package snapshot',
+  'approval renewal rejects mutable account identity drift'
+);
+
+update public.ads_budget_packages as package
+set status = 'closed'
+from public.ads_campaign_plans as plan
+where plan.budget_package_id = package.id and plan.created_by_name = 'renew-inactive-package';
+select throws_ok(
+  $$select public.ads_approve_campaign_plan_revision(
+    plan.id, plan.active_revision_id, plan.approved_revision_hash, plan.lock_version,
+    approval.expires_at + interval '1 hour', 'renew-inactive-package-v2', null,
+    '00000000-0000-0000-0000-000000000051', null, null
+  ) from public.ads_campaign_plans as plan
+  join public.ads_campaign_builds as build on build.plan_id = plan.id
+  join public.ads_campaign_approvals as approval on approval.id = build.approval_id
+  where plan.created_by_name = 'renew-inactive-package'$$,
+  '55000', 'An active budget package is required for approval renewal',
+  'approval renewal revalidates the package lifecycle'
+);
+
+select throws_ok(
+  $$select public.ads_approve_campaign_plan_revision(
+    plan.id, plan.active_revision_id, plan.approved_revision_hash, plan.lock_version,
+    approval.expires_at + interval '1 hour', 'renew-invalid-approved-build-v2', null,
+    '00000000-0000-0000-0000-000000000051', null, null
+  ) from public.ads_campaign_plans as plan
+  join public.ads_campaign_builds as build on build.plan_id = plan.id
+  join public.ads_campaign_approvals as approval on approval.id = build.approval_id
+  where plan.created_by_name = 'renew-invalid-approved-build'$$,
+  '55000', 'Approved renewal requires the exact pending Gate 1 build',
+  'an approved plan cannot renew a non-pending build'
+);
+select throws_ok(
+  $$select public.ads_approve_campaign_plan_revision(
+    plan.id, plan.active_revision_id, plan.approved_revision_hash, plan.lock_version,
+    approval.expires_at + interval '1 hour', 'renew-terminal-v2', null,
+    '00000000-0000-0000-0000-000000000051', null, null
+  ) from public.ads_campaign_plans as plan
+  join public.ads_campaign_builds as build on build.plan_id = plan.id
+  join public.ads_campaign_approvals as approval on approval.id = build.approval_id
+  where plan.created_by_name = 'renew-terminal'$$,
+  '55000', 'Terminal or cancelled campaign builds cannot renew approval',
+  'a verified build cannot renew approval'
+);
+select throws_ok(
+  $$select public.ads_approve_campaign_plan_revision(
+    plan.id, plan.active_revision_id, plan.approved_revision_hash, plan.lock_version,
+    approval.expires_at + interval '1 hour', 'renew-cancelled-v2', null,
+    '00000000-0000-0000-0000-000000000051', null, null
+  ) from public.ads_campaign_plans as plan
+  join public.ads_campaign_builds as build on build.plan_id = plan.id
+  join public.ads_campaign_approvals as approval on approval.id = build.approval_id
+  where plan.created_by_name = 'renew-cancelled'$$,
+  '55000', 'Campaign plan is not eligible for initial approval or renewal',
+  'a cancelled plan/build cannot renew approval'
+);
+
+insert into public.ads_campaign_approvals (
+  plan_id, revision_id, revision_hash, decision, expires_at,
+  request_idempotency_key, superseded_approval_id,
+  approved_by_id, approved_by_name
+)
+select plan.id, plan.active_revision_id, plan.approved_revision_hash, 'approved',
+  old_approval.expires_at + interval '1 hour', 'renewed-old-key-v2', old_approval.id,
+  '00000000-0000-0000-0000-000000000051', 'Workflow Operator'
+from public.ads_campaign_plans as plan
+join public.ads_campaign_builds as build on build.plan_id = plan.id
+join public.ads_campaign_approvals as old_approval on old_approval.id = build.approval_id
+where plan.created_by_name = 'renewed-old-key';
+update public.ads_campaign_builds as build
+set approval_id = new_approval.id, lock_version = build.lock_version + 1
+from public.ads_campaign_plans as plan, public.ads_campaign_approvals as new_approval
+where plan.id = build.plan_id and plan.created_by_name = 'renewed-old-key'
+  and new_approval.plan_id = plan.id and new_approval.request_idempotency_key = 'renewed-old-key-v2';
+update public.ads_campaign_plans
+set lock_version = lock_version + 1
+where created_by_name = 'renewed-old-key';
+select lives_ok(
+  $$select public.ads_approve_campaign_plan_revision(
+    plan.id, plan.active_revision_id, plan.approved_revision_hash, plan.lock_version - 1,
+    clock_timestamp() + interval '1 day', 'initial-renewed-old-key', null,
+    '00000000-0000-0000-0000-000000000051', null, null
+  ) from public.ads_campaign_plans as plan
+  where plan.created_by_name = 'renewed-old-key'$$,
+  'an old approval key still resolves the same build after its approval pointer is renewed'
+);
+
+select throws_ok(
+  $$select public.ads_release_campaign_budget(
+    plan.id, plan.lock_version, 'unsafe direct approved release',
+    '00000000-0000-0000-0000-000000000051', null, null
+  ) from public.ads_campaign_plans as plan
+  where plan.created_by_name = 'approved-release-reject'$$,
+  '55000', 'Approved campaign plans must cancel their pending build before budget release',
+  'direct budget release from approved is rejected'
+);
+
+create function pg_temp.transition_then_release_is_coherent()
+returns boolean
+language plpgsql
+as $$
+declare
+  v_plan public.ads_campaign_plans%rowtype;
+begin
+  select * into strict v_plan
+  from public.ads_campaign_plans where created_by_name = 'transition-release';
+  select * into strict v_plan
+  from public.ads_transition_campaign_plan(
+    v_plan.id, v_plan.lock_version, 'approved', 'draft',
+    'cancel build before release',
+    '00000000-0000-0000-0000-000000000051', null,
+    'workflow-tests/transition-release'
+  );
+  if v_plan.lock_version <> 11 or exists (
+    select 1 from public.ads_campaign_builds
+    where plan_id = v_plan.id and status <> 'cancelled'
+  ) then
+    return false;
+  end if;
+  select * into strict v_plan
+  from public.ads_release_campaign_budget(
+    v_plan.id, v_plan.lock_version, 'release after coherent cancellation',
+    '00000000-0000-0000-0000-000000000051', null,
+    'workflow-tests/release-after-transition'
+  );
+  return v_plan.status = 'draft'
+    and v_plan.lock_version = 12
+    and v_plan.reserved_revision_id is null
+    and v_plan.reserved_budget = 0
+    and (select committed_amount from public.ads_budget_packages where id = v_plan.budget_package_id) = 0
+    and (select count(*) from public.ads_campaign_builds where plan_id = v_plan.id) = 1
+    and not exists (
+      select 1 from public.ads_campaign_builds
+      where plan_id = v_plan.id and status <> 'cancelled'
+    )
+    and exists (
+      select 1 from public.ads_campaign_audit_events
+      where plan_id = v_plan.id and event_type = 'campaign_build_cancelled'
+    );
+exception when others then
+  return false;
+end;
+$$;
+
+select ok(
+  pg_temp.transition_then_release_is_coherent(),
+  'approved transition cancels its exact build before release clears only the committed reservation'
+);
+
 select is(
   (select actor_name from public.ads_campaign_audit_events where event_type = 'campaign_plan_revision_approved' and trusted_user_agent = 'workflow-tests/approve'),
   'Workflow Operator',

@@ -108,9 +108,21 @@ from (values
   ('ads_campaign_plans','acp_package_idx'), ('ads_campaign_plans','acp_account_idx'),
   ('ads_campaign_plan_revisions','acpr_plan_idx'), ('ads_campaign_approvals','aca_plan_idx'),
   ('ads_campaign_builds','acb_plan_idx'), ('ads_campaign_build_resources','acbr_build_idx'),
-  ('ads_campaign_gate_attempts','acga_build_gate_active_idx'), ('ads_campaign_qa_results','acqr_attempt_idx'),
+  ('ads_campaign_gate_attempts','acga_build_active_idx'), ('ads_campaign_qa_results','acqr_attempt_idx'),
   ('ads_campaign_audit_events','acaud_plan_idx'), ('ads_campaign_monitoring_handoffs','acmh_build_uidx')
 ) as expected(table_name, index_name);
+
+select ok(
+  (
+    select pg_catalog.pg_get_indexdef(index_row.indexrelid)
+      ~ 'UNIQUE INDEX acga_build_active_idx .* \(build_id\) WHERE \(\(released_at IS NULL\) AND \(status = ''claimed''::text\)\)'
+    from pg_catalog.pg_index as index_row
+    join pg_catalog.pg_class as index_class on index_class.oid = index_row.indexrelid
+    where index_class.relname = 'acga_build_active_idx'
+      and index_row.indrelid = 'public.ads_campaign_gate_attempts'::regclass
+  ),
+  'the partial unique claim index excludes a second active claim anywhere on one build'
+);
 
 select ok(c.relrowsecurity and exists (
   select 1 from pg_policies p

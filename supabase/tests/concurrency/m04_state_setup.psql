@@ -1,0 +1,175 @@
+\set ON_ERROR_STOP on
+
+truncate table
+  public.ads_campaign_monitoring_handoffs,
+  public.ads_campaign_qa_results,
+  public.ads_campaign_gate_attempts,
+  public.ads_campaign_build_resources,
+  public.ads_campaign_builds,
+  public.ads_campaign_approvals,
+  public.ads_campaign_audit_events,
+  public.ads_campaign_plan_revisions,
+  public.ads_campaign_plans,
+  public.ads_budget_packages,
+  public.ads_ad_accounts
+restart identity cascade;
+
+drop table if exists public.m04_state_race_results;
+drop table if exists public.m04_state_race_release;
+
+create unlogged table public.m04_state_race_release (
+  case_name text primary key,
+  released boolean not null default false
+);
+
+create unlogged table public.m04_state_race_results (
+  case_name text not null,
+  session_role text not null check (session_role in ('winner', 'loser')),
+  succeeded boolean not null,
+  stale_failure boolean not null,
+  primary key (case_name, session_role)
+);
+
+insert into public.m04_state_race_release (case_name)
+values
+  ('claim-wins-draft'),
+  ('claim-wins-cancelled'),
+  ('transition-wins-draft'),
+  ('transition-wins-cancelled'),
+  ('approval-wins-awaiting'),
+  ('transition-wins-awaiting'),
+  ('renewal-cas');
+
+insert into auth.users (id, email, aud, role, email_confirmed_at)
+values (
+  '00000000-0000-0000-0000-000000000461',
+  'state.race@locus-t.com.my',
+  'authenticated', 'authenticated', clock_timestamp()
+)
+on conflict (id) do update
+set email = excluded.email,
+    aud = excluded.aud,
+    role = excluded.role,
+    email_confirmed_at = excluded.email_confirmed_at;
+
+insert into public.ad_automation_report_users (id, full_name, role, is_active)
+values (
+  '00000000-0000-0000-0000-000000000461',
+  'State Race Operator', 'approver', true
+)
+on conflict (id) do update
+set full_name = excluded.full_name,
+    role = excluded.role,
+    is_active = excluded.is_active;
+
+insert into public.ads_ad_accounts (
+  client_id, platform, provider_account_id, account_name, currency, timezone,
+  access_status, access_evidence, access_verified_at, is_active
+) values (
+  '00000000-0000-0000-0000-000000000462', 'google',
+  'm04-state-race', 'M04 State Race', 'MYR', 'Asia/Kuala_Lumpur',
+  'verified', '{"source":"local-state-race"}', clock_timestamp(), true
+);
+
+insert into public.ads_budget_packages (
+  client_id, package_key, package_name, currency, start_date, end_date,
+  envelope_amount, committed_amount, status
+) values (
+  '00000000-0000-0000-0000-000000000462', 'm04-state-race',
+  'M04 State Race', 'MYR', '2026-08-01', '2026-08-31',
+  10000, 700, 'active'
+);
+
+insert into public.ads_campaign_plans (
+  client_id, budget_package_id, ad_account_id, platform, reserved_budget,
+  status, created_by_id, created_by_name, lock_version
+)
+select
+  package.client_id, package.id, account.id, account.platform, 100,
+  fixture.plan_status,
+  '00000000-0000-0000-0000-000000000461', fixture.case_name, 7
+from (values
+  ('claim-wins-draft', 'approved'),
+  ('claim-wins-cancelled', 'approved'),
+  ('transition-wins-draft', 'approved'),
+  ('transition-wins-cancelled', 'approved'),
+  ('approval-wins-awaiting', 'awaiting_approval'),
+  ('transition-wins-awaiting', 'awaiting_approval'),
+  ('renewal-cas', 'launch_in_progress')
+) as fixture(case_name, plan_status)
+cross join public.ads_budget_packages as package
+cross join public.ads_ad_accounts as account
+where package.package_key = 'm04-state-race'
+  and account.provider_account_id = 'm04-state-race';
+
+insert into public.ads_campaign_plan_revisions (
+  plan_id, revision_number, client_id, ad_account_id, budget_package_id,
+  platform, provider_account_id, currency, timezone, start_date, end_date,
+  allocated_budget, increment_amount, daily_budget, projected_total,
+  objective, destination, plan_payload, canonical_json, payload_hash,
+  created_by_id, created_by_name
+)
+select
+  plan.id, 1, plan.client_id, plan.ad_account_id, plan.budget_package_id,
+  plan.platform, account.provider_account_id, account.currency, account.timezone,
+  '2026-08-01', '2026-08-20', 100, 0, 5, 100,
+  'leads', 'https://example.test/state-race', '{"fixture":true}'::jsonb,
+  '{"fixture":true}', repeat('c', 64), plan.created_by_id, 'State Race Operator'
+from public.ads_campaign_plans as plan
+join public.ads_ad_accounts as account on account.id = plan.ad_account_id
+where plan.created_by_name in (
+  'claim-wins-draft', 'claim-wins-cancelled',
+  'transition-wins-draft', 'transition-wins-cancelled',
+  'approval-wins-awaiting', 'transition-wins-awaiting', 'renewal-cas'
+);
+
+update public.ads_campaign_plans as plan
+set active_revision_id = revision.id,
+    reserved_revision_id = revision.id,
+    approved_revision_id = case
+      when plan.status in ('approved', 'launch_in_progress') then revision.id
+    end,
+    approved_revision_hash = case
+      when plan.status in ('approved', 'launch_in_progress') then revision.payload_hash
+    end
+from public.ads_campaign_plan_revisions as revision
+where revision.plan_id = plan.id;
+
+insert into public.ads_campaign_approvals (
+  plan_id, revision_id, revision_hash, decision, expires_at,
+  request_idempotency_key, approved_by_id, approved_by_name
+)
+select
+  plan.id, revision.id, revision.payload_hash, 'approved',
+  clock_timestamp() + interval '1 hour', 'initial-' || plan.created_by_name,
+  '00000000-0000-0000-0000-000000000461', 'State Race Operator'
+from public.ads_campaign_plans as plan
+join public.ads_campaign_plan_revisions as revision on revision.plan_id = plan.id
+where plan.status in ('approved', 'launch_in_progress');
+
+insert into public.ads_campaign_builds (
+  plan_id, revision_id, revision_hash, approval_id, budget_package_id,
+  ad_account_id, platform, status, lock_version
+)
+select
+  plan.id, revision.id, revision.payload_hash, approval.id,
+  plan.budget_package_id, plan.ad_account_id, plan.platform,
+  case when plan.created_by_name = 'renewal-cas'
+    then 'gate_1_failed' else 'pending_gate_1' end,
+  3
+from public.ads_campaign_plans as plan
+join public.ads_campaign_plan_revisions as revision on revision.plan_id = plan.id
+join public.ads_campaign_approvals as approval on approval.plan_id = plan.id
+where plan.status in ('approved', 'launch_in_progress');
+
+do $setup_assertion$
+begin
+  if (select count(*) from public.ads_campaign_plans) <> 7
+    or (select count(*) from public.ads_campaign_builds) <> 5
+    or (select count(*) from public.ads_campaign_approvals) <> 5 then
+    raise exception 'State race setup did not create the seven exact workflow fixtures';
+  end if;
+end;
+$setup_assertion$;
+
+select 'state race setup ready' as result;

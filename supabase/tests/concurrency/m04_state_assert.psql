@@ -1,0 +1,92 @@
+\set ON_ERROR_STOP on
+
+do $assertions$
+declare
+  fixture record;
+  result_count integer;
+  winner_count integer;
+  loser_stale_count integer;
+  unexpected_count integer;
+  plan_row public.ads_campaign_plans%rowtype;
+  build_row public.ads_campaign_builds%rowtype;
+begin
+  for fixture in
+    select * from (values
+      ('claim-wins-draft', 'claim', 'launch_in_progress', 'gate_1_in_progress'),
+      ('claim-wins-cancelled', 'claim', 'launch_in_progress', 'gate_1_in_progress'),
+      ('transition-wins-draft', 'transition', 'draft', 'cancelled'),
+      ('transition-wins-cancelled', 'transition', 'cancelled', 'cancelled'),
+      ('approval-wins-awaiting', 'approval', 'approved', 'pending_gate_1'),
+      ('transition-wins-awaiting', 'transition_without_build', 'draft', null),
+      ('renewal-cas', 'renewal', 'launch_in_progress', 'gate_1_failed')
+    ) as cases(case_name, winner_kind, expected_plan_status, expected_build_status)
+  loop
+    select
+      count(*)::integer,
+      count(*) filter (where session_role = 'winner' and succeeded)::integer,
+      count(*) filter (where session_role = 'loser' and stale_failure)::integer,
+      count(*) filter (
+        where (session_role = 'winner' and not succeeded)
+           or (session_role = 'loser' and not stale_failure)
+      )::integer
+    into result_count, winner_count, loser_stale_count, unexpected_count
+    from public.m04_state_race_results
+    where case_name = fixture.case_name;
+
+    if result_count <> 2 or winner_count <> 1
+      or loser_stale_count <> 1 or unexpected_count <> 0 then
+      raise exception
+        'Case % expected one committed winner and one stale loser; results %, winners %, stale losers %, unexpected %',
+        fixture.case_name, result_count, winner_count, loser_stale_count, unexpected_count;
+    end if;
+
+    select * into strict plan_row
+    from public.ads_campaign_plans where created_by_name = fixture.case_name;
+    if plan_row.status <> fixture.expected_plan_status then
+      raise exception 'Case % expected plan %, observed %',
+        fixture.case_name, fixture.expected_plan_status, plan_row.status;
+    end if;
+
+    select * into build_row
+    from public.ads_campaign_builds where plan_id = plan_row.id;
+    if fixture.expected_build_status is null then
+      if found then
+        raise exception 'Case % unexpectedly created a build', fixture.case_name;
+      end if;
+    elsif not found or build_row.status <> fixture.expected_build_status then
+      raise exception 'Case % expected build %, observed %', fixture.case_name,
+        fixture.expected_build_status, case when found then build_row.status else '<missing>' end;
+    end if;
+
+    if fixture.winner_kind = 'claim' and (
+      select count(*) from public.ads_campaign_gate_attempts
+      where build_id = build_row.id and status = 'claimed' and released_at is null
+    ) <> 1 then
+      raise exception 'Case % expected exactly one active Gate 1 claim', fixture.case_name;
+    elsif fixture.winner_kind = 'transition' and exists (
+      select 1 from public.ads_campaign_gate_attempts where build_id = build_row.id
+    ) then
+      raise exception 'Case % retained an attempt after transition won', fixture.case_name;
+    elsif fixture.winner_kind = 'approval' and (
+      (select count(*) from public.ads_campaign_builds where plan_id = plan_row.id) <> 1
+      or (select count(*) from public.ads_campaign_approvals where plan_id = plan_row.id) <> 1
+    ) then
+      raise exception 'Case % did not create exactly one approval/build', fixture.case_name;
+    elsif fixture.winner_kind = 'renewal' and (
+      (select count(*) from public.ads_campaign_builds where plan_id = plan_row.id) <> 1
+      or (select count(*) from public.ads_campaign_approvals where plan_id = plan_row.id) <> 2
+      or plan_row.lock_version <> 8
+      or build_row.lock_version <> 4
+      or not exists (
+        select 1 from public.ads_campaign_approvals as approval
+        where approval.id = build_row.approval_id
+          and approval.request_idempotency_key = 'renewal-winner'
+      )
+    ) then
+      raise exception 'Case % did not serialize renewal CAS onto one build', fixture.case_name;
+    end if;
+  end loop;
+end;
+$assertions$;
+
+select 'PASS: state races have one coherent winner, one stale loser, and no deadlock' as result;
