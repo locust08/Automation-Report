@@ -258,6 +258,8 @@ Claim functions lock the build, resolve an identical idempotency key first, lock
 
 Gate 2 claims use the provider-neutral `m04.gate2.v1` manifest. Its platform must match the immutable build, its delivery mode is immediate or RFC3339-scheduled, and its duplicate-free resource key/type list must exactly cover every persisted build resource. Each resource carries a non-empty `required_fields` object including `delivery.status`; reconciliation repeats the exact latest delivery manifest. Future Google, Meta, and TikTok creation adapters consume and report this contract only through the existing service-role RPCs—there are no provider-specific duplicate workflow tables or browser write paths.
 
+Required Gate 2 QA is bound to a non-null manifest resource and declared field, with the manifest value as both expected and matching observed value. Finalization expands every current-attempt manifest field, uses the latest QA for each resource/field in the correct phase, and requires required matching evidence plus a provider ID for every persisted resource. Verification stamps every resource with one timestamp atomically. Handoff then requires every persisted resource to carry that exact build timestamp and a provider ID, requires exactly one campaign, and includes every non-campaign ID ordered by logical key.
+
 The generic transition function cannot set `ready_to_deliver`, `verified`, or `handoff_complete`. Gate finalization derives those sensitive states from persisted QA/readback evidence. `verified_at` on a campaign resource means final provider delivery readback, not Gate 1 QA.
 
 Review hardening adds these invariants without changing any public function signature:

@@ -352,7 +352,7 @@ set verified_at = clock_timestamp(),
 from public.ads_campaign_plans as plan
 where plan.id = build.plan_id and plan.created_by_name = 'probe-handoff';
 update public.ads_campaign_build_resources as resource
-set verified_at = clock_timestamp()
+set verified_at = build.verified_at
 from public.ads_campaign_builds as build
 join public.ads_campaign_plans as plan on plan.id = build.plan_id
 where resource.build_id = build.id and plan.created_by_name = 'probe-handoff';

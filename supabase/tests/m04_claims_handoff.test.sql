@@ -4225,6 +4225,291 @@ select lives_ok(
   'Gate 2 reconciliation repeats the exact latest delivery manifest'
 );
 
+-- Gate 2 required QA is authorization evidence only when it is bound to the
+-- current manifest resource, declared field, expected value, and readback.
+select pg_temp.make_claim_hardening_build(
+  fixture, 'google', 'launch_in_progress', build_status
+)
+from (values
+  ('gate2-complete-current-attempt', 'ready_to_deliver'),
+  ('gate2-required-qa-validation', 'ready_to_deliver'),
+  ('handoff-resource-null-id', 'verified'),
+  ('handoff-resource-null-verified-at', 'verified'),
+  ('handoff-resource-mismatched-verified-at', 'verified')
+) as fixtures(fixture, build_status);
+
+insert into public.ads_campaign_build_resources (
+  build_id, logical_resource_key, resource_type, provider_resource_id
+)
+select build.id, resource.logical_resource_key, resource.resource_type,
+  plan.created_by_name || '-' || resource.logical_resource_key
+from public.ads_campaign_builds as build
+join public.ads_campaign_plans as plan on plan.id = build.plan_id
+cross join (values
+  ('campaign.main', 'campaign'),
+  ('ad-group.main', 'ad_group')
+) as resource(logical_resource_key, resource_type)
+where plan.created_by_name in (
+  'gate2-complete-current-attempt', 'gate2-required-qa-validation'
+);
+
+select public.ads_acquire_campaign_gate_claim(
+  build.id, 2::smallint, 'deliver', plan.created_by_name || '-deliver',
+  build.revision_id, build.revision_hash, 300,
+  pg_temp.m04_gate2_manifest(build.id),
+  '00000000-0000-0000-0000-000000000061', null, null
+)
+from public.ads_campaign_builds as build
+join public.ads_campaign_plans as plan on plan.id = build.plan_id
+where plan.created_by_name in (
+  'gate2-complete-current-attempt', 'gate2-required-qa-validation'
+);
+
+create function pg_temp.campaign_only_gate2_qa_cannot_verify()
+returns boolean
+language plpgsql
+as $$
+declare
+  v_build public.ads_campaign_builds%rowtype;
+  v_attempt public.ads_campaign_gate_attempts%rowtype;
+  v_campaign public.ads_campaign_build_resources%rowtype;
+begin
+  select build.* into strict v_build
+  from public.ads_campaign_builds as build
+  join public.ads_campaign_plans as plan on plan.id = build.plan_id
+  where plan.created_by_name = 'gate2-complete-current-attempt';
+  select attempt.* into strict v_attempt
+  from public.ads_campaign_gate_attempts as attempt
+  where attempt.build_id = v_build.id and attempt.action = 'deliver';
+  select resource.* into strict v_campaign
+  from public.ads_campaign_build_resources as resource
+  where resource.build_id = v_build.id and resource.resource_type = 'campaign';
+
+  perform public.ads_append_campaign_qa_result(
+    v_attempt.id, v_attempt.claim_token, v_campaign.id,
+    'gate_2', 'delivery.status', true,
+    '"ENABLED"', '"ENABLED"', 'match', null, null,
+    '{"delivery":{"status":"ENABLED"}}'
+  );
+  select * into strict v_build
+  from public.ads_finalize_campaign_gate_claim(
+    v_attempt.id, v_attempt.claim_token, 'succeeded',
+    '{"delivery":{"status":"ENABLED"}}',
+    '00000000-0000-0000-0000-000000000061', null, null
+  );
+
+  return v_build.status = 'delivery_unverified'
+    and v_build.verified_at is null
+    and (select status = 'reconciliation_required'
+         from public.ads_campaign_gate_attempts where id = v_attempt.id)
+    and not exists (
+      select 1 from public.ads_campaign_build_resources
+      where build_id = v_build.id and verified_at is not null
+    )
+    and not exists (
+      select 1 from public.ads_campaign_monitoring_handoffs
+      where build_id = v_build.id
+    );
+end;
+$$;
+
+select ok(
+  pg_temp.campaign_only_gate2_qa_cannot_verify(),
+  'campaign-only QA cannot verify or stamp a campaign-plus-child Gate 2 manifest'
+);
+
+insert into public.ads_campaign_build_resources (
+  build_id, logical_resource_key, resource_type, provider_resource_id
+)
+select build.id, 'creative.outside', 'creative', 'gate2-qa-outside-resource'
+from public.ads_campaign_builds as build
+join public.ads_campaign_plans as plan on plan.id = build.plan_id
+where plan.created_by_name = 'gate2-required-qa-validation';
+
+create temporary table pg_temp.gate2_required_qa_cases (
+  case_name text primary key,
+  resource_selector text not null,
+  field_path text not null,
+  expected_value jsonb,
+  observed_value jsonb,
+  expected_message text not null
+);
+insert into pg_temp.gate2_required_qa_cases values
+  (
+    'null-resource', 'null', 'delivery.status', '"ENABLED"', '"ENABLED"',
+    'Gate 2 required QA must name a manifest resource'
+  ),
+  (
+    'out-of-manifest-resource', 'outside', 'delivery.status', '"ENABLED"', '"ENABLED"',
+    'Gate 2 required QA must name a manifest resource'
+  ),
+  (
+    'undeclared-field', 'campaign', 'delivery.budget', '100', '100',
+    'Gate 2 required QA field is not declared by the manifest'
+  ),
+  (
+    'mismatched-expected', 'campaign', 'delivery.status', '"PAUSED"', '"PAUSED"',
+    'Gate 2 required QA expected value must match the manifest'
+  ),
+  (
+    'mismatched-observed', 'campaign', 'delivery.status', '"ENABLED"', '"PAUSED"',
+    'Gate 2 matching QA observed value must equal its expected value'
+  );
+
+create function pg_temp.invalid_required_gate2_qa_is_side_effect_free(
+  p_resource_selector text,
+  p_field_path text,
+  p_expected_value jsonb,
+  p_observed_value jsonb,
+  p_expected_message text
+)
+returns boolean
+language plpgsql
+as $$
+declare
+  v_attempt public.ads_campaign_gate_attempts%rowtype;
+  v_resource_id bigint;
+  v_before jsonb;
+  v_exact_error boolean := false;
+begin
+  select attempt.* into strict v_attempt
+  from public.ads_campaign_gate_attempts as attempt
+  join public.ads_campaign_builds as build on build.id = attempt.build_id
+  join public.ads_campaign_plans as plan on plan.id = build.plan_id
+  where plan.created_by_name = 'gate2-required-qa-validation'
+    and attempt.action = 'deliver';
+
+  if p_resource_selector = 'campaign' then
+    select resource.id into strict v_resource_id
+    from public.ads_campaign_build_resources as resource
+    where resource.build_id = v_attempt.build_id
+      and resource.logical_resource_key = 'campaign.main';
+  elsif p_resource_selector = 'outside' then
+    select resource.id into strict v_resource_id
+    from public.ads_campaign_build_resources as resource
+    where resource.build_id = v_attempt.build_id
+      and resource.logical_resource_key = 'creative.outside';
+  elsif p_resource_selector = 'null' then
+    v_resource_id := null;
+  else
+    raise exception 'unknown Gate 2 QA resource selector' using errcode = 'P0001';
+  end if;
+
+  select coalesce(pg_catalog.jsonb_agg(pg_catalog.to_jsonb(qa) order by qa.id), '[]'::jsonb)
+  into v_before
+  from public.ads_campaign_qa_results as qa
+  where qa.attempt_id = v_attempt.id;
+
+  begin
+    perform public.ads_append_campaign_qa_result(
+      v_attempt.id, v_attempt.claim_token, v_resource_id,
+      'gate_2', p_field_path, true,
+      p_expected_value, p_observed_value, 'match', null, null,
+      '{"source":"provider-readback"}'
+    );
+    raise exception 'invalid required Gate 2 QA unexpectedly persisted' using errcode = 'P0001';
+  exception when others then
+    v_exact_error := sqlstate = '22023' and sqlerrm = p_expected_message;
+  end;
+
+  return v_exact_error
+    and (select coalesce(pg_catalog.jsonb_agg(pg_catalog.to_jsonb(qa) order by qa.id), '[]'::jsonb)
+         from public.ads_campaign_qa_results as qa
+         where qa.attempt_id = v_attempt.id) = v_before;
+end;
+$$;
+
+select ok(
+  pg_temp.invalid_required_gate2_qa_is_side_effect_free(
+    resource_selector, field_path, expected_value, observed_value, expected_message
+  ),
+  'required Gate 2 QA rejects ' || case_name || ' input with no side effects'
+)
+from pg_temp.gate2_required_qa_cases
+order by case_name;
+
+update public.ads_campaign_builds as build
+set verified_at = '2026-08-21T00:00:00Z'::timestamptz,
+    final_readback_evidence = '{"delivery":{"status":"ENABLED"}}'
+from public.ads_campaign_plans as plan
+where plan.id = build.plan_id
+  and plan.created_by_name like 'handoff-resource-%';
+
+set local session_replication_role = replica;
+insert into public.ads_campaign_build_resources (
+  build_id, logical_resource_key, resource_type, provider_resource_id, verified_at
+)
+select build.id, 'campaign.main', 'campaign', plan.created_by_name || '-campaign',
+  build.verified_at
+from public.ads_campaign_builds as build
+join public.ads_campaign_plans as plan on plan.id = build.plan_id
+where plan.created_by_name like 'handoff-resource-%';
+
+insert into public.ads_campaign_build_resources (
+  build_id, logical_resource_key, resource_type, provider_resource_id, verified_at
+)
+select build.id, 'child.main', 'ad',
+  case when plan.created_by_name = 'handoff-resource-null-id'
+    then null else plan.created_by_name || '-child' end,
+  case
+    when plan.created_by_name = 'handoff-resource-null-verified-at' then null
+    when plan.created_by_name = 'handoff-resource-mismatched-verified-at'
+      then build.verified_at + interval '1 second'
+    else build.verified_at
+  end
+from public.ads_campaign_builds as build
+join public.ads_campaign_plans as plan on plan.id = build.plan_id
+where plan.created_by_name like 'handoff-resource-%';
+set local session_replication_role = origin;
+
+create function pg_temp.incomplete_handoff_resource_is_rejected(p_fixture text)
+returns boolean
+language plpgsql
+as $$
+declare
+  v_build public.ads_campaign_builds%rowtype;
+  v_before jsonb;
+  v_exact_error boolean := false;
+begin
+  select build.* into strict v_build
+  from public.ads_campaign_builds as build
+  join public.ads_campaign_plans as plan on plan.id = build.plan_id
+  where plan.created_by_name = p_fixture;
+  v_before := pg_catalog.jsonb_build_object(
+    'build', (select pg_catalog.to_jsonb(build) from public.ads_campaign_builds as build where build.id = v_build.id),
+    'plan', (select pg_catalog.to_jsonb(plan) from public.ads_campaign_plans as plan where plan.id = v_build.plan_id),
+    'handoffs', (select coalesce(pg_catalog.jsonb_agg(pg_catalog.to_jsonb(handoff) order by handoff.id), '[]'::jsonb)
+                 from public.ads_campaign_monitoring_handoffs as handoff where handoff.build_id = v_build.id)
+  );
+  begin
+    perform public.ads_create_campaign_monitoring_handoff(
+      v_build.id, v_build.lock_version, v_build.revision_hash,
+      '00000000-0000-0000-0000-000000000061', null, null
+    );
+    raise exception 'incomplete resource unexpectedly reached handoff' using errcode = 'P0001';
+  exception when others then
+    v_exact_error := sqlstate = '55000'
+      and sqlerrm = 'Monitoring handoff requires complete resource verification';
+  end;
+  return v_exact_error and v_before = pg_catalog.jsonb_build_object(
+    'build', (select pg_catalog.to_jsonb(build) from public.ads_campaign_builds as build where build.id = v_build.id),
+    'plan', (select pg_catalog.to_jsonb(plan) from public.ads_campaign_plans as plan where plan.id = v_build.plan_id),
+    'handoffs', (select coalesce(pg_catalog.jsonb_agg(pg_catalog.to_jsonb(handoff) order by handoff.id), '[]'::jsonb)
+                 from public.ads_campaign_monitoring_handoffs as handoff where handoff.build_id = v_build.id)
+  );
+end;
+$$;
+
+select ok(
+  pg_temp.incomplete_handoff_resource_is_rejected(fixture),
+  fixture || ' rejects handoff without silently filtering the persisted resource'
+)
+from (values
+  ('handoff-resource-null-id'),
+  ('handoff-resource-null-verified-at'),
+  ('handoff-resource-mismatched-verified-at')
+) as fixtures(fixture);
+
 update public.ads_campaign_builds as build
 set verified_at = clock_timestamp(),
     final_readback_evidence = '{"status":"ENABLED","immutable":true}'::jsonb
@@ -4235,7 +4520,7 @@ set local session_replication_role = replica;
 insert into public.ads_campaign_build_resources (
   build_id, logical_resource_key, resource_type, provider_resource_id, verified_at
 )
-select build.id, 'campaign', 'campaign', plan.created_by_name || '-campaign', clock_timestamp()
+select build.id, 'campaign', 'campaign', plan.created_by_name || '-campaign', build.verified_at
 from public.ads_campaign_builds as build
 join public.ads_campaign_plans as plan on plan.id = build.plan_id
 where plan.created_by_name in ('handoff-drift', 'handoff-build-mismatch', 'handoff-plan-mismatch');

@@ -2437,6 +2437,74 @@ begin
 end;
 $$;
 
+create or replace function ads_internal.campaign_gate_2_manifest_ready(
+  p_build_id bigint,
+  p_attempt_id bigint,
+  p_phase text
+)
+returns boolean
+language sql
+stable
+security definer
+set search_path = ''
+as $$
+  select coalesce((
+    select attempt.build_id = p_build_id
+      and attempt.gate = 2
+      and p_phase is not distinct from case
+        when attempt.action = 'reconcile' then 'reconciliation'
+        else 'gate_2'
+      end
+      and not exists (
+        select 1
+        from pg_catalog.jsonb_array_elements(attempt.intent -> 'resources') as manifest_resource(value)
+        left join public.ads_campaign_build_resources as resource
+          on resource.build_id = attempt.build_id
+         and resource.logical_resource_key = manifest_resource.value ->> 'logical_resource_key'
+         and resource.resource_type = manifest_resource.value ->> 'resource_type'
+        where resource.id is null
+          or pg_catalog.btrim(coalesce(resource.provider_resource_id, '')) = ''
+          or exists (
+            select 1
+            from pg_catalog.jsonb_each(manifest_resource.value -> 'required_fields') as required_field(field_path, expected_value)
+            left join lateral (
+              select qa.*
+              from public.ads_campaign_qa_results as qa
+              where qa.attempt_id = attempt.id
+                and qa.build_resource_id = resource.id
+                and qa.phase = p_phase
+                and qa.field_path = required_field.field_path
+              order by qa.id desc
+              limit 1
+            ) as latest_qa on true
+            where latest_qa.id is null
+              or latest_qa.required is distinct from true
+              or latest_qa.expected_value is distinct from required_field.expected_value
+              or latest_qa.observed_value is distinct from required_field.expected_value
+              or latest_qa.result is distinct from 'match'
+              or not ads_internal.is_nonempty_json_object(latest_qa.readback_evidence)
+          )
+      )
+      and not exists (
+        select 1
+        from public.ads_campaign_build_resources as resource
+        where resource.build_id = attempt.build_id
+          and not exists (
+            select 1
+            from pg_catalog.jsonb_array_elements(attempt.intent -> 'resources') as manifest_resource(value)
+            where manifest_resource.value ->> 'logical_resource_key' = resource.logical_resource_key
+              and manifest_resource.value ->> 'resource_type' = resource.resource_type
+          )
+      )
+    from public.ads_campaign_gate_attempts as attempt
+    where attempt.id = p_attempt_id
+  ), false);
+$$;
+
+revoke all on function ads_internal.campaign_gate_2_manifest_ready(
+  bigint, bigint, text
+) from public, anon, authenticated, service_role;
+
 create or replace function public.ads_append_campaign_qa_result(
   p_attempt_id bigint,
   p_claim_token uuid,
@@ -2461,6 +2529,7 @@ declare
   v_build public.ads_campaign_builds%rowtype;
   v_resource public.ads_campaign_build_resources%rowtype;
   v_result public.ads_campaign_qa_results%rowtype;
+  v_manifest_required_fields jsonb;
 begin
   select attempt.* into v_attempt
   from public.ads_campaign_gate_attempts as attempt where attempt.id = p_attempt_id;
@@ -2508,6 +2577,32 @@ begin
   if p_phase in ('gate_2', 'reconciliation')
     and not ads_internal.is_nonempty_json_object(p_readback_evidence) then
     raise exception 'Authorization-grade readback evidence must be a non-empty JSON object' using errcode = '22023';
+  end if;
+  if v_attempt.gate = 2 and coalesce(p_required, true) then
+    if p_build_resource_id is null or not exists (
+      select 1
+      from pg_catalog.jsonb_array_elements(v_attempt.intent -> 'resources') as manifest_resource(value)
+      where manifest_resource.value ->> 'logical_resource_key' = v_resource.logical_resource_key
+        and manifest_resource.value ->> 'resource_type' = v_resource.resource_type
+    ) then
+      raise exception 'Gate 2 required QA must name a manifest resource' using errcode = '22023';
+    end if;
+
+    select manifest_resource.value -> 'required_fields'
+    into strict v_manifest_required_fields
+    from pg_catalog.jsonb_array_elements(v_attempt.intent -> 'resources') as manifest_resource(value)
+    where manifest_resource.value ->> 'logical_resource_key' = v_resource.logical_resource_key
+      and manifest_resource.value ->> 'resource_type' = v_resource.resource_type;
+
+    if not (v_manifest_required_fields ? p_field_path) then
+      raise exception 'Gate 2 required QA field is not declared by the manifest' using errcode = '22023';
+    end if;
+    if p_expected_value is distinct from v_manifest_required_fields -> p_field_path then
+      raise exception 'Gate 2 required QA expected value must match the manifest' using errcode = '22023';
+    end if;
+    if p_result = 'match' and p_observed_value is distinct from p_expected_value then
+      raise exception 'Gate 2 matching QA observed value must equal its expected value' using errcode = '22023';
+    end if;
   end if;
 
   insert into public.ads_campaign_qa_results (
@@ -3371,6 +3466,8 @@ declare
   v_reconciliation_all_resolved boolean := false;
   v_gate_qa_ready boolean := false;
   v_verified_at timestamptz;
+  v_expected_resource_count integer;
+  v_verified_resource_count integer;
 begin
   select actor.actor_name, actor.actor_email, actor.actor_role
   into strict v_actor_name, v_actor_email, v_actor_role
@@ -3502,19 +3599,8 @@ begin
   elsif v_attempt.action = 'reconcile' then
     if p_provider_outcome = 'succeeded' then
       select ads_internal.is_nonempty_json_object(p_final_readback_evidence)
-        and exists (
-          select 1 from public.ads_campaign_qa_results as qa
-          join public.ads_campaign_build_resources as resource on resource.id = qa.build_resource_id
-          where qa.attempt_id = v_attempt.id and qa.phase = 'reconciliation'
-            and qa.required and qa.result = 'match'
-            and ads_internal.is_nonempty_json_object(qa.readback_evidence)
-            and resource.resource_type = 'campaign' and resource.provider_resource_id is not null
-        )
-        and not exists (
-          select 1 from public.ads_campaign_qa_results as qa
-          where qa.attempt_id = v_attempt.id and qa.phase = 'reconciliation'
-            and qa.required and (qa.result <> 'match'
-              or not ads_internal.is_nonempty_json_object(qa.readback_evidence))
+        and ads_internal.campaign_gate_2_manifest_ready(
+          v_build.id, v_attempt.id, 'reconciliation'
         ) into v_gate_qa_ready;
       if v_gate_qa_ready then
         v_to_status := 'verified';
@@ -3537,19 +3623,8 @@ begin
       v_attempt_status := 'failed';
     else
       select ads_internal.is_nonempty_json_object(p_final_readback_evidence)
-        and exists (
-          select 1 from public.ads_campaign_qa_results as qa
-          join public.ads_campaign_build_resources as resource on resource.id = qa.build_resource_id
-          where qa.attempt_id = v_attempt.id and qa.phase = 'gate_2' and qa.required
-            and qa.result = 'match'
-            and ads_internal.is_nonempty_json_object(qa.readback_evidence)
-            and resource.resource_type = 'campaign' and resource.provider_resource_id is not null
-        )
-        and not exists (
-          select 1 from public.ads_campaign_qa_results as qa
-          where qa.attempt_id = v_attempt.id and qa.phase = 'gate_2'
-            and qa.required and (qa.result <> 'match'
-              or not ads_internal.is_nonempty_json_object(qa.readback_evidence))
+        and ads_internal.campaign_gate_2_manifest_ready(
+          v_build.id, v_attempt.id, 'gate_2'
         ) into v_gate_qa_ready;
       if v_gate_qa_ready then
         v_to_status := 'verified';
@@ -3563,18 +3638,19 @@ begin
   end if;
 
   if v_to_status = 'verified' then
+    select pg_catalog.count(*) into v_expected_resource_count
+    from public.ads_campaign_build_resources as resource
+    where resource.build_id = v_build.id;
     perform pg_catalog.set_config('ads_internal.gate_2_finalizer', 'on', true);
     update public.ads_campaign_build_resources as resource
     set verified_at = v_verified_at, updated_at = v_verified_at
-    where resource.build_id = v_build.id and resource.provider_resource_id is not null
-      and exists (
-        select 1 from public.ads_campaign_qa_results as qa
-        where qa.attempt_id = v_attempt.id and qa.build_resource_id = resource.id
-          and qa.phase = case when v_attempt.action = 'reconcile' then 'reconciliation' else 'gate_2' end
-          and qa.required and qa.result = 'match'
-          and ads_internal.is_nonempty_json_object(qa.readback_evidence)
-      );
+    where resource.build_id = v_build.id;
+    get diagnostics v_verified_resource_count = row_count;
     perform pg_catalog.set_config('ads_internal.gate_2_finalizer', 'off', true);
+    if v_verified_resource_count <> v_expected_resource_count then
+      raise exception 'Gate 2 verification did not stamp every persisted resource'
+        using errcode = '55000';
+    end if;
   end if;
   update public.ads_campaign_gate_attempts
   set status = v_attempt_status, released_at = pg_catalog.clock_timestamp(),
@@ -3684,16 +3760,26 @@ begin
     or v_build.platform is distinct from v_revision.platform then
     raise exception 'Monitoring handoff requires matching immutable build, revision, and launch plan snapshots' using errcode = '55000';
   end if;
+  if exists (
+    select 1
+    from public.ads_campaign_build_resources as resource
+    where resource.build_id = v_build.id
+      and (
+        pg_catalog.btrim(coalesce(resource.provider_resource_id, '')) = ''
+        or resource.verified_at is distinct from v_build.verified_at
+      )
+  ) then
+    raise exception 'Monitoring handoff requires complete resource verification'
+      using errcode = '55000';
+  end if;
   select resource.* into v_campaign
   from public.ads_campaign_build_resources as resource
   where resource.build_id = v_build.id and resource.resource_type = 'campaign'
-    and resource.provider_resource_id is not null and resource.verified_at is not null
   order by resource.id limit 1;
   if not found or (
     select pg_catalog.count(*) <> 1
     from public.ads_campaign_build_resources as resource
     where resource.build_id = v_build.id and resource.resource_type = 'campaign'
-      and resource.provider_resource_id is not null and resource.verified_at is not null
   ) then
     raise exception 'Monitoring handoff requires one verified campaign mapping' using errcode = '55000';
   end if;
@@ -3702,8 +3788,7 @@ begin
     '[]'::jsonb
   ) into v_child_ids
   from public.ads_campaign_build_resources as resource
-  where resource.build_id = v_build.id and resource.resource_type <> 'campaign'
-    and resource.provider_resource_id is not null and resource.verified_at is not null;
+  where resource.build_id = v_build.id and resource.resource_type <> 'campaign';
   insert into public.ads_campaign_monitoring_handoffs (
     build_id, client_id, platform, ad_account_id, provider_account_id,
     revision_id, revision_hash, provider_campaign_id, provider_child_ids,
