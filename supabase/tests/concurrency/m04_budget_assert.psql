@@ -1,0 +1,61 @@
+\set ON_ERROR_STOP on
+
+do $assertions$
+declare
+  result_count integer;
+  winner_count integer;
+  over_allocation_count integer;
+  unexpected_failure_count integer;
+  package_envelope numeric(20,6);
+  package_committed numeric(20,6);
+  reserved_plan_count integer;
+  reserved_total numeric(20,6);
+begin
+  select
+    count(*)::integer,
+    count(*) filter (where succeeded and not is_over_allocation)::integer,
+    count(*) filter (where not succeeded and is_over_allocation)::integer,
+    count(*) filter (where succeeded = is_over_allocation)::integer
+  into result_count, winner_count, over_allocation_count, unexpected_failure_count
+  from public.m04_budget_race_results;
+
+  if result_count <> 2 then
+    raise exception 'Expected two independent race results, observed %', result_count;
+  end if;
+  if winner_count <> 1 then
+    raise exception 'Expected exactly one successful 60-unit reservation, observed %', winner_count;
+  end if;
+  if over_allocation_count <> 1 or unexpected_failure_count <> 0 then
+    raise exception
+      'Expected one over-allocation failure and no other failure (over-allocation %, other %)',
+      over_allocation_count, unexpected_failure_count;
+  end if;
+
+  select envelope_amount, committed_amount
+  into strict package_envelope, package_committed
+  from public.ads_budget_packages
+  where package_key = 'm04-budget-race';
+
+  if package_envelope <> 100 or package_committed <> 60
+    or package_committed > package_envelope then
+    raise exception
+      'Expected committed budget 60 of 100 without overflow, observed % of %',
+      package_committed, package_envelope;
+  end if;
+
+  select
+    count(*) filter (where reserved_budget = 60)::integer,
+    coalesce(sum(reserved_budget), 0)
+  into reserved_plan_count, reserved_total
+  from public.ads_campaign_plans
+  where created_by_name in ('race-one', 'race-two');
+
+  if reserved_plan_count <> 1 or reserved_total <> 60 then
+    raise exception
+      'Expected exactly one plan to hold the 60-unit reservation, observed % plans and % units',
+      reserved_plan_count, reserved_total;
+  end if;
+end;
+$assertions$;
+
+select 'PASS: exactly one 60-of-100 reservation won, one over-allocation failed, and committed budget is 60' as result;

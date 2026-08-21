@@ -2208,6 +2208,58 @@ begin
 end;
 $$;
 
+-- Preserve the M03 launch-eligibility RPC while allowing only delivery-
+-- verified Google campaign builds into the post-launch change workflow.
+create or replace function public.ads_get_campaign_launch_eligibility(
+  p_account_id text,
+  p_campaign_id text
+) returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  adoption_id uuid;
+  verified_build_id bigint;
+begin
+  select adoption.id into adoption_id
+  from public.ads_campaign_legacy_adoptions adoption
+  where adoption.account_id = p_account_id
+    and adoption.campaign_id = p_campaign_id
+    and adoption.project_key = 'lt_paid_media'
+    and adoption.revoked_at is null
+  limit 1;
+
+  if adoption_id is not null then
+    return jsonb_build_object('eligible', true, 'source', 'legacy_adoption', 'sourceId', adoption_id::text);
+  end if;
+
+  if to_regclass('public.ads_campaign_build_resources') is not null
+     and to_regclass('public.ads_campaign_builds') is not null
+     and to_regclass('public.ads_ad_accounts') is not null then
+    execute $query$
+      select build.id
+      from public.ads_campaign_build_resources resource
+      join public.ads_campaign_builds build on build.id = resource.build_id
+      join public.ads_ad_accounts account on account.id = build.ad_account_id
+      where account.provider_account_id = $1
+        and account.platform = 'google'
+        and resource.resource_type = 'campaign'
+        and resource.provider_resource_id = $2
+        and resource.verified_at is not null
+        and build.status in ('verified', 'handoff_complete')
+      order by resource.verified_at desc
+      limit 1
+    $query$ into verified_build_id using p_account_id, p_campaign_id;
+  end if;
+
+  if verified_build_id is not null then
+    return jsonb_build_object('eligible', true, 'source', 'verified_build', 'sourceId', verified_build_id::text);
+  end if;
+  return jsonb_build_object('eligible', false, 'source', 'unverified', 'sourceId', null);
+end;
+$$;
+
 create trigger acpr_append_only before update or delete on public.ads_campaign_plan_revisions
 for each row execute function ads_internal.reject_m04_row_mutation();
 create trigger aca_append_only before update or delete on public.ads_campaign_approvals
@@ -2274,6 +2326,7 @@ revoke all on function public.ads_record_campaign_resource_outcome(bigint, uuid,
 revoke all on function public.ads_append_campaign_qa_result(bigint, uuid, bigint, text, text, boolean, jsonb, jsonb, text, text, text, jsonb) from public, anon, authenticated, service_role;
 revoke all on function public.ads_finalize_campaign_gate_claim(bigint, uuid, text, jsonb, uuid, inet, text) from public, anon, authenticated, service_role;
 revoke all on function public.ads_create_campaign_monitoring_handoff(bigint, bigint, text, uuid, inet, text) from public, anon, authenticated, service_role;
+revoke all on function public.ads_get_campaign_launch_eligibility(text, text) from public, anon, authenticated;
 
 grant execute on function public.ads_create_campaign_plan_revision(bigint, bigint, jsonb, text, text, uuid, inet, text) to service_role;
 grant execute on function public.ads_reserve_campaign_budget(bigint, bigint, text, bigint, uuid, inet, text) to service_role;
@@ -2286,3 +2339,4 @@ grant execute on function public.ads_record_campaign_resource_outcome(bigint, uu
 grant execute on function public.ads_append_campaign_qa_result(bigint, uuid, bigint, text, text, boolean, jsonb, jsonb, text, text, text, jsonb) to service_role;
 grant execute on function public.ads_finalize_campaign_gate_claim(bigint, uuid, text, jsonb, uuid, inet, text) to service_role;
 grant execute on function public.ads_create_campaign_monitoring_handoff(bigint, bigint, text, uuid, inet, text) to service_role;
+grant execute on function public.ads_get_campaign_launch_eligibility(text, text) to service_role;

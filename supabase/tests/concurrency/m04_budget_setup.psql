@@ -1,0 +1,133 @@
+\set ON_ERROR_STOP on
+
+truncate table
+  public.ads_campaign_monitoring_handoffs,
+  public.ads_campaign_qa_results,
+  public.ads_campaign_gate_attempts,
+  public.ads_campaign_build_resources,
+  public.ads_campaign_builds,
+  public.ads_campaign_approvals,
+  public.ads_campaign_audit_events,
+  public.ads_campaign_plan_revisions,
+  public.ads_campaign_plans,
+  public.ads_budget_packages,
+  public.ads_ad_accounts
+restart identity cascade;
+
+drop table if exists public.m04_budget_race_results;
+drop table if exists public.m04_budget_race_ready;
+drop table if exists public.m04_budget_race_gate;
+
+create unlogged table public.m04_budget_race_gate (
+  singleton boolean primary key default true check (singleton),
+  released boolean not null default false
+);
+
+create unlogged table public.m04_budget_race_ready (
+  session_name text primary key,
+  ready_at timestamptz not null default clock_timestamp()
+);
+
+create unlogged table public.m04_budget_race_results (
+  session_name text primary key,
+  succeeded boolean not null,
+  is_over_allocation boolean not null
+);
+
+insert into public.m04_budget_race_gate (singleton, released)
+values (true, false);
+
+insert into auth.users (
+  id, email, aud, role, email_confirmed_at
+) values (
+  '00000000-0000-0000-0000-000000000451',
+  'budget.race@locus-t.com.my',
+  'authenticated', 'authenticated', clock_timestamp()
+)
+on conflict (id) do update
+set email = excluded.email,
+    aud = excluded.aud,
+    role = excluded.role,
+    email_confirmed_at = excluded.email_confirmed_at;
+
+insert into public.ad_automation_report_users (
+  id, full_name, role, is_active
+) values (
+  '00000000-0000-0000-0000-000000000451',
+  'Budget Race Operator', 'approver', true
+)
+on conflict (id) do update
+set full_name = excluded.full_name,
+    role = excluded.role,
+    is_active = excluded.is_active;
+
+insert into public.ads_ad_accounts (
+  client_id, platform, provider_account_id, account_name, currency, timezone,
+  access_status, access_evidence, access_verified_at, is_active
+) values (
+  '00000000-0000-0000-0000-000000000452', 'google',
+  'm04-budget-race', 'M04 Budget Race', 'MYR', 'Asia/Kuala_Lumpur',
+  'verified', '{"source":"local-concurrency-test"}', clock_timestamp(), true
+);
+
+insert into public.ads_budget_packages (
+  client_id, package_key, package_name, currency, start_date, end_date,
+  envelope_amount, committed_amount, status
+) values (
+  '00000000-0000-0000-0000-000000000452', 'm04-budget-race',
+  'M04 Budget Race', 'MYR', '2026-08-01', '2026-08-31',
+  100, 0, 'active'
+);
+
+insert into public.ads_campaign_plans (
+  client_id, budget_package_id, ad_account_id, platform,
+  created_by_id, created_by_name
+)
+select
+  package.client_id, package.id, account.id, account.platform,
+  '00000000-0000-0000-0000-000000000451', fixture.plan_name
+from (values ('race-one'), ('race-two')) as fixture(plan_name)
+cross join public.ads_budget_packages as package
+cross join public.ads_ad_accounts as account
+where package.package_key = 'm04-budget-race'
+  and account.provider_account_id = 'm04-budget-race';
+
+insert into public.ads_campaign_plan_revisions (
+  plan_id, revision_number, client_id, ad_account_id, budget_package_id,
+  platform, provider_account_id, currency, timezone, start_date, end_date,
+  allocated_budget, increment_amount, daily_budget, projected_total,
+  objective, destination, plan_payload, canonical_json, payload_hash,
+  created_by_id, created_by_name
+)
+select
+  plan.id, 1, plan.client_id, plan.ad_account_id, plan.budget_package_id,
+  plan.platform, account.provider_account_id, account.currency, account.timezone,
+  '2026-08-01', '2026-08-31', 60, 0, 2, 60,
+  'leads', 'https://example.test/budget-race',
+  '{"allocated_budget":60}'::jsonb, '{"allocated_budget":60}',
+  case plan.created_by_name
+    when 'race-one' then repeat('1', 64)
+    else repeat('2', 64)
+  end,
+  plan.created_by_id, 'Budget Race Operator'
+from public.ads_campaign_plans as plan
+join public.ads_ad_accounts as account on account.id = plan.ad_account_id
+where plan.created_by_name in ('race-one', 'race-two');
+
+update public.ads_campaign_plans as plan
+set active_revision_id = revision.id
+from public.ads_campaign_plan_revisions as revision
+where revision.plan_id = plan.id
+  and plan.created_by_name in ('race-one', 'race-two');
+
+do $setup_assertion$
+begin
+  if (select count(*) from public.ads_campaign_plans where created_by_name in ('race-one', 'race-two')) <> 2
+    or (select count(*) from public.ads_campaign_plan_revisions where allocated_budget = 60) <> 2
+    or (select envelope_amount from public.ads_budget_packages where package_key = 'm04-budget-race') <> 100 then
+    raise exception 'Budget race setup did not create two 60-unit revisions against one 100-unit package';
+  end if;
+end;
+$setup_assertion$;
+
+select 'budget race setup ready' as result;

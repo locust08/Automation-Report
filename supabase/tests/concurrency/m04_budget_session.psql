@@ -1,0 +1,46 @@
+\set ON_ERROR_STOP on
+\set VERBOSITY verbose
+
+insert into public.m04_budget_race_ready (session_name)
+values (:'session_name');
+
+do $barrier$
+declare
+  wait_deadline timestamptz := clock_timestamp() + interval '20 seconds';
+begin
+  loop
+    exit when exists (
+      select 1
+      from public.m04_budget_race_gate
+      where singleton and released
+    );
+
+    if clock_timestamp() >= wait_deadline then
+      raise exception 'Budget race synchronization barrier timed out'
+        using errcode = '57014';
+    end if;
+
+    perform pg_catalog.pg_sleep(0.02);
+  end loop;
+end;
+$barrier$;
+
+set role service_role;
+
+select (public.ads_reserve_campaign_budget(
+  (select id from public.ads_campaign_plans where created_by_name = :'plan_name'),
+  (select active_revision_id from public.ads_campaign_plans where created_by_name = :'plan_name'),
+  (select payload_hash
+   from public.ads_campaign_plan_revisions
+   where id = (
+     select active_revision_id
+     from public.ads_campaign_plans
+     where created_by_name = :'plan_name'
+   )),
+  0,
+  '00000000-0000-0000-0000-000000000451',
+  '203.0.113.45',
+  'm04-budget-concurrency/' || :'session_name'
+)).id as reserved_plan_id \gset
+
+\echo M04_BUDGET_RACE_SUCCESS plan_id=:reserved_plan_id
