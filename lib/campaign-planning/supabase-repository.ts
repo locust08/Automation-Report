@@ -38,6 +38,8 @@ const PLATFORM_DETAIL_TABLE = {
   tiktok: "m04_ads_tiktok_campaign_revision_details",
 } as const;
 
+const CRM08_DEVELOPMENT_ACTOR_ID = "c4b46e06-bbe9-4f91-855e-d43d6e31c8fe";
+
 export class CampaignPlanningRepositoryError extends Error {
   constructor(message: string, public readonly status = 400) {
     super(message);
@@ -220,7 +222,7 @@ export async function createCampaignPlanDraft(
       p_canonical_json: prepared.canonical_json,
       p_expected_payload_hash: prepared.payload_hash,
       p_platform_detail: platformDetail,
-      p_actor_id: requestContext.actorId,
+      p_actor_id: resolveCampaignActorId(requestContext.actorId),
       p_trusted_ip: null,
       p_trusted_user_agent: requestContext.userAgent?.trim().slice(0, 1_000) || "m04-crm08-mock",
     },
@@ -242,11 +244,22 @@ export async function runMockCampaignWorkflow(planId: number, actorId: string): 
     method: "POST",
     body: {
       p_plan_id: planId,
-      p_actor_id: actorId,
+      p_actor_id: resolveCampaignActorId(actorId),
       p_request_idempotency_key: `mock-workflow:${planId}`,
     },
   });
   return getCampaignPlan(planId);
+}
+
+export function resolveCampaignActorId(sessionSubject: string): string {
+  if (isPostgresUuid(sessionSubject)) return sessionSubject;
+  if (process.env.NODE_ENV !== "production"
+    && process.env.DEV_AUTH_BYPASS === "true"
+    && sessionSubject === "local-development-admin") {
+    const configuredActorId = process.env.DEV_AUTH_BYPASS_ACTOR_ID?.trim() || CRM08_DEVELOPMENT_ACTOR_ID;
+    if (isPostgresUuid(configuredActorId)) return configuredActorId;
+  }
+  throw new CampaignPlanningRepositoryError("Campaign access requires an approved CRM08 staff identity.", 403);
 }
 
 function connectedStage2Meta(config: LocalSupabaseConfig): LocalSupabaseStage2Meta {
@@ -575,4 +588,8 @@ function objectValue(value: unknown): JsonObject {
   return typeof value === "object" && value !== null && !Array.isArray(value)
     ? value as JsonObject
     : {};
+}
+
+function isPostgresUuid(value: string): boolean {
+  return /^[a-f0-9]{8}-[a-f0-9]{4}-[1-5][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i.test(value);
 }

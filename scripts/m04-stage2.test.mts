@@ -235,3 +235,29 @@ test("the complete 12-state build table allows only declared transitions", () =>
   assert.equal(canTransitionCampaignBuild("handoff_complete", "pending_gate_1"), false);
   assert.equal(canTransitionCampaignBuild("cancelled", "gate_1_in_progress"), false);
 });
+
+test("development auth maps the local bypass subject to an explicitly configured CRM08 actor", async () => {
+  const repository = require("../lib/campaign-planning/supabase-repository.ts") as typeof import("../lib/campaign-planning/supabase-repository.ts");
+  const previousBypass = process.env.DEV_AUTH_BYPASS;
+  const previousActor = process.env.DEV_AUTH_BYPASS_ACTOR_ID;
+  process.env.DEV_AUTH_BYPASS = "true";
+  process.env.DEV_AUTH_BYPASS_ACTOR_ID = "c4b46e06-bbe9-4f91-855e-d43d6e31c8fe";
+  try {
+    assert.equal(
+      repository.resolveCampaignActorId("local-development-admin"),
+      "c4b46e06-bbe9-4f91-855e-d43d6e31c8fe",
+    );
+    assert.equal(
+      repository.resolveCampaignActorId("5a718bf0-df4d-487d-a871-db1fd72c0b84"),
+      "5a718bf0-df4d-487d-a871-db1fd72c0b84",
+    );
+  } finally {
+    restoreEnvironment("DEV_AUTH_BYPASS", previousBypass);
+    restoreEnvironment("DEV_AUTH_BYPASS_ACTOR_ID", previousActor);
+  }
+});
+
+function restoreEnvironment(name: string, value: string | undefined) {
+  if (value === undefined) delete process.env[name];
+  else process.env[name] = value;
+}
