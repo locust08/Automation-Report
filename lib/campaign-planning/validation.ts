@@ -13,9 +13,18 @@ export const createCampaignPlanSchema = z.object({
   startDate: date,
   endDate: date,
   allocationMicros: z.coerce.number().int().positive(),
+  platformConfig: z.record(z.string(), z.string()),
 }).superRefine((value, context) => {
   if (value.endDate < value.startDate) {
     context.addIssue({ code: "custom", path: ["endDate"], message: "End date must be on or after start date." });
+  }
+  const required = value.platform === "google"
+    ? ["campaignType", "biddingStrategy", "networks", "language"]
+    : value.platform === "meta"
+      ? ["buyingType", "optimizationGoal", "conversionLocation", "specialAdCategory"]
+      : ["campaignType", "objectiveType", "budgetMode", "placementType"];
+  for (const key of required) {
+    if (!value.platformConfig[key]?.trim()) context.addIssue({ code: "custom", path: ["platformConfig", key], message: `${key} is required.` });
   }
 });
 
@@ -23,4 +32,3 @@ export const campaignPlanActionSchema = z.object({
   action: z.enum(["save_revision", "submit", "approve", "simulate_gate_1", "simulate_gate_2", "create_handoff"]),
   lockVersion: z.coerce.number().int().nonnegative(),
 });
-

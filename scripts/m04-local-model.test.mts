@@ -20,7 +20,11 @@ test("local M04 model connects, fetches, and completes a simulated campaign life
       clientName: "Northstar Retail", platform: "google", accountId: 1, packageId: 1,
       campaignName: "Local lifecycle test", objective: "Conversions", destination: "https://example.com/test",
       startDate: "2026-08-22", endDate: "2026-09-21", allocationMicros: 5_000_000_000,
-    }, actor);
+      platformConfig: { campaignType: "search", biddingStrategy: "maximize_conversions", networks: "search", language: "en" },
+    } as Parameters<typeof repository.createCampaignPlan>[0], actor);
+    assert.deepEqual(detail.currentRevision.payload.platform_config, {
+      campaignType: "search", biddingStrategy: "maximize_conversions", networks: "search", language: "en",
+    });
     for (const action of ["submit", "approve", "simulate_gate_1", "simulate_gate_2", "create_handoff"] as const) {
       detail = repository.applyCampaignPlanAction(detail.plan.id, { action, lockVersion: detail.plan.lockVersion }, actor);
     }
@@ -33,4 +37,3 @@ test("local M04 model connects, fetches, and completes a simulated campaign life
     rmSync(root, { recursive: true, force: true });
   }
 });
-

@@ -123,12 +123,14 @@ function seedLocalModel(db: DatabaseSync) {
       clientName: "Northstar Retail", platform: "google", accountId: 1, packageId: 1,
       campaignName: "Northstar Search — Brand", objective: "Leads", destination: "https://northstar.example/contact",
       startDate: "2026-08-25", endDate: "2026-09-30", allocationMicros: 12_000_000_000,
+      platformConfig: { campaignType: "search", biddingStrategy: "maximize_conversions", networks: "search", language: "en" },
     }, SEED_ACTOR);
 
     const awaiting = createPlanRows(db, {
       clientName: "Harbor Homes", platform: "meta", accountId: 2, packageId: 2,
       campaignName: "Harbor Website Leads", objective: "Leads", destination: "https://harbor.example/enquire",
       startDate: "2026-08-24", endDate: "2026-09-20", allocationMicros: 9_500_000_000,
+      platformConfig: { buyingType: "auction", optimizationGoal: "lead_generation", conversionLocation: "website", specialAdCategory: "none" },
     }, SEED_ACTOR);
     applyActionRows(db, awaiting, { action: "submit", lockVersion: 0 }, SEED_ACTOR);
 
@@ -136,6 +138,7 @@ function seedLocalModel(db: DatabaseSync) {
       clientName: "BrightPath Learning", platform: "tiktok", accountId: 3, packageId: 3,
       campaignName: "BrightPath Course Discovery", objective: "Traffic", destination: "https://brightpath.example/courses",
       startDate: "2026-08-23", endDate: "2026-09-15", allocationMicros: 7_200_000_000,
+      platformConfig: { campaignType: "auction", objectiveType: "traffic", budgetMode: "daily", placementType: "automatic" },
     }, SEED_ACTOR);
     applyActionRows(db, ready, { action: "submit", lockVersion: 0 }, SEED_ACTOR);
     applyActionRows(db, ready, { action: "approve", lockVersion: 1 }, SEED_ACTOR);
@@ -145,6 +148,7 @@ function seedLocalModel(db: DatabaseSync) {
       clientName: "Northstar Retail", platform: "google", accountId: 4, packageId: 1,
       campaignName: "Northstar Performance Max", objective: "Sales", destination: "https://northstar.example/shop",
       startDate: "2026-08-20", endDate: "2026-09-30", allocationMicros: 18_000_000_000,
+      platformConfig: { campaignType: "performance_max", biddingStrategy: "maximize_conversion_value", networks: "all_google", language: "en" },
     }, SEED_ACTOR);
     applyActionRows(db, launched, { action: "submit", lockVersion: 0 }, SEED_ACTOR);
     applyActionRows(db, launched, { action: "approve", lockVersion: 1 }, SEED_ACTOR);
@@ -181,6 +185,7 @@ function createPlanRows(db: DatabaseSync, input: CreateCampaignPlanInput, actor:
     objective: input.objective, destination: input.destination, start_date: input.startDate,
     end_date: input.endDate, allocation_micros: input.allocationMicros,
     daily_budget_micros: recommendedDaily, projected_total_micros: projectedTotal,
+    platform_config: input.platformConfig,
     mock: true,
   };
   const revisionHash = hashJson(payload);

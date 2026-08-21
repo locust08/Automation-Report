@@ -202,10 +202,10 @@ export type CreateCampaignPlanInput = {
   startDate: string;
   endDate: string;
   allocationMicros: number;
+  platformConfig: Record<string, string>;
 };
 
 export type CampaignPlanActionInput = {
   action: CampaignPlanAction;
   lockVersion: number;
 };
-
