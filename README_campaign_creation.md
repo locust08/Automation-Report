@@ -4,7 +4,7 @@ M04 is the shared database boundary for cross-platform campaign launch orchestra
 
 It is deliberately distinct from:
 
-- **M03**, which owns post-launch Google change control and rollback. M04 provides verified launch evidence that M03 can use; it does not replace M03's change workflow.
+- **M03 — Cross-Platform Post-Launch Change Control and Verification**, which owns cross-platform post-launch change control, verification, and rollback. M04 provides verified launch evidence that M03 can use; it does not replace M03's change workflow.
 - Future Google, Meta, and TikTok campaign creators, which are server-side clients of M04. No provider adapter, provider call, UI, or platform `plan_payload` schema exists in Stage 1.
 
 ## Relationship map
@@ -43,7 +43,7 @@ The public functions are service-role-only transactional interfaces. A future se
 5. Call `ads_acquire_campaign_gate_claim` for Gate 2 (`p_gate = 2`, `p_action = 'deliver'`) with a `m04.gate2.v1` delivery manifest; record delivery outcomes, append Gate 2 QA, and finalize with `ads_finalize_campaign_gate_claim`.
 6. Call `ads_create_campaign_monitoring_handoff` after verification to create the one immutable monitoring handoff.
 
-Supporting plan lifecycle RPCs are `ads_create_campaign_plan_revision`, `ads_reserve_campaign_budget`, `ads_release_campaign_budget`, `ads_approve_campaign_plan_revision`, and `ads_transition_campaign_plan`. M03 compatibility is exposed through `ads_get_campaign_launch_eligibility`; its existing two-text-argument contract is retained.
+Supporting plan lifecycle RPCs are `ads_create_campaign_plan_revision`, `ads_reserve_campaign_budget`, `ads_release_campaign_budget`, `ads_approve_campaign_plan_revision`, and `ads_transition_campaign_plan`. The currently checked-in `ads_get_campaign_launch_eligibility(text, text)` legacy eligibility bridge is Google-specific today. M04's generic platform, resource, build, and handoff structure can support later Meta/TikTok M03 integration without redesigning M04.
 
 ### Gate intents
 
