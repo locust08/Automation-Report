@@ -18,6 +18,7 @@ drop table if exists public.m04_approval_parallel_results;
 drop table if exists public.m04_probe_control;
 drop table if exists public.m04_stress_release;
 drop table if exists public.m04_stress_results;
+drop table if exists public.m04_transition_snapshot_results;
 
 create unlogged table public.m04_approval_parallel_results (
   case_name text not null,
@@ -30,7 +31,8 @@ create unlogged table public.m04_approval_parallel_results (
 
 create unlogged table public.m04_probe_control (
   case_name text primary key,
-  probe_now boolean not null default false
+  probe_now boolean not null default false,
+  rpc_now boolean not null default false
 );
 
 create unlogged table public.m04_stress_release (
@@ -47,14 +49,22 @@ create unlogged table public.m04_stress_results (
   primary key (case_name, session_role)
 );
 
+create unlogged table public.m04_transition_snapshot_results (
+  case_name text primary key,
+  sqlstate text not null,
+  error_message text,
+  result_id bigint
+);
+
 grant insert on public.m04_approval_parallel_results to service_role;
 grant insert on public.m04_stress_results to service_role;
+grant insert on public.m04_transition_snapshot_results to service_role;
 
 insert into public.m04_probe_control (case_name)
 values
   ('claim'), ('retry'), ('draft'), ('cancelled'),
   ('renewal'), ('handoff'), ('initial'), ('qa'),
-  ('same-key'), ('conflict');
+  ('same-key'), ('conflict'), ('transition-snapshot');
 
 insert into auth.users (id, email, aud, role, email_confirmed_at)
 values
@@ -106,7 +116,9 @@ with fixtures(case_name, plan_status) as (
     ('probe-qa', 'launch_in_progress'),
     ('probe-initial', 'awaiting_approval'),
     ('approval-same-key', 'awaiting_approval'),
-    ('approval-conflict', 'awaiting_approval')
+    ('approval-conflict', 'awaiting_approval'),
+    ('transition-snapshot', 'approved'),
+    ('transition-snapshot-prewarm', 'approved')
 ), stress_fixtures(case_name, plan_status) as (
   select 'stress-' || variant || '-' || pg_catalog.lpad(iteration::text, 2, '0'),
          'approved'
@@ -177,6 +189,7 @@ select plan.id, revision.id, revision.payload_hash, approval.id,
   case plan.created_by_name
     when 'probe-retry' then 'gate_1_failed'
     when 'probe-renewal' then 'gate_1_failed'
+    when 'transition-snapshot-prewarm' then 'gate_1_failed'
     when 'probe-handoff' then 'verified'
     when 'probe-qa' then 'gate_1_in_progress'
     else 'pending_gate_1'
@@ -247,14 +260,14 @@ select created_by_name from public.ads_campaign_plans where created_by_name like
 
 do $setup_assertion$
 begin
-  if (select count(*) from public.ads_campaign_plans) <> 50
-    or (select count(*) from public.ads_campaign_builds) <> 47
-    or (select count(*) from public.ads_campaign_approvals) <> 47
+  if (select count(*) from public.ads_campaign_plans) <> 52
+    or (select count(*) from public.ads_campaign_builds) <> 49
+    or (select count(*) from public.ads_campaign_approvals) <> 49
     or (select count(*) from public.ads_campaign_build_resources) <> 3
     or (select count(*) from public.ads_campaign_gate_attempts) <> 3
-    or (select count(*) from public.m04_probe_control) <> 10
+    or (select count(*) from public.m04_probe_control) <> 11
     or (select count(*) from public.m04_stress_release) <> 40 then
-    raise exception 'Enhanced state setup did not create the exact 50-plan fixture matrix';
+    raise exception 'Enhanced state setup did not create the exact 52-plan fixture matrix';
   end if;
 end;
 $setup_assertion$;

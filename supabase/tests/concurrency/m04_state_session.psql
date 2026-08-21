@@ -2,77 +2,98 @@
 \set VERBOSITY verbose
 
 select pg_catalog.set_config('application_name', :'app_invoking', false);
+select pg_catalog.set_config('m04.state_case', :'case_name', false);
+select pg_catalog.set_config('m04.state_role', :'session_role', false);
+select pg_catalog.set_config('m04.state_request_key', :'request_key', false);
+select pg_catalog.set_config('m04.state_expected_plan_lock', :'expected_plan_lock', false);
+select pg_catalog.set_config('m04.state_expected_from_status', :'expected_from_status', false);
+select pg_catalog.set_config('m04.state_to_status', :'to_status', false);
+select pg_catalog.set_config('m04.state_expiry_minutes', :'expiry_minutes', false);
+select pg_catalog.set_config('m04.state_is_claim', :'is_claim', false);
+select pg_catalog.set_config('m04.state_is_transition', :'is_transition', false);
+select pg_catalog.set_config('m04.state_is_approval', :'is_approval', false);
+select pg_catalog.set_config('m04.state_is_renewal', :'is_renewal', false);
 
 begin;
 set local statement_timeout = '25s';
 set local lock_timeout = '20s';
 set role service_role;
 
-\if :is_claim
-select (public.ads_acquire_campaign_gate_claim(
-  (select build.id
-   from public.ads_campaign_builds as build
-   join public.ads_campaign_plans as plan on plan.id = build.plan_id
-   where plan.created_by_name = :'case_name'),
-  1::smallint,
-  'create',
-  :'request_key',
-  (select build.revision_id
-   from public.ads_campaign_builds as build
-   join public.ads_campaign_plans as plan on plan.id = build.plan_id
-   where plan.created_by_name = :'case_name'),
-  repeat('c', 64),
-  300,
-  '{"resources":[{"logical_resource_key":"campaign","resource_type":"campaign"}]}'::jsonb,
-  '00000000-0000-0000-0000-000000000461',
-  '203.0.113.46',
-  'm04-state-race/' || :'case_name' || '/' || :'session_role'
-)).id as result_id \gset
-\elif :is_transition
-select (public.ads_transition_campaign_plan(
-  (select id from public.ads_campaign_plans where created_by_name = :'case_name'),
-  :expected_plan_lock,
-  :'expected_from_status',
-  :'to_status',
-  'deterministic state-race transition',
-  '00000000-0000-0000-0000-000000000461',
-  '203.0.113.46',
-  'm04-state-race/' || :'case_name' || '/' || :'session_role'
-)).id as result_id \gset
-\elif :is_approval
-select (public.ads_approve_campaign_plan_revision(
-  (select id from public.ads_campaign_plans where created_by_name = :'case_name'),
-  (select active_revision_id from public.ads_campaign_plans where created_by_name = :'case_name'),
-  repeat('c', 64),
-  :expected_plan_lock,
-  clock_timestamp() + pg_catalog.make_interval(mins => :expiry_minutes),
-  :'request_key',
-  'deterministic state-race approval',
-  '00000000-0000-0000-0000-000000000461',
-  '203.0.113.46',
-  'm04-state-race/' || :'case_name' || '/' || :'session_role'
-)).id as result_id \gset
-\elif :is_renewal
-select (public.ads_approve_campaign_plan_revision(
-  (select id from public.ads_campaign_plans where created_by_name = :'case_name'),
-  (select active_revision_id from public.ads_campaign_plans where created_by_name = :'case_name'),
-  repeat('c', 64),
-  :expected_plan_lock,
-  clock_timestamp() + pg_catalog.make_interval(mins => :expiry_minutes),
-  :'request_key',
-  'deterministic state-race renewal',
-  '00000000-0000-0000-0000-000000000461',
-  '203.0.113.46',
-  'm04-state-race/' || :'case_name' || '/' || :'session_role'
-)).id as result_id \gset
-\else
-\quit 3
-\endif
+do $invoke_state_rpc$
+declare
+  v_case text := pg_catalog.current_setting('m04.state_case');
+  v_role text := pg_catalog.current_setting('m04.state_role');
+  v_result_id bigint;
+begin
+  begin
+    if pg_catalog.current_setting('m04.state_is_claim') = '1' then
+      select (public.ads_acquire_campaign_gate_claim(
+        (select build.id
+         from public.ads_campaign_builds as build
+         join public.ads_campaign_plans as plan on plan.id = build.plan_id
+         where plan.created_by_name = v_case),
+        1::smallint,
+        'create',
+        pg_catalog.current_setting('m04.state_request_key'),
+        (select build.revision_id
+         from public.ads_campaign_builds as build
+         join public.ads_campaign_plans as plan on plan.id = build.plan_id
+         where plan.created_by_name = v_case),
+        repeat('c', 64),
+        300,
+        '{"resources":[{"logical_resource_key":"campaign","resource_type":"campaign"}]}'::jsonb,
+        '00000000-0000-0000-0000-000000000461',
+        '203.0.113.46',
+        'm04-state-race/' || v_case || '/' || v_role
+      )).id into strict v_result_id;
+    elsif pg_catalog.current_setting('m04.state_is_transition') = '1' then
+      select (public.ads_transition_campaign_plan(
+        (select id from public.ads_campaign_plans where created_by_name = v_case),
+        pg_catalog.current_setting('m04.state_expected_plan_lock')::bigint,
+        pg_catalog.current_setting('m04.state_expected_from_status'),
+        pg_catalog.current_setting('m04.state_to_status'),
+        'deterministic state-race transition',
+        '00000000-0000-0000-0000-000000000461',
+        '203.0.113.46',
+        'm04-state-race/' || v_case || '/' || v_role
+      )).id into strict v_result_id;
+    elsif pg_catalog.current_setting('m04.state_is_approval') = '1'
+       or pg_catalog.current_setting('m04.state_is_renewal') = '1' then
+      select (public.ads_approve_campaign_plan_revision(
+        (select id from public.ads_campaign_plans where created_by_name = v_case),
+        (select active_revision_id from public.ads_campaign_plans where created_by_name = v_case),
+        repeat('c', 64),
+        pg_catalog.current_setting('m04.state_expected_plan_lock')::bigint,
+        clock_timestamp() + pg_catalog.make_interval(
+          mins => pg_catalog.current_setting('m04.state_expiry_minutes')::integer
+        ),
+        pg_catalog.current_setting('m04.state_request_key'),
+        case when pg_catalog.current_setting('m04.state_is_renewal') = '1'
+          then 'deterministic state-race renewal'
+          else 'deterministic state-race approval'
+        end,
+        '00000000-0000-0000-0000-000000000461',
+        '203.0.113.46',
+        'm04-state-race/' || v_case || '/' || v_role
+      )).id into strict v_result_id;
+    else
+      raise exception 'State-race session operation was not selected' using errcode = '22023';
+    end if;
+
+    insert into public.m04_state_race_results (
+      case_name, session_role, sqlstate, result_id
+    ) values (v_case, v_role, '00000', v_result_id);
+  exception when others then
+    insert into public.m04_state_race_results (
+      case_name, session_role, sqlstate, error_message
+    ) values (v_case, v_role, sqlstate, sqlerrm);
+  end;
+end;
+$invoke_state_rpc$;
 
 reset role;
 
 \if :hold_open
-select pg_catalog.set_config('m04.state_case', :'case_name', true);
 select pg_catalog.set_config('application_name', :'app_done', false);
 do $hold_winner$
 declare
@@ -94,4 +115,22 @@ $hold_winner$;
 \endif
 
 commit;
-\echo M04_STATE_SERIALIZATION_SUCCESS case=:case_name role=:session_role result_id=:result_id
+
+select result.sqlstate as result_sqlstate,
+       coalesce(result.error_message, 'none') as result_message,
+       coalesce(result.result_id::text, 'none') as result_id,
+       result.sqlstate = '00000' as result_ok
+from public.m04_state_race_results as result
+where result.case_name = :'case_name' and result.session_role = :'session_role'
+\gset
+\echo M04_STATE_SERIALIZATION_RESULT case=:case_name role=:session_role sqlstate=:result_sqlstate result_id=:result_id message=:result_message
+\if :result_ok
+\else
+select pg_catalog.set_config('m04.recorded_child_sqlstate', :'result_sqlstate', false);
+do $raise_recorded_child_error$
+begin
+  raise exception 'M04_RECORDED_STATE_SERIALIZATION_CHILD_ERROR'
+    using errcode = pg_catalog.current_setting('m04.recorded_child_sqlstate');
+end;
+$raise_recorded_child_error$;
+\endif

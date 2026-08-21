@@ -2207,13 +2207,16 @@ language plpgsql
 as $$
 declare
   v_attempt public.ads_campaign_gate_attempts%rowtype;
+  v_plan_id bigint;
   v_audit_count bigint;
 begin
   select attempt.* into strict v_attempt
   from public.ads_campaign_gate_attempts as attempt
   where request_idempotency_key = 'ambiguity-audit-active';
+  select build.plan_id into strict v_plan_id
+  from public.ads_campaign_builds as build where build.id = v_attempt.build_id;
   select count(*) into v_audit_count
-  from public.ads_campaign_audit_events where build_id = v_attempt.build_id;
+  from public.ads_campaign_audit_events where plan_id = v_plan_id;
   perform public.ads_record_campaign_resource_outcome(
     v_attempt.id, v_attempt.claim_token, 'campaign', 'unknown', null, null,
     '{"request_sent":true}', '{"timeout":true}'
@@ -2222,7 +2225,7 @@ begin
           from public.ads_campaign_gate_attempts where id = v_attempt.id)
     and (select status = 'reconciliation_required'
          from public.ads_campaign_builds where id = v_attempt.build_id)
-    and (select count(*) from public.ads_campaign_audit_events where build_id = v_attempt.build_id) = v_audit_count + 1
+    and (select count(*) from public.ads_campaign_audit_events where plan_id = v_plan_id) = v_audit_count + 1
     and (
       select count(*) = 1
         and bool_and(audit.actor_id = v_attempt.actor_id)
@@ -2655,6 +2658,11 @@ select ok(
   'a B-only reconciliation resolves its subset to gate_1_failed and authorizes only the causal B retry'
 );
 
+create temp table stale_missing_proof_results (
+  check_name text primary key,
+  passed boolean not null
+) on commit drop;
+
 create function pg_temp.stale_missing_proof_cannot_cross_a_later_mutation()
 returns boolean
 language plpgsql
@@ -2664,10 +2672,15 @@ declare
   v_create public.ads_campaign_gate_attempts%rowtype;
   v_reconcile_one public.ads_campaign_gate_attempts%rowtype;
   v_retry_one public.ads_campaign_gate_attempts%rowtype;
-  v_reconcile_two public.ads_campaign_gate_attempts%rowtype;
+  v_reconcile_found public.ads_campaign_gate_attempts%rowtype;
+  v_reconcile_missing public.ads_campaign_gate_attempts%rowtype;
   v_retry_two public.ads_campaign_gate_attempts%rowtype;
   v_resource public.ads_campaign_build_resources%rowtype;
-  v_stale_rejected boolean := false;
+  v_old_parent_rejected boolean := false;
+  v_old_proof_rejected boolean := false;
+  v_found_supersedes_missing boolean := false;
+  v_snapshot_before jsonb;
+  v_snapshot_after jsonb;
 begin
   select build.* into strict v_build
   from public.ads_campaign_builds as build
@@ -2719,25 +2732,109 @@ begin
     raise exception 'stale proof unexpectedly authorized retry' using errcode = 'P0001';
   exception
     when sqlstate '55000' then
-      v_stale_rejected := sqlerrm = 'Retry parent must be the latest mutation for every selected resource';
+      v_old_parent_rejected := sqlerrm = 'Retry parent must be the latest mutation for every selected resource';
     when sqlstate 'P0001' then
-      v_stale_rejected := false;
+      v_old_parent_rejected := false;
   end;
 
-  select * into strict v_reconcile_two from public.ads_acquire_campaign_gate_claim(
-    v_build.id, 1::smallint, 'reconcile', 'stale-proof-reconcile-two',
+  select pg_catalog.jsonb_build_object(
+    'plan', (select pg_catalog.to_jsonb(plan) from public.ads_campaign_plans as plan where plan.id = v_build.plan_id),
+    'build', (select pg_catalog.to_jsonb(build) from public.ads_campaign_builds as build where build.id = v_build.id),
+    'attempts', (select coalesce(pg_catalog.jsonb_agg(pg_catalog.to_jsonb(attempt) order by attempt.id), '[]'::jsonb)
+                 from public.ads_campaign_gate_attempts as attempt where attempt.build_id = v_build.id),
+    'resources', (select coalesce(pg_catalog.jsonb_agg(pg_catalog.to_jsonb(resource) order by resource.id), '[]'::jsonb)
+                  from public.ads_campaign_build_resources as resource where resource.build_id = v_build.id),
+    'qa', (select coalesce(pg_catalog.jsonb_agg(pg_catalog.to_jsonb(qa) order by qa.id), '[]'::jsonb)
+           from public.ads_campaign_qa_results as qa
+           join public.ads_campaign_gate_attempts as attempt on attempt.id = qa.attempt_id
+           where attempt.build_id = v_build.id),
+    'audit', (select coalesce(pg_catalog.jsonb_agg(pg_catalog.to_jsonb(audit) order by audit.id), '[]'::jsonb)
+              from public.ads_campaign_audit_events as audit where audit.plan_id = v_build.plan_id)
+  ) into v_snapshot_before;
+  begin
+    perform public.ads_acquire_campaign_retry_claim(
+      v_build.id, v_retry_one.id, 'stale-proof-no-newer-proof', v_build.revision_hash, 300,
+      '{"resources":[{"logical_resource_key":"campaign","resource_type":"campaign"}]}'::jsonb,
+      '00000000-0000-0000-0000-000000000061', null, null
+    );
+    raise exception 'old missing proof unexpectedly authorized a later retry' using errcode = 'P0001';
+  exception
+    when sqlstate '55000' then
+      v_old_proof_rejected := sqlerrm = 'Mutation retry requires every selected resource to be proven missing by newer reconciliation readback';
+    when sqlstate 'P0001' then
+      v_old_proof_rejected := false;
+  end;
+  select pg_catalog.jsonb_build_object(
+    'plan', (select pg_catalog.to_jsonb(plan) from public.ads_campaign_plans as plan where plan.id = v_build.plan_id),
+    'build', (select pg_catalog.to_jsonb(build) from public.ads_campaign_builds as build where build.id = v_build.id),
+    'attempts', (select coalesce(pg_catalog.jsonb_agg(pg_catalog.to_jsonb(attempt) order by attempt.id), '[]'::jsonb)
+                 from public.ads_campaign_gate_attempts as attempt where attempt.build_id = v_build.id),
+    'resources', (select coalesce(pg_catalog.jsonb_agg(pg_catalog.to_jsonb(resource) order by resource.id), '[]'::jsonb)
+                  from public.ads_campaign_build_resources as resource where resource.build_id = v_build.id),
+    'qa', (select coalesce(pg_catalog.jsonb_agg(pg_catalog.to_jsonb(qa) order by qa.id), '[]'::jsonb)
+           from public.ads_campaign_qa_results as qa
+           join public.ads_campaign_gate_attempts as attempt on attempt.id = qa.attempt_id
+           where attempt.build_id = v_build.id),
+    'audit', (select coalesce(pg_catalog.jsonb_agg(pg_catalog.to_jsonb(audit) order by audit.id), '[]'::jsonb)
+              from public.ads_campaign_audit_events as audit where audit.plan_id = v_build.plan_id)
+  ) into v_snapshot_after;
+  insert into stale_missing_proof_results values
+    ('old-parent-rejected', v_old_parent_rejected),
+    ('old-proof-exact-and-unchanged', v_old_proof_rejected and v_snapshot_after = v_snapshot_before);
+
+  -- Persist the provider readback chronology directly: this fixture isolates
+  -- retry authorization from finalizer state derivation. The later successful
+  -- intent-scoped `found` row must be decisive over the older `missing` row.
+  insert into public.ads_campaign_gate_attempts (
+    build_id, gate, action, request_idempotency_key, attempt_number,
+    revision_id, revision_hash, status, intent, claimed_at, claim_expires_at,
+    released_at, provider_outcome, actor_id, actor_name
+  ) values (
+    v_build.id, 1, 'reconcile', 'stale-proof-reconcile-found',
+    (select pg_catalog.max(attempt_number) + 1
+     from public.ads_campaign_gate_attempts where build_id = v_build.id),
+    v_build.revision_id, v_build.revision_hash, 'succeeded',
+    '{"resources":[{"logical_resource_key":"campaign","resource_type":"campaign"}]}'::jsonb,
+    clock_timestamp(), clock_timestamp() + interval '5 minutes', clock_timestamp(),
+    'succeeded', '00000000-0000-0000-0000-000000000061', 'Launch Operator'
+  ) returning * into v_reconcile_found;
+  insert into public.ads_campaign_qa_results (
+    attempt_id, build_resource_id, phase, field_path, required,
+    expected_value, observed_value, result, readback_evidence
+  ) values (
+    v_reconcile_found.id, v_resource.id, 'reconciliation', 'provider.exists', true,
+    'true', 'true', 'match', '{"found":true,"after_retry":true}'
+  );
+  begin
+    perform public.ads_acquire_campaign_retry_claim(
+      v_build.id, v_retry_one.id, 'stale-proof-after-found', v_build.revision_hash, 300,
+      '{"resources":[{"logical_resource_key":"campaign","resource_type":"campaign"}]}'::jsonb,
+      '00000000-0000-0000-0000-000000000061', null, null
+    );
+    raise exception 'a newer found reconciliation unexpectedly authorized retry' using errcode = 'P0001';
+  exception
+    when sqlstate '55000' then
+      v_found_supersedes_missing := sqlerrm = 'Mutation retry requires every selected resource to be proven missing by newer reconciliation readback';
+    when sqlstate 'P0001' then
+      v_found_supersedes_missing := false;
+  end;
+  insert into stale_missing_proof_results values
+    ('newer-found-supersedes-missing', v_found_supersedes_missing);
+
+  select * into strict v_reconcile_missing from public.ads_acquire_campaign_gate_claim(
+    v_build.id, 1::smallint, 'reconcile', 'stale-proof-reconcile-missing',
     v_build.revision_id, v_build.revision_hash, 300,
     '{"resources":[{"logical_resource_key":"campaign","resource_type":"campaign"}]}'::jsonb,
     '00000000-0000-0000-0000-000000000061', null, null
   );
   perform public.ads_append_campaign_qa_result(
-    v_reconcile_two.id, v_reconcile_two.claim_token, v_resource.id,
+    v_reconcile_missing.id, v_reconcile_missing.claim_token, v_resource.id,
     'reconciliation', 'provider.exists', true, 'false', 'false', 'missing',
-    'PROVEN_MISSING', null, '{"found":false,"after_retry":true}'
+    'PROVEN_MISSING', null, '{"found":false,"after_found":true}'
   );
   perform public.ads_finalize_campaign_gate_claim(
-    v_reconcile_two.id, v_reconcile_two.claim_token, 'succeeded',
-    '{"campaign":"missing_after_retry"}',
+    v_reconcile_missing.id, v_reconcile_missing.claim_token, 'succeeded',
+    '{"campaign":"missing_after_found"}',
     '00000000-0000-0000-0000-000000000061', null, null
   );
   select * into strict v_retry_two from public.ads_acquire_campaign_retry_claim(
@@ -2745,9 +2842,11 @@ begin
     '{"resources":[{"logical_resource_key":"campaign","resource_type":"campaign"}]}'::jsonb,
     '00000000-0000-0000-0000-000000000061', null, null
   );
-  return v_stale_rejected
-    and v_retry_two.retry_parent_attempt_id = v_retry_one.id
-    and v_retry_two.status = 'claimed';
+  insert into stale_missing_proof_results values (
+    'newer-missing-authorizes-retry',
+    v_retry_two.retry_parent_attempt_id = v_retry_one.id and v_retry_two.status = 'claimed'
+  );
+  return true;
 exception when others then
   return false;
 end;
@@ -2755,7 +2854,23 @@ $$;
 
 select ok(
   pg_temp.stale_missing_proof_cannot_cross_a_later_mutation(),
-  'old create proof cannot authorize retry after a later mutation; only newer post-mutation missing proof can'
+  'the stale-proof chronology fixture completes through a final newer missing proof'
+);
+select ok(
+  (select passed from stale_missing_proof_results where check_name = 'old-parent-rejected'),
+  'an old mutation parent is rejected independently of proof freshness'
+);
+select ok(
+  (select passed from stale_missing_proof_results where check_name = 'old-proof-exact-and-unchanged'),
+  'the latest retry parent with only pre-retry missing proof returns the exact newer-proof error with full state unchanged'
+);
+select ok(
+  (select passed from stale_missing_proof_results where check_name = 'newer-found-supersedes-missing'),
+  'a later decisive found reconciliation supersedes an older missing proof'
+);
+select ok(
+  (select passed from stale_missing_proof_results where check_name = 'newer-missing-authorizes-retry'),
+  'a still-later decisive missing reconciliation authorizes retry of the latest mutation parent'
 );
 
 -- Decisive Gate 1 QA is per required field after the resource's latest

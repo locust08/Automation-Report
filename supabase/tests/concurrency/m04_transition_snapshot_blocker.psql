@@ -1,0 +1,50 @@
+\set ON_ERROR_STOP on
+\set VERBOSITY verbose
+
+select pg_catalog.set_config('application_name', :'app_blocker' || '-starting', false);
+select pg_catalog.set_config('m04.transition_snapshot_case', :'case_name', false);
+
+begin;
+set local statement_timeout = '25s';
+set local lock_timeout = '20s';
+lock table public.ads_campaign_builds in access exclusive mode;
+select pg_catalog.set_config('application_name', :'app_blocker', false);
+
+do $wait_for_verified_transition_wait$
+declare
+  v_deadline timestamptz := pg_catalog.clock_timestamp() + interval '20 seconds';
+begin
+  loop
+    exit when exists (
+      select 1 from public.m04_probe_control
+      where case_name = pg_catalog.current_setting('m04.transition_snapshot_case')
+        and probe_now
+    );
+    if pg_catalog.clock_timestamp() >= v_deadline then
+      raise exception 'Transition snapshot blocker release timed out' using errcode = '57014';
+    end if;
+    perform pg_catalog.pg_sleep(0.02);
+  end loop;
+end;
+$wait_for_verified_transition_wait$;
+
+set role service_role;
+select (public.ads_acquire_campaign_gate_claim(
+  (select build.id
+   from public.ads_campaign_builds as build
+   join public.ads_campaign_plans as plan on plan.id = build.plan_id
+   where plan.created_by_name = :'case_name'),
+  1::smallint, 'create', 'transition-snapshot-claim',
+  (select build.revision_id
+   from public.ads_campaign_builds as build
+   join public.ads_campaign_plans as plan on plan.id = build.plan_id
+   where plan.created_by_name = :'case_name'),
+  repeat('b', 64), 300,
+  '{"resources":[{"logical_resource_key":"campaign","resource_type":"campaign"}]}'::jsonb,
+  '00000000-0000-0000-0000-000000000461', '203.0.113.50',
+  'm04-transition-snapshot/blocker-claim'
+)).id as result_id \gset
+reset role;
+commit;
+
+\echo M04_TRANSITION_SNAPSHOT_BLOCKER_SUCCESS case=:case_name result_id=:result_id

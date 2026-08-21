@@ -9,6 +9,8 @@ Implemented the second Task 3 safety-hardening round in the existing M04 additiv
 - Hardening commit: `fix(m04): close recovery and state races`
 - Review-fix base: `c926e2d`
 - Review-fix commit: `fix(m04): validate causal recovery evidence`
+- Review-fix 2 base: `15989b224284ab6bc4ee3056777d02bc1b0de328`
+- Review-fix 2 commit subject: `fix(m04): classify concurrent transitions stale`
 - Date: 2026-08-21
 
 No unrelated Task 4 artifact, historical migration, provider/API/UI file, credential, remote Supabase project, deployment, activation, Notion object, Task 5 item, or Stage 2 behavior was touched. The shared state-concurrency runner and its disposable fixtures were intentionally extended because the review-fix brief requires runtime lock-order proof and simultaneous state stress.
@@ -194,6 +196,71 @@ Every command used a fresh, disposable local Supabase project with pinned CLI `2
 
 The final exact cleanup inventory reported zero matching M04 processes, zero matching Supabase containers, and zero generated `m04-stage1-*`, `m04-budget-concurrency-*`, or `m04-state-concurrency-*` temp roots. Every final project stop completed with `--no-backup` at exit `0`. The laptop sleep interruption was treated as uncertain state: exact child PIDs and its disposable project were stopped and verified before a fresh claims run; its validated diagnostic root was removed only after that fresh result was classified.
 
+## Review fix 2/5 — concurrent transition stale classification
+
+### Test-first classification evidence
+
+Review fix 2 started from clean `15989b224284ab6bc4ee3056777d02bc1b0de328`. Workflow and claims regressions were written before the migration changed and proved test-only evidence gaps: both suites remained GREEN at 90/90 and 207/207. They now capture each renewal RPC result and require the original build ID, count ambiguity audits across the entire isolated plan, split the old-parent and old-proof retry failures, compare full unchanged snapshots after the failed latest-parent retry, and prove that a later decisive `found` reconciliation blocks older missing evidence until a still-later decisive `missing` result authorizes retry.
+
+The production regression used no public hook and no caller-supplied build/plan row lock. A transition backend first prewarmed the function's internal statements against a separate initially inconsistent fixture, then waited visibly. A blocker held only `ACCESS EXCLUSIVE` on `ads_campaign_builds`; after the runner proved the real transition backend was directly blocked by that exact PID through `pg_blocking_pids`, the blocker invoked the real Gate 1 claim and committed. Against the unchanged migration, every legacy exact serialization case and all enhanced stress children completed, while this isolated transition returned exact SQLSTATE `55000` and message `Approved transition requires one matching pending Gate 1 build`. The required result was stale SQLSTATE `40001`, so this was a clean behavioral RED without a parser, setup, deadlock, timeout, or unrelated assertion cascade.
+
+The first post-edit run exposed a declaration placed in the preceding approval function rather than the final replacement transition function; exact child validation rejected SQLSTATE `42703`, and the scope mistake was corrected before further verification. The next run returned the required `40001` with the truthful generic message `Campaign plan status does not match expected state`: because the combined statement acquired its snapshot after the table lock was released, it saw the already-changed plan. The deterministic fixture alone was corrected from an over-specific race message to that exact generic message. Legacy forced-wait cases continue to require their original race-specific exact messages.
+
+### Production correction
+
+The final `ads_transition_campaign_plan` definition now reads the pre-status, the minimum matching pending-build ID, and the exact matching-build count in one initial MVCC statement. The sensitive approved-to-draft/cancelled branch then:
+
+- returns stale `40001` when that one snapshot is no longer approved;
+- reserves invariant `55000` for a snapshot that is approved but does not contain exactly one matching `pending_gate_1` build bound to the approved revision/hash;
+- locks only the captured build and then the plan; and
+- revalidates absence, status, plan CAS, build ownership/state, and revision/hash as stale `40001` before mutation.
+
+The public function name, arguments, return type, security settings, ACL, allowed transition graph, audit behavior, and build-before-plan row-lock order are unchanged. No public function was added.
+
+### Exact state-race evidence
+
+The legacy seven-case runner now persists the exact SQLSTATE, message, and numeric result ID for each case/role. Each child emits exactly one case-and-role-specific marker. Winners require SQLSTATE `00000`, a numeric result ID, no error, and native exit `0`; expected losers require exact SQLSTATE `40001`, their case-specific message, no result ID, one synthetic same-SQLSTATE rethrow, and native psql exit `3`. Deadlock `40P01`, timeout `57014`, ambiguous markers, missing markers, and any other exit are fatal both in PowerShell and in independent database assertions.
+
+The new table-lock fixture separately requires the real claim blocker to exit `0` with one numeric success marker, the transition child to exit `3` with exactly one `40001`/generic-stale marker and no result ID, and the final database state to contain one live Gate 1 create claim with plan/build state `launch_in_progress`/`gate_1_in_progress`. Its blocker and transition have bounded SQL timeouts; the PowerShell launcher uses hidden tracked processes, asynchronous output draining, bounded waits, parameterless `WaitForExit()`, `Refresh()`, exact PID observation, and the existing validated cleanup path.
+
+### Review-fix-2 changed files
+
+- `docs/superpowers/specs/2026-08-20-m04-stage-1-database-design.md`
+- `.superpowers/sdd/2026-08-20-m04-stage-1-database/progress.md` (updated as the repository-ignored local SDD ledger; not force-added)
+- `.superpowers/sdd/2026-08-20-m04-stage-1-database/task-3-hardening-2-report.md`
+- `supabase/migrations/20260820071959_m04_campaign_planning_launch.sql`
+- `supabase/tests/m04_workflow.test.sql`
+- `supabase/tests/m04_claims_handoff.test.sql`
+- `scripts/test-m04-state-concurrency.ps1`
+- `supabase/tests/concurrency/m04_state_setup.psql`
+- `supabase/tests/concurrency/m04_state_session.psql`
+- `supabase/tests/concurrency/m04_state_assert.psql`
+- `supabase/tests/concurrency/m04_state_enhanced_setup.psql`
+- `supabase/tests/concurrency/m04_state_enhanced_assert.psql`
+- `supabase/tests/concurrency/m04_transition_snapshot_blocker.psql`
+- `supabase/tests/concurrency/m04_transition_snapshot_rpc.psql`
+
+No Task 4 artifact, provider/API/UI file, remote project, deployment, Notion object, production credential, Task 5 item, or Stage 2 behavior was touched.
+
+### Final review-fix-2 verification
+
+All final runs used fresh disposable local Supabase projects and pinned CLI `2.115.0`:
+
+| Command | Result |
+| --- | --- |
+| `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test-m04-state-concurrency.ps1 -Iterations 1 -RunToken b6e20032c92c41ddbcb075cd64760862` | PASS; one iteration of seven exact forced-order cases plus deterministic table-lock classification, eight lock probes, parallel approvals, 40 simultaneous races, and enhanced DB assertions; project `m04_state_b6e20032c92c41dd` |
+| `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test-m04-state-concurrency.ps1 -RunToken 6e460e208b3444a09ceedafb56528126` | PASS; default three iterations of seven exact forced-order cases plus the complete enhanced matrix; project `m04_state_6e460e208b3444a0` |
+| `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test-m04-stage1.ps1 -Suite workflow` | PASS, 90/90; project `m04_stage1_e4b1a892292e4879` |
+| `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test-m04-stage1.ps1 -Suite claims` | PASS, 207/207; project `m04_stage1_8b14a3ae5cf74fe2` |
+| `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test-m04-stage1.ps1 -Suite schema` | PASS, 114/114; project `m04_stage1_8660f04008374986` |
+| `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test-m04-stage1.ps1 -Suite all` | PASS, 434/434; project `m04_stage1_65c200dfe39b4631` |
+| `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test-m04-budget-concurrency.ps1` | PASS, 5/5; project `m04_budget_4e7e5f3c99514733` |
+| PowerShell parser on all three M04 runners | PASS, zero parse errors |
+| Migration parse/apply and catalog signature/ACL checks | PASS in every focused, combined, budget, and state project |
+| `git diff --check` | PASS; only Windows LF-to-CRLF notices |
+
+Every final project stop completed with `--no-backup` at exit `0`. All recorded stage, state, and budget temporary roots were absent afterward; the final inventory found zero `psql` processes and zero matching M04 Supabase containers. No interrupted or failed run was reused as evidence.
+
 ## Residual concerns
 
-No known correctness issue remains inside this review-fix scope, but this commit is intentionally stopping for scoped independent re-review (fix round 1/5). The concurrency evidence is bounded local PostgreSQL evidence, not a proof over every possible scheduler interleaving. Real provider/API behavior remains Stage 2 work and was not exercised.
+No known correctness issue remains inside review fix 2 scope, but this commit intentionally stops for scoped independent re-review (fix round 2/5). The concurrency evidence is bounded local PostgreSQL evidence, not a proof over every possible scheduler interleaving. Real provider/API behavior remains Stage 2 work and was not exercised.

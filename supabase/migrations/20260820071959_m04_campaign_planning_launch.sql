@@ -3893,6 +3893,7 @@ as $$
 declare
   v_pre_status text;
   v_pre_build_id bigint;
+  v_pre_build_count integer;
   v_plan public.ads_campaign_plans%rowtype;
   v_build public.ads_campaign_builds%rowtype;
   v_actor_name text;
@@ -3905,8 +3906,19 @@ begin
   if pg_catalog.btrim(coalesce(p_reason, '')) = '' then
     raise exception 'A campaign plan transition reason is required' using errcode = '22023';
   end if;
-  select plan.status into v_pre_status
-  from public.ads_campaign_plans as plan where plan.id = p_plan_id;
+  select plan.status, candidate.build_id, candidate.build_count
+  into v_pre_status, v_pre_build_id, v_pre_build_count
+  from public.ads_campaign_plans as plan
+  left join lateral (
+    select pg_catalog.min(build.id) as build_id,
+           pg_catalog.count(*)::integer as build_count
+    from public.ads_campaign_builds as build
+    where build.plan_id = plan.id
+      and build.status = 'pending_gate_1'
+      and build.revision_id = plan.approved_revision_id
+      and build.revision_hash = plan.approved_revision_hash
+  ) as candidate on true
+  where plan.id = p_plan_id;
   if not found then
     raise exception 'Campaign plan was not found' using errcode = 'P0002';
   end if;
@@ -3915,20 +3927,19 @@ begin
     if v_pre_status <> 'approved' then
       raise exception 'Campaign plan status does not match expected state' using errcode = '40001';
     end if;
-    select build.id into v_pre_build_id
-    from public.ads_campaign_builds as build
-    join public.ads_campaign_plans as plan on plan.id = build.plan_id
-    where build.plan_id = p_plan_id
-      and build.status = 'pending_gate_1'
-      and build.revision_id = plan.approved_revision_id
-      and build.revision_hash = plan.approved_revision_hash;
-    if not found then
+    if v_pre_build_count <> 1 or v_pre_build_id is null then
       raise exception 'Approved transition requires one matching pending Gate 1 build' using errcode = '55000';
     end if;
-    select build.* into strict v_build
+    select build.* into v_build
     from public.ads_campaign_builds as build where build.id = v_pre_build_id for update;
-    select plan.* into strict v_plan
+    if not found then
+      raise exception 'Campaign plan or pending build changed while transition waited' using errcode = '40001';
+    end if;
+    select plan.* into v_plan
     from public.ads_campaign_plans as plan where plan.id = p_plan_id for update;
+    if not found then
+      raise exception 'Campaign plan or pending build changed while transition waited' using errcode = '40001';
+    end if;
     if v_pre_status <> 'approved' or v_plan.status <> 'approved'
       or v_plan.status is distinct from p_expected_from_status
       or v_plan.lock_version is distinct from p_expected_lock_version

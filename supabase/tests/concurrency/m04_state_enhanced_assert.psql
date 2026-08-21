@@ -104,6 +104,30 @@ begin
 end;
 $approval_assertions$;
 
+do $transition_snapshot_assertions$
+declare
+  v_plan public.ads_campaign_plans%rowtype;
+  v_build public.ads_campaign_builds%rowtype;
+begin
+  select * into strict v_plan
+  from public.ads_campaign_plans where created_by_name = 'transition-snapshot';
+  select * into strict v_build
+  from public.ads_campaign_builds where plan_id = v_plan.id;
+  if v_plan.status <> 'launch_in_progress'
+    or v_build.status <> 'gate_1_in_progress'
+    or (select count(*) from public.ads_campaign_gate_attempts
+        where build_id = v_build.id and gate = 1 and action = 'create'
+          and status = 'claimed' and released_at is null) <> 1
+    or (select count(*) from public.m04_transition_snapshot_results
+        where case_name = 'transition-snapshot'
+          and sqlstate = '40001'
+          and error_message = 'Campaign plan status does not match expected state'
+          and result_id is null) <> 1 then
+    raise exception 'Transition snapshot race did not classify the claim winner and transition loser exactly';
+  end if;
+end;
+$transition_snapshot_assertions$;
+
 do $stress_assertions$
 declare
   v_fixture record;

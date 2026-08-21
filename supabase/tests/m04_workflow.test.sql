@@ -621,6 +621,7 @@ from (values
   ('renew-cancelled', 'cancelled', 'cancelled'),
   ('renewed-old-key', 'approved', 'pending_gate_1'),
   ('approved-release-reject', 'approved', 'pending_gate_1'),
+  ('transition-inconsistent-approved', 'approved', 'gate_1_failed'),
   ('transition-release', 'approved', 'pending_gate_1')
 ) as fixtures(fixture, plan_status, build_status);
 
@@ -730,6 +731,7 @@ declare
   v_plan public.ads_campaign_plans%rowtype;
   v_build_before public.ads_campaign_builds%rowtype;
   v_build_after public.ads_campaign_builds%rowtype;
+  v_returned public.ads_campaign_builds%rowtype;
   v_old_approval public.ads_campaign_approvals%rowtype;
   v_new_approval public.ads_campaign_approvals%rowtype;
 begin
@@ -737,7 +739,8 @@ begin
   select * into strict v_build_before from public.ads_campaign_builds where plan_id = v_plan.id;
   select * into strict v_old_approval from public.ads_campaign_approvals where id = v_build_before.approval_id;
 
-  perform public.ads_approve_campaign_plan_revision(
+  select * into strict v_returned
+  from public.ads_approve_campaign_plan_revision(
     v_plan.id, v_plan.active_revision_id, v_plan.approved_revision_hash,
     v_plan.lock_version, v_old_approval.expires_at + interval '1 hour',
     p_request_key, 'renewed atomically',
@@ -748,7 +751,8 @@ begin
   select * into strict v_plan from public.ads_campaign_plans where id = v_plan.id;
   select * into strict v_build_after from public.ads_campaign_builds where id = v_build_before.id;
   select * into strict v_new_approval from public.ads_campaign_approvals where id = v_build_after.approval_id;
-  return v_build_after.id = v_build_before.id
+  return v_returned.id = v_build_before.id
+    and v_build_after.id = v_build_before.id
     and v_build_after.status = v_build_before.status
     and v_build_after.lock_version = v_build_before.lock_version + 1
     and v_plan.lock_version = 11
@@ -772,11 +776,11 @@ $$;
 
 select ok(
   pg_temp.renewal_is_atomic('renew-before-gate', 'renew-before-gate-v2'),
-  'approval renewal before Gate 1 appends evidence, repoints one build, and advances both CAS locks'
+  'approval renewal before Gate 1 returns the original build, appends evidence, repoints it, and advances both CAS locks'
 );
 select ok(
   pg_temp.renewal_is_atomic('renew-launch-recovery', 'renew-launch-recovery-v2'),
-  'approval renewal preserves an exact nonterminal launch-recovery build'
+  'approval renewal returns and preserves the original nonterminal launch-recovery build'
 );
 
 select throws_ok(
@@ -920,6 +924,18 @@ select throws_ok(
   where plan.created_by_name = 'approved-release-reject'$$,
   '55000', 'Approved campaign plans must cancel their pending build before budget release',
   'direct budget release from approved is rejected'
+);
+
+select throws_ok(
+  $$select public.ads_transition_campaign_plan(
+    plan.id, plan.lock_version, 'approved', 'draft',
+    'reject an initially inconsistent approved snapshot',
+    '00000000-0000-0000-0000-000000000051', null,
+    'workflow-tests/transition-inconsistent-approved'
+  ) from public.ads_campaign_plans as plan
+  where plan.created_by_name = 'transition-inconsistent-approved'$$,
+  '55000', 'Approved transition requires one matching pending Gate 1 build',
+  'an initially inconsistent approved plan/build snapshot remains an invariant error'
 );
 
 create function pg_temp.transition_then_release_is_coherent()

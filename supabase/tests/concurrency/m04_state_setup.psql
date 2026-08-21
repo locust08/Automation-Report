@@ -25,10 +25,13 @@ create unlogged table public.m04_state_race_release (
 create unlogged table public.m04_state_race_results (
   case_name text not null,
   session_role text not null check (session_role in ('winner', 'loser')),
-  succeeded boolean not null,
-  stale_failure boolean not null,
+  sqlstate text not null,
+  error_message text,
+  result_id bigint,
   primary key (case_name, session_role)
 );
+
+grant insert on public.m04_state_race_results to service_role;
 
 insert into public.m04_state_race_release (case_name)
 values

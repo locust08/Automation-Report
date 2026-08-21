@@ -1,0 +1,98 @@
+\set ON_ERROR_STOP on
+\set VERBOSITY verbose
+
+select pg_catalog.set_config('application_name', :'app_rpc' || '-prewarming', false);
+select pg_catalog.set_config('m04.transition_snapshot_case', :'case_name', false);
+
+begin;
+set local statement_timeout = '25s';
+set local lock_timeout = '20s';
+set role service_role;
+do $prewarm_transition_plans$
+begin
+  begin
+    perform public.ads_transition_campaign_plan(
+      (select id from public.ads_campaign_plans
+       where created_by_name = 'transition-snapshot-prewarm'),
+      7, 'approved', 'draft', 'prewarm transition statement plans',
+      '00000000-0000-0000-0000-000000000461', '203.0.113.50',
+      'm04-transition-snapshot/prewarm'
+    );
+    raise exception 'Transition snapshot prewarm unexpectedly succeeded' using errcode = 'P0001';
+  exception when sqlstate '55000' then
+    if sqlerrm <> 'Approved transition requires one matching pending Gate 1 build' then
+      raise exception 'Transition snapshot prewarm returned an unexpected invariant: %', sqlerrm;
+    end if;
+  end;
+end;
+$prewarm_transition_plans$;
+reset role;
+commit;
+
+select pg_catalog.set_config('application_name', :'app_rpc' || '-ready', false);
+do $wait_for_blocker$
+declare
+  v_deadline timestamptz := pg_catalog.clock_timestamp() + interval '20 seconds';
+begin
+  loop
+    exit when exists (
+      select 1 from public.m04_probe_control
+      where case_name = pg_catalog.current_setting('m04.transition_snapshot_case')
+        and rpc_now
+    );
+    if pg_catalog.clock_timestamp() >= v_deadline then
+      raise exception 'Transition snapshot RPC start timed out' using errcode = '57014';
+    end if;
+    perform pg_catalog.pg_sleep(0.02);
+  end loop;
+end;
+$wait_for_blocker$;
+
+select pg_catalog.set_config('application_name', :'app_rpc', false);
+begin;
+set local statement_timeout = '25s';
+set local lock_timeout = '20s';
+set role service_role;
+do $invoke_transition_snapshot$
+declare
+  v_case text := pg_catalog.current_setting('m04.transition_snapshot_case');
+  v_result_id bigint;
+begin
+  begin
+    select (public.ads_transition_campaign_plan(
+      (select id from public.ads_campaign_plans where created_by_name = v_case),
+      7, 'approved', 'draft', 'one-snapshot transition classification race',
+      '00000000-0000-0000-0000-000000000461', '203.0.113.50',
+      'm04-transition-snapshot/transition'
+    )).id into strict v_result_id;
+    insert into public.m04_transition_snapshot_results (
+      case_name, sqlstate, result_id
+    ) values (v_case, '00000', v_result_id);
+  exception when others then
+    insert into public.m04_transition_snapshot_results (
+      case_name, sqlstate, error_message
+    ) values (v_case, sqlstate, sqlerrm);
+  end;
+end;
+$invoke_transition_snapshot$;
+reset role;
+commit;
+
+select result.sqlstate as result_sqlstate,
+       coalesce(result.error_message, 'none') as result_message,
+       coalesce(result.result_id::text, 'none') as result_id,
+       result.sqlstate = '00000' as result_ok
+from public.m04_transition_snapshot_results as result
+where result.case_name = :'case_name'
+\gset
+\echo M04_TRANSITION_SNAPSHOT_RESULT case=:case_name role=transition sqlstate=:result_sqlstate result_id=:result_id message=:result_message
+\if :result_ok
+\else
+select pg_catalog.set_config('m04.recorded_child_sqlstate', :'result_sqlstate', false);
+do $raise_recorded_transition_snapshot_error$
+begin
+  raise exception 'M04_RECORDED_TRANSITION_SNAPSHOT_ERROR'
+    using errcode = pg_catalog.current_setting('m04.recorded_child_sqlstate');
+end;
+$raise_recorded_transition_snapshot_error$;
+\endif

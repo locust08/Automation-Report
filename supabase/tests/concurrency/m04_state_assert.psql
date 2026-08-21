@@ -12,22 +12,41 @@ declare
 begin
   for fixture in
     select * from (values
-      ('claim-wins-draft', 'claim', 'launch_in_progress', 'gate_1_in_progress'),
-      ('claim-wins-cancelled', 'claim', 'launch_in_progress', 'gate_1_in_progress'),
-      ('transition-wins-draft', 'transition', 'draft', 'cancelled'),
-      ('transition-wins-cancelled', 'transition', 'cancelled', 'cancelled'),
-      ('approval-wins-awaiting', 'approval', 'approved', 'pending_gate_1'),
-      ('transition-wins-awaiting', 'transition_without_build', 'draft', null),
-      ('renewal-cas', 'renewal', 'launch_in_progress', 'gate_1_failed')
-    ) as cases(case_name, winner_kind, expected_plan_status, expected_build_status)
+      ('claim-wins-draft', 'claim', 'launch_in_progress', 'gate_1_in_progress',
+       'Campaign plan or pending build changed while transition waited'),
+      ('claim-wins-cancelled', 'claim', 'launch_in_progress', 'gate_1_in_progress',
+       'Campaign plan or pending build changed while transition waited'),
+      ('transition-wins-draft', 'transition', 'draft', 'cancelled',
+       'Campaign plan and build launch states do not match'),
+      ('transition-wins-cancelled', 'transition', 'cancelled', 'cancelled',
+       'Campaign plan and build launch states do not match'),
+      ('approval-wins-awaiting', 'approval', 'approved', 'pending_gate_1',
+       'Campaign plan status changed while transition waited'),
+      ('transition-wins-awaiting', 'transition_without_build', 'draft', null,
+       'Campaign plan status changed while approval waited'),
+      ('renewal-cas', 'renewal', 'launch_in_progress', 'gate_1_failed',
+       'Campaign plan lock version is stale')
+    ) as cases(case_name, winner_kind, expected_plan_status, expected_build_status, expected_loser_message)
   loop
     select
       count(*)::integer,
-      count(*) filter (where session_role = 'winner' and succeeded)::integer,
-      count(*) filter (where session_role = 'loser' and stale_failure)::integer,
       count(*) filter (
-        where (session_role = 'winner' and not succeeded)
-           or (session_role = 'loser' and not stale_failure)
+        where session_role = 'winner' and sqlstate = '00000'
+          and error_message is null and result_id is not null
+      )::integer,
+      count(*) filter (
+        where session_role = 'loser' and sqlstate = '40001'
+          and error_message = fixture.expected_loser_message and result_id is null
+      )::integer,
+      count(*) filter (
+        where (session_role = 'winner' and (
+                 sqlstate <> '00000' or error_message is not null or result_id is null
+               ))
+           or (session_role = 'loser' and (
+                 sqlstate <> '40001'
+                 or error_message is distinct from fixture.expected_loser_message
+                 or result_id is not null
+               ))
       )::integer
     into result_count, winner_count, loser_stale_count, unexpected_count
     from public.m04_state_race_results

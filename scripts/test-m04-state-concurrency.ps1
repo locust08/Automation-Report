@@ -30,6 +30,8 @@ $lockRpcScript = Join-Path $repoRoot 'supabase\tests\concurrency\m04_lock_probe_
 $approvalBlockerScript = Join-Path $repoRoot 'supabase\tests\concurrency\m04_approval_parallel_blocker.psql'
 $approvalSessionScript = Join-Path $repoRoot 'supabase\tests\concurrency\m04_approval_parallel_session.psql'
 $stressSessionScript = Join-Path $repoRoot 'supabase\tests\concurrency\m04_state_stress_session.psql'
+$transitionSnapshotBlockerScript = Join-Path $repoRoot 'supabase\tests\concurrency\m04_transition_snapshot_blocker.psql'
+$transitionSnapshotRpcScript = Join-Path $repoRoot 'supabase\tests\concurrency\m04_transition_snapshot_rpc.psql'
 $enhancedAssertScript = Join-Path $repoRoot 'supabase\tests\concurrency\m04_state_enhanced_assert.psql'
 $raceProcesses = @()
 $trackedProcesses = @()
@@ -201,6 +203,7 @@ function Start-StateSession {
   $race | Add-Member -NotePropertyName CaseName -NotePropertyValue $Case.Name
   $race | Add-Member -NotePropertyName SessionRole -NotePropertyValue $SessionRole
   $race | Add-Member -NotePropertyName AppDone -NotePropertyValue "$appPrefix-done"
+  $race | Add-Member -NotePropertyName ExpectedErrorMessage -NotePropertyValue $Case.ExpectedErrorMessage
   $script:raceProcesses += $race
   return $race
 }
@@ -402,44 +405,109 @@ function Test-RecordedChildResult {
 function Save-RaceResult {
   param([pscustomobject]$Race)
   $output = Read-RaceOutput -Race $Race
-  $succeeded = [regex]::IsMatch(
+  $escapedCase = [regex]::Escape($Race.CaseName)
+  $escapedRole = [regex]::Escape($Race.SessionRole)
+  $markerPattern =
+    "^M04_STATE_SERIALIZATION_RESULT case=$escapedCase role=$escapedRole " +
+    'sqlstate=(?<sqlstate>[0-9A-Z]{5}) result_id=(?<result_id>[0-9]+|none) message=(?<message>[^\r\n]+)\r?$'
+  $allMarkerCount = [regex]::Matches(
     $output,
-    '^M04_STATE_SERIALIZATION_SUCCESS case=.* role=.* result_id=[0-9]+\r?$',
+    '^M04_STATE_SERIALIZATION_RESULT .+\r?$',
     [System.Text.RegularExpressions.RegexOptions]::Multiline
+  ).Count
+  $matches = [regex]::Matches(
+    $output, $markerPattern, [System.Text.RegularExpressions.RegexOptions]::Multiline
   )
-  $staleFailure = [regex]::IsMatch($output, 'ERROR:\s+40001:')
-  if ($succeeded -and $staleFailure) {
-    throw "State serialization $($Race.CaseName)/$($Race.SessionRole) produced an ambiguous outcome:`n$output"
+  if ($allMarkerCount -ne 1 -or $matches.Count -ne 1) {
+    throw "State serialization $($Race.CaseName)/$($Race.SessionRole) had $allMarkerCount total markers and $($matches.Count) exact markers:`n$output"
   }
-  if ($succeeded) {
-    $unexpectedExit = [int]$Race.Process.ExitCode -ne 0
-  }
-  elseif ($staleFailure) {
-    $unexpectedExit = [int]$Race.Process.ExitCode -eq 0
+
+  $sqlstate = $matches[0].Groups['sqlstate'].Value
+  $resultId = $matches[0].Groups['result_id'].Value
+  $message = $matches[0].Groups['message'].Value
+  $exitCode = [int]$Race.Process.ExitCode
+  if ($Race.SessionRole -eq 'winner') {
+    $valid = $sqlstate -eq '00000' -and $resultId -match '^[0-9]+$' `
+      -and $message -eq 'none' -and $exitCode -eq 0 `
+      -and $output -notmatch '(?im)ERROR:'
   }
   else {
-    $unexpectedExit = $true
+    $syntheticErrors = [regex]::Matches(
+      $output,
+      'ERROR:\s+40001:\s+M04_RECORDED_STATE_SERIALIZATION_CHILD_ERROR\r?$',
+      [System.Text.RegularExpressions.RegexOptions]::Multiline
+    ).Count
+    $valid = $sqlstate -eq '40001' -and $resultId -eq 'none' `
+      -and $message -ceq $Race.ExpectedErrorMessage -and $exitCode -eq 3 `
+      -and $syntheticErrors -eq 1
   }
-  if ($unexpectedExit) {
-    throw "State serialization $($Race.CaseName)/$($Race.SessionRole) had an unexpected exact exit/result (success=$succeeded stale=$staleFailure exit=$($Race.Process.ExitCode)):`n$output"
+  if (-not $valid -or $output -match '(?im)ERROR:\s+(40P01|57014):') {
+    throw "State serialization $($Race.CaseName)/$($Race.SessionRole) had an unexpected exact result (exit=$exitCode sqlstate=$sqlstate result=$resultId message=$message):`n$output"
   }
-  $caseLiteral = switch ($Race.CaseName) {
-    'claim-wins-draft' { "'claim-wins-draft'" }
-    'claim-wins-cancelled' { "'claim-wins-cancelled'" }
-    'transition-wins-draft' { "'transition-wins-draft'" }
-    'transition-wins-cancelled' { "'transition-wins-cancelled'" }
-    'approval-wins-awaiting' { "'approval-wins-awaiting'" }
-    'transition-wins-awaiting' { "'transition-wins-awaiting'" }
-    'renewal-cas' { "'renewal-cas'" }
-    default { throw "Unexpected race case: $($Race.CaseName)" }
-  }
-  $roleLiteral = if ($Race.SessionRole -eq 'winner') { "'winner'" } else { "'loser'" }
-  $successSql = if ($succeeded) { 'true' } else { 'false' }
-  $staleSql = if ($staleFailure) { 'true' } else { 'false' }
+}
+
+function Invoke-TransitionSnapshotCase {
+  $caseName = 'transition-snapshot'
+  $appBlocker = 'm04-transition-snapshot-blocker'
+  $appRpc = 'm04-transition-snapshot-rpc'
+  $rpc = Start-PsqlChild -Name $appRpc -Arguments @(
+    $dbUrl, '-X', '-v', 'ON_ERROR_STOP=1',
+    '-v', "case_name=$caseName", '-v', "app_rpc=$appRpc",
+    '-f', $transitionSnapshotRpcScript
+  )
+  Wait-ForApplicationName -ApplicationName "$appRpc-ready" -Child $rpc
+
+  $blocker = Start-PsqlChild -Name $appBlocker -Arguments @(
+    $dbUrl, '-X', '-v', 'ON_ERROR_STOP=1',
+    '-v', "case_name=$caseName", '-v', "app_blocker=$appBlocker",
+    '-f', $transitionSnapshotBlockerScript
+  )
+  Wait-ForApplicationName -ApplicationName $appBlocker -Child $blocker
   Invoke-Psql -Arguments @(
     $dbUrl, '-X', '-v', 'ON_ERROR_STOP=1', '-c',
-    "insert into public.m04_state_race_results (case_name, session_role, succeeded, stale_failure) values ($caseLiteral, $roleLiteral, $successSql, $staleSql);"
+    "update public.m04_probe_control set rpc_now = true where case_name = 'transition-snapshot';"
   )
+  Signal-VerifiedProbe -CaseName $caseName -BlockerApplication $appBlocker `
+    -RpcApplications @($appRpc) -Blocker $blocker
+  Wait-ChildExit -Child $blocker
+  Wait-ChildExit -Child $rpc
+
+  $null = Test-ExactChildResult -Child $blocker `
+    -MarkerPattern '^M04_TRANSITION_SNAPSHOT_BLOCKER_SUCCESS case=transition-snapshot result_id=[0-9]+\r?$' `
+    -Label 'Transition snapshot blocker/real claim'
+
+  $output = Read-ChildOutput -Child $rpc
+  $markerPattern =
+    '^M04_TRANSITION_SNAPSHOT_RESULT case=transition-snapshot role=transition ' +
+    'sqlstate=(?<sqlstate>[0-9A-Z]{5}) result_id=(?<result_id>[0-9]+|none) message=(?<message>[^\r\n]+)\r?$'
+  $allMarkerCount = [regex]::Matches(
+    $output, '^M04_TRANSITION_SNAPSHOT_RESULT .+\r?$',
+    [System.Text.RegularExpressions.RegexOptions]::Multiline
+  ).Count
+  $matches = [regex]::Matches(
+    $output, $markerPattern, [System.Text.RegularExpressions.RegexOptions]::Multiline
+  )
+  $valid = $false
+  if ($allMarkerCount -eq 1 -and $matches.Count -eq 1) {
+    $sqlstate = $matches[0].Groups['sqlstate'].Value
+    $resultId = $matches[0].Groups['result_id'].Value
+    $message = $matches[0].Groups['message'].Value
+    $syntheticErrors = [regex]::Matches(
+      $output,
+      'ERROR:\s+40001:\s+M04_RECORDED_TRANSITION_SNAPSHOT_ERROR\r?$',
+      [System.Text.RegularExpressions.RegexOptions]::Multiline
+    ).Count
+    $valid = $rpc.Process.ExitCode -eq 3 -and $sqlstate -eq '40001' `
+      -and $resultId -eq 'none' `
+      -and $message -ceq 'Campaign plan status does not match expected state' `
+      -and $syntheticErrors -eq 1 `
+      -and $output -notmatch '(?im)ERROR:\s+(40P01|57014):'
+  }
+  if (-not $valid) {
+    $script:enhancedFailures.Add(
+      "Transition one-snapshot classification failed (exit $($rpc.Process.ExitCode), total markers $allMarkerCount, exact markers $($matches.Count)):`n$output"
+    )
+  }
 }
 
 function Invoke-LockProbe {
@@ -572,13 +640,13 @@ function Invoke-StressCase {
 }
 
 $cases = @(
-  @{ Name = 'claim-wins-draft'; Winner = 'claim'; Loser = 'transition'; ExpectedFromStatus = 'approved'; ToStatus = 'draft'; ExpectedPlanLock = 7; WinnerKey = 'claim-winner-draft'; LoserKey = 'unused-transition'; WinnerExpiryMinutes = 120; LoserExpiryMinutes = 180 },
-  @{ Name = 'claim-wins-cancelled'; Winner = 'claim'; Loser = 'transition'; ExpectedFromStatus = 'approved'; ToStatus = 'cancelled'; ExpectedPlanLock = 7; WinnerKey = 'claim-winner-cancelled'; LoserKey = 'unused-transition'; WinnerExpiryMinutes = 120; LoserExpiryMinutes = 180 },
-  @{ Name = 'transition-wins-draft'; Winner = 'transition'; Loser = 'claim'; ExpectedFromStatus = 'approved'; ToStatus = 'draft'; ExpectedPlanLock = 7; WinnerKey = 'unused-transition'; LoserKey = 'claim-loser-draft'; WinnerExpiryMinutes = 120; LoserExpiryMinutes = 180 },
-  @{ Name = 'transition-wins-cancelled'; Winner = 'transition'; Loser = 'claim'; ExpectedFromStatus = 'approved'; ToStatus = 'cancelled'; ExpectedPlanLock = 7; WinnerKey = 'unused-transition'; LoserKey = 'claim-loser-cancelled'; WinnerExpiryMinutes = 120; LoserExpiryMinutes = 180 },
-  @{ Name = 'approval-wins-awaiting'; Winner = 'approval'; Loser = 'transition'; ExpectedFromStatus = 'awaiting_approval'; ToStatus = 'draft'; ExpectedPlanLock = 7; WinnerKey = 'approval-winner'; LoserKey = 'unused-transition'; WinnerExpiryMinutes = 120; LoserExpiryMinutes = 180 },
-  @{ Name = 'transition-wins-awaiting'; Winner = 'transition'; Loser = 'approval'; ExpectedFromStatus = 'awaiting_approval'; ToStatus = 'draft'; ExpectedPlanLock = 7; WinnerKey = 'unused-transition'; LoserKey = 'approval-loser'; WinnerExpiryMinutes = 120; LoserExpiryMinutes = 180 },
-  @{ Name = 'renewal-cas'; Winner = 'renewal'; Loser = 'renewal'; ExpectedFromStatus = 'launch_in_progress'; ToStatus = 'draft'; ExpectedPlanLock = 7; WinnerKey = 'renewal-winner'; LoserKey = 'renewal-loser'; WinnerExpiryMinutes = 120; LoserExpiryMinutes = 180 }
+  @{ Name = 'claim-wins-draft'; Winner = 'claim'; Loser = 'transition'; ExpectedFromStatus = 'approved'; ToStatus = 'draft'; ExpectedPlanLock = 7; WinnerKey = 'claim-winner-draft'; LoserKey = 'unused-transition'; WinnerExpiryMinutes = 120; LoserExpiryMinutes = 180; ExpectedErrorMessage = 'Campaign plan or pending build changed while transition waited' },
+  @{ Name = 'claim-wins-cancelled'; Winner = 'claim'; Loser = 'transition'; ExpectedFromStatus = 'approved'; ToStatus = 'cancelled'; ExpectedPlanLock = 7; WinnerKey = 'claim-winner-cancelled'; LoserKey = 'unused-transition'; WinnerExpiryMinutes = 120; LoserExpiryMinutes = 180; ExpectedErrorMessage = 'Campaign plan or pending build changed while transition waited' },
+  @{ Name = 'transition-wins-draft'; Winner = 'transition'; Loser = 'claim'; ExpectedFromStatus = 'approved'; ToStatus = 'draft'; ExpectedPlanLock = 7; WinnerKey = 'unused-transition'; LoserKey = 'claim-loser-draft'; WinnerExpiryMinutes = 120; LoserExpiryMinutes = 180; ExpectedErrorMessage = 'Campaign plan and build launch states do not match' },
+  @{ Name = 'transition-wins-cancelled'; Winner = 'transition'; Loser = 'claim'; ExpectedFromStatus = 'approved'; ToStatus = 'cancelled'; ExpectedPlanLock = 7; WinnerKey = 'unused-transition'; LoserKey = 'claim-loser-cancelled'; WinnerExpiryMinutes = 120; LoserExpiryMinutes = 180; ExpectedErrorMessage = 'Campaign plan and build launch states do not match' },
+  @{ Name = 'approval-wins-awaiting'; Winner = 'approval'; Loser = 'transition'; ExpectedFromStatus = 'awaiting_approval'; ToStatus = 'draft'; ExpectedPlanLock = 7; WinnerKey = 'approval-winner'; LoserKey = 'unused-transition'; WinnerExpiryMinutes = 120; LoserExpiryMinutes = 180; ExpectedErrorMessage = 'Campaign plan status changed while transition waited' },
+  @{ Name = 'transition-wins-awaiting'; Winner = 'transition'; Loser = 'approval'; ExpectedFromStatus = 'awaiting_approval'; ToStatus = 'draft'; ExpectedPlanLock = 7; WinnerKey = 'unused-transition'; LoserKey = 'approval-loser'; WinnerExpiryMinutes = 120; LoserExpiryMinutes = 180; ExpectedErrorMessage = 'Campaign plan status changed while approval waited' },
+  @{ Name = 'renewal-cas'; Winner = 'renewal'; Loser = 'renewal'; ExpectedFromStatus = 'launch_in_progress'; ToStatus = 'draft'; ExpectedPlanLock = 7; WinnerKey = 'renewal-winner'; LoserKey = 'renewal-loser'; WinnerExpiryMinutes = 120; LoserExpiryMinutes = 180; ExpectedErrorMessage = 'Campaign plan lock version is stale' }
 )
 
 $lockProbeCases = @(
@@ -654,6 +722,7 @@ try {
 
   Invoke-Psql -Arguments @($dbUrl, '-X', '-f', $enhancedSetupScript)
 
+  Invoke-TransitionSnapshotCase
   foreach ($case in $lockProbeCases) {
     Invoke-LockProbe -Case $case
   }
