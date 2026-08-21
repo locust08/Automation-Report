@@ -258,6 +258,17 @@ Claim functions lock the build, resolve an identical idempotency key first, expi
 
 The generic transition function cannot set `ready_to_deliver`, `verified`, or `handoff_complete`. Gate finalization derives those sensitive states from persisted QA/readback evidence. `verified_at` on a campaign resource means final provider delivery readback, not Gate 1 QA.
 
+Review hardening adds these invariants without changing any public function signature:
+
+- Every operation on an existing build locks the build before the plan and never changes lock-order branches after taking its first row lock. A build has at most one active claim across both gates.
+- Exact approval, gate-claim, and retry idempotency keys are identity-checked before mutable approval-expiry or workflow-state checks. They return only the already-persisted row; provider receipts and finalization still require a live claim token, and every new key requires the current unexpired approval.
+- `ads_approve_campaign_plan_revision` may append a same-revision superseding approval for the exact existing nonterminal build in `approved` or `launch_in_progress`. Renewal requires a new key, a strictly later future expiry, unchanged plan/revision/hash/account/package identity, and creates no second build. It advances both plan and build locks. Verified, handed-off, and cancelled builds cannot be renewed.
+- An approved plan must transition to `draft` or `cancelled`, atomically cancelling and auditing its exact `pending_gate_1` build, before budget release. Direct release from `approved` is rejected.
+- `gate_1_failed` and `qa_failed` can acquire only Gate 1 reconciliation; `gate_2_failed` can acquire only Gate 2 reconciliation. No failed state permits a direct create, retry, or delivery shortcut.
+- A partial retry may complete successfully while the build remains `gate_1_failed`. Gate 1 readiness is calculated over every persisted logical build resource using causal evidence after that resource's latest mutation; every resource requires a provider ID and an authoritative matching QA or later successful reconciliation result before the build becomes `ready_to_deliver`.
+- Finalization and ambiguous-resource recording require the build to remain in the in-progress state for the attempt's gate. Ambiguous state changes append attributed audit evidence atomically.
+- Monitoring handoff identity comes from the immutable approved revision and must match the locked build and launch-in-progress plan. Mutable account-directory values cannot rewrite the launch identity.
+
 ## M03 compatibility
 
 M03 requires exact bigint joins and exact terminal state names. A verified M04 campaign is eligible only when:
@@ -279,6 +290,8 @@ The Stage 1 suite contains:
 - `m04_claims_handoff.test.sql` for claim idempotency/expiry, Gate 2 blocking, ambiguous outcomes, resource/QA immutability, delivery verification, and minimal handoff;
 - `m04_m03_compatibility.test.sql` for legacy and verified-build eligibility without cross-platform false positives; and
 - a PowerShell/psql two-session race proving two individually valid reservations cannot over-allocate one package.
+
+The hardening verification additionally covers claim-versus-cancellation lock ordering in both winner orders, approval renewal and expiry recovery, failed-state reconciliation, full-intent subset-retry completion, build-wide claim exclusion, attributed ambiguity audit, immutable handoff identity, and successful generic database lifecycles for Meta and TikTok.
 
 The repository has two pre-existing full-chain blockers: duplicate `20260805` migration versions and a historical migration that alters tables absent from the checked-in chain. Stage 1 does not rewrite deployed migration history. Focused tests therefore use a disposable local Supabase database with the required existing M03 contract followed by the generated M04 migration; the full-chain reset remains a separately reported baseline gap.
 
