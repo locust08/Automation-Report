@@ -32,6 +32,8 @@ $approvalSessionScript = Join-Path $repoRoot 'supabase\tests\concurrency\m04_app
 $stressSessionScript = Join-Path $repoRoot 'supabase\tests\concurrency\m04_state_stress_session.psql'
 $transitionSnapshotBlockerScript = Join-Path $repoRoot 'supabase\tests\concurrency\m04_transition_snapshot_blocker.psql'
 $transitionSnapshotRpcScript = Join-Path $repoRoot 'supabase\tests\concurrency\m04_transition_snapshot_rpc.psql'
+$expiryBoundaryBlockerScript = Join-Path $repoRoot 'supabase\tests\concurrency\m04_expiry_boundary_blocker.psql'
+$expiryBoundaryRpcScript = Join-Path $repoRoot 'supabase\tests\concurrency\m04_expiry_boundary_rpc.psql'
 $enhancedAssertScript = Join-Path $repoRoot 'supabase\tests\concurrency\m04_state_enhanced_assert.psql'
 $raceProcesses = @()
 $trackedProcesses = @()
@@ -307,6 +309,7 @@ function Signal-VerifiedProbe {
     [string]$BlockerApplication,
     [string[]]$RpcApplications,
     [pscustomobject]$Blocker,
+    [pscustomobject[]]$RpcChildren = @(),
     [int]$Seconds = 20
   )
   $blockerLiteral = ConvertTo-SqlLiteral -Value $BlockerApplication
@@ -318,6 +321,12 @@ function Signal-VerifiedProbe {
     $Blocker.Process.Refresh()
     if ($Blocker.Process.HasExited) {
       throw "Blocker $($Blocker.Name) exited before the real RPC wait was verified.`n$(Read-ChildOutput -Child $Blocker)"
+    }
+    foreach ($rpcChild in $RpcChildren) {
+      $rpcChild.Process.Refresh()
+      if ($rpcChild.Process.HasExited) {
+        throw "RPC child $($rpcChild.Name) exited before its required lock wait was verified.`n$(Read-ChildOutput -Child $rpcChild)"
+      }
     }
     $waitState = & $psqlPath $dbUrl -X -A -t -F '|' -v ON_ERROR_STOP=1 -c @"
 with blocker as (
@@ -468,7 +477,7 @@ function Invoke-TransitionSnapshotCase {
     "update public.m04_probe_control set rpc_now = true where case_name = 'transition-snapshot';"
   )
   Signal-VerifiedProbe -CaseName $caseName -BlockerApplication $appBlocker `
-    -RpcApplications @($appRpc) -Blocker $blocker
+    -RpcApplications @($appRpc) -Blocker $blocker -RpcChildren @($rpc)
   Wait-ChildExit -Child $blocker
   Wait-ChildExit -Child $rpc
 
@@ -510,6 +519,74 @@ function Invoke-TransitionSnapshotCase {
   }
 }
 
+function Invoke-ExpiryBoundaryCase {
+  param([hashtable]$Case)
+
+  $appBlocker = "m04-$($Case.Name)-blocker"
+  $appRpc = "m04-$($Case.Name)-rpc"
+  $isGate = if ($Case.Operation -eq 'gate') { 1 } else { 0 }
+  $blocker = Start-PsqlChild -Name $appBlocker -Arguments @(
+    $dbUrl, '-X', '-v', 'ON_ERROR_STOP=1',
+    '-v', "case_name=$($Case.Name)", '-v', "app_blocker=$appBlocker",
+    '-f', $expiryBoundaryBlockerScript
+  )
+  Wait-ForApplicationName -ApplicationName $appBlocker -Child $blocker
+
+  $rpc = Start-PsqlChild -Name $appRpc -Arguments @(
+    $dbUrl, '-X', '-v', 'ON_ERROR_STOP=1',
+    '-v', "case_name=$($Case.Name)", '-v', "app_rpc=$appRpc",
+    '-v', "is_gate=$isGate", '-f', $expiryBoundaryRpcScript
+  )
+
+  Signal-VerifiedProbe -CaseName $Case.Name -BlockerApplication $appBlocker `
+    -RpcApplications @($appRpc) -Blocker $blocker -RpcChildren @($rpc)
+  Wait-ChildExit -Child $blocker
+  Wait-ChildExit -Child $rpc
+
+  $escapedCase = [regex]::Escape($Case.Name)
+  $null = Test-ExactChildResult -Child $blocker `
+    -MarkerPattern (
+      "^M04_EXPIRY_BOUNDARY_RESULT case=$escapedCase role=blocker " +
+      'sqlstate=00000 message=none result_id=[0-9]+ native_exit=0\r?$'
+    ) `
+    -Label "Expiry-boundary blocker $($Case.Name)"
+
+  $output = Read-ChildOutput -Child $rpc
+  $markerPattern =
+    "^M04_EXPIRY_BOUNDARY_RESULT case=$escapedCase role=rpc " +
+    'sqlstate=(?<sqlstate>[0-9A-Z]{5}) message=(?<message>.+?) ' +
+    'result_id=(?<result_id>[0-9]+|none) native_exit=(?<native_exit>[0-9]+)\r?$'
+  $allMarkerCount = [regex]::Matches(
+    $output, '^M04_EXPIRY_BOUNDARY_RESULT .+\r?$',
+    [System.Text.RegularExpressions.RegexOptions]::Multiline
+  ).Count
+  $matches = [regex]::Matches(
+    $output, $markerPattern, [System.Text.RegularExpressions.RegexOptions]::Multiline
+  )
+  $valid = $false
+  if ($allMarkerCount -eq 1 -and $matches.Count -eq 1) {
+    $sqlstate = $matches[0].Groups['sqlstate'].Value
+    $message = $matches[0].Groups['message'].Value
+    $resultId = $matches[0].Groups['result_id'].Value
+    $nativeExit = $matches[0].Groups['native_exit'].Value
+    $syntheticErrors = [regex]::Matches(
+      $output,
+      'ERROR:\s+55P03:\s+M04_RECORDED_EXPIRY_BOUNDARY_CHILD_ERROR\r?$',
+      [System.Text.RegularExpressions.RegexOptions]::Multiline
+    ).Count
+    $valid = $rpc.Process.ExitCode -eq 3 -and $sqlstate -eq '55P03' `
+      -and $message -ceq 'A different active gate claim already exists' `
+      -and $resultId -eq 'none' -and $nativeExit -eq '3' `
+      -and $syntheticErrors -eq 1 `
+      -and $output -notmatch '(?im)ERROR:\s+(40P01|57014):'
+  }
+  if (-not $valid) {
+    $script:enhancedFailures.Add(
+      "Expiry-boundary RPC $($Case.Name) failed exact classification (exit $($rpc.Process.ExitCode), total markers $allMarkerCount, exact markers $($matches.Count)):`n$output"
+    )
+  }
+}
+
 function Invoke-LockProbe {
   param([hashtable]$Case)
 
@@ -518,15 +595,31 @@ function Invoke-LockProbe {
   $secondIsPlan = if ($Case.Second -eq 'plan') { 1 } else { 0 }
   $secondIsAttempt = if ($Case.Second -eq 'attempt') { 1 } else { 0 }
   $secondIsPackage = if ($Case.Second -eq 'package') { 1 } else { 0 }
+  $secondIsAccount = if ($Case.Second -eq 'account') { 1 } else { 0 }
   $firstIsBuild = if ($Case.First -eq 'build') { 1 } else { 0 }
   $firstIsPlan = if ($Case.First -eq 'plan') { 1 } else { 0 }
+  $firstIsPackage = if ($Case.First -eq 'package') { 1 } else { 0 }
+  $usesExtendedClaimOrderProbe = $Case.Name -in @(
+    'claim-package', 'claim-account', 'retry-package', 'retry-account'
+  )
+  $probeBlockerScript = if ($usesExtendedClaimOrderProbe) {
+    $expiryBoundaryBlockerScript
+  } else {
+    $lockBlockerScript
+  }
+  $probeRpcScript = if ($usesExtendedClaimOrderProbe) {
+    $expiryBoundaryRpcScript
+  } else {
+    $lockRpcScript
+  }
   $blocker = Start-PsqlChild -Name $appBlocker -Arguments @(
     $dbUrl, '-X', '-v', 'ON_ERROR_STOP=1',
     '-v', "probe_case=$($Case.Name)", '-v', "fixture=$($Case.Fixture)",
     '-v', "app_blocker=$appBlocker", '-v', "app_rpc=$appRpc",
     '-v', "second_is_plan=$secondIsPlan", '-v', "second_is_attempt=$secondIsAttempt",
-    '-v', "second_is_package=$secondIsPackage", '-v', "first_is_build=$firstIsBuild",
-    '-v', "first_is_plan=$firstIsPlan", '-f', $lockBlockerScript
+    '-v', "second_is_package=$secondIsPackage", '-v', "second_is_account=$secondIsAccount",
+    '-v', "first_is_build=$firstIsBuild", '-v', "first_is_plan=$firstIsPlan",
+    '-v', "first_is_package=$firstIsPackage", '-f', $probeBlockerScript
   )
   Wait-ForApplicationName -ApplicationName $appBlocker -Child $blocker
 
@@ -541,11 +634,11 @@ function Invoke-LockProbe {
     '-v', "is_claim=$($operationFlags.claim)", '-v', "is_retry=$($operationFlags.retry)",
     '-v', "is_transition=$($operationFlags.transition)", '-v', "is_renewal=$($operationFlags.renewal)",
     '-v', "is_handoff=$($operationFlags.handoff)", '-v', "is_qa=$($operationFlags.qa)",
-    '-v', "is_initial=$($operationFlags.initial)", '-f', $lockRpcScript
+    '-v', "is_initial=$($operationFlags.initial)", '-f', $probeRpcScript
   )
 
   Signal-VerifiedProbe -CaseName $Case.Name -BlockerApplication $appBlocker `
-    -RpcApplications @($appRpc) -Blocker $blocker
+    -RpcApplications @($appRpc) -Blocker $blocker -RpcChildren @($rpc)
   Wait-ChildExit -Child $blocker
   Wait-ChildExit -Child $rpc
   $escapedCase = [regex]::Escape($Case.Name)
@@ -587,7 +680,7 @@ function Invoke-ApprovalParallelCase {
   )
 
   Signal-VerifiedProbe -CaseName $Case.Name -BlockerApplication $appBlocker `
-    -RpcApplications @($appOne, $appTwo) -Blocker $blocker
+    -RpcApplications @($appOne, $appTwo) -Blocker $blocker -RpcChildren @($one, $two)
   Wait-ChildExit -Child $blocker
   Wait-ChildExit -Child $one
   Wait-ChildExit -Child $two
@@ -652,6 +745,10 @@ $cases = @(
 $lockProbeCases = @(
   @{ Name = 'claim'; Fixture = 'probe-claim'; Operation = 'claim'; First = 'build'; Second = 'plan'; ToStatus = 'draft' },
   @{ Name = 'retry'; Fixture = 'probe-retry'; Operation = 'retry'; First = 'build'; Second = 'plan'; ToStatus = 'draft' },
+  @{ Name = 'claim-package'; Fixture = 'probe-claim-package'; Operation = 'claim'; First = 'plan'; Second = 'package'; ToStatus = 'draft' },
+  @{ Name = 'claim-account'; Fixture = 'probe-claim-account'; Operation = 'claim'; First = 'package'; Second = 'account'; ToStatus = 'draft' },
+  @{ Name = 'retry-package'; Fixture = 'probe-retry-package'; Operation = 'retry'; First = 'plan'; Second = 'package'; ToStatus = 'draft' },
+  @{ Name = 'retry-account'; Fixture = 'probe-retry-account'; Operation = 'retry'; First = 'package'; Second = 'account'; ToStatus = 'draft' },
   @{ Name = 'draft'; Fixture = 'probe-draft'; Operation = 'transition'; First = 'build'; Second = 'plan'; ToStatus = 'draft' },
   @{ Name = 'cancelled'; Fixture = 'probe-cancelled'; Operation = 'transition'; First = 'build'; Second = 'plan'; ToStatus = 'cancelled' },
   @{ Name = 'renewal'; Fixture = 'probe-renewal'; Operation = 'renewal'; First = 'build'; Second = 'plan'; ToStatus = 'draft' },
@@ -663,6 +760,11 @@ $lockProbeCases = @(
 $approvalCases = @(
   @{ Name = 'same-key'; Fixture = 'approval-same-key'; RequestKey = 'parallel-same-key'; SecondActor = '00000000-0000-0000-0000-000000000461' },
   @{ Name = 'conflict'; Fixture = 'approval-conflict'; RequestKey = 'parallel-conflict-key'; SecondActor = '00000000-0000-0000-0000-000000000463' }
+)
+
+$expiryBoundaryCases = @(
+  @{ Name = 'expiry-boundary-gate'; Operation = 'gate' },
+  @{ Name = 'expiry-boundary-retry'; Operation = 'retry' }
 )
 
 try {
@@ -723,6 +825,9 @@ try {
   Invoke-Psql -Arguments @($dbUrl, '-X', '-f', $enhancedSetupScript)
 
   Invoke-TransitionSnapshotCase
+  foreach ($case in $expiryBoundaryCases) {
+    Invoke-ExpiryBoundaryCase -Case $case
+  }
   foreach ($case in $lockProbeCases) {
     Invoke-LockProbe -Case $case
   }

@@ -19,6 +19,7 @@ drop table if exists public.m04_probe_control;
 drop table if exists public.m04_stress_release;
 drop table if exists public.m04_stress_results;
 drop table if exists public.m04_transition_snapshot_results;
+drop table if exists public.m04_expiry_boundary_results;
 
 create unlogged table public.m04_approval_parallel_results (
   case_name text not null,
@@ -56,15 +57,28 @@ create unlogged table public.m04_transition_snapshot_results (
   result_id bigint
 );
 
+create unlogged table public.m04_expiry_boundary_results (
+  case_name text not null,
+  session_role text not null check (session_role in ('blocker', 'rpc')),
+  sqlstate text not null,
+  error_message text,
+  result_id bigint,
+  native_exit integer not null,
+  primary key (case_name, session_role)
+);
+
 grant insert on public.m04_approval_parallel_results to service_role;
 grant insert on public.m04_stress_results to service_role;
 grant insert on public.m04_transition_snapshot_results to service_role;
+grant insert on public.m04_expiry_boundary_results to service_role;
 
 insert into public.m04_probe_control (case_name)
 values
   ('claim'), ('retry'), ('draft'), ('cancelled'),
   ('renewal'), ('handoff'), ('initial'), ('qa'),
-  ('same-key'), ('conflict'), ('transition-snapshot');
+  ('same-key'), ('conflict'), ('transition-snapshot'),
+  ('expiry-boundary-gate'), ('expiry-boundary-retry'),
+  ('claim-package'), ('claim-account'), ('retry-package'), ('retry-account');
 
 insert into auth.users (id, email, aud, role, email_confirmed_at)
 values
@@ -109,6 +123,10 @@ with fixtures(case_name, plan_status) as (
   values
     ('probe-claim', 'approved'),
     ('probe-retry', 'launch_in_progress'),
+    ('probe-claim-package', 'approved'),
+    ('probe-claim-account', 'approved'),
+    ('probe-retry-package', 'launch_in_progress'),
+    ('probe-retry-account', 'launch_in_progress'),
     ('probe-draft', 'approved'),
     ('probe-cancelled', 'approved'),
     ('probe-renewal', 'launch_in_progress'),
@@ -118,7 +136,9 @@ with fixtures(case_name, plan_status) as (
     ('approval-same-key', 'awaiting_approval'),
     ('approval-conflict', 'awaiting_approval'),
     ('transition-snapshot', 'approved'),
-    ('transition-snapshot-prewarm', 'approved')
+    ('transition-snapshot-prewarm', 'approved'),
+    ('expiry-boundary-gate', 'launch_in_progress'),
+    ('expiry-boundary-retry', 'launch_in_progress')
 ), stress_fixtures(case_name, plan_status) as (
   select 'stress-' || variant || '-' || pg_catalog.lpad(iteration::text, 2, '0'),
          'approved'
@@ -188,10 +208,14 @@ select plan.id, revision.id, revision.payload_hash, approval.id,
   plan.budget_package_id, plan.ad_account_id, plan.platform,
   case plan.created_by_name
     when 'probe-retry' then 'gate_1_failed'
+    when 'probe-retry-package' then 'gate_1_failed'
+    when 'probe-retry-account' then 'gate_1_failed'
     when 'probe-renewal' then 'gate_1_failed'
     when 'transition-snapshot-prewarm' then 'gate_1_failed'
     when 'probe-handoff' then 'verified'
     when 'probe-qa' then 'gate_1_in_progress'
+    when 'expiry-boundary-gate' then 'delivery_unverified'
+    when 'expiry-boundary-retry' then 'gate_1_failed'
     else 'pending_gate_1'
   end,
   3
@@ -203,11 +227,20 @@ where plan.status in ('approved', 'launch_in_progress');
 insert into public.ads_campaign_build_resources (
   build_id, logical_resource_key, resource_type, provider_resource_id
 )
-select build.id, 'campaign', 'campaign',
-  case when plan.created_by_name = 'probe-handoff' then 'probe-handoff-campaign' end
+select build.id,
+  case when plan.created_by_name = 'expiry-boundary-gate' then 'campaign.main' else 'campaign' end,
+  'campaign',
+  case plan.created_by_name
+    when 'probe-handoff' then 'probe-handoff-campaign'
+    when 'expiry-boundary-gate' then 'expiry-boundary-gate-campaign'
+  end
 from public.ads_campaign_builds as build
 join public.ads_campaign_plans as plan on plan.id = build.plan_id
-where plan.created_by_name in ('probe-retry', 'probe-handoff', 'probe-qa');
+where plan.created_by_name in (
+  'probe-retry', 'probe-handoff', 'probe-qa',
+  'probe-retry-package', 'probe-retry-account',
+  'expiry-boundary-gate', 'expiry-boundary-retry'
+);
 
 insert into public.ads_campaign_gate_attempts (
   build_id, gate, action, request_idempotency_key, attempt_number,
@@ -226,9 +259,67 @@ from (values
    interval '-4 minutes', interval '-3 minutes'),
   ('probe-retry', 'reconcile', 'probe-retry-proof', 2, 'succeeded',
    interval '-2 minutes', interval '-1 minute'),
+  ('probe-retry-package', 'create', 'probe-retry-package-parent', 1, 'failed',
+   interval '-4 minutes', interval '-3 minutes'),
+  ('probe-retry-package', 'reconcile', 'probe-retry-package-proof', 2, 'succeeded',
+   interval '-2 minutes', interval '-1 minute'),
+  ('probe-retry-account', 'create', 'probe-retry-account-parent', 1, 'failed',
+   interval '-4 minutes', interval '-3 minutes'),
+  ('probe-retry-account', 'reconcile', 'probe-retry-account-proof', 2, 'succeeded',
+   interval '-2 minutes', interval '-1 minute'),
   ('probe-qa', 'create', 'probe-qa-attempt', 1, 'claimed',
    interval '0 minutes', interval '5 minutes')
 ) as attempt(fixture, action, request_key, attempt_number, status, claimed_offset, expires_offset)
+join public.ads_campaign_plans as plan on plan.created_by_name = attempt.fixture
+join public.ads_campaign_builds as build on build.plan_id = plan.id;
+
+insert into public.ads_campaign_gate_attempts (
+  build_id, gate, action, request_idempotency_key, attempt_number,
+  revision_id, revision_hash, status, intent, claimed_at,
+  claim_expires_at, released_at, actor_id, actor_name
+)
+select build.id, attempt.gate, attempt.action, attempt.request_key,
+  attempt.attempt_number, build.revision_id, build.revision_hash,
+  attempt.status, attempt.intent,
+  clock_timestamp() + attempt.claimed_offset,
+  clock_timestamp() + attempt.expires_offset,
+  case when attempt.status = 'claimed' then null else clock_timestamp() + attempt.expires_offset end,
+  '00000000-0000-0000-0000-000000000461', 'State Race Operator'
+from (values
+  (
+    'expiry-boundary-gate', 2::smallint, 'deliver',
+    'expiry-boundary-gate-parent', 1, 'failed',
+    '{"schema":"m04.gate2.v1","platform":"google","delivery":{"mode":"activate_now"},"resources":[{"logical_resource_key":"campaign.main","resource_type":"campaign","required_fields":{"delivery.status":"active"}}]}'::jsonb,
+    interval '-4 minutes', interval '-3 minutes'
+  ),
+  (
+    'expiry-boundary-gate', 1::smallint, 'reconcile',
+    'expiry-boundary-gate-active', 2, 'claimed',
+    '{"resources":[{"logical_resource_key":"campaign.main","resource_type":"campaign"}]}'::jsonb,
+    interval '-1 second', interval '1 hour'
+  ),
+  (
+    'expiry-boundary-retry', 1::smallint, 'create',
+    'expiry-boundary-retry-parent', 1, 'failed',
+    '{"resources":[{"logical_resource_key":"campaign","resource_type":"campaign"}]}'::jsonb,
+    interval '-4 minutes', interval '-3 minutes'
+  ),
+  (
+    'expiry-boundary-retry', 1::smallint, 'reconcile',
+    'expiry-boundary-retry-proof', 2, 'succeeded',
+    '{"resources":[{"logical_resource_key":"campaign","resource_type":"campaign"}]}'::jsonb,
+    interval '-2 minutes', interval '-1 minute'
+  ),
+  (
+    'expiry-boundary-retry', 1::smallint, 'reconcile',
+    'expiry-boundary-retry-active', 3, 'claimed',
+    '{"resources":[{"logical_resource_key":"campaign","resource_type":"campaign"}]}'::jsonb,
+    interval '-1 second', interval '1 hour'
+  )
+) as attempt(
+  fixture, gate, action, request_key, attempt_number, status, intent,
+  claimed_offset, expires_offset
+)
 join public.ads_campaign_plans as plan on plan.created_by_name = attempt.fixture
 join public.ads_campaign_builds as build on build.plan_id = plan.id;
 
@@ -240,7 +331,19 @@ select attempt.id, resource.id, 'reconciliation', 'provider.exists', true,
   'false', 'false', 'missing', '{"found":false}'
 from public.ads_campaign_gate_attempts as attempt
 join public.ads_campaign_build_resources as resource on resource.build_id = attempt.build_id
-where attempt.request_idempotency_key = 'probe-retry-proof';
+where attempt.request_idempotency_key in (
+  'probe-retry-proof', 'probe-retry-package-proof', 'probe-retry-account-proof'
+);
+
+insert into public.ads_campaign_qa_results (
+  attempt_id, build_resource_id, phase, field_path, required,
+  expected_value, observed_value, result, readback_evidence
+)
+select attempt.id, resource.id, 'reconciliation', 'provider.exists', true,
+  'false', 'false', 'missing', '{"found":false}'
+from public.ads_campaign_gate_attempts as attempt
+join public.ads_campaign_build_resources as resource on resource.build_id = attempt.build_id
+where attempt.request_idempotency_key = 'expiry-boundary-retry-proof';
 
 set session_replication_role = replica;
 update public.ads_campaign_builds as build
@@ -260,14 +363,15 @@ select created_by_name from public.ads_campaign_plans where created_by_name like
 
 do $setup_assertion$
 begin
-  if (select count(*) from public.ads_campaign_plans) <> 52
-    or (select count(*) from public.ads_campaign_builds) <> 49
-    or (select count(*) from public.ads_campaign_approvals) <> 49
-    or (select count(*) from public.ads_campaign_build_resources) <> 3
-    or (select count(*) from public.ads_campaign_gate_attempts) <> 3
-    or (select count(*) from public.m04_probe_control) <> 11
+  if (select count(*) from public.ads_campaign_plans) <> 58
+    or (select count(*) from public.ads_campaign_builds) <> 55
+    or (select count(*) from public.ads_campaign_approvals) <> 55
+    or (select count(*) from public.ads_campaign_build_resources) <> 7
+    or (select count(*) from public.ads_campaign_gate_attempts) <> 12
+    or (select count(*) from public.ads_campaign_qa_results) <> 4
+    or (select count(*) from public.m04_probe_control) <> 17
     or (select count(*) from public.m04_stress_release) <> 40 then
-    raise exception 'Enhanced state setup did not create the exact 52-plan fixture matrix';
+    raise exception 'Enhanced state setup did not create the exact 58-plan fixture matrix';
   end if;
 end;
 $setup_assertion$;

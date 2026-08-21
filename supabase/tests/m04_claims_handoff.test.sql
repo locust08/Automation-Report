@@ -102,6 +102,36 @@ from (values ('claim fixture'), ('recovery fixture'), ('mismatch fixture'),
              ('invalid gate 2 fixture'), ('invalid gate 2 final fixture'),
              ('invalid handoff fixture')) as fixtures(fixture);
 
+create function pg_temp.m04_gate2_manifest(
+  p_build_id bigint,
+  p_delivery_status text default 'ENABLED'
+)
+returns jsonb
+language sql
+stable
+as $$
+  select pg_catalog.jsonb_build_object(
+    'schema', 'm04.gate2.v1',
+    'platform', build.platform,
+    'delivery', pg_catalog.jsonb_build_object('mode', 'activate_now'),
+    'resources', coalesce((
+      select pg_catalog.jsonb_agg(
+        pg_catalog.jsonb_build_object(
+          'logical_resource_key', resource.logical_resource_key,
+          'resource_type', resource.resource_type,
+          'required_fields', pg_catalog.jsonb_build_object(
+            'delivery.status', pg_catalog.to_jsonb(p_delivery_status)
+          )
+        ) order by resource.logical_resource_key
+      )
+      from public.ads_campaign_build_resources as resource
+      where resource.build_id = build.id
+    ), '[]'::jsonb)
+  )
+  from public.ads_campaign_builds as build
+  where build.id = p_build_id;
+$$;
+
 select has_function(
   'public', 'ads_acquire_campaign_gate_claim',
   array['bigint','smallint','text','text','bigint','text','integer','jsonb','uuid','inet','text'],
@@ -665,7 +695,7 @@ where plan.created_by_name = 'expired gate 2 fixture';
 select lives_ok(
   $$select public.ads_acquire_campaign_gate_claim(
     build.id, 2::smallint, 'deliver', 'expired-gate-2-deliver', build.revision_id,
-    build.revision_hash, 300, '{}'::jsonb,
+    build.revision_hash, 300, pg_temp.m04_gate2_manifest(build.id),
     '00000000-0000-0000-0000-000000000061', null, null
   )
   from public.ads_campaign_builds build join public.ads_campaign_plans plan on plan.id = build.plan_id
@@ -690,7 +720,7 @@ select throws_ok(
 select lives_ok(
   $$select public.ads_acquire_campaign_gate_claim(
     build.id, 2::smallint, 'reconcile', 'expired-gate-2-readback', build.revision_id,
-    build.revision_hash, 300, '{}'::jsonb,
+    build.revision_hash, 300, pg_temp.m04_gate2_manifest(build.id),
     '00000000-0000-0000-0000-000000000061', null, null
   )
   from public.ads_campaign_builds build join public.ads_campaign_plans plan on plan.id = build.plan_id
@@ -716,7 +746,7 @@ insert into public.ads_campaign_gate_attempts (
 select build.id, 2, 'reconcile', 'expired-gate-2-readback',
   (select coalesce(max(existing.attempt_number), 0) + 1
    from public.ads_campaign_gate_attempts existing where existing.build_id = build.id),
-  build.revision_id, build.revision_hash, 'claimed', '{}'::jsonb,
+  build.revision_id, build.revision_hash, 'claimed', pg_temp.m04_gate2_manifest(build.id),
   clock_timestamp(), clock_timestamp() + interval '5 minutes',
   '00000000-0000-0000-0000-000000000061', 'Launch Operator'
 from public.ads_campaign_builds build
@@ -737,7 +767,7 @@ where request_idempotency_key = 'expired-gate-2-readback';
 select lives_ok(
   $$select public.ads_acquire_campaign_gate_claim(
     build.id, 2::smallint, 'reconcile', 'expired-gate-2-readback-again', build.revision_id,
-    build.revision_hash, 300, '{}'::jsonb,
+    build.revision_hash, 300, pg_temp.m04_gate2_manifest(build.id),
     '00000000-0000-0000-0000-000000000061', null, null
   )
   from public.ads_campaign_builds build join public.ads_campaign_plans plan on plan.id = build.plan_id
@@ -763,7 +793,7 @@ where plan.created_by_name in ('invalid gate 2 fixture', 'invalid gate 2 final f
 select lives_ok(
   $$select public.ads_acquire_campaign_gate_claim(
     build.id, 2::smallint, 'deliver', plan.created_by_name || '-deliver', build.revision_id,
-    build.revision_hash, 300, '{}'::jsonb,
+    build.revision_hash, 300, pg_temp.m04_gate2_manifest(build.id),
     '00000000-0000-0000-0000-000000000061', null, null
   )
   from public.ads_campaign_builds build join public.ads_campaign_plans plan on plan.id = build.plan_id
@@ -772,7 +802,7 @@ select lives_ok(
 );
 select throws_ok(
   $$select public.ads_append_campaign_qa_result(
-    attempt.id, attempt.claim_token, resource.id, 'gate_2', 'campaign.status', true,
+    attempt.id, attempt.claim_token, resource.id, 'gate_2', 'delivery.status', true,
     '"ENABLED"'::jsonb, '"ENABLED"'::jsonb, 'match', null, null, '[]'::jsonb
   )
   from public.ads_campaign_gate_attempts attempt
@@ -795,7 +825,7 @@ select is(
 );
 select lives_ok(
   $$select public.ads_append_campaign_qa_result(
-    attempt.id, attempt.claim_token, resource.id, 'gate_2', 'campaign.status', true,
+    attempt.id, attempt.claim_token, resource.id, 'gate_2', 'delivery.status', true,
     '"ENABLED"'::jsonb, '"ENABLED"'::jsonb, 'match', null, null,
     '{"status":"ENABLED"}'::jsonb
   )
@@ -868,7 +898,7 @@ select is(
 select lives_ok(
   $$select public.ads_acquire_campaign_gate_claim(
     build.id, 2::smallint, 'deliver', plan.created_by_name || '-deliver', build.revision_id,
-    build.revision_hash, 300, '{}'::jsonb,
+    build.revision_hash, 300, pg_temp.m04_gate2_manifest(build.id),
     '00000000-0000-0000-0000-000000000061', null, null
   )
   from public.ads_campaign_builds build
@@ -892,7 +922,7 @@ select ok(
 select lives_ok(
   $$select public.ads_acquire_campaign_gate_claim(
     build.id, 2::smallint, 'reconcile', 'ambiguous-delivery-invalid-readback', build.revision_id,
-    build.revision_hash, 300, '{}'::jsonb,
+    build.revision_hash, 300, pg_temp.m04_gate2_manifest(build.id),
     '00000000-0000-0000-0000-000000000061', null, null
   )
   from public.ads_campaign_builds build join public.ads_campaign_plans plan on plan.id = build.plan_id
@@ -901,7 +931,7 @@ select lives_ok(
 );
 select throws_ok(
   $$select public.ads_append_campaign_qa_result(
-    attempt.id, attempt.claim_token, resource.id, 'reconciliation', 'campaign.status', true,
+    attempt.id, attempt.claim_token, resource.id, 'reconciliation', 'delivery.status', true,
     '"ENABLED"'::jsonb, '"ENABLED"'::jsonb, 'match', null, null, '"scalar"'::jsonb
   )
   from public.ads_campaign_gate_attempts attempt
@@ -949,7 +979,7 @@ set local session_replication_role = origin;
 select lives_ok(
   $$select public.ads_acquire_campaign_gate_claim(
     build.id, 2::smallint, 'reconcile', 'ambiguous-delivery-readback', build.revision_id,
-    build.revision_hash, 300, '{}'::jsonb,
+    build.revision_hash, 300, pg_temp.m04_gate2_manifest(build.id),
     '00000000-0000-0000-0000-000000000061', null, null
   )
   from public.ads_campaign_builds build
@@ -959,7 +989,7 @@ select lives_ok(
 );
 select lives_ok(
   $$select public.ads_append_campaign_qa_result(
-    attempt.id, attempt.claim_token, resource.id, 'reconciliation', 'campaign.status', true,
+    attempt.id, attempt.claim_token, resource.id, 'reconciliation', 'delivery.status', true,
     '"ENABLED"'::jsonb, '"ENABLED"'::jsonb, 'match', null, null,
     '{"status":"ENABLED","provider_id":"provider-campaign-ambiguous"}'::jsonb
   )
@@ -988,7 +1018,7 @@ select ok(
 
 select lives_ok(
   $$select public.ads_append_campaign_qa_result(
-    attempt.id, attempt.claim_token, resource.id, 'gate_2', 'campaign.status', true,
+    attempt.id, attempt.claim_token, resource.id, 'gate_2', 'delivery.status', true,
     '"ENABLED"'::jsonb, '"ENABLED"'::jsonb, 'match', null, null,
     '{"status":"ENABLED","provider_id":"provider-campaign-verified"}'::jsonb
   )
@@ -1747,6 +1777,31 @@ where plan.created_by_name in (
   'failed-g2', 'retry-g1-failed-no-proof'
 );
 
+insert into public.ads_campaign_build_resources (
+  build_id, logical_resource_key, resource_type, provider_resource_id
+)
+select build.id, 'campaign', 'campaign', plan.created_by_name || '-campaign'
+from public.ads_campaign_builds as build
+join public.ads_campaign_plans as plan on plan.id = build.plan_id
+where plan.created_by_name in ('recover-g2-delivery-unverified', 'failed-g2');
+
+insert into public.ads_campaign_gate_attempts (
+  build_id, gate, action, request_idempotency_key, attempt_number,
+  revision_id, revision_hash, status, intent, claimed_at, claim_expires_at,
+  released_at, actor_id, actor_name
+)
+select build.id, 2, 'deliver', plan.created_by_name || '-delivery-prior',
+  (select coalesce(max(existing.attempt_number), 0) + 1
+   from public.ads_campaign_gate_attempts as existing where existing.build_id = build.id),
+  build.revision_id, build.revision_hash, 'failed',
+  pg_temp.m04_gate2_manifest(build.id),
+  clock_timestamp() - interval '2 minutes', clock_timestamp() - interval '1 minute',
+  clock_timestamp() - interval '1 minute',
+  '00000000-0000-0000-0000-000000000061', 'Launch Operator'
+from public.ads_campaign_builds as build
+join public.ads_campaign_plans as plan on plan.id = build.plan_id
+where plan.created_by_name in ('recover-g2-delivery-unverified', 'failed-g2');
+
 select throws_ok(
   $$select public.ads_acquire_campaign_gate_claim(
     build.id, 2::smallint, 'reconcile', 'failed-g1-wrong-gate',
@@ -1807,7 +1862,7 @@ select lives_ok(
 select lives_ok(
   $$select public.ads_acquire_campaign_gate_claim(
     build.id, 2::smallint, 'reconcile', 'delivery-unverified-reconcile',
-    build.revision_id, build.revision_hash, 300, '{}'::jsonb,
+    build.revision_id, build.revision_hash, 300, pg_temp.m04_gate2_manifest(build.id),
     '00000000-0000-0000-0000-000000000061', null, null
   ) from public.ads_campaign_builds as build
   join public.ads_campaign_plans as plan on plan.id = build.plan_id
@@ -1817,7 +1872,7 @@ select lives_ok(
 select lives_ok(
   $$select public.ads_acquire_campaign_gate_claim(
     build.id, 2::smallint, 'reconcile', 'failed-g2-reconcile',
-    build.revision_id, build.revision_hash, 300, '{}'::jsonb,
+    build.revision_id, build.revision_hash, 300, pg_temp.m04_gate2_manifest(build.id),
     '00000000-0000-0000-0000-000000000061', null, null
   ) from public.ads_campaign_builds as build
   join public.ads_campaign_plans as plan on plan.id = build.plan_id
@@ -3420,6 +3475,756 @@ select ok(
   'a null approved revision fails the handoff snapshot closed with no side effects'
 );
 
+-- SQL NULL is not a provider outcome. Each fixture is otherwise ready to
+-- authorize complete Gate 2 verification so the vocabulary guard is the only
+-- reason the operation can fail.
+select pg_temp.make_claim_hardening_build(
+  fixture, 'google', 'launch_in_progress', 'ready_to_deliver'
+)
+from (values
+  ('null-resource-outcome'),
+  ('null-finalizer-outcome')
+) as fixtures(fixture);
+
+insert into public.ads_campaign_build_resources (
+  build_id, logical_resource_key, resource_type, provider_resource_id
+)
+select build.id, 'campaign.main', 'campaign', plan.created_by_name || '-campaign'
+from public.ads_campaign_builds as build
+join public.ads_campaign_plans as plan on plan.id = build.plan_id
+where plan.created_by_name in ('null-resource-outcome', 'null-finalizer-outcome');
+
+select public.ads_acquire_campaign_gate_claim(
+  build.id, 2::smallint, 'deliver', plan.created_by_name || '-gate-2',
+  build.revision_id, build.revision_hash, 300,
+  pg_catalog.jsonb_build_object(
+    'schema', 'm04.gate2.v1',
+    'platform', build.platform,
+    'delivery', pg_catalog.jsonb_build_object('mode', 'activate_now'),
+    'resources', pg_catalog.jsonb_build_array(pg_catalog.jsonb_build_object(
+      'logical_resource_key', 'campaign.main',
+      'resource_type', 'campaign',
+      'required_fields', pg_catalog.jsonb_build_object('delivery.status', 'active')
+    ))
+  ),
+  '00000000-0000-0000-0000-000000000061', null, null
+)
+from public.ads_campaign_builds as build
+join public.ads_campaign_plans as plan on plan.id = build.plan_id
+where plan.created_by_name in ('null-resource-outcome', 'null-finalizer-outcome');
+
+select public.ads_append_campaign_qa_result(
+  attempt.id, attempt.claim_token, resource.id, 'gate_2',
+  'delivery.status', true, '"active"', '"active"', 'match',
+  null, null, '{"delivery":{"status":"active"}}'
+)
+from public.ads_campaign_gate_attempts as attempt
+join public.ads_campaign_builds as build on build.id = attempt.build_id
+join public.ads_campaign_plans as plan on plan.id = build.plan_id
+join public.ads_campaign_build_resources as resource on resource.build_id = build.id
+where plan.created_by_name in ('null-resource-outcome', 'null-finalizer-outcome')
+  and attempt.action = 'deliver'
+  and resource.logical_resource_key = 'campaign.main';
+
+create function pg_temp.null_provider_outcome_is_side_effect_free(
+  p_fixture text,
+  p_operation text
+)
+returns boolean
+language plpgsql
+as $$
+declare
+  v_build public.ads_campaign_builds%rowtype;
+  v_attempt public.ads_campaign_gate_attempts%rowtype;
+  v_snapshot_before jsonb;
+  v_snapshot_after jsonb;
+  v_expected_message text;
+  v_exact_error boolean := false;
+begin
+  select build.* into strict v_build
+  from public.ads_campaign_builds as build
+  join public.ads_campaign_plans as plan on plan.id = build.plan_id
+  where plan.created_by_name = p_fixture;
+  select attempt.* into strict v_attempt
+  from public.ads_campaign_gate_attempts as attempt
+  where attempt.build_id = v_build.id and attempt.action = 'deliver';
+
+  select pg_catalog.jsonb_build_object(
+    'plan', (select pg_catalog.to_jsonb(plan)
+             from public.ads_campaign_plans as plan where plan.id = v_build.plan_id),
+    'build', (select pg_catalog.to_jsonb(build)
+              from public.ads_campaign_builds as build where build.id = v_build.id),
+    'approvals', (select coalesce(pg_catalog.jsonb_agg(pg_catalog.to_jsonb(approval) order by approval.id), '[]'::jsonb)
+                  from public.ads_campaign_approvals as approval where approval.plan_id = v_build.plan_id),
+    'attempts', (select coalesce(pg_catalog.jsonb_agg(pg_catalog.to_jsonb(attempt) order by attempt.id), '[]'::jsonb)
+                 from public.ads_campaign_gate_attempts as attempt where attempt.build_id = v_build.id),
+    'resources', (select coalesce(pg_catalog.jsonb_agg(pg_catalog.to_jsonb(resource) order by resource.id), '[]'::jsonb)
+                  from public.ads_campaign_build_resources as resource where resource.build_id = v_build.id),
+    'qa', (select coalesce(pg_catalog.jsonb_agg(pg_catalog.to_jsonb(qa) order by qa.id), '[]'::jsonb)
+           from public.ads_campaign_qa_results as qa
+           join public.ads_campaign_gate_attempts as attempt on attempt.id = qa.attempt_id
+           where attempt.build_id = v_build.id),
+    'audit', (select coalesce(pg_catalog.jsonb_agg(pg_catalog.to_jsonb(audit) order by audit.id), '[]'::jsonb)
+              from public.ads_campaign_audit_events as audit where audit.build_id = v_build.id),
+    'handoff', (select coalesce(pg_catalog.jsonb_agg(pg_catalog.to_jsonb(handoff) order by handoff.id), '[]'::jsonb)
+                from public.ads_campaign_monitoring_handoffs as handoff where handoff.build_id = v_build.id),
+    'm03_eligibility', public.ads_get_campaign_launch_eligibility(
+      'claim-hardening-' || p_fixture, p_fixture || '-campaign'
+    )
+  ) into v_snapshot_before;
+
+  v_expected_message := case p_operation
+    when 'resource' then 'Provider resource outcome is invalid'
+    when 'finalizer' then 'Gate provider outcome is invalid'
+  end;
+
+  begin
+    if p_operation = 'resource' then
+      perform public.ads_record_campaign_resource_outcome(
+        v_attempt.id, v_attempt.claim_token, 'campaign.main', null,
+        p_fixture || '-campaign', null, '{"delivery":{"status":"active"}}', null
+      );
+    elsif p_operation = 'finalizer' then
+      perform public.ads_finalize_campaign_gate_claim(
+        v_attempt.id, v_attempt.claim_token, null,
+        '{"delivery":{"status":"active"}}',
+        '00000000-0000-0000-0000-000000000061', null, null
+      );
+    else
+      raise exception 'unexpected null-outcome operation' using errcode = 'P0001';
+    end if;
+    raise exception 'null provider outcome unexpectedly succeeded' using errcode = 'P0001';
+  exception when others then
+    v_exact_error := sqlstate = '22023' and sqlerrm = v_expected_message;
+  end;
+
+  select pg_catalog.jsonb_build_object(
+    'plan', (select pg_catalog.to_jsonb(plan)
+             from public.ads_campaign_plans as plan where plan.id = v_build.plan_id),
+    'build', (select pg_catalog.to_jsonb(build)
+              from public.ads_campaign_builds as build where build.id = v_build.id),
+    'approvals', (select coalesce(pg_catalog.jsonb_agg(pg_catalog.to_jsonb(approval) order by approval.id), '[]'::jsonb)
+                  from public.ads_campaign_approvals as approval where approval.plan_id = v_build.plan_id),
+    'attempts', (select coalesce(pg_catalog.jsonb_agg(pg_catalog.to_jsonb(attempt) order by attempt.id), '[]'::jsonb)
+                 from public.ads_campaign_gate_attempts as attempt where attempt.build_id = v_build.id),
+    'resources', (select coalesce(pg_catalog.jsonb_agg(pg_catalog.to_jsonb(resource) order by resource.id), '[]'::jsonb)
+                  from public.ads_campaign_build_resources as resource where resource.build_id = v_build.id),
+    'qa', (select coalesce(pg_catalog.jsonb_agg(pg_catalog.to_jsonb(qa) order by qa.id), '[]'::jsonb)
+           from public.ads_campaign_qa_results as qa
+           join public.ads_campaign_gate_attempts as attempt on attempt.id = qa.attempt_id
+           where attempt.build_id = v_build.id),
+    'audit', (select coalesce(pg_catalog.jsonb_agg(pg_catalog.to_jsonb(audit) order by audit.id), '[]'::jsonb)
+              from public.ads_campaign_audit_events as audit where audit.build_id = v_build.id),
+    'handoff', (select coalesce(pg_catalog.jsonb_agg(pg_catalog.to_jsonb(handoff) order by handoff.id), '[]'::jsonb)
+                from public.ads_campaign_monitoring_handoffs as handoff where handoff.build_id = v_build.id),
+    'm03_eligibility', public.ads_get_campaign_launch_eligibility(
+      'claim-hardening-' || p_fixture, p_fixture || '-campaign'
+    )
+  ) into v_snapshot_after;
+
+  return v_exact_error and v_snapshot_after = v_snapshot_before;
+end;
+$$;
+
+select ok(
+  pg_temp.null_provider_outcome_is_side_effect_free('null-resource-outcome', 'resource'),
+  'SQL NULL resource outcome is rejected exactly and leaves the complete launch snapshot unchanged'
+);
+select ok(
+  pg_temp.null_provider_outcome_is_side_effect_free('null-finalizer-outcome', 'finalizer'),
+  'SQL NULL finalizer outcome is rejected exactly and leaves the complete launch snapshot unchanged'
+);
+
+-- A new claim may proceed only while the complete approved launch snapshot is
+-- still current. Exercise every drift through each mutation entrypoint; the
+-- subtransaction rolls an unsafe success back before comparing all persisted
+-- M04 state plus the unchanged M03 eligibility result.
+create temporary table pg_temp.claim_snapshot_drift_cases as
+select
+  operation,
+  drift,
+  'snapshot-drift-' || operation || '-' || drift as fixture
+from (values ('gate_1'), ('gate_2'), ('retry')) as operations(operation)
+cross join (values
+  ('account_inactive'),
+  ('account_access_unverified'),
+  ('account_access_verified_at_null'),
+  ('account_client'),
+  ('account_provider_id'),
+  ('account_platform'),
+  ('account_currency'),
+  ('account_timezone'),
+  ('package_inactive'),
+  ('package_client'),
+  ('package_currency'),
+  ('package_flight'),
+  ('plan_reserved_revision'),
+  ('plan_reserved_budget'),
+  ('package_committed_below_reservation')
+) as drifts(drift);
+
+select pg_temp.make_claim_hardening_build(
+  fixture,
+  'google',
+  case when operation = 'gate_1' then 'approved' else 'launch_in_progress' end,
+  case operation
+    when 'gate_1' then 'pending_gate_1'
+    when 'gate_2' then 'ready_to_deliver'
+    else 'gate_1_failed'
+  end
+)
+from pg_temp.claim_snapshot_drift_cases;
+
+insert into public.ads_campaign_build_resources (
+  build_id, logical_resource_key, resource_type, provider_resource_id
+)
+select build.id, 'campaign.main', 'campaign', cases.fixture || '-campaign'
+from pg_temp.claim_snapshot_drift_cases as cases
+join public.ads_campaign_plans as plan on plan.created_by_name = cases.fixture
+join public.ads_campaign_builds as build on build.plan_id = plan.id
+where cases.operation = 'gate_2';
+
+select pg_temp.seed_retry_proof(fixture)
+from pg_temp.claim_snapshot_drift_cases
+where operation = 'retry';
+
+create function pg_temp.apply_claim_snapshot_drift(
+  p_build_id bigint,
+  p_drift text
+)
+returns void
+language plpgsql
+as $$
+declare
+  v_build public.ads_campaign_builds%rowtype;
+begin
+  select * into strict v_build
+  from public.ads_campaign_builds
+  where id = p_build_id;
+
+  if p_drift = 'account_inactive' then
+    update public.ads_ad_accounts set is_active = false where id = v_build.ad_account_id;
+  elsif p_drift = 'account_access_unverified' then
+    update public.ads_ad_accounts set access_status = 'revoked' where id = v_build.ad_account_id;
+  elsif p_drift = 'account_access_verified_at_null' then
+    update public.ads_ad_accounts set access_verified_at = null where id = v_build.ad_account_id;
+  elsif p_drift = 'account_client' then
+    update public.ads_ad_accounts
+    set client_id = '00000000-0000-0000-0000-000000000002'
+    where id = v_build.ad_account_id;
+  elsif p_drift = 'account_provider_id' then
+    update public.ads_ad_accounts
+    set provider_account_id = provider_account_id || '-drift'
+    where id = v_build.ad_account_id;
+  elsif p_drift = 'account_platform' then
+    update public.ads_ad_accounts set platform = 'meta' where id = v_build.ad_account_id;
+  elsif p_drift = 'account_currency' then
+    update public.ads_ad_accounts set currency = 'USD' where id = v_build.ad_account_id;
+  elsif p_drift = 'account_timezone' then
+    update public.ads_ad_accounts set timezone = 'UTC' where id = v_build.ad_account_id;
+  elsif p_drift = 'package_inactive' then
+    update public.ads_budget_packages set status = 'closed' where id = v_build.budget_package_id;
+  elsif p_drift = 'package_client' then
+    update public.ads_budget_packages
+    set client_id = '00000000-0000-0000-0000-000000000002'
+    where id = v_build.budget_package_id;
+  elsif p_drift = 'package_currency' then
+    update public.ads_budget_packages set currency = 'USD' where id = v_build.budget_package_id;
+  elsif p_drift = 'package_flight' then
+    update public.ads_budget_packages set start_date = '2026-08-02' where id = v_build.budget_package_id;
+  elsif p_drift = 'plan_reserved_revision' then
+    update public.ads_campaign_plans set reserved_revision_id = null where id = v_build.plan_id;
+  elsif p_drift = 'plan_reserved_budget' then
+    update public.ads_campaign_plans set reserved_budget = 99 where id = v_build.plan_id;
+  elsif p_drift = 'package_committed_below_reservation' then
+    update public.ads_budget_packages set committed_amount = 99 where id = v_build.budget_package_id;
+  else
+    raise exception 'unexpected immutable snapshot drift' using errcode = 'P0001';
+  end if;
+end;
+$$;
+
+select pg_temp.apply_claim_snapshot_drift(build.id, cases.drift)
+from pg_temp.claim_snapshot_drift_cases as cases
+join public.ads_campaign_plans as plan on plan.created_by_name = cases.fixture
+join public.ads_campaign_builds as build on build.plan_id = plan.id;
+
+create function pg_temp.claim_fixture_snapshot(p_build_id bigint)
+returns jsonb
+language sql
+stable
+as $$
+  select pg_catalog.jsonb_build_object(
+    'plan', pg_catalog.to_jsonb(plan),
+    'build', pg_catalog.to_jsonb(build),
+    'account', pg_catalog.to_jsonb(account),
+    'package', pg_catalog.to_jsonb(package),
+    'approvals', (
+      select coalesce(pg_catalog.jsonb_agg(pg_catalog.to_jsonb(approval) order by approval.id), '[]'::jsonb)
+      from public.ads_campaign_approvals as approval where approval.plan_id = plan.id
+    ),
+    'attempts', (
+      select coalesce(pg_catalog.jsonb_agg(pg_catalog.to_jsonb(attempt) order by attempt.id), '[]'::jsonb)
+      from public.ads_campaign_gate_attempts as attempt where attempt.build_id = build.id
+    ),
+    'resources', (
+      select coalesce(pg_catalog.jsonb_agg(pg_catalog.to_jsonb(resource) order by resource.id), '[]'::jsonb)
+      from public.ads_campaign_build_resources as resource where resource.build_id = build.id
+    ),
+    'qa', (
+      select coalesce(pg_catalog.jsonb_agg(pg_catalog.to_jsonb(qa) order by qa.id), '[]'::jsonb)
+      from public.ads_campaign_qa_results as qa
+      join public.ads_campaign_gate_attempts as attempt on attempt.id = qa.attempt_id
+      where attempt.build_id = build.id
+    ),
+    'audit', (
+      select coalesce(pg_catalog.jsonb_agg(pg_catalog.to_jsonb(audit) order by audit.id), '[]'::jsonb)
+      from public.ads_campaign_audit_events as audit where audit.build_id = build.id
+    ),
+    'handoff', (
+      select coalesce(pg_catalog.jsonb_agg(pg_catalog.to_jsonb(handoff) order by handoff.id), '[]'::jsonb)
+      from public.ads_campaign_monitoring_handoffs as handoff where handoff.build_id = build.id
+    ),
+    'm03_eligibility', public.ads_get_campaign_launch_eligibility(
+      revision.provider_account_id,
+      coalesce((
+        select resource.provider_resource_id
+        from public.ads_campaign_build_resources as resource
+        where resource.build_id = build.id and resource.resource_type = 'campaign'
+        order by resource.logical_resource_key, resource.id limit 1
+      ), 'not-persisted')
+    )
+  )
+  from public.ads_campaign_builds as build
+  join public.ads_campaign_plans as plan on plan.id = build.plan_id
+  join public.ads_campaign_plan_revisions as revision on revision.id = build.revision_id
+  join public.ads_ad_accounts as account on account.id = build.ad_account_id
+  join public.ads_budget_packages as package on package.id = build.budget_package_id
+  where build.id = p_build_id;
+$$;
+
+create function pg_temp.claim_snapshot_drift_is_side_effect_free(
+  p_fixture text,
+  p_operation text
+)
+returns boolean
+language plpgsql
+as $$
+declare
+  v_build public.ads_campaign_builds%rowtype;
+  v_parent_id bigint;
+  v_before jsonb;
+  v_after jsonb;
+  v_exact_error boolean := false;
+begin
+  select build.* into strict v_build
+  from public.ads_campaign_builds as build
+  join public.ads_campaign_plans as plan on plan.id = build.plan_id
+  where plan.created_by_name = p_fixture;
+  v_before := pg_temp.claim_fixture_snapshot(v_build.id);
+
+  begin
+    if p_operation = 'gate_1' then
+      perform public.ads_acquire_campaign_gate_claim(
+        v_build.id, 1::smallint, 'create', p_fixture || '-new-key',
+        v_build.revision_id, v_build.revision_hash, 300,
+        '{"resources":[{"logical_resource_key":"campaign.main","resource_type":"campaign"}]}'::jsonb,
+        '00000000-0000-0000-0000-000000000061', null, null
+      );
+    elsif p_operation = 'gate_2' then
+      perform public.ads_acquire_campaign_gate_claim(
+        v_build.id, 2::smallint, 'deliver', p_fixture || '-new-key',
+        v_build.revision_id, v_build.revision_hash, 300,
+        pg_catalog.jsonb_build_object(
+          'schema', 'm04.gate2.v1',
+          'platform', v_build.platform,
+          'delivery', pg_catalog.jsonb_build_object('mode', 'activate_now'),
+          'resources', pg_catalog.jsonb_build_array(pg_catalog.jsonb_build_object(
+            'logical_resource_key', 'campaign.main',
+            'resource_type', 'campaign',
+            'required_fields', pg_catalog.jsonb_build_object('delivery.status', 'active')
+          ))
+        ),
+        '00000000-0000-0000-0000-000000000061', null, null
+      );
+    elsif p_operation = 'retry' then
+      select id into strict v_parent_id
+      from public.ads_campaign_gate_attempts
+      where request_idempotency_key = p_fixture || '-parent';
+      perform public.ads_acquire_campaign_retry_claim(
+        v_build.id, v_parent_id, p_fixture || '-new-key',
+        v_build.revision_hash, 300,
+        '{"resources":[{"logical_resource_key":"campaign","resource_type":"campaign"}]}'::jsonb,
+        '00000000-0000-0000-0000-000000000061', null, null
+      );
+    else
+      raise exception 'unexpected immutable snapshot operation' using errcode = 'P0001';
+    end if;
+    raise exception 'immutable snapshot drift unexpectedly admitted a new claim' using errcode = 'P0001';
+  exception when others then
+    v_exact_error := sqlstate = '55000'
+      and sqlerrm = 'Campaign build immutable launch snapshot is no longer current';
+  end;
+
+  v_after := pg_temp.claim_fixture_snapshot(v_build.id);
+  return v_exact_error and v_after = v_before;
+end;
+$$;
+
+select ok(
+  pg_temp.claim_snapshot_drift_is_side_effect_free(cases.fixture, cases.operation),
+  cases.operation || ' rejects new-key ' || cases.drift || ' drift with the exact error and no side effects'
+)
+from pg_temp.claim_snapshot_drift_cases as cases
+order by cases.operation, cases.drift;
+
+-- Exact immutable requests are historical replay, so they resolve before any
+-- current-directory or reservation validation and return the original row.
+select pg_temp.make_claim_hardening_build(fixture, 'google', plan_status, build_status)
+from (values
+  ('snapshot-replay-gate-1', 'approved', 'pending_gate_1'),
+  ('snapshot-replay-gate-2', 'launch_in_progress', 'ready_to_deliver'),
+  ('snapshot-replay-retry', 'launch_in_progress', 'gate_1_failed')
+) as fixtures(fixture, plan_status, build_status);
+
+insert into public.ads_campaign_build_resources (
+  build_id, logical_resource_key, resource_type, provider_resource_id
+)
+select build.id, 'campaign.main', 'campaign', 'snapshot-replay-gate-2-campaign'
+from public.ads_campaign_builds as build
+join public.ads_campaign_plans as plan on plan.id = build.plan_id
+where plan.created_by_name = 'snapshot-replay-gate-2';
+
+select pg_temp.seed_retry_proof('snapshot-replay-retry');
+
+select public.ads_acquire_campaign_gate_claim(
+  build.id, 1::smallint, 'create', 'snapshot-replay-gate-1-key',
+  build.revision_id, build.revision_hash, 300,
+  '{"resources":[{"logical_resource_key":"campaign.main","resource_type":"campaign"}]}'::jsonb,
+  '00000000-0000-0000-0000-000000000061', null, null
+)
+from public.ads_campaign_builds as build
+join public.ads_campaign_plans as plan on plan.id = build.plan_id
+where plan.created_by_name = 'snapshot-replay-gate-1';
+
+select public.ads_acquire_campaign_gate_claim(
+  build.id, 2::smallint, 'deliver', 'snapshot-replay-gate-2-key',
+  build.revision_id, build.revision_hash, 300,
+  pg_catalog.jsonb_build_object(
+    'schema', 'm04.gate2.v1',
+    'platform', build.platform,
+    'delivery', pg_catalog.jsonb_build_object('mode', 'activate_now'),
+    'resources', pg_catalog.jsonb_build_array(pg_catalog.jsonb_build_object(
+      'logical_resource_key', 'campaign.main',
+      'resource_type', 'campaign',
+      'required_fields', pg_catalog.jsonb_build_object('delivery.status', 'active')
+    ))
+  ),
+  '00000000-0000-0000-0000-000000000061', null, null
+)
+from public.ads_campaign_builds as build
+join public.ads_campaign_plans as plan on plan.id = build.plan_id
+where plan.created_by_name = 'snapshot-replay-gate-2';
+
+select public.ads_acquire_campaign_retry_claim(
+  build.id,
+  (select id from public.ads_campaign_gate_attempts where request_idempotency_key = 'snapshot-replay-retry-parent'),
+  'snapshot-replay-retry-key', build.revision_hash, 300,
+  '{"resources":[{"logical_resource_key":"campaign","resource_type":"campaign"}]}'::jsonb,
+  '00000000-0000-0000-0000-000000000061', null, null
+)
+from public.ads_campaign_builds as build
+join public.ads_campaign_plans as plan on plan.id = build.plan_id
+where plan.created_by_name = 'snapshot-replay-retry';
+
+update public.ads_ad_accounts as account
+set is_active = false
+from public.ads_campaign_plans as plan
+where plan.ad_account_id = account.id
+  and plan.created_by_name in (
+    'snapshot-replay-gate-1', 'snapshot-replay-gate-2', 'snapshot-replay-retry'
+  );
+
+create function pg_temp.claim_snapshot_exact_replay_is_side_effect_free(
+  p_fixture text,
+  p_operation text,
+  p_request_key text
+)
+returns boolean
+language plpgsql
+as $$
+declare
+  v_build public.ads_campaign_builds%rowtype;
+  v_existing public.ads_campaign_gate_attempts%rowtype;
+  v_returned public.ads_campaign_gate_attempts%rowtype;
+  v_before jsonb;
+  v_parent_id bigint;
+begin
+  select build.* into strict v_build
+  from public.ads_campaign_builds as build
+  join public.ads_campaign_plans as plan on plan.id = build.plan_id
+  where plan.created_by_name = p_fixture;
+  select * into strict v_existing
+  from public.ads_campaign_gate_attempts
+  where build_id = v_build.id and request_idempotency_key = p_request_key;
+  v_before := pg_temp.claim_fixture_snapshot(v_build.id);
+
+  if p_operation = 'gate_1' then
+    select * into strict v_returned from public.ads_acquire_campaign_gate_claim(
+      v_build.id, 1::smallint, 'create', p_request_key,
+      v_build.revision_id, v_build.revision_hash, 300,
+      '{"resources":[{"logical_resource_key":"campaign.main","resource_type":"campaign"}]}'::jsonb,
+      '00000000-0000-0000-0000-000000000061', null, null
+    );
+  elsif p_operation = 'gate_2' then
+    select * into strict v_returned from public.ads_acquire_campaign_gate_claim(
+      v_build.id, 2::smallint, 'deliver', p_request_key,
+      v_build.revision_id, v_build.revision_hash, 300,
+      pg_catalog.jsonb_build_object(
+        'schema', 'm04.gate2.v1',
+        'platform', v_build.platform,
+        'delivery', pg_catalog.jsonb_build_object('mode', 'activate_now'),
+        'resources', pg_catalog.jsonb_build_array(pg_catalog.jsonb_build_object(
+          'logical_resource_key', 'campaign.main',
+          'resource_type', 'campaign',
+          'required_fields', pg_catalog.jsonb_build_object('delivery.status', 'active')
+        ))
+      ),
+      '00000000-0000-0000-0000-000000000061', null, null
+    );
+  elsif p_operation = 'retry' then
+    select id into strict v_parent_id
+    from public.ads_campaign_gate_attempts
+    where request_idempotency_key = 'snapshot-replay-retry-parent';
+    select * into strict v_returned from public.ads_acquire_campaign_retry_claim(
+      v_build.id, v_parent_id, p_request_key, v_build.revision_hash, 300,
+      '{"resources":[{"logical_resource_key":"campaign","resource_type":"campaign"}]}'::jsonb,
+      '00000000-0000-0000-0000-000000000061', null, null
+    );
+  else
+    raise exception 'unexpected immutable snapshot replay operation' using errcode = 'P0001';
+  end if;
+
+  return v_returned.id = v_existing.id
+    and pg_temp.claim_fixture_snapshot(v_build.id) = v_before;
+end;
+$$;
+
+select ok(
+  pg_temp.claim_snapshot_exact_replay_is_side_effect_free(
+    fixture, operation, request_key
+  ),
+  operation || ' exact key replays the original attempt before immutable snapshot drift validation'
+)
+from (values
+  ('snapshot-replay-gate-1', 'gate_1', 'snapshot-replay-gate-1-key'),
+  ('snapshot-replay-gate-2', 'gate_2', 'snapshot-replay-gate-2-key'),
+  ('snapshot-replay-retry', 'retry', 'snapshot-replay-retry-key')
+) as replay_cases(fixture, operation, request_key);
+
+-- Gate 2 claims consume one versioned, provider-neutral manifest that exactly
+-- covers persisted logical resources and names every authorizing readback.
+select pg_temp.make_claim_hardening_build(
+  fixture, 'google', 'launch_in_progress', build_status
+)
+from (values
+  ('gate2-manifest-invalid', 'ready_to_deliver'),
+  ('gate2-manifest-schedule', 'ready_to_deliver'),
+  ('gate2-manifest-reconcile', 'delivery_unverified')
+) as fixtures(fixture, build_status);
+
+insert into public.ads_campaign_build_resources (
+  build_id, logical_resource_key, resource_type, provider_resource_id
+)
+select build.id, resource.logical_key, resource.resource_type,
+  plan.created_by_name || '-' || resource.logical_key
+from public.ads_campaign_builds as build
+join public.ads_campaign_plans as plan on plan.id = build.plan_id
+cross join (values
+  ('campaign.main', 'campaign'),
+  ('ad-group.main', 'ad_group')
+) as resource(logical_key, resource_type)
+where plan.created_by_name in ('gate2-manifest-invalid', 'gate2-manifest-reconcile');
+
+insert into public.ads_campaign_build_resources (
+  build_id, logical_resource_key, resource_type, provider_resource_id
+)
+select build.id, 'campaign.main', 'campaign', 'gate2-manifest-schedule-campaign'
+from public.ads_campaign_builds as build
+join public.ads_campaign_plans as plan on plan.id = build.plan_id
+where plan.created_by_name = 'gate2-manifest-schedule';
+
+create temporary table pg_temp.gate2_invalid_manifest_cases as
+with selected_build as (
+  select build.id
+  from public.ads_campaign_builds as build
+  join public.ads_campaign_plans as plan on plan.id = build.plan_id
+  where plan.created_by_name = 'gate2-manifest-invalid'
+), base as (
+  select pg_temp.m04_gate2_manifest(id, 'active') as intent from selected_build
+)
+select * from (
+  select 'legacy-empty'::text as case_name, '{}'::jsonb as intent
+  union all
+  select 'wrong-schema', intent || '{"schema":"m04.gate2.v0"}'::jsonb from base
+  union all
+  select 'wrong-platform', intent || '{"platform":"meta"}'::jsonb from base
+  union all
+  select 'wrong-mode', pg_catalog.jsonb_set(intent, '{delivery}', '{"mode":"pause"}') from base
+  union all
+  select 'schedule-missing-at', pg_catalog.jsonb_set(intent, '{delivery}', '{"mode":"schedule"}') from base
+  union all
+  select 'schedule-invalid-at', pg_catalog.jsonb_set(
+    intent, '{delivery}', '{"mode":"schedule","scheduled_at":"tomorrow"}'
+  ) from base
+  union all
+  select 'missing-resource', pg_catalog.jsonb_set(
+    intent, '{resources}', pg_catalog.jsonb_build_array(intent -> 'resources' -> 0)
+  ) from base
+  union all
+  select 'extra-resource', pg_catalog.jsonb_set(
+    intent, '{resources}', (intent -> 'resources') ||
+      '[{"logical_resource_key":"creative.extra","resource_type":"creative","required_fields":{"delivery.status":"active"}}]'::jsonb
+  ) from base
+  union all
+  select 'duplicate-resource', pg_catalog.jsonb_set(
+    intent, '{resources}', (intent -> 'resources') || pg_catalog.jsonb_build_array(intent -> 'resources' -> 0)
+  ) from base
+  union all
+  select 'empty-required-fields', pg_catalog.jsonb_set(
+    intent, '{resources,0,required_fields}', '{}'::jsonb
+  ) from base
+  union all
+  select 'missing-delivery-status', pg_catalog.jsonb_set(
+    intent, '{resources,0,required_fields}', '{"budget.amount":100}'::jsonb
+  ) from base
+  union all
+  select 'non-object-required-fields', pg_catalog.jsonb_set(
+    intent, '{resources,0,required_fields}', '[]'::jsonb
+  ) from base
+) as invalid_cases;
+
+create function pg_temp.invalid_gate2_manifest_is_side_effect_free(p_intent jsonb)
+returns boolean
+language plpgsql
+as $$
+declare
+  v_build public.ads_campaign_builds%rowtype;
+  v_before jsonb;
+  v_exact_error boolean := false;
+begin
+  select build.* into strict v_build
+  from public.ads_campaign_builds as build
+  join public.ads_campaign_plans as plan on plan.id = build.plan_id
+  where plan.created_by_name = 'gate2-manifest-invalid';
+  v_before := pg_temp.claim_fixture_snapshot(v_build.id);
+  begin
+    perform public.ads_acquire_campaign_gate_claim(
+      v_build.id, 2::smallint, 'deliver',
+      'gate2-invalid-' || pg_catalog.md5(p_intent::text),
+      v_build.revision_id, v_build.revision_hash, 300, p_intent,
+      '00000000-0000-0000-0000-000000000061', null, null
+    );
+    raise exception 'invalid Gate 2 manifest unexpectedly acquired a claim' using errcode = 'P0001';
+  exception when others then
+    v_exact_error := sqlstate = '22023'
+      and sqlerrm = 'Gate 2 intent must satisfy m04.gate2.v1';
+  end;
+  return v_exact_error and pg_temp.claim_fixture_snapshot(v_build.id) = v_before;
+end;
+$$;
+
+select ok(
+  pg_temp.invalid_gate2_manifest_is_side_effect_free(intent),
+  'Gate 2 rejects ' || case_name || ' manifest input with no side effects'
+)
+from pg_temp.gate2_invalid_manifest_cases
+order by case_name;
+
+select lives_ok(
+  $$select public.ads_acquire_campaign_gate_claim(
+    build.id, 2::smallint, 'deliver', 'gate2-valid-schedule',
+    build.revision_id, build.revision_hash, 300,
+    pg_catalog.jsonb_set(
+      pg_temp.m04_gate2_manifest(build.id, 'scheduled'),
+      '{delivery}',
+      '{"mode":"schedule","scheduled_at":"2026-08-22T04:00:00+08:00"}'::jsonb
+    ),
+    '00000000-0000-0000-0000-000000000061', null, null
+  )
+  from public.ads_campaign_builds as build
+  join public.ads_campaign_plans as plan on plan.id = build.plan_id
+  where plan.created_by_name = 'gate2-manifest-schedule'$$,
+  'Gate 2 accepts a valid RFC3339 scheduled-delivery manifest'
+);
+
+insert into public.ads_campaign_gate_attempts (
+  build_id, gate, action, request_idempotency_key, attempt_number,
+  revision_id, revision_hash, status, intent, claimed_at, claim_expires_at,
+  released_at, actor_id, actor_name
+)
+select build.id, 2, 'deliver', 'gate2-reconcile-parent', 1,
+  build.revision_id, build.revision_hash, 'failed',
+  pg_temp.m04_gate2_manifest(build.id, 'active'),
+  clock_timestamp() - interval '2 minutes', clock_timestamp() - interval '1 minute',
+  clock_timestamp() - interval '1 minute',
+  '00000000-0000-0000-0000-000000000061', 'Launch Operator'
+from public.ads_campaign_builds as build
+join public.ads_campaign_plans as plan on plan.id = build.plan_id
+where plan.created_by_name = 'gate2-manifest-reconcile';
+
+create function pg_temp.reconciliation_manifest_drift_is_side_effect_free()
+returns boolean
+language plpgsql
+as $$
+declare
+  v_build public.ads_campaign_builds%rowtype;
+  v_before jsonb;
+  v_exact_error boolean := false;
+begin
+  select build.* into strict v_build
+  from public.ads_campaign_builds as build
+  join public.ads_campaign_plans as plan on plan.id = build.plan_id
+  where plan.created_by_name = 'gate2-manifest-reconcile';
+  v_before := pg_temp.claim_fixture_snapshot(v_build.id);
+  begin
+    perform public.ads_acquire_campaign_gate_claim(
+      v_build.id, 2::smallint, 'reconcile', 'gate2-reconcile-drift',
+      v_build.revision_id, v_build.revision_hash, 300,
+      pg_catalog.jsonb_set(
+        pg_temp.m04_gate2_manifest(v_build.id, 'active'),
+        '{resources,0,required_fields,delivery.status}', '"paused"'::jsonb
+      ),
+      '00000000-0000-0000-0000-000000000061', null, null
+    );
+    raise exception 'drifted reconciliation manifest unexpectedly acquired a claim'
+      using errcode = 'P0001';
+  exception when others then
+    v_exact_error := sqlstate = '22023'
+      and sqlerrm = 'Gate 2 reconciliation manifest must match the latest delivery intent';
+  end;
+  return v_exact_error and pg_temp.claim_fixture_snapshot(v_build.id) = v_before;
+end;
+$$;
+
+select ok(
+  pg_temp.reconciliation_manifest_drift_is_side_effect_free(),
+  'Gate 2 reconciliation cannot drift from the latest delivery manifest and is side-effect free'
+);
+
+select lives_ok(
+  $$select public.ads_acquire_campaign_gate_claim(
+    build.id, 2::smallint, 'reconcile', 'gate2-reconcile-exact',
+    build.revision_id, build.revision_hash, 300,
+    pg_temp.m04_gate2_manifest(build.id, 'active'),
+    '00000000-0000-0000-0000-000000000061', null, null
+  )
+  from public.ads_campaign_builds as build
+  join public.ads_campaign_plans as plan on plan.id = build.plan_id
+  where plan.created_by_name = 'gate2-manifest-reconcile'$$,
+  'Gate 2 reconciliation repeats the exact latest delivery manifest'
+);
+
 update public.ads_campaign_builds as build
 set verified_at = clock_timestamp(),
     final_readback_evidence = '{"status":"ENABLED","immutable":true}'::jsonb
@@ -3566,9 +4371,32 @@ declare
   v_attempt public.ads_campaign_gate_attempts%rowtype;
   v_resource public.ads_campaign_build_resources%rowtype;
   v_handoff public.ads_campaign_monitoring_handoffs%rowtype;
+  v_gate_1_intent jsonb;
+  v_expected_child_ids jsonb;
   v_provider_account_id text := 'generic-' || p_platform;
   v_hash constant text := '4de43ffc59a2e30653465f2a1521003623076f9aab294d6f7d7debf632128baf';
 begin
+  v_gate_1_intent := pg_catalog.jsonb_build_object(
+    'resources', case p_platform
+      when 'google' then '[
+        {"logical_resource_key":"campaign.main","resource_type":"campaign"},
+        {"logical_resource_key":"ad-group.search","resource_type":"ad_group"},
+        {"logical_resource_key":"ad.search","resource_type":"ad"},
+        {"logical_resource_key":"asset-group.pmax","resource_type":"asset_group"},
+        {"logical_resource_key":"asset.pmax","resource_type":"asset"}
+      ]'::jsonb
+      when 'meta' then '[
+        {"logical_resource_key":"campaign.main","resource_type":"campaign"},
+        {"logical_resource_key":"ad-set.main","resource_type":"ad_set"},
+        {"logical_resource_key":"ad.main","resource_type":"ad"}
+      ]'::jsonb
+      when 'tiktok' then '[
+        {"logical_resource_key":"campaign.main","resource_type":"campaign"},
+        {"logical_resource_key":"ad-group.main","resource_type":"ad_group"},
+        {"logical_resource_key":"ad.main","resource_type":"ad"}
+      ]'::jsonb
+    end
+  );
   insert into public.ads_ad_accounts (
     client_id, platform, provider_account_id, account_name, currency, timezone,
     access_status, access_evidence, access_verified_at, is_active
@@ -3613,22 +4441,26 @@ begin
   select * into strict v_attempt
   from public.ads_acquire_campaign_gate_claim(
     v_build.id, 1::smallint, 'create', 'generic-' || p_platform || '-gate-1',
-    v_revision.id, v_hash, 300,
-    '{"resources":[{"logical_resource_key":"campaign","resource_type":"campaign"}]}'::jsonb,
+    v_revision.id, v_hash, 300, v_gate_1_intent,
     '00000000-0000-0000-0000-000000000061', null, null
   );
-  perform public.ads_record_campaign_resource_outcome(
-    v_attempt.id, v_attempt.claim_token, 'campaign', 'succeeded',
-    'generic-' || p_platform || '-campaign', null, '{"status":"PAUSED"}', null
-  );
-  select resource.* into strict v_resource
-  from public.ads_campaign_build_resources as resource
-  where resource.build_id = v_build.id and resource.logical_resource_key = 'campaign';
-  perform public.ads_append_campaign_qa_result(
-    v_attempt.id, v_attempt.claim_token, v_resource.id,
-    'gate_1', 'campaign.status', true, '"PAUSED"', '"PAUSED"', 'match',
-    null, null, '{"status":"PAUSED"}'
-  );
+  for v_resource in
+    select resource.*
+    from public.ads_campaign_build_resources as resource
+    where resource.build_id = v_build.id
+    order by resource.logical_resource_key
+  loop
+    perform public.ads_record_campaign_resource_outcome(
+      v_attempt.id, v_attempt.claim_token, v_resource.logical_resource_key,
+      'succeeded', 'generic-' || p_platform || '-' || v_resource.logical_resource_key,
+      null, '{"status":"PAUSED"}', null
+    );
+    perform public.ads_append_campaign_qa_result(
+      v_attempt.id, v_attempt.claim_token, v_resource.id,
+      'gate_1', 'provisioning.status', true, '"PAUSED"', '"PAUSED"', 'match',
+      null, null, '{"status":"PAUSED"}'
+    );
+  end loop;
   select * into strict v_build
   from public.ads_finalize_campaign_gate_claim(
     v_attempt.id, v_attempt.claim_token, 'succeeded', '{"status":"PAUSED"}',
@@ -3637,14 +4469,26 @@ begin
   select * into strict v_attempt
   from public.ads_acquire_campaign_gate_claim(
     v_build.id, 2::smallint, 'deliver', 'generic-' || p_platform || '-gate-2',
-    v_revision.id, v_hash, 300, '{}'::jsonb,
+    v_revision.id, v_hash, 300, pg_temp.m04_gate2_manifest(v_build.id),
     '00000000-0000-0000-0000-000000000061', null, null
   );
-  perform public.ads_append_campaign_qa_result(
-    v_attempt.id, v_attempt.claim_token, v_resource.id,
-    'gate_2', 'campaign.status', true, '"ENABLED"', '"ENABLED"', 'match',
-    null, null, '{"status":"ENABLED"}'
-  );
+  for v_resource in
+    select resource.*
+    from public.ads_campaign_build_resources as resource
+    where resource.build_id = v_build.id
+    order by resource.logical_resource_key
+  loop
+    perform public.ads_record_campaign_resource_outcome(
+      v_attempt.id, v_attempt.claim_token, v_resource.logical_resource_key,
+      'succeeded', v_resource.provider_resource_id, null,
+      '{"status":"ENABLED"}', null
+    );
+    perform public.ads_append_campaign_qa_result(
+      v_attempt.id, v_attempt.claim_token, v_resource.id,
+      'gate_2', 'delivery.status', true, '"ENABLED"', '"ENABLED"', 'match',
+      null, null, '{"status":"ENABLED"}'
+    );
+  end loop;
   select * into strict v_build
   from public.ads_finalize_campaign_gate_claim(
     v_attempt.id, v_attempt.claim_token, 'succeeded', '{"status":"ENABLED"}',
@@ -3655,11 +4499,30 @@ begin
     v_build.id, v_build.lock_version, v_hash,
     '00000000-0000-0000-0000-000000000061', null, null
   );
+  select coalesce(
+    pg_catalog.jsonb_agg(resource.provider_resource_id order by resource.logical_resource_key),
+    '[]'::jsonb
+  ) into v_expected_child_ids
+  from public.ads_campaign_build_resources as resource
+  where resource.build_id = v_build.id and resource.resource_type <> 'campaign';
   return v_handoff.platform = p_platform
     and v_handoff.provider_account_id = v_provider_account_id
     and v_handoff.revision_id = v_revision.id
     and v_handoff.revision_hash = v_hash
-    and v_handoff.provider_campaign_id = 'generic-' || p_platform || '-campaign'
+    and v_handoff.provider_campaign_id = 'generic-' || p_platform || '-campaign.main'
+    and v_handoff.provider_child_ids = v_expected_child_ids
+    and (select pg_catalog.count(*) = 1
+         from public.ads_campaign_build_resources as resource
+         where resource.build_id = v_build.id and resource.resource_type = 'campaign')
+    and not exists (
+      select 1
+      from public.ads_campaign_build_resources as resource
+      where resource.build_id = v_build.id
+        and (
+          pg_catalog.btrim(coalesce(resource.provider_resource_id, '')) = ''
+          or resource.verified_at is distinct from v_build.verified_at
+        )
+    )
     and (select status = 'handoff_complete' from public.ads_campaign_builds where id = v_build.id)
     and (select status = 'launched' from public.ads_campaign_plans where id = v_plan.id);
 exception when others then
@@ -3667,12 +4530,16 @@ exception when others then
 end;
 $$;
 select ok(
+  pg_temp.run_generic_platform_lifecycle('google'),
+  'Google passes every Search and extensible asset resource through verified monitoring handoff'
+);
+select ok(
   pg_temp.run_generic_platform_lifecycle('meta'),
-  'Meta completes the generic database lifecycle through immutable monitoring handoff'
+  'Meta passes every generic campaign, ad-set, and ad resource through verified monitoring handoff'
 );
 select ok(
   pg_temp.run_generic_platform_lifecycle('tiktok'),
-  'TikTok completes the generic database lifecycle through immutable monitoring handoff'
+  'TikTok passes every generic campaign, ad-group, and ad resource through verified monitoring handoff'
 );
 
 select throws_ok(

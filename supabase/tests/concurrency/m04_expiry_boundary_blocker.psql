@@ -1,0 +1,159 @@
+\if :{?probe_case}
+\set ON_ERROR_STOP on
+\set VERBOSITY verbose
+
+select pg_catalog.set_config('application_name', :'app_blocker' || '-starting', false);
+
+begin;
+set local statement_timeout = '20s';
+set local lock_timeout = '15s';
+select pg_catalog.set_config('m04.probe_fixture', :'fixture', true);
+select pg_catalog.set_config('m04.probe_case', :'probe_case', true);
+
+\if :second_is_package
+select package.id
+from public.ads_budget_packages as package
+join public.ads_campaign_plans as plan on plan.budget_package_id = package.id
+where plan.created_by_name = :'fixture'
+for update of package;
+\elif :second_is_account
+select account.id
+from public.ads_ad_accounts as account
+join public.ads_campaign_plans as plan on plan.ad_account_id = account.id
+where plan.created_by_name = :'fixture'
+for update of account;
+\else
+\quit 3
+\endif
+
+select pg_catalog.set_config('application_name', :'app_blocker', false);
+\echo M04_LOCK_PROBE_BLOCKER_READY case=:probe_case
+
+do $wait_for_probe_signal$
+declare
+  v_deadline timestamptz := pg_catalog.clock_timestamp() + interval '15 seconds';
+begin
+  loop
+    exit when exists (
+      select 1 from public.m04_probe_control
+      where case_name = pg_catalog.current_setting('m04.probe_case')
+        and probe_now
+    );
+    if pg_catalog.clock_timestamp() >= v_deadline then
+      raise exception 'Neutral blocker timed out waiting for the externally verified probe signal'
+        using errcode = '57014';
+    end if;
+    perform pg_catalog.pg_sleep(0.01);
+  end loop;
+end;
+$wait_for_probe_signal$;
+
+\if :first_is_plan
+do $prove_plan_lock$
+begin
+  begin
+    perform plan.id
+    from public.ads_campaign_plans as plan
+    where plan.created_by_name = pg_catalog.current_setting('m04.probe_fixture')
+    for update nowait;
+    raise exception 'Neutral blocker unexpectedly acquired the RPC first plan lock'
+      using errcode = 'P0001';
+  exception when lock_not_available then
+    null;
+  end;
+end;
+$prove_plan_lock$;
+\elif :first_is_package
+do $prove_package_lock$
+begin
+  begin
+    perform package.id
+    from public.ads_budget_packages as package
+    join public.ads_campaign_plans as plan on plan.budget_package_id = package.id
+    where plan.created_by_name = pg_catalog.current_setting('m04.probe_fixture')
+    for update of package nowait;
+    raise exception 'Neutral blocker unexpectedly acquired the RPC package lock'
+      using errcode = 'P0001';
+  exception when lock_not_available then
+    null;
+  end;
+end;
+$prove_package_lock$;
+\else
+\quit 4
+\endif
+
+commit;
+\echo M04_LOCK_PROBE_PROVEN case=:probe_case
+\else
+\set ON_ERROR_STOP on
+\set VERBOSITY verbose
+
+select pg_catalog.set_config('application_name', :'app_blocker' || '-starting', false);
+select pg_catalog.set_config('m04.expiry_boundary_case', :'case_name', false);
+
+begin;
+set local statement_timeout = '30s';
+set local lock_timeout = '25s';
+
+update public.ads_campaign_gate_attempts as attempt
+set claimed_at = pg_catalog.clock_timestamp() - interval '1 second',
+    claim_expires_at = pg_catalog.clock_timestamp() + interval '6 seconds',
+    updated_at = pg_catalog.clock_timestamp()
+from public.ads_campaign_builds as build
+join public.ads_campaign_plans as plan on plan.id = build.plan_id
+where attempt.build_id = build.id
+  and plan.created_by_name = :'case_name'
+  and attempt.status = 'claimed'
+  and attempt.released_at is null
+returning attempt.id as active_attempt_id \gset
+
+lock table public.ads_campaign_gate_attempts in share mode;
+select pg_catalog.set_config('application_name', :'app_blocker', false);
+
+do $wait_for_verified_boundary_wait$
+declare
+  v_deadline timestamptz := pg_catalog.clock_timestamp() + interval '25 seconds';
+  v_expires_at timestamptz;
+begin
+  loop
+    exit when exists (
+      select 1 from public.m04_probe_control
+      where case_name = pg_catalog.current_setting('m04.expiry_boundary_case')
+        and probe_now
+    );
+    if pg_catalog.clock_timestamp() >= v_deadline then
+      raise exception 'Expiry-boundary blocker release signal timed out'
+        using errcode = '57014';
+    end if;
+    perform pg_catalog.pg_sleep(0.02);
+  end loop;
+
+  select attempt.claim_expires_at into strict v_expires_at
+  from public.ads_campaign_gate_attempts as attempt
+  join public.ads_campaign_builds as build on build.id = attempt.build_id
+  join public.ads_campaign_plans as plan on plan.id = build.plan_id
+  where plan.created_by_name = pg_catalog.current_setting('m04.expiry_boundary_case')
+    and attempt.status = 'claimed' and attempt.released_at is null;
+
+  loop
+    exit when pg_catalog.clock_timestamp() >= v_expires_at + interval '250 milliseconds';
+    if pg_catalog.clock_timestamp() >= v_deadline then
+      raise exception 'Expiry-boundary database clock did not cross the active lease'
+        using errcode = '57014';
+    end if;
+    perform pg_catalog.pg_sleep(0.02);
+  end loop;
+end;
+$wait_for_verified_boundary_wait$;
+
+insert into public.m04_expiry_boundary_results (
+  case_name, session_role, sqlstate, result_id, native_exit
+) values (
+  :'case_name', 'blocker', '00000', :active_attempt_id, 0
+);
+
+commit;
+
+\echo M04_EXPIRY_BOUNDARY_RESULT case=:case_name role=blocker sqlstate=00000 message=none result_id=:active_attempt_id native_exit=0
+\endif

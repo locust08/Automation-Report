@@ -1,0 +1,132 @@
+\if :{?probe_case}
+\set ON_ERROR_STOP on
+\set VERBOSITY verbose
+
+select pg_catalog.set_config('application_name', :'app_rpc', false);
+
+begin;
+set local statement_timeout = '20s';
+set local lock_timeout = '15s';
+set role service_role;
+
+\if :is_claim
+select (public.ads_acquire_campaign_gate_claim(
+  (select build.id from public.ads_campaign_builds as build
+   join public.ads_campaign_plans as plan on plan.id = build.plan_id
+   where plan.created_by_name = :'fixture'),
+  1::smallint, 'create', 'probe-claim-key',
+  (select build.revision_id from public.ads_campaign_builds as build
+   join public.ads_campaign_plans as plan on plan.id = build.plan_id
+   where plan.created_by_name = :'fixture'),
+  repeat('b', 64), 300,
+  '{"resources":[{"logical_resource_key":"campaign","resource_type":"campaign"}]}'::jsonb,
+  '00000000-0000-0000-0000-000000000461', '203.0.113.47',
+  'm04-lock-probe/claim'
+)).id as result_id \gset
+\elif :is_retry
+select (public.ads_acquire_campaign_retry_claim(
+  (select build.id from public.ads_campaign_builds as build
+   join public.ads_campaign_plans as plan on plan.id = build.plan_id
+   where plan.created_by_name = :'fixture'),
+  (select attempt.id from public.ads_campaign_gate_attempts as attempt
+   join public.ads_campaign_builds as build on build.id = attempt.build_id
+   join public.ads_campaign_plans as plan on plan.id = build.plan_id
+   where plan.created_by_name = :'fixture'
+     and attempt.gate = 1 and attempt.action = 'create'),
+  'probe-retry-key', repeat('b', 64), 300,
+  '{"resources":[{"logical_resource_key":"campaign","resource_type":"campaign"}]}'::jsonb,
+  '00000000-0000-0000-0000-000000000461', '203.0.113.47',
+  'm04-lock-probe/retry'
+)).id as result_id \gset
+\else
+\quit 3
+\endif
+
+reset role;
+commit;
+\echo M04_LOCK_PROBE_RPC_SUCCESS case=:probe_case result_id=:result_id
+\else
+\set ON_ERROR_STOP on
+\set VERBOSITY verbose
+
+select pg_catalog.set_config('application_name', :'app_rpc', false);
+select pg_catalog.set_config('m04.expiry_boundary_case', :'case_name', false);
+select pg_catalog.set_config('m04.expiry_boundary_is_gate', :'is_gate', false);
+
+begin;
+set local statement_timeout = '30s';
+set local lock_timeout = '25s';
+set role service_role;
+
+do $invoke_expiry_boundary_rpc$
+declare
+  v_case text := pg_catalog.current_setting('m04.expiry_boundary_case');
+  v_build public.ads_campaign_builds%rowtype;
+  v_attempt public.ads_campaign_gate_attempts%rowtype;
+  v_parent_id bigint;
+begin
+  select build.* into strict v_build
+  from public.ads_campaign_builds as build
+  join public.ads_campaign_plans as plan on plan.id = build.plan_id
+  where plan.created_by_name = v_case;
+
+  begin
+    if pg_catalog.current_setting('m04.expiry_boundary_is_gate')::integer = 1 then
+      select * into strict v_attempt
+      from public.ads_acquire_campaign_gate_claim(
+        v_build.id, 2::smallint, 'reconcile', v_case || '-rpc',
+        v_build.revision_id, v_build.revision_hash, 300,
+        '{"schema":"m04.gate2.v1","platform":"google","delivery":{"mode":"activate_now"},"resources":[{"logical_resource_key":"campaign.main","resource_type":"campaign","required_fields":{"delivery.status":"active"}}]}'::jsonb,
+        '00000000-0000-0000-0000-000000000461', '203.0.113.52',
+        'm04-expiry-boundary/gate'
+      );
+    else
+      select attempt.id into strict v_parent_id
+      from public.ads_campaign_gate_attempts as attempt
+      where attempt.build_id = v_build.id
+        and attempt.request_idempotency_key = 'expiry-boundary-retry-parent';
+      select * into strict v_attempt
+      from public.ads_acquire_campaign_retry_claim(
+        v_build.id, v_parent_id, v_case || '-rpc',
+        v_build.revision_hash, 300,
+        '{"resources":[{"logical_resource_key":"campaign","resource_type":"campaign"}]}'::jsonb,
+        '00000000-0000-0000-0000-000000000461', '203.0.113.52',
+        'm04-expiry-boundary/retry'
+      );
+    end if;
+
+    insert into public.m04_expiry_boundary_results (
+      case_name, session_role, sqlstate, result_id, native_exit
+    ) values (v_case, 'rpc', '00000', v_attempt.id, 0);
+  exception when others then
+    insert into public.m04_expiry_boundary_results (
+      case_name, session_role, sqlstate, error_message, native_exit
+    ) values (v_case, 'rpc', sqlstate, sqlerrm, 3);
+  end;
+end;
+$invoke_expiry_boundary_rpc$;
+
+reset role;
+commit;
+
+select result.sqlstate as result_sqlstate,
+       coalesce(result.error_message, 'none') as result_message,
+       coalesce(result.result_id::text, 'none') as result_id,
+       result.native_exit as result_native_exit,
+       result.sqlstate = '00000' as result_ok
+from public.m04_expiry_boundary_results as result
+where result.case_name = :'case_name' and result.session_role = 'rpc'
+\gset
+
+\echo M04_EXPIRY_BOUNDARY_RESULT case=:case_name role=rpc sqlstate=:result_sqlstate message=:result_message result_id=:result_id native_exit=:result_native_exit
+\if :result_ok
+\else
+select pg_catalog.set_config('m04.recorded_child_sqlstate', :'result_sqlstate', false);
+do $raise_recorded_expiry_boundary_error$
+begin
+  raise exception 'M04_RECORDED_EXPIRY_BOUNDARY_CHILD_ERROR'
+    using errcode = pg_catalog.current_setting('m04.recorded_child_sqlstate');
+end;
+$raise_recorded_expiry_boundary_error$;
+\endif
+\endif

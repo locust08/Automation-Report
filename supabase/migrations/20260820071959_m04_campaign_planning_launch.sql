@@ -1134,6 +1134,189 @@ begin
 end;
 $$;
 
+create or replace function ads_internal.assert_campaign_build_immutable_launch_snapshot(
+  p_build public.ads_campaign_builds,
+  p_plan public.ads_campaign_plans
+)
+returns void
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_snapshot_is_current boolean;
+  v_package public.ads_budget_packages%rowtype;
+  v_account public.ads_ad_accounts%rowtype;
+begin
+  -- The caller already holds build then plan. Lock mutable roots in the one
+  -- global order before comparing them with the immutable revision snapshot.
+  select package.* into v_package
+  from public.ads_budget_packages as package
+  where package.id = p_build.budget_package_id
+  for update;
+
+  select account.* into v_account
+  from public.ads_ad_accounts as account
+  where account.id = p_build.ad_account_id
+  for update;
+
+  select coalesce((
+    select
+      p_build.plan_id is not distinct from p_plan.id
+      and p_build.revision_id is not distinct from revision.id
+      and p_build.revision_hash is not distinct from revision.payload_hash
+      and revision.plan_id is not distinct from p_plan.id
+      and p_build.ad_account_id is not distinct from p_plan.ad_account_id
+      and p_build.ad_account_id is not distinct from revision.ad_account_id
+      and p_build.ad_account_id is not distinct from v_account.id
+      and p_build.budget_package_id is not distinct from p_plan.budget_package_id
+      and p_build.budget_package_id is not distinct from revision.budget_package_id
+      and p_build.budget_package_id is not distinct from v_package.id
+      and p_build.platform is not distinct from p_plan.platform
+      and p_build.platform is not distinct from revision.platform
+      and p_build.platform is not distinct from v_account.platform
+      and p_plan.client_id is not distinct from revision.client_id
+      and p_plan.client_id is not distinct from v_account.client_id
+      and p_plan.client_id is not distinct from v_package.client_id
+      and revision.provider_account_id is not distinct from v_account.provider_account_id
+      and revision.currency is not distinct from v_account.currency
+      and revision.currency is not distinct from v_package.currency
+      and revision.timezone is not distinct from v_account.timezone
+      and v_account.is_active is not distinct from true
+      and v_account.access_status is not distinct from 'verified'
+      and v_account.access_verified_at is not null
+      and v_package.status is not distinct from 'active'
+      and (revision.start_date >= v_package.start_date) is true
+      and (revision.end_date <= v_package.end_date) is true
+      and p_plan.reserved_revision_id is not distinct from revision.id
+      and p_plan.reserved_budget is not distinct from revision.allocated_budget
+      and (v_package.committed_amount >= p_plan.reserved_budget) is true
+    from public.ads_campaign_plan_revisions as revision
+    where revision.id = p_build.revision_id
+  ), false)
+  into v_snapshot_is_current;
+
+  if v_snapshot_is_current is distinct from true then
+    raise exception 'Campaign build immutable launch snapshot is no longer current'
+      using errcode = '55000';
+  end if;
+end;
+$$;
+
+revoke all on function ads_internal.assert_campaign_build_immutable_launch_snapshot(
+  public.ads_campaign_builds, public.ads_campaign_plans
+) from public, anon, authenticated, service_role;
+
+create or replace function ads_internal.assert_campaign_gate_2_manifest(
+  p_build public.ads_campaign_builds,
+  p_action text,
+  p_intent jsonb
+)
+returns void
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_delivery_mode text;
+  v_latest_delivery_intent jsonb;
+begin
+  if (p_intent ->> 'schema') is distinct from 'm04.gate2.v1'
+    or (p_intent ->> 'platform') is distinct from p_build.platform
+    or pg_catalog.jsonb_typeof(p_intent -> 'delivery') is distinct from 'object'
+    or pg_catalog.jsonb_typeof(p_intent -> 'resources') is distinct from 'array'
+    or pg_catalog.jsonb_array_length(p_intent -> 'resources') = 0 then
+    raise exception 'Gate 2 intent must satisfy m04.gate2.v1' using errcode = '22023';
+  end if;
+
+  v_delivery_mode := p_intent #>> '{delivery,mode}';
+  if v_delivery_mode is null or v_delivery_mode not in ('activate_now', 'schedule') then
+    raise exception 'Gate 2 intent must satisfy m04.gate2.v1' using errcode = '22023';
+  end if;
+
+  if v_delivery_mode = 'schedule' then
+    if pg_catalog.btrim(coalesce(p_intent #>> '{delivery,scheduled_at}', '')) = ''
+      or (p_intent #>> '{delivery,scheduled_at}') !~
+        '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}([.][0-9]+)?(Z|[+-][0-9]{2}:[0-9]{2})$' then
+      raise exception 'Gate 2 intent must satisfy m04.gate2.v1' using errcode = '22023';
+    end if;
+    begin
+      perform (p_intent #>> '{delivery,scheduled_at}')::timestamptz;
+    exception when others then
+      raise exception 'Gate 2 intent must satisfy m04.gate2.v1' using errcode = '22023';
+    end;
+  end if;
+
+  if exists (
+    select 1
+    from pg_catalog.jsonb_array_elements(p_intent -> 'resources') as item(value)
+    where pg_catalog.jsonb_typeof(item.value) is distinct from 'object'
+      or pg_catalog.btrim(coalesce(item.value ->> 'logical_resource_key', '')) = ''
+      or pg_catalog.btrim(coalesce(item.value ->> 'resource_type', '')) = ''
+      or pg_catalog.jsonb_typeof(item.value -> 'required_fields') is distinct from 'object'
+      or item.value -> 'required_fields' = '{}'::jsonb
+      or not (item.value -> 'required_fields' ? 'delivery.status')
+  ) or (
+    select pg_catalog.count(*) is distinct from
+      pg_catalog.count(distinct (item.value ->> 'logical_resource_key'))
+    from pg_catalog.jsonb_array_elements(p_intent -> 'resources') as item(value)
+  ) or (
+    select pg_catalog.count(*) is distinct from
+      pg_catalog.count(distinct (
+        item.value ->> 'logical_resource_key',
+        item.value ->> 'resource_type'
+      ))
+    from pg_catalog.jsonb_array_elements(p_intent -> 'resources') as item(value)
+  ) then
+    raise exception 'Gate 2 intent must satisfy m04.gate2.v1' using errcode = '22023';
+  end if;
+
+  if exists (
+    select 1
+    from pg_catalog.jsonb_array_elements(p_intent -> 'resources') as item(value)
+    where not exists (
+      select 1
+      from public.ads_campaign_build_resources as resource
+      where resource.build_id = p_build.id
+        and resource.logical_resource_key = item.value ->> 'logical_resource_key'
+        and resource.resource_type = item.value ->> 'resource_type'
+    )
+  ) or exists (
+    select 1
+    from public.ads_campaign_build_resources as resource
+    where resource.build_id = p_build.id
+      and not exists (
+        select 1
+        from pg_catalog.jsonb_array_elements(p_intent -> 'resources') as item(value)
+        where item.value ->> 'logical_resource_key' = resource.logical_resource_key
+          and item.value ->> 'resource_type' = resource.resource_type
+      )
+  ) then
+    raise exception 'Gate 2 intent must satisfy m04.gate2.v1' using errcode = '22023';
+  end if;
+
+  if p_action = 'reconcile' then
+    select attempt.intent
+    into v_latest_delivery_intent
+    from public.ads_campaign_gate_attempts as attempt
+    where attempt.build_id = p_build.id
+      and attempt.gate = 2
+      and attempt.action = 'deliver'
+    order by attempt.attempt_number desc, attempt.id desc
+    limit 1;
+
+    if not found or v_latest_delivery_intent is distinct from p_intent then
+      raise exception 'Gate 2 reconciliation manifest must match the latest delivery intent'
+        using errcode = '22023';
+    end if;
+  end if;
+end;
+$$;
+
+revoke all on function ads_internal.assert_campaign_gate_2_manifest(
+  public.ads_campaign_builds, text, jsonb
+) from public, anon, authenticated, service_role;
+
 create or replace function ads_internal.acquire_campaign_gate_claim_hardened(
   p_build_id bigint,
   p_gate smallint,
@@ -1167,6 +1350,7 @@ declare
   v_latest_mutation_intent jsonb;
   v_from_status text;
   v_plan_update_count integer;
+  v_now timestamptz;
 begin
   select actor.actor_name, actor.actor_email, actor.actor_role
   into strict v_actor_name, v_actor_email, v_actor_role
@@ -1217,6 +1401,8 @@ begin
     or p_expected_revision_hash is distinct from v_build.revision_hash then
     raise exception 'Campaign build revision lock does not match' using errcode = '40001';
   end if;
+  perform ads_internal.assert_campaign_build_immutable_launch_snapshot(v_build, v_plan);
+  v_now := pg_catalog.clock_timestamp();
   if (v_build.status = 'pending_gate_1' and v_plan.status <> 'approved')
     or (v_build.status <> 'pending_gate_1' and v_plan.status <> 'launch_in_progress') then
     raise exception 'Campaign plan and build launch states do not match' using errcode = '40001';
@@ -1224,7 +1410,7 @@ begin
   select approval.* into strict v_approval
   from public.ads_campaign_approvals as approval where approval.id = v_build.approval_id;
   if v_approval.decision is distinct from 'approved'
-    or v_approval.expires_at <= pg_catalog.clock_timestamp()
+    or v_approval.expires_at <= v_now
     or v_approval.plan_id is distinct from v_build.plan_id
     or v_approval.revision_id is distinct from v_build.revision_id
     or v_approval.revision_hash is distinct from v_build.revision_hash
@@ -1238,13 +1424,13 @@ begin
   from public.ads_campaign_gate_attempts as attempt
   where attempt.build_id = v_build.id and attempt.status = 'claimed'
     and attempt.released_at is null
-    and attempt.claim_expires_at <= pg_catalog.clock_timestamp()
+    and attempt.claim_expires_at <= v_now
   order by attempt.id limit 1;
   update public.ads_campaign_gate_attempts
-  set status = 'expired', released_at = pg_catalog.clock_timestamp(),
-      updated_at = pg_catalog.clock_timestamp()
+  set status = 'expired', released_at = v_now,
+      updated_at = v_now
   where build_id = v_build.id and status = 'claimed' and released_at is null
-    and claim_expires_at <= pg_catalog.clock_timestamp();
+    and claim_expires_at <= v_now;
   get diagnostics v_expired_count = row_count;
   if v_expired_count > 0 then
     update public.ads_campaign_builds
@@ -1344,6 +1530,7 @@ begin
       and v_build.status not in ('delivery_unverified', 'gate_2_failed') then
       raise exception 'Gate 2 reconciliation requires unverified delivery' using errcode = '55000';
     end if;
+    perform ads_internal.assert_campaign_gate_2_manifest(v_build, p_action, p_intent);
   end if;
 
   select coalesce(pg_catalog.max(attempt.attempt_number), 0) + 1
@@ -1351,12 +1538,12 @@ begin
   where attempt.build_id = v_build.id;
   insert into public.ads_campaign_gate_attempts (
     build_id, gate, action, request_idempotency_key, attempt_number,
-    revision_id, revision_hash, status, intent, claim_expires_at,
+    revision_id, revision_hash, status, intent, claimed_at, claim_expires_at,
     actor_id, actor_name, trusted_ip, trusted_user_agent
   ) values (
     v_build.id, p_gate, p_action, p_request_idempotency_key, v_attempt_number,
-    v_build.revision_id, v_build.revision_hash, 'claimed', p_intent,
-    pg_catalog.clock_timestamp() + pg_catalog.make_interval(secs => p_claim_ttl_seconds),
+    v_build.revision_id, v_build.revision_hash, 'claimed', p_intent, v_now,
+    v_now + pg_catalog.make_interval(secs => p_claim_ttl_seconds),
     p_actor_id, v_actor_name, p_trusted_ip, p_trusted_user_agent
   ) returning * into v_attempt;
   if p_gate = 1 then
@@ -1433,6 +1620,7 @@ declare
   v_expired_gate smallint;
   v_expired_action text;
   v_expired_count integer;
+  v_now timestamptz;
 begin
   select actor.actor_name, actor.actor_email, actor.actor_role
   into strict v_actor_name, v_actor_email, v_actor_role
@@ -1484,6 +1672,8 @@ begin
   if p_expected_revision_hash is distinct from v_build.revision_hash then
     raise exception 'Campaign build revision lock does not match' using errcode = '40001';
   end if;
+  perform ads_internal.assert_campaign_build_immutable_launch_snapshot(v_build, v_plan);
+  v_now := pg_catalog.clock_timestamp();
   select approval.* into strict v_approval
   from public.ads_campaign_approvals as approval where approval.id = v_build.approval_id;
   if v_approval.plan_id is distinct from v_build.plan_id
@@ -1491,7 +1681,7 @@ begin
     or v_approval.revision_hash is distinct from v_build.revision_hash then
     raise exception 'Campaign build approval revision lock does not match the build' using errcode = '55000';
   end if;
-  if v_approval.decision is distinct from 'approved' or v_approval.expires_at <= pg_catalog.clock_timestamp()
+  if v_approval.decision is distinct from 'approved' or v_approval.expires_at <= v_now
     or v_plan.status <> 'launch_in_progress'
     or v_plan.approved_revision_id is distinct from v_build.revision_id
     or v_plan.approved_revision_hash is distinct from v_build.revision_hash
@@ -1502,13 +1692,13 @@ begin
   select attempt.gate, attempt.action into v_expired_gate, v_expired_action
   from public.ads_campaign_gate_attempts as attempt
   where attempt.build_id = v_build.id and attempt.status = 'claimed'
-    and attempt.released_at is null and attempt.claim_expires_at <= pg_catalog.clock_timestamp()
+    and attempt.released_at is null and attempt.claim_expires_at <= v_now
   order by attempt.id limit 1;
   update public.ads_campaign_gate_attempts
-  set status = 'expired', released_at = pg_catalog.clock_timestamp(),
-      updated_at = pg_catalog.clock_timestamp()
+  set status = 'expired', released_at = v_now,
+      updated_at = v_now
   where build_id = v_build.id and status = 'claimed' and released_at is null
-    and claim_expires_at <= pg_catalog.clock_timestamp();
+    and claim_expires_at <= v_now;
   get diagnostics v_expired_count = row_count;
   if v_expired_count > 0 then
     update public.ads_campaign_builds
@@ -1630,11 +1820,11 @@ begin
   insert into public.ads_campaign_gate_attempts (
     build_id, gate, action, request_idempotency_key, retry_parent_attempt_id,
     attempt_number, revision_id, revision_hash, status, intent,
-    claim_expires_at, actor_id, actor_name, trusted_ip, trusted_user_agent
+    claimed_at, claim_expires_at, actor_id, actor_name, trusted_ip, trusted_user_agent
   ) values (
     v_build.id, 1, 'retry', p_request_idempotency_key, v_parent.id,
     v_attempt_number, v_build.revision_id, v_build.revision_hash, 'claimed', p_intent,
-    pg_catalog.clock_timestamp() + pg_catalog.make_interval(secs => p_claim_ttl_seconds),
+    v_now, v_now + pg_catalog.make_interval(secs => p_claim_ttl_seconds),
     p_actor_id, v_actor_name, p_trusted_ip, p_trusted_user_agent
   ) returning * into v_attempt;
   v_from_status := v_build.status;
@@ -2191,7 +2381,7 @@ begin
   if pg_catalog.btrim(coalesce(p_logical_resource_key, '')) = '' then
     raise exception 'Logical resource key is required' using errcode = '22023';
   end if;
-  if p_outcome not in ('succeeded', 'failed', 'ambiguous', 'missing', 'found') then
+  if p_outcome is null or p_outcome not in ('succeeded', 'failed', 'ambiguous', 'missing', 'found') then
     raise exception 'Provider resource outcome is invalid' using errcode = '22023';
   end if;
 
@@ -2364,7 +2554,7 @@ begin
   select actor.actor_name, actor.actor_email, actor.actor_role
   into strict v_actor_name, v_actor_email, v_actor_role
   from ads_internal.resolve_m04_actor(p_actor_id) as actor;
-  if p_provider_outcome not in ('succeeded', 'failed', 'ambiguous', 'unknown', 'missing') then
+  if p_provider_outcome is null or p_provider_outcome not in ('succeeded', 'failed', 'ambiguous', 'unknown', 'missing') then
     raise exception 'Gate provider outcome is invalid' using errcode = '22023';
   end if;
 
@@ -3078,7 +3268,7 @@ begin
   if pg_catalog.btrim(coalesce(p_logical_resource_key, '')) = '' then
     raise exception 'Logical resource key is required' using errcode = '22023';
   end if;
-  if p_outcome not in ('succeeded', 'failed', 'ambiguous', 'unknown', 'missing', 'found') then
+  if p_outcome is null or p_outcome not in ('succeeded', 'failed', 'ambiguous', 'unknown', 'missing', 'found') then
     raise exception 'Provider resource outcome is invalid' using errcode = '22023';
   end if;
   select resource.* into v_resource
@@ -3185,7 +3375,7 @@ begin
   select actor.actor_name, actor.actor_email, actor.actor_role
   into strict v_actor_name, v_actor_email, v_actor_role
   from ads_internal.resolve_m04_actor(p_actor_id) as actor;
-  if p_provider_outcome not in ('succeeded', 'failed', 'ambiguous', 'unknown', 'missing') then
+  if p_provider_outcome is null or p_provider_outcome not in ('succeeded', 'failed', 'ambiguous', 'unknown', 'missing') then
     raise exception 'Gate provider outcome is invalid' using errcode = '22023';
   end if;
   select attempt.* into v_attempt

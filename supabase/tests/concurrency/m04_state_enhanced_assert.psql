@@ -23,6 +23,22 @@ begin
 
   for v_plan in
     select * from public.ads_campaign_plans
+    where created_by_name in (
+      'probe-claim-package', 'probe-claim-account',
+      'probe-retry-package', 'probe-retry-account'
+    )
+  loop
+    select * into strict v_build from public.ads_campaign_builds where plan_id = v_plan.id;
+    if v_plan.status <> 'launch_in_progress' or v_build.status <> 'gate_1_in_progress'
+      or (select count(*) from public.ads_campaign_gate_attempts
+          where build_id = v_build.id and status = 'claimed' and released_at is null) <> 1 then
+      raise exception 'Extended claim lock probe % did not finish coherently',
+        v_plan.created_by_name;
+    end if;
+  end loop;
+
+  for v_plan in
+    select * from public.ads_campaign_plans
     where created_by_name in ('probe-draft', 'probe-cancelled')
   loop
     select * into strict v_build from public.ads_campaign_builds where plan_id = v_plan.id;
@@ -127,6 +143,61 @@ begin
   end if;
 end;
 $transition_snapshot_assertions$;
+
+do $expiry_boundary_assertions$
+declare
+  v_case record;
+  v_plan public.ads_campaign_plans%rowtype;
+  v_build public.ads_campaign_builds%rowtype;
+begin
+  for v_case in
+    select * from (values
+      ('expiry-boundary-gate', 'delivery_unverified', 2, 0, 'expiry-boundary-gate-active'),
+      ('expiry-boundary-retry', 'gate_1_failed', 3, 1, 'expiry-boundary-retry-active')
+    ) as cases(case_name, build_status, attempt_count, qa_count, active_key)
+  loop
+    select * into strict v_plan
+    from public.ads_campaign_plans where created_by_name = v_case.case_name;
+    select * into strict v_build
+    from public.ads_campaign_builds where plan_id = v_plan.id;
+
+    if v_plan.status <> 'launch_in_progress' or v_plan.lock_version <> 7
+      or v_build.status <> v_case.build_status or v_build.lock_version <> 3
+      or (select count(*) from public.ads_campaign_gate_attempts
+          where build_id = v_build.id) <> v_case.attempt_count
+      or (select count(*) from public.ads_campaign_gate_attempts
+          where build_id = v_build.id and request_idempotency_key = v_case.active_key
+            and gate = 1 and status = 'claimed' and released_at is null
+            and claim_expires_at < pg_catalog.clock_timestamp()) <> 1
+      or exists (
+        select 1 from public.ads_campaign_gate_attempts
+        where build_id = v_build.id and request_idempotency_key = v_case.case_name || '-rpc'
+      )
+      or (select count(*) from public.ads_campaign_qa_results as qa
+          join public.ads_campaign_gate_attempts as attempt on attempt.id = qa.attempt_id
+          where attempt.build_id = v_build.id) <> v_case.qa_count
+      or exists (select 1 from public.ads_campaign_audit_events where build_id = v_build.id)
+      or exists (select 1 from public.ads_campaign_monitoring_handoffs where build_id = v_build.id)
+      or (select count(*) from public.m04_expiry_boundary_results
+          where case_name = v_case.case_name) <> 2
+      or (select count(*) from public.m04_expiry_boundary_results
+          where case_name = v_case.case_name and session_role = 'blocker'
+            and sqlstate = '00000' and error_message is null
+            and result_id = (select id from public.ads_campaign_gate_attempts
+                            where build_id = v_build.id
+                              and request_idempotency_key = v_case.active_key)
+            and native_exit = 0) <> 1
+      or (select count(*) from public.m04_expiry_boundary_results
+          where case_name = v_case.case_name and session_role = 'rpc'
+            and sqlstate = '55P03'
+            and error_message = 'A different active gate claim already exists'
+            and result_id is null and native_exit = 3) <> 1 then
+      raise exception 'Expiry-boundary case % did not preserve the exact active Gate 1 claim contract',
+        v_case.case_name;
+    end if;
+  end loop;
+end;
+$expiry_boundary_assertions$;
 
 do $stress_assertions$
 declare
