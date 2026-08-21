@@ -36,6 +36,14 @@ select ok(
     where constraint_row.conrelid = pg_catalog.to_regclass('public.ads_campaign_legacy_adoptions')
       and constraint_row.conname = 'ads_campaign_legacy_adoptions_pkey'
       and constraint_row.contype = 'p'
+      and (
+        select pg_catalog.array_agg(key_attribute.attname order by key_column.ordinality)
+        from pg_catalog.unnest(constraint_row.conkey) with ordinality
+          as key_column(attnum, ordinality)
+        join pg_catalog.pg_attribute as key_attribute
+          on key_attribute.attrelid = constraint_row.conrelid
+         and key_attribute.attnum = key_column.attnum
+      ) = array['id']::name[]
   ),
   'the curated M03 legacy-adoptions table has the exact column, type, nullability, and primary-key contract'
 );
@@ -101,43 +109,77 @@ select ok(
     from pg_catalog.pg_class as table_row
     where table_row.oid = pg_catalog.to_regclass('public.ads_campaign_legacy_adoptions')
   ), false)
-  and coalesce(pg_catalog.has_table_privilege(
-    'service_role', pg_catalog.to_regclass('public.ads_campaign_legacy_adoptions'), 'SELECT'
-  ), false)
-  and coalesce(pg_catalog.has_table_privilege(
-    'service_role', pg_catalog.to_regclass('public.ads_campaign_legacy_adoptions'), 'INSERT'
-  ), false)
-  and coalesce(pg_catalog.has_table_privilege(
-    'service_role', pg_catalog.to_regclass('public.ads_campaign_legacy_adoptions'), 'UPDATE'
-  ), false)
-  and not coalesce(pg_catalog.has_table_privilege(
-    'service_role', pg_catalog.to_regclass('public.ads_campaign_legacy_adoptions'), 'DELETE'
-  ), false)
-  and not coalesce(pg_catalog.has_table_privilege(
-    'anon', pg_catalog.to_regclass('public.ads_campaign_legacy_adoptions'), 'SELECT'
-  ), false)
-  and not coalesce(pg_catalog.has_table_privilege(
-    'anon', pg_catalog.to_regclass('public.ads_campaign_legacy_adoptions'), 'INSERT'
-  ), false)
-  and not coalesce(pg_catalog.has_table_privilege(
-    'anon', pg_catalog.to_regclass('public.ads_campaign_legacy_adoptions'), 'UPDATE'
-  ), false)
-  and not coalesce(pg_catalog.has_table_privilege(
-    'anon', pg_catalog.to_regclass('public.ads_campaign_legacy_adoptions'), 'DELETE'
-  ), false)
-  and not coalesce(pg_catalog.has_table_privilege(
-    'authenticated', pg_catalog.to_regclass('public.ads_campaign_legacy_adoptions'), 'SELECT'
-  ), false)
-  and not coalesce(pg_catalog.has_table_privilege(
-    'authenticated', pg_catalog.to_regclass('public.ads_campaign_legacy_adoptions'), 'INSERT'
-  ), false)
-  and not coalesce(pg_catalog.has_table_privilege(
-    'authenticated', pg_catalog.to_regclass('public.ads_campaign_legacy_adoptions'), 'UPDATE'
-  ), false)
-  and not coalesce(pg_catalog.has_table_privilege(
-    'authenticated', pg_catalog.to_regclass('public.ads_campaign_legacy_adoptions'), 'DELETE'
-  ), false),
-  'the curated M03 legacy-adoptions table enables RLS and preserves its service-role-only write ACL'
+  and coalesce((
+    select pg_catalog.jsonb_agg(
+      pg_catalog.jsonb_build_object(
+        'grantee', acl_entry.grantee_name,
+        'privilege', acl_entry.privilege_type,
+        'is_grantable', acl_entry.is_grantable,
+        'grantor_is_owner', acl_entry.grantor_is_owner
+      )
+      order by acl_entry.grantee_name, acl_entry.privilege_type
+    )
+    from (
+      select
+        case
+          when exploded_acl.grantee = 0 then 'PUBLIC'
+          else pg_catalog.pg_get_userbyid(exploded_acl.grantee)
+        end::text as grantee_name,
+        exploded_acl.privilege_type,
+        exploded_acl.is_grantable,
+        exploded_acl.grantor = table_row.relowner as grantor_is_owner
+      from pg_catalog.pg_class as table_row
+      cross join lateral pg_catalog.aclexplode(table_row.relacl) as exploded_acl
+      where table_row.oid = pg_catalog.to_regclass('public.ads_campaign_legacy_adoptions')
+        and exploded_acl.grantee <> table_row.relowner
+    ) as acl_entry
+  ), '[]'::jsonb) = '[
+    {"grantee":"service_role","privilege":"INSERT","is_grantable":false,"grantor_is_owner":true},
+    {"grantee":"service_role","privilege":"MAINTAIN","is_grantable":false,"grantor_is_owner":true},
+    {"grantee":"service_role","privilege":"REFERENCES","is_grantable":false,"grantor_is_owner":true},
+    {"grantee":"service_role","privilege":"SELECT","is_grantable":false,"grantor_is_owner":true},
+    {"grantee":"service_role","privilege":"TRIGGER","is_grantable":false,"grantor_is_owner":true},
+    {"grantee":"service_role","privilege":"TRUNCATE","is_grantable":false,"grantor_is_owner":true},
+    {"grantee":"service_role","privilege":"UPDATE","is_grantable":false,"grantor_is_owner":true}
+  ]'::jsonb
+  and not exists (
+    select 1
+    from (values
+      ('SELECT'::text, true),
+      ('INSERT'::text, true),
+      ('UPDATE'::text, true),
+      ('DELETE'::text, false),
+      ('TRUNCATE'::text, true),
+      ('REFERENCES'::text, true),
+      ('TRIGGER'::text, true),
+      ('MAINTAIN'::text, true)
+    ) as expected_service_privilege(privilege_type, is_allowed)
+    where coalesce(pg_catalog.has_table_privilege(
+      'service_role',
+      pg_catalog.to_regclass('public.ads_campaign_legacy_adoptions'),
+      expected_service_privilege.privilege_type
+    ), false) is distinct from expected_service_privilege.is_allowed
+  )
+  and not exists (
+    select 1
+    from (values ('anon'::text), ('authenticated'::text)) as denied_role(role_name)
+    cross join (values
+      ('SELECT'::text),
+      ('INSERT'::text),
+      ('UPDATE'::text),
+      ('DELETE'::text),
+      ('TRUNCATE'::text),
+      ('REFERENCES'::text),
+      ('TRIGGER'::text),
+      ('MAINTAIN'::text)
+    ) as denied_privilege(privilege_type)
+    where coalesce(pg_catalog.has_table_privilege(
+      denied_role.role_name,
+      pg_catalog.to_regclass('public.ads_campaign_legacy_adoptions'),
+      denied_privilege.privilege_type
+    ), false)
+  ),
+  'the curated M03 legacy-adoptions table enables RLS and preserves its exact historical ACL'
 );
 
 -- The curated prerequisite owns the pre-M04 table contract. This block keeps

@@ -13,9 +13,10 @@ Implemented the second Task 3 safety-hardening round in the existing M04 additiv
 - Review-fix 2 commit subject: `fix(m04): classify concurrent transitions stale`
 - Task 5 lint-fixture base: `d2744606d5f5c1de1bba1c758a3f01e821442422`
 - Task 5 lint-fixture commit subject: `test(m04): lint curated m03 prerequisite`
+- Lint-fixture review commit subject: `test(m04): assert exact legacy fixture security`
 - Date: 2026-08-21
 
-No unrelated Task 4 artifact, historical migration, provider/API/UI file, credential, remote Supabase project, deployment, activation, Notion object, Task 5 item, or Stage 2 behavior was touched. The shared state-concurrency runner and its disposable fixtures were intentionally extended because the review-fix brief requires runtime lock-order proof and simultaneous state stress.
+During the original hardening and review-fix rounds, no unrelated Task 4 artifact, historical migration, provider/API/UI file, credential, remote Supabase project, deployment, activation, Notion object, Task 5 item, or Stage 2 behavior was touched. The shared state-concurrency runner and its disposable fixtures were intentionally extended because the review-fix brief requires runtime lock-order proof and simultaneous state stress.
 
 ## Test-first RED provenance
 
@@ -270,10 +271,10 @@ Task 5 held the curated prerequisite and M04 migration database open after all p
 The existing held lint result was accepted as the clean behavioral RED. The regression removes test ownership of the prerequisite and adds five catalog-backed assertions for:
 
 - permanent table presence before the M04 compatibility test;
-- the exact thirteen columns, types, nullability, and UUID primary key;
+- the exact thirteen columns, types, nullability, and UUID primary key whose `conkey` resolves only to `id`;
 - the three exact defaults and three M03 validation checks;
 - the active-adoption unique partial index on `(project_key, account_id, campaign_id) where revoked_at is null`; and
-- enabled RLS with the M03 ACL: service-role `SELECT`/`INSERT`/`UPDATE`, no service-role `DELETE`, and no anon/authenticated read or write privilege.
+- enabled RLS with the historical effective M03 ACL: owner-granted, non-grantable service-role `SELECT`/`INSERT`/`UPDATE` plus Supabase-default `TRUNCATE`/`REFERENCES`/`TRIGGER`/`MAINTAIN`, no service-role `DELETE`, and no `PUBLIC`/anon/authenticated table privilege.
 
 The curated pre-M04 fixture now carries the faithful table, checks, defaults, partial index, RLS, revoke, and grant statements copied from `20260820035059_m03_google_change_control_contract.sql`. The M04 production migration and every public function remain byte-for-byte unchanged.
 
@@ -298,4 +299,4 @@ Each disposable project stopped with `--no-backup` at exit `0`. Exact post-stop 
 
 ## Residual concerns
 
-No known correctness issue remains inside this narrow lint-fixture scope. The work intentionally stops for scoped re-review and a clean Task 5 restart. The concurrency evidence remains bounded local PostgreSQL evidence, not a proof over every possible scheduler interleaving. Real provider/API behavior remains Stage 2 work and was not exercised.
+No known correctness issue remains inside this narrow lint-fixture scope. Supabase's default table ACL leaves the historical M03 legacy-adoptions table with broader service-role `TRUNCATE`/`REFERENCES`/`TRIGGER`/`MAINTAIN` access in addition to its explicit `SELECT`/`INSERT`/`UPDATE` grant; `DELETE` remains absent. This forward test fix records exact historical catalog parity without changing or endorsing that contract. The work intentionally stops for scoped re-review and a clean Task 5 restart. The concurrency evidence remains bounded local PostgreSQL evidence, not a proof over every possible scheduler interleaving. Real provider/API behavior remains Stage 2 work and was not exercised.
