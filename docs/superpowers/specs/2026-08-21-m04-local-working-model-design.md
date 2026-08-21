@@ -106,4 +106,3 @@ Authenticated non-basic operators may view the local model. Mutating local actio
 Run one focused end-to-end command after implementation. It creates a unique temporary SQLite file, initializes and seeds it, creates a campaign through the local API workflow, advances it through the simulated states, fetches the resulting detail, and verifies the final status, audit trail, `mode`, and `providerWrites: false`. The test removes only its exact temporary directory.
 
 No additional database, provider, deployment, or exhaustive test suite is part of this local-model delivery.
-
