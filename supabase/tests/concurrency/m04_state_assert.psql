@@ -89,4 +89,4 @@ begin
 end;
 $assertions$;
 
-select 'PASS: state races have one coherent winner, one stale loser, and no deadlock' as result;
+select 'PASS: forced winner-order cases serialize coherently with one winner and one stale loser' as result;

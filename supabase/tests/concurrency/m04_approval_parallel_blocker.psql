@@ -1,0 +1,41 @@
+\set ON_ERROR_STOP on
+\set VERBOSITY verbose
+
+select pg_catalog.set_config('application_name', :'app_blocker' || '-starting', false);
+
+begin;
+set local statement_timeout = '20s';
+set local lock_timeout = '15s';
+select pg_catalog.set_config('m04.approval_app_one', :'app_one', true);
+select pg_catalog.set_config('m04.approval_app_two', :'app_two', true);
+select pg_catalog.set_config('m04.approval_case', :'case_name', true);
+
+select plan.id
+from public.ads_campaign_plans as plan
+where plan.created_by_name = :'fixture'
+for update;
+
+select pg_catalog.set_config('application_name', :'app_blocker', false);
+\echo M04_APPROVAL_BLOCKER_READY case=:case_name
+
+do $wait_for_probe_signal$
+declare
+  v_deadline timestamptz := pg_catalog.clock_timestamp() + interval '15 seconds';
+begin
+  loop
+    exit when exists (
+      select 1 from public.m04_probe_control
+      where case_name = pg_catalog.current_setting('m04.approval_case')
+        and probe_now
+    );
+    if pg_catalog.clock_timestamp() >= v_deadline then
+      raise exception 'Approval blocker timed out waiting for the externally verified release signal'
+        using errcode = '57014';
+    end if;
+    perform pg_catalog.pg_sleep(0.01);
+  end loop;
+end;
+$wait_for_probe_signal$;
+
+commit;
+\echo M04_APPROVAL_BLOCKER_RELEASED case=:case_name

@@ -630,14 +630,76 @@ set expires_at = clock_timestamp() - interval '1 minute'
 where request_idempotency_key = 'initial-approval-expired-key';
 set local session_replication_role = origin;
 
-select lives_ok(
-  $$select public.ads_approve_campaign_plan_revision(
-    plan.id, plan.active_revision_id, repeat('d', 64), 10,
-    clock_timestamp() + interval '1 day', 'initial-approval-expired-key', null,
-    '00000000-0000-0000-0000-000000000051', null, null
-  ) from public.ads_campaign_plans as plan
-  where plan.created_by_name = 'approval-expired-key'$$,
-  'an exact approval key returns its build after the immutable approval expires'
+create temporary table approval_replay_results (
+  fixture text primary key,
+  returned_build_id bigint not null,
+  original_build_id bigint not null,
+  side_effect_free boolean not null
+) on commit drop;
+
+create function pg_temp.capture_approval_replay(p_fixture text, p_request_key text)
+returns void
+language plpgsql
+as $$
+declare
+  v_plan_before public.ads_campaign_plans%rowtype;
+  v_plan_after public.ads_campaign_plans%rowtype;
+  v_build_before public.ads_campaign_builds%rowtype;
+  v_build_after public.ads_campaign_builds%rowtype;
+  v_returned public.ads_campaign_builds%rowtype;
+  v_approval_count integer;
+  v_build_count integer;
+  v_audit_count integer;
+begin
+  select * into strict v_plan_before
+  from public.ads_campaign_plans where created_by_name = p_fixture;
+  select * into strict v_build_before
+  from public.ads_campaign_builds where plan_id = v_plan_before.id;
+  select count(*)::integer into v_approval_count
+  from public.ads_campaign_approvals where plan_id = v_plan_before.id;
+  select count(*)::integer into v_build_count
+  from public.ads_campaign_builds where plan_id = v_plan_before.id;
+  select count(*)::integer into v_audit_count
+  from public.ads_campaign_audit_events where plan_id = v_plan_before.id;
+
+  select * into strict v_returned
+  from public.ads_approve_campaign_plan_revision(
+    v_plan_before.id, v_plan_before.active_revision_id,
+    v_plan_before.approved_revision_hash, v_plan_before.lock_version - 1,
+    clock_timestamp() + interval '2 days', p_request_key,
+    'idempotent historical replay',
+    '00000000-0000-0000-0000-000000000051',
+    '203.0.113.57', 'workflow-tests/approval-replay'
+  );
+
+  select * into strict v_plan_after
+  from public.ads_campaign_plans where id = v_plan_before.id;
+  select * into strict v_build_after
+  from public.ads_campaign_builds where id = v_build_before.id;
+  insert into approval_replay_results (
+    fixture, returned_build_id, original_build_id, side_effect_free
+  ) values (
+    p_fixture, v_returned.id, v_build_before.id,
+    to_jsonb(v_plan_after) = to_jsonb(v_plan_before)
+      and to_jsonb(v_build_after) = to_jsonb(v_build_before)
+      and (select count(*) from public.ads_campaign_approvals where plan_id = v_plan_before.id) = v_approval_count
+      and (select count(*) from public.ads_campaign_builds where plan_id = v_plan_before.id) = v_build_count
+      and (select count(*) from public.ads_campaign_audit_events where plan_id = v_plan_before.id) = v_audit_count
+  );
+end;
+$$;
+
+select pg_temp.capture_approval_replay(
+  'approval-expired-key', 'initial-approval-expired-key'
+);
+select is(
+  (select returned_build_id from approval_replay_results where fixture = 'approval-expired-key'),
+  (select original_build_id from approval_replay_results where fixture = 'approval-expired-key'),
+  'an exact expired approval key returns the original build identity'
+);
+select ok(
+  (select side_effect_free from approval_replay_results where fixture = 'approval-expired-key'),
+  'an exact expired approval replay changes no approval, build, plan lock, or audit evidence'
 );
 select throws_ok(
   $$select public.ads_approve_campaign_plan_revision(
@@ -825,34 +887,29 @@ select throws_ok(
   'a cancelled plan/build cannot renew approval'
 );
 
-insert into public.ads_campaign_approvals (
-  plan_id, revision_id, revision_hash, decision, expires_at,
-  request_idempotency_key, superseded_approval_id,
-  approved_by_id, approved_by_name
+select public.ads_approve_campaign_plan_revision(
+  plan.id, plan.active_revision_id, plan.approved_revision_hash, plan.lock_version,
+  approval.expires_at + interval '1 hour', 'renewed-old-key-v2',
+  'real renewal before historical replay',
+  '00000000-0000-0000-0000-000000000051',
+  '203.0.113.57', 'workflow-tests/real-renewal'
 )
-select plan.id, plan.active_revision_id, plan.approved_revision_hash, 'approved',
-  old_approval.expires_at + interval '1 hour', 'renewed-old-key-v2', old_approval.id,
-  '00000000-0000-0000-0000-000000000051', 'Workflow Operator'
 from public.ads_campaign_plans as plan
 join public.ads_campaign_builds as build on build.plan_id = plan.id
-join public.ads_campaign_approvals as old_approval on old_approval.id = build.approval_id
+join public.ads_campaign_approvals as approval on approval.id = build.approval_id
 where plan.created_by_name = 'renewed-old-key';
-update public.ads_campaign_builds as build
-set approval_id = new_approval.id, lock_version = build.lock_version + 1
-from public.ads_campaign_plans as plan, public.ads_campaign_approvals as new_approval
-where plan.id = build.plan_id and plan.created_by_name = 'renewed-old-key'
-  and new_approval.plan_id = plan.id and new_approval.request_idempotency_key = 'renewed-old-key-v2';
-update public.ads_campaign_plans
-set lock_version = lock_version + 1
-where created_by_name = 'renewed-old-key';
-select lives_ok(
-  $$select public.ads_approve_campaign_plan_revision(
-    plan.id, plan.active_revision_id, plan.approved_revision_hash, plan.lock_version - 1,
-    clock_timestamp() + interval '1 day', 'initial-renewed-old-key', null,
-    '00000000-0000-0000-0000-000000000051', null, null
-  ) from public.ads_campaign_plans as plan
-  where plan.created_by_name = 'renewed-old-key'$$,
-  'an old approval key still resolves the same build after its approval pointer is renewed'
+
+select pg_temp.capture_approval_replay(
+  'renewed-old-key', 'initial-renewed-old-key'
+);
+select is(
+  (select returned_build_id from approval_replay_results where fixture = 'renewed-old-key'),
+  (select original_build_id from approval_replay_results where fixture = 'renewed-old-key'),
+  'an old approval key returns the original build after a real renewal'
+);
+select ok(
+  (select side_effect_free from approval_replay_results where fixture = 'renewed-old-key'),
+  'an old-key replay after real renewal changes no approval, build, plan lock, or audit evidence'
 );
 
 select throws_ok(

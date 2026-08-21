@@ -1,0 +1,88 @@
+\set ON_ERROR_STOP on
+\set VERBOSITY verbose
+
+select pg_catalog.set_config('application_name', :'app_rpc', false);
+
+begin;
+set local statement_timeout = '20s';
+set local lock_timeout = '15s';
+set role service_role;
+
+\if :is_claim
+select (public.ads_acquire_campaign_gate_claim(
+  (select build.id from public.ads_campaign_builds as build
+   join public.ads_campaign_plans as plan on plan.id = build.plan_id
+   where plan.created_by_name = :'fixture'),
+  1::smallint, 'create', 'probe-claim-key',
+  (select build.revision_id from public.ads_campaign_builds as build
+   join public.ads_campaign_plans as plan on plan.id = build.plan_id
+   where plan.created_by_name = :'fixture'),
+  repeat('b', 64), 300,
+  '{"resources":[{"logical_resource_key":"campaign","resource_type":"campaign"}]}'::jsonb,
+  '00000000-0000-0000-0000-000000000461', '203.0.113.47', 'm04-lock-probe/claim'
+)).id as result_id \gset
+\elif :is_retry
+select (public.ads_acquire_campaign_retry_claim(
+  (select build.id from public.ads_campaign_builds as build
+   join public.ads_campaign_plans as plan on plan.id = build.plan_id
+   where plan.created_by_name = :'fixture'),
+  (select attempt.id from public.ads_campaign_gate_attempts as attempt
+   where attempt.request_idempotency_key = 'probe-retry-parent'),
+  'probe-retry-key', repeat('b', 64), 300,
+  '{"resources":[{"logical_resource_key":"campaign","resource_type":"campaign"}]}'::jsonb,
+  '00000000-0000-0000-0000-000000000461', '203.0.113.47', 'm04-lock-probe/retry'
+)).id as result_id \gset
+\elif :is_transition
+select (public.ads_transition_campaign_plan(
+  (select id from public.ads_campaign_plans where created_by_name = :'fixture'),
+  7, 'approved', :'to_status', 'neutral blocker lock-order probe',
+  '00000000-0000-0000-0000-000000000461', '203.0.113.47',
+  'm04-lock-probe/transition'
+)).id as result_id \gset
+\elif :is_renewal
+select (public.ads_approve_campaign_plan_revision(
+  (select id from public.ads_campaign_plans where created_by_name = :'fixture'),
+  (select active_revision_id from public.ads_campaign_plans where created_by_name = :'fixture'),
+  repeat('b', 64), 7, clock_timestamp() + interval '2 hours',
+  'probe-renewal-key', 'neutral blocker lock-order probe',
+  '00000000-0000-0000-0000-000000000461', '203.0.113.47',
+  'm04-lock-probe/renewal'
+)).id as result_id \gset
+\elif :is_handoff
+select (public.ads_create_campaign_monitoring_handoff(
+  (select build.id from public.ads_campaign_builds as build
+   join public.ads_campaign_plans as plan on plan.id = build.plan_id
+   where plan.created_by_name = :'fixture'),
+  3, repeat('b', 64),
+  '00000000-0000-0000-0000-000000000461', '203.0.113.47',
+  'm04-lock-probe/handoff'
+)).id as result_id \gset
+\elif :is_qa
+select (public.ads_append_campaign_qa_result(
+  (select attempt.id from public.ads_campaign_gate_attempts as attempt
+   where attempt.request_idempotency_key = 'probe-qa-attempt'),
+  (select attempt.claim_token from public.ads_campaign_gate_attempts as attempt
+   where attempt.request_idempotency_key = 'probe-qa-attempt'),
+  (select resource.id from public.ads_campaign_build_resources as resource
+   join public.ads_campaign_builds as build on build.id = resource.build_id
+   join public.ads_campaign_plans as plan on plan.id = build.plan_id
+   where plan.created_by_name = :'fixture'),
+  'gate_1', 'campaign.status', true, '"PAUSED"', '"PAUSED"', 'match',
+  null, null, '{"status":"PAUSED"}'
+)).id as result_id \gset
+\elif :is_initial
+select (public.ads_approve_campaign_plan_revision(
+  (select id from public.ads_campaign_plans where created_by_name = :'fixture'),
+  (select active_revision_id from public.ads_campaign_plans where created_by_name = :'fixture'),
+  repeat('b', 64), 7, clock_timestamp() + interval '2 hours',
+  'probe-initial-key', 'neutral blocker lock-order probe',
+  '00000000-0000-0000-0000-000000000461', '203.0.113.47',
+  'm04-lock-probe/initial'
+)).id as result_id \gset
+\else
+\quit 3
+\endif
+
+reset role;
+commit;
+\echo M04_LOCK_PROBE_RPC_SUCCESS case=:probe_case result_id=:result_id

@@ -1,0 +1,97 @@
+\set ON_ERROR_STOP on
+\set VERBOSITY verbose
+
+select pg_catalog.set_config('application_name', :'app_waiting' || '-starting', false);
+
+begin;
+set local statement_timeout = '20s';
+set local lock_timeout = '15s';
+select pg_catalog.set_config('m04.stress_case', :'case_name', true);
+select pg_catalog.set_config('m04.stress_role', :'session_role', true);
+select pg_catalog.set_config('m04.stress_to_status', :'to_status', true);
+select pg_catalog.set_config('application_name', :'app_waiting', false);
+
+do $wait_for_release$
+declare
+  v_deadline timestamptz := pg_catalog.clock_timestamp() + interval '15 seconds';
+begin
+  loop
+    exit when exists (
+      select 1 from public.m04_stress_release
+      where case_name = pg_catalog.current_setting('m04.stress_case') and released
+    );
+    if pg_catalog.clock_timestamp() >= v_deadline then
+      raise exception 'Simultaneous state stress release timed out' using errcode = '57014';
+    end if;
+    perform pg_catalog.pg_sleep(0.01);
+  end loop;
+end;
+$wait_for_release$;
+
+set role service_role;
+do $invoke_stress_rpc$
+declare
+  v_result_id bigint;
+begin
+  begin
+    if pg_catalog.current_setting('m04.stress_role') = 'claim' then
+      select (public.ads_acquire_campaign_gate_claim(
+        (select build.id from public.ads_campaign_builds as build
+         join public.ads_campaign_plans as plan on plan.id = build.plan_id
+         where plan.created_by_name = pg_catalog.current_setting('m04.stress_case')),
+        1::smallint, 'create',
+        'stress-claim-' || pg_catalog.current_setting('m04.stress_case'),
+        (select build.revision_id from public.ads_campaign_builds as build
+         join public.ads_campaign_plans as plan on plan.id = build.plan_id
+         where plan.created_by_name = pg_catalog.current_setting('m04.stress_case')),
+        repeat('b', 64), 300,
+        '{"resources":[{"logical_resource_key":"campaign","resource_type":"campaign"}]}'::jsonb,
+        '00000000-0000-0000-0000-000000000461', '203.0.113.49',
+        'm04-state-stress/claim'
+      )).id into strict v_result_id;
+    else
+      select (public.ads_transition_campaign_plan(
+        (select id from public.ads_campaign_plans
+         where created_by_name = pg_catalog.current_setting('m04.stress_case')),
+        7, 'approved', pg_catalog.current_setting('m04.stress_to_status'),
+        'simultaneous state stress transition',
+        '00000000-0000-0000-0000-000000000461', '203.0.113.49',
+        'm04-state-stress/transition'
+      )).id into strict v_result_id;
+    end if;
+    insert into public.m04_stress_results (
+      case_name, session_role, sqlstate, result_id
+    ) values (
+      pg_catalog.current_setting('m04.stress_case'),
+      pg_catalog.current_setting('m04.stress_role'), '00000', v_result_id
+    );
+  exception when others then
+    insert into public.m04_stress_results (
+      case_name, session_role, sqlstate, error_message
+    ) values (
+      pg_catalog.current_setting('m04.stress_case'),
+      pg_catalog.current_setting('m04.stress_role'), sqlstate, sqlerrm
+    );
+  end;
+end;
+$invoke_stress_rpc$;
+reset role;
+commit;
+
+select result.sqlstate as result_sqlstate,
+       coalesce(result.result_id::text, 'none') as result_id,
+       result.sqlstate = '00000' as result_ok
+from public.m04_stress_results as result
+where result.case_name = :'case_name' and result.session_role = :'session_role'
+\gset
+\echo M04_STATE_STRESS_RESULT case=:case_name role=:session_role sqlstate=:result_sqlstate result_id=:result_id
+\if :result_ok
+\else
+select pg_catalog.set_config('m04.recorded_child_sqlstate', :'result_sqlstate', false);
+do $raise_recorded_child_error$
+begin
+  raise exception 'M04_RECORDED_STRESS_CHILD_ERROR'
+    using errcode = pg_catalog.current_setting('m04.recorded_child_sqlstate');
+end;
+$raise_recorded_child_error$;
+\endif

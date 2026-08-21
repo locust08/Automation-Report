@@ -1,0 +1,173 @@
+\set ON_ERROR_STOP on
+
+do $lock_probe_assertions$
+declare
+  v_plan public.ads_campaign_plans%rowtype;
+  v_build public.ads_campaign_builds%rowtype;
+begin
+  select * into strict v_plan from public.ads_campaign_plans where created_by_name = 'probe-claim';
+  select * into strict v_build from public.ads_campaign_builds where plan_id = v_plan.id;
+  if v_plan.status <> 'launch_in_progress' or v_build.status <> 'gate_1_in_progress'
+    or (select count(*) from public.ads_campaign_gate_attempts
+        where build_id = v_build.id and status = 'claimed' and released_at is null) <> 1 then
+    raise exception 'Claim lock probe did not finish in one coherent Gate 1 claim state';
+  end if;
+
+  select * into strict v_plan from public.ads_campaign_plans where created_by_name = 'probe-retry';
+  select * into strict v_build from public.ads_campaign_builds where plan_id = v_plan.id;
+  if v_plan.status <> 'launch_in_progress' or v_build.status <> 'gate_1_in_progress'
+    or (select count(*) from public.ads_campaign_gate_attempts
+        where build_id = v_build.id and action = 'retry' and status = 'claimed' and released_at is null) <> 1 then
+    raise exception 'Retry lock probe did not finish in one coherent retry state';
+  end if;
+
+  for v_plan in
+    select * from public.ads_campaign_plans
+    where created_by_name in ('probe-draft', 'probe-cancelled')
+  loop
+    select * into strict v_build from public.ads_campaign_builds where plan_id = v_plan.id;
+    if v_plan.status <> (case when v_plan.created_by_name = 'probe-draft' then 'draft' else 'cancelled' end)
+      or v_build.status <> 'cancelled' then
+      raise exception 'Transition lock probe % did not finish coherently', v_plan.created_by_name;
+    end if;
+  end loop;
+
+  select * into strict v_plan from public.ads_campaign_plans where created_by_name = 'probe-renewal';
+  select * into strict v_build from public.ads_campaign_builds where plan_id = v_plan.id;
+  if v_plan.status <> 'launch_in_progress' or v_plan.lock_version <> 8
+    or v_build.status <> 'gate_1_failed' or v_build.lock_version <> 4
+    or (select count(*) from public.ads_campaign_approvals where plan_id = v_plan.id) <> 2
+    or not exists (
+      select 1 from public.ads_campaign_approvals
+      where id = v_build.approval_id and request_idempotency_key = 'probe-renewal-key'
+    ) then
+    raise exception 'Renewal lock probe did not preserve one build with append-only approval';
+  end if;
+
+  select * into strict v_plan from public.ads_campaign_plans where created_by_name = 'probe-handoff';
+  select * into strict v_build from public.ads_campaign_builds where plan_id = v_plan.id;
+  if v_plan.status <> 'launched' or v_build.status <> 'handoff_complete'
+    or (select count(*) from public.ads_campaign_monitoring_handoffs where build_id = v_build.id) <> 1 then
+    raise exception 'Handoff lock probe did not finish with one immutable handoff';
+  end if;
+
+  select * into strict v_plan from public.ads_campaign_plans where created_by_name = 'probe-qa';
+  select * into strict v_build from public.ads_campaign_builds where plan_id = v_plan.id;
+  if v_plan.status <> 'launch_in_progress' or v_build.status <> 'gate_1_in_progress'
+    or (select count(*) from public.ads_campaign_qa_results as qa
+        join public.ads_campaign_gate_attempts as attempt on attempt.id = qa.attempt_id
+        where attempt.build_id = v_build.id) <> 1 then
+    raise exception 'QA lock probe did not append exactly one result after serialization';
+  end if;
+
+  select * into strict v_plan from public.ads_campaign_plans where created_by_name = 'probe-initial';
+  if v_plan.status <> 'approved' or v_plan.lock_version <> 8
+    or (select count(*) from public.ads_campaign_builds where plan_id = v_plan.id) <> 1
+    or (select count(*) from public.ads_campaign_approvals where plan_id = v_plan.id) <> 1 then
+    raise exception 'Initial approval lock probe did not create exactly one approval and build';
+  end if;
+end;
+$lock_probe_assertions$;
+
+do $approval_assertions$
+declare
+  v_plan public.ads_campaign_plans%rowtype;
+begin
+  select * into strict v_plan
+  from public.ads_campaign_plans where created_by_name = 'approval-same-key';
+  if (select count(*) from public.m04_approval_parallel_results
+      where case_name = 'same-key' and sqlstate = '00000') <> 2
+    or (select count(distinct build_id) from public.m04_approval_parallel_results
+        where case_name = 'same-key') <> 1
+    or (select count(*) from public.ads_campaign_builds where plan_id = v_plan.id) <> 1
+    or (select count(*) from public.ads_campaign_approvals where plan_id = v_plan.id) <> 1
+    or (select count(*) from public.ads_campaign_audit_events
+        where plan_id = v_plan.id and event_type = 'campaign_plan_revision_approved') <> 1
+    or (select count(*) from public.ads_campaign_audit_events where plan_id = v_plan.id) <> 1
+    or v_plan.status <> 'approved' or v_plan.lock_version <> 8 then
+    raise exception 'Concurrent identical initial approvals were not exact-idempotent';
+  end if;
+
+  select * into strict v_plan
+  from public.ads_campaign_plans where created_by_name = 'approval-conflict';
+  if (select count(*) from public.m04_approval_parallel_results
+      where case_name = 'conflict' and sqlstate = '00000') <> 1
+    or (select count(*) from public.m04_approval_parallel_results
+        where case_name = 'conflict' and sqlstate = '22023'
+          and error_message = 'Approval idempotency key conflicts with an existing request') <> 1
+    or (select count(*) from public.ads_campaign_builds where plan_id = v_plan.id) <> 1
+    or (select count(*) from public.ads_campaign_approvals where plan_id = v_plan.id) <> 1
+    or (select count(*) from public.ads_campaign_audit_events where plan_id = v_plan.id) <> 1
+    or v_plan.status <> 'approved' or v_plan.lock_version <> 8 then
+    raise exception 'Concurrent conflicting initial approval did not yield one winner and exact 22023 conflict';
+  end if;
+end;
+$approval_assertions$;
+
+do $stress_assertions$
+declare
+  v_fixture record;
+  v_plan public.ads_campaign_plans%rowtype;
+  v_build public.ads_campaign_builds%rowtype;
+  v_claim_state text;
+  v_transition_state text;
+begin
+  for v_fixture in
+    select release.case_name,
+      case when release.case_name like 'stress-draft-%' then 'draft' else 'cancelled' end as to_status
+    from public.m04_stress_release as release
+    order by release.case_name
+  loop
+    if (select count(*) from public.m04_stress_results
+        where case_name = v_fixture.case_name) <> 2
+      or (select count(*) from public.m04_stress_results
+          where case_name = v_fixture.case_name and sqlstate = '00000') <> 1
+      or exists (
+        select 1 from public.m04_stress_results
+        where case_name = v_fixture.case_name
+          and sqlstate in ('40P01', '57014', '55P03')
+      )
+      or exists (
+        select 1 from public.m04_stress_results
+        where case_name = v_fixture.case_name
+          and sqlstate not in ('00000', '40001')
+      ) then
+      raise exception 'Stress case % has a timeout, deadlock, dual success, or unexpected result',
+        v_fixture.case_name;
+    end if;
+
+    select sqlstate into strict v_claim_state
+    from public.m04_stress_results
+    where case_name = v_fixture.case_name and session_role = 'claim';
+    select sqlstate into strict v_transition_state
+    from public.m04_stress_results
+    where case_name = v_fixture.case_name and session_role = 'transition';
+    select * into strict v_plan
+    from public.ads_campaign_plans where created_by_name = v_fixture.case_name;
+    select * into strict v_build
+    from public.ads_campaign_builds where plan_id = v_plan.id;
+
+    if v_claim_state = '00000' then
+      if v_transition_state <> '40001'
+        or v_plan.status <> 'launch_in_progress'
+        or v_build.status <> 'gate_1_in_progress'
+        or (select count(*) from public.ads_campaign_gate_attempts
+            where build_id = v_build.id and status = 'claimed' and released_at is null) <> 1 then
+        raise exception 'Stress case % claim winner left incoherent state', v_fixture.case_name;
+      end if;
+    elsif v_transition_state = '00000' then
+      if v_claim_state <> '40001'
+        or v_plan.status <> v_fixture.to_status
+        or v_build.status <> 'cancelled'
+        or exists (select 1 from public.ads_campaign_gate_attempts where build_id = v_build.id) then
+        raise exception 'Stress case % transition winner left incoherent state', v_fixture.case_name;
+      end if;
+    else
+      raise exception 'Stress case % has no successful winner', v_fixture.case_name;
+    end if;
+  end loop;
+end;
+$stress_assertions$;
+
+select 'PASS: enhanced lock probes, approval races, and 40 simultaneous state races are coherent' as result;
+\echo M04_STATE_ENHANCED_ASSERT_PASS

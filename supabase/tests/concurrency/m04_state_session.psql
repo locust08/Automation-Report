@@ -94,4 +94,4 @@ $hold_winner$;
 \endif
 
 commit;
-\echo M04_STATE_RACE_SUCCESS case=:case_name role=:session_role result_id=:result_id
+\echo M04_STATE_SERIALIZATION_SUCCESS case=:case_name role=:session_role result_id=:result_id

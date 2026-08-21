@@ -1262,9 +1262,17 @@ from (values
   ('failed-g1', 'google', 'launch_in_progress', 'gate_1_failed'),
   ('failed-qa', 'google', 'launch_in_progress', 'qa_failed'),
   ('failed-g2', 'google', 'launch_in_progress', 'gate_2_failed'),
+  ('recover-g1-reconciliation-required', 'google', 'launch_in_progress', 'reconciliation_required'),
+  ('recover-g2-delivery-unverified', 'google', 'launch_in_progress', 'delivery_unverified'),
+  ('failed-reconciliation-create', 'google', 'launch_in_progress', 'reconciliation_required'),
   ('failed-g1-create', 'google', 'launch_in_progress', 'gate_1_failed'),
   ('failed-qa-create', 'google', 'launch_in_progress', 'qa_failed'),
+  ('failed-delivery-unverified-deliver', 'google', 'launch_in_progress', 'delivery_unverified'),
   ('failed-g2-deliver', 'google', 'launch_in_progress', 'gate_2_failed'),
+  ('retry-reconciliation-required', 'google', 'launch_in_progress', 'reconciliation_required'),
+  ('retry-delivery-unverified', 'google', 'launch_in_progress', 'delivery_unverified'),
+  ('retry-gate2-failed', 'google', 'launch_in_progress', 'gate_2_failed'),
+  ('retry-g1-failed-no-proof', 'google', 'launch_in_progress', 'gate_1_failed'),
   ('retry-qa-failed', 'google', 'launch_in_progress', 'qa_failed'),
   ('active-cross-gate', 'google', 'launch_in_progress', 'ready_to_deliver'),
   ('active-cross-retry', 'google', 'launch_in_progress', 'gate_1_failed'),
@@ -1372,10 +1380,8 @@ select throws_ok(
   'a new gate key remains blocked until approval renewal'
 );
 update public.ads_campaign_gate_attempts
-set status = 'expired',
-    claimed_at = clock_timestamp() - interval '2 minutes',
-    claim_expires_at = clock_timestamp() - interval '1 minute',
-    released_at = clock_timestamp() - interval '1 minute'
+set claimed_at = clock_timestamp() - interval '2 minutes',
+    claim_expires_at = clock_timestamp() - interval '1 minute'
 where request_idempotency_key = 'gate-key-expiry-one';
 select lives_ok(
   $$select public.ads_acquire_campaign_gate_claim(
@@ -1386,12 +1392,46 @@ select lives_ok(
   ) from public.ads_campaign_builds as build
   join public.ads_campaign_plans as plan on plan.id = build.plan_id
   where plan.created_by_name = 'gate-key-expiry'$$,
-  'an exact expired gate key still returns its immutable attempt'
+  'an exact clock-expired gate key still returns its immutable attempt before stale normalization'
 );
 select ok(
-  (select count(*) = 1 and bool_and(status = 'expired' and released_at is not null)
+  (select count(*) = 1 and bool_and(status = 'claimed' and released_at is null)
    from public.ads_campaign_gate_attempts where request_idempotency_key = 'gate-key-expiry-one'),
-  'returning an expired gate key neither creates nor reactivates a claim'
+  'returning an exact clock-expired gate key neither creates nor rewrites its claim'
+);
+select lives_ok(
+  $$select public.ads_approve_campaign_plan_revision(
+    plan.id, plan.active_revision_id, plan.approved_revision_hash, plan.lock_version,
+    clock_timestamp() + interval '1 day', 'gate-key-expiry-renewal',
+    'renew approval for reconciliation recovery',
+    '00000000-0000-0000-0000-000000000061', null, null
+  ) from public.ads_campaign_plans as plan
+  where plan.created_by_name = 'gate-key-expiry'$$,
+  'the expired Gate 1 build renews through the real same-build approval path'
+);
+select lives_ok(
+  $$select public.ads_acquire_campaign_gate_claim(
+    build.id, 1::smallint, 'reconcile', 'gate-key-expiry-recovery',
+    build.revision_id, build.revision_hash, 300,
+    '{"resources":[{"logical_resource_key":"campaign","resource_type":"campaign"}]}'::jsonb,
+    '00000000-0000-0000-0000-000000000061', null, null
+  ) from public.ads_campaign_builds as build
+  join public.ads_campaign_plans as plan on plan.id = build.plan_id
+  where plan.created_by_name = 'gate-key-expiry'$$,
+  'a new Gate 1 reconciliation key succeeds only after real approval renewal'
+);
+select ok(
+  (select count(*) = 1 from public.ads_campaign_builds as build
+   join public.ads_campaign_plans as plan on plan.id = build.plan_id
+   where plan.created_by_name = 'gate-key-expiry')
+  and (select count(*) = 2 from public.ads_campaign_approvals as approval
+       join public.ads_campaign_plans as plan on plan.id = approval.plan_id
+       where plan.created_by_name = 'gate-key-expiry')
+  and (select status = 'expired' and released_at is not null
+       from public.ads_campaign_gate_attempts where request_idempotency_key = 'gate-key-expiry-one')
+  and (select status = 'claimed' and released_at is null
+       from public.ads_campaign_gate_attempts where request_idempotency_key = 'gate-key-expiry-recovery'),
+  'Gate 1 renewal is append-only and recovers the same single build without reusing the old claim'
 );
 
 create function pg_temp.seed_retry_proof(p_fixture text)
@@ -1448,7 +1488,8 @@ $$;
 select pg_temp.seed_retry_proof(fixture)
 from (values
   ('retry-key-expiry'), ('active-cross-retry'), ('retry-ready'),
-  ('retry-gate2'), ('retry-verified'), ('retry-handoff'), ('retry-qa-failed')
+  ('retry-gate2'), ('retry-verified'), ('retry-handoff'), ('retry-qa-failed'),
+  ('retry-reconciliation-required'), ('retry-delivery-unverified'), ('retry-gate2-failed')
 ) as fixtures(fixture);
 
 select lives_ok(
@@ -1548,10 +1589,8 @@ select throws_ok(
   'a new retry key remains blocked until approval renewal'
 );
 update public.ads_campaign_gate_attempts
-set status = 'expired',
-    claimed_at = clock_timestamp() - interval '2 minutes',
-    claim_expires_at = clock_timestamp() - interval '1 minute',
-    released_at = clock_timestamp() - interval '1 minute'
+set claimed_at = clock_timestamp() - interval '2 minutes',
+    claim_expires_at = clock_timestamp() - interval '1 minute'
 where request_idempotency_key = 'retry-key-expiry-one';
 select lives_ok(
   $$select public.ads_acquire_campaign_retry_claim(
@@ -1563,12 +1602,77 @@ select lives_ok(
   ) from public.ads_campaign_builds as build
   join public.ads_campaign_plans as plan on plan.id = build.plan_id
   where plan.created_by_name = 'retry-key-expiry'$$,
-  'an exact expired retry key still returns its immutable attempt'
+  'an exact clock-expired retry key still returns its immutable attempt before stale normalization'
 );
 select ok(
-  (select count(*) = 1 and bool_and(status = 'expired' and released_at is not null)
+  (select count(*) = 1 and bool_and(status = 'claimed' and released_at is null)
    from public.ads_campaign_gate_attempts where request_idempotency_key = 'retry-key-expiry-one'),
-  'returning an expired retry key neither creates nor reactivates a claim'
+  'returning an exact clock-expired retry key neither creates nor rewrites its claim'
+);
+select lives_ok(
+  $$select public.ads_approve_campaign_plan_revision(
+    plan.id, plan.active_revision_id, plan.approved_revision_hash, plan.lock_version,
+    clock_timestamp() + interval '1 day', 'retry-key-expiry-renewal',
+    'renew approval for retry reconciliation',
+    '00000000-0000-0000-0000-000000000061', null, null
+  ) from public.ads_campaign_plans as plan
+  where plan.created_by_name = 'retry-key-expiry'$$,
+  'the expired retry build renews through the real same-build approval path'
+);
+select lives_ok(
+  $$select public.ads_acquire_campaign_gate_claim(
+    build.id, 1::smallint, 'reconcile', 'retry-key-expiry-recovery-readback',
+    build.revision_id, build.revision_hash, 300,
+    '{"resources":[{"logical_resource_key":"campaign","resource_type":"campaign"}]}'::jsonb,
+    '00000000-0000-0000-0000-000000000061', null, null
+  ) from public.ads_campaign_builds as build
+  join public.ads_campaign_plans as plan on plan.id = build.plan_id
+  where plan.created_by_name = 'retry-key-expiry'$$,
+  'a new reconciliation key succeeds after renewal and normalizes the expired retry'
+);
+select lives_ok(
+  $$select public.ads_append_campaign_qa_result(
+    attempt.id, attempt.claim_token, resource.id,
+    'reconciliation', 'provider.exists', true,
+    'false', 'false', 'missing', 'PROVEN_MISSING', null, '{"found":false}'
+  ) from public.ads_campaign_gate_attempts as attempt
+  join public.ads_campaign_build_resources as resource on resource.build_id = attempt.build_id
+  where attempt.request_idempotency_key = 'retry-key-expiry-recovery-readback'
+    and resource.logical_resource_key = 'campaign'$$,
+  'renewed recovery records newer resource-bound missing proof'
+);
+select lives_ok(
+  $$select public.ads_finalize_campaign_gate_claim(
+    attempt.id, attempt.claim_token, 'succeeded', '{"campaign":"missing"}',
+    '00000000-0000-0000-0000-000000000061', null, null
+  ) from public.ads_campaign_gate_attempts as attempt
+  where attempt.request_idempotency_key = 'retry-key-expiry-recovery-readback'$$,
+  'renewed recovery returns the build to proof-gated Gate 1 failed state'
+);
+select lives_ok(
+  $$select public.ads_acquire_campaign_retry_claim(
+    build.id,
+    (select id from public.ads_campaign_gate_attempts where request_idempotency_key = 'retry-key-expiry-one'),
+    'retry-key-expiry-recovery-retry', build.revision_hash, 300,
+    '{"resources":[{"logical_resource_key":"campaign","resource_type":"campaign"}]}'::jsonb,
+    '00000000-0000-0000-0000-000000000061', null, null
+  ) from public.ads_campaign_builds as build
+  join public.ads_campaign_plans as plan on plan.id = build.plan_id
+  where plan.created_by_name = 'retry-key-expiry'$$,
+  'the renewed build accepts a new retry only after newer causal missing proof'
+);
+select ok(
+  (select count(*) = 1 from public.ads_campaign_builds as build
+   join public.ads_campaign_plans as plan on plan.id = build.plan_id
+   where plan.created_by_name = 'retry-key-expiry')
+  and (select count(*) = 2 from public.ads_campaign_approvals as approval
+       join public.ads_campaign_plans as plan on plan.id = approval.plan_id
+       where plan.created_by_name = 'retry-key-expiry')
+  and (select status = 'expired' and released_at is not null
+       from public.ads_campaign_gate_attempts where request_idempotency_key = 'retry-key-expiry-one')
+  and (select status = 'claimed' and released_at is null
+       from public.ads_campaign_gate_attempts where request_idempotency_key = 'retry-key-expiry-recovery-retry'),
+  'retry renewal preserves one build, append-only approvals, and distinct recovery attempts'
 );
 
 select lives_ok(
@@ -1619,7 +1723,11 @@ insert into public.ads_campaign_build_resources (build_id, logical_resource_key,
 select build.id, 'campaign', 'campaign'
 from public.ads_campaign_builds as build
 join public.ads_campaign_plans as plan on plan.id = build.plan_id
-where plan.created_by_name in ('failed-g1', 'failed-qa', 'failed-g1-create', 'failed-qa-create');
+where plan.created_by_name in (
+  'failed-g1', 'failed-qa', 'recover-g1-reconciliation-required',
+  'failed-reconciliation-create', 'failed-g1-create', 'failed-qa-create',
+  'retry-g1-failed-no-proof'
+);
 insert into public.ads_campaign_gate_attempts (
   build_id, gate, action, request_idempotency_key, attempt_number,
   revision_id, revision_hash, status, intent, claimed_at, claim_expires_at,
@@ -1633,7 +1741,11 @@ select build.id, 1, 'create', plan.created_by_name || '-prior', 1,
   '00000000-0000-0000-0000-000000000061', 'Launch Operator'
 from public.ads_campaign_builds as build
 join public.ads_campaign_plans as plan on plan.id = build.plan_id
-where plan.created_by_name in ('failed-g1', 'failed-qa', 'failed-g1-create', 'failed-qa-create', 'failed-g2');
+where plan.created_by_name in (
+  'failed-g1', 'failed-qa', 'recover-g1-reconciliation-required',
+  'failed-reconciliation-create', 'failed-g1-create', 'failed-qa-create',
+  'failed-g2', 'retry-g1-failed-no-proof'
+);
 
 select throws_ok(
   $$select public.ads_acquire_campaign_gate_claim(
@@ -1661,14 +1773,46 @@ select throws_ok(
 
 select lives_ok(
   $$select public.ads_acquire_campaign_gate_claim(
-    build.id, 1::smallint, 'reconcile', plan.created_by_name || '-reconcile',
+    build.id, 1::smallint, 'reconcile', 'recover-reconciliation-required-readback',
     build.revision_id, build.revision_hash, 300,
     '{"resources":[{"logical_resource_key":"campaign","resource_type":"campaign"}]}'::jsonb,
     '00000000-0000-0000-0000-000000000061', null, null
   ) from public.ads_campaign_builds as build
   join public.ads_campaign_plans as plan on plan.id = build.plan_id
-  where plan.created_by_name in ('failed-g1', 'failed-qa')$$,
-  'Gate 1 failed and QA-failed builds admit only read-only Gate 1 reconciliation'
+  where plan.created_by_name = 'recover-g1-reconciliation-required'$$,
+  'Gate 1 reconciliation_required admits a read-only Gate 1 reconciliation'
+);
+select lives_ok(
+  $$select public.ads_acquire_campaign_gate_claim(
+    build.id, 1::smallint, 'reconcile', 'failed-g1-reconcile',
+    build.revision_id, build.revision_hash, 300,
+    '{"resources":[{"logical_resource_key":"campaign","resource_type":"campaign"}]}'::jsonb,
+    '00000000-0000-0000-0000-000000000061', null, null
+  ) from public.ads_campaign_builds as build
+  join public.ads_campaign_plans as plan on plan.id = build.plan_id
+  where plan.created_by_name = 'failed-g1'$$,
+  'Gate 1 gate_1_failed admits a read-only Gate 1 reconciliation'
+);
+select lives_ok(
+  $$select public.ads_acquire_campaign_gate_claim(
+    build.id, 1::smallint, 'reconcile', 'failed-qa-reconcile',
+    build.revision_id, build.revision_hash, 300,
+    '{"resources":[{"logical_resource_key":"campaign","resource_type":"campaign"}]}'::jsonb,
+    '00000000-0000-0000-0000-000000000061', null, null
+  ) from public.ads_campaign_builds as build
+  join public.ads_campaign_plans as plan on plan.id = build.plan_id
+  where plan.created_by_name = 'failed-qa'$$,
+  'Gate 1 qa_failed admits a read-only Gate 1 reconciliation'
+);
+select lives_ok(
+  $$select public.ads_acquire_campaign_gate_claim(
+    build.id, 2::smallint, 'reconcile', 'delivery-unverified-reconcile',
+    build.revision_id, build.revision_hash, 300, '{}'::jsonb,
+    '00000000-0000-0000-0000-000000000061', null, null
+  ) from public.ads_campaign_builds as build
+  join public.ads_campaign_plans as plan on plan.id = build.plan_id
+  where plan.created_by_name = 'recover-g2-delivery-unverified'$$,
+  'Gate 2 delivery_unverified admits a read-only Gate 2 reconciliation'
 );
 select lives_ok(
   $$select public.ads_acquire_campaign_gate_claim(
@@ -1678,19 +1822,55 @@ select lives_ok(
   ) from public.ads_campaign_builds as build
   join public.ads_campaign_plans as plan on plan.id = build.plan_id
   where plan.created_by_name = 'failed-g2'$$,
-  'a Gate 2 failed build admits only read-only Gate 2 reconciliation'
+  'Gate 2 gate_2_failed admits a read-only Gate 2 reconciliation'
 );
+
 select throws_ok(
   $$select public.ads_acquire_campaign_gate_claim(
-    build.id, 1::smallint, 'create', plan.created_by_name || '-shortcut',
+    build.id, 1::smallint, 'create', 'reconciliation-required-create-shortcut',
     build.revision_id, build.revision_hash, 300,
     '{"resources":[{"logical_resource_key":"campaign","resource_type":"campaign"}]}'::jsonb,
     '00000000-0000-0000-0000-000000000061', null, null
   ) from public.ads_campaign_builds as build
   join public.ads_campaign_plans as plan on plan.id = build.plan_id
-  where plan.created_by_name in ('failed-g1-create', 'failed-qa-create')$$,
+  where plan.created_by_name = 'failed-reconciliation-create'$$,
+  '55000', 'Gate 1 create requires a pending build or an expired claim',
+  'Gate 1 reconciliation_required rejects a direct create shortcut'
+);
+select throws_ok(
+  $$select public.ads_acquire_campaign_gate_claim(
+    build.id, 1::smallint, 'create', 'failed-g1-create-shortcut',
+    build.revision_id, build.revision_hash, 300,
+    '{"resources":[{"logical_resource_key":"campaign","resource_type":"campaign"}]}'::jsonb,
+    '00000000-0000-0000-0000-000000000061', null, null
+  ) from public.ads_campaign_builds as build
+  join public.ads_campaign_plans as plan on plan.id = build.plan_id
+  where plan.created_by_name = 'failed-g1-create'$$,
   '55000', 'Failed Gate 1 states require reconciliation before mutation',
-  'failed Gate 1 states reject direct create shortcuts'
+  'Gate 1 gate_1_failed rejects a direct create shortcut'
+);
+select throws_ok(
+  $$select public.ads_acquire_campaign_gate_claim(
+    build.id, 1::smallint, 'create', 'failed-qa-create-shortcut',
+    build.revision_id, build.revision_hash, 300,
+    '{"resources":[{"logical_resource_key":"campaign","resource_type":"campaign"}]}'::jsonb,
+    '00000000-0000-0000-0000-000000000061', null, null
+  ) from public.ads_campaign_builds as build
+  join public.ads_campaign_plans as plan on plan.id = build.plan_id
+  where plan.created_by_name = 'failed-qa-create'$$,
+  '55000', 'Failed Gate 1 states require reconciliation before mutation',
+  'Gate 1 qa_failed rejects a direct create shortcut'
+);
+select throws_ok(
+  $$select public.ads_acquire_campaign_gate_claim(
+    build.id, 2::smallint, 'deliver', 'delivery-unverified-deliver-shortcut',
+    build.revision_id, build.revision_hash, 300, '{}'::jsonb,
+    '00000000-0000-0000-0000-000000000061', null, null
+  ) from public.ads_campaign_builds as build
+  join public.ads_campaign_plans as plan on plan.id = build.plan_id
+  where plan.created_by_name = 'failed-delivery-unverified-deliver'$$,
+  '55000', 'Gate 2 requires a build ready to deliver',
+  'Gate 2 delivery_unverified rejects a direct delivery shortcut'
 );
 select throws_ok(
   $$select public.ads_acquire_campaign_gate_claim(
@@ -1701,7 +1881,7 @@ select throws_ok(
   join public.ads_campaign_plans as plan on plan.id = build.plan_id
   where plan.created_by_name = 'failed-g2-deliver'$$,
   '55000', 'Failed Gate 2 state requires reconciliation before delivery',
-  'a failed Gate 2 state rejects a direct delivery shortcut'
+  'Gate 2 gate_2_failed rejects a direct delivery shortcut'
 );
 
 insert into public.ads_campaign_gate_attempts (
@@ -1792,16 +1972,102 @@ select throws_ok(
 
 select throws_ok(
   $$select public.ads_acquire_campaign_retry_claim(
-    build.id,
-    (select id from public.ads_campaign_gate_attempts where request_idempotency_key = plan.created_by_name || '-parent'),
-    plan.created_by_name || '-retry-forbidden', build.revision_hash, 300,
+    build.id, (select id from public.ads_campaign_gate_attempts where request_idempotency_key = 'retry-reconciliation-required-parent'),
+    'retry-reconciliation-required-forbidden', build.revision_hash, 300,
     '{"resources":[{"logical_resource_key":"campaign","resource_type":"campaign"}]}'::jsonb,
     '00000000-0000-0000-0000-000000000061', null, null
-  ) from public.ads_campaign_builds as build
-  join public.ads_campaign_plans as plan on plan.id = build.plan_id
-  where plan.created_by_name in ('retry-ready', 'retry-gate2', 'retry-verified', 'retry-handoff', 'retry-qa-failed')$$,
+  ) from public.ads_campaign_builds as build join public.ads_campaign_plans as plan on plan.id = build.plan_id
+  where plan.created_by_name = 'retry-reconciliation-required'$$,
   '55000', 'Mutation retry requires a Gate 1 failed build',
-  'mutation retry is rejected from ready, Gate 2, verified, and handoff states'
+  'reconciliation_required rejects a direct retry shortcut'
+);
+select throws_ok(
+  $$select public.ads_acquire_campaign_retry_claim(
+    build.id, (select id from public.ads_campaign_gate_attempts where request_idempotency_key = 'retry-qa-failed-parent'),
+    'retry-qa-failed-forbidden', build.revision_hash, 300,
+    '{"resources":[{"logical_resource_key":"campaign","resource_type":"campaign"}]}'::jsonb,
+    '00000000-0000-0000-0000-000000000061', null, null
+  ) from public.ads_campaign_builds as build join public.ads_campaign_plans as plan on plan.id = build.plan_id
+  where plan.created_by_name = 'retry-qa-failed'$$,
+  '55000', 'Mutation retry requires a Gate 1 failed build',
+  'qa_failed rejects a direct retry shortcut'
+);
+select throws_ok(
+  $$select public.ads_acquire_campaign_retry_claim(
+    build.id, (select id from public.ads_campaign_gate_attempts where request_idempotency_key = 'retry-delivery-unverified-parent'),
+    'retry-delivery-unverified-forbidden', build.revision_hash, 300,
+    '{"resources":[{"logical_resource_key":"campaign","resource_type":"campaign"}]}'::jsonb,
+    '00000000-0000-0000-0000-000000000061', null, null
+  ) from public.ads_campaign_builds as build join public.ads_campaign_plans as plan on plan.id = build.plan_id
+  where plan.created_by_name = 'retry-delivery-unverified'$$,
+  '55000', 'Mutation retry requires a Gate 1 failed build',
+  'delivery_unverified rejects a direct retry shortcut'
+);
+select throws_ok(
+  $$select public.ads_acquire_campaign_retry_claim(
+    build.id, (select id from public.ads_campaign_gate_attempts where request_idempotency_key = 'retry-gate2-failed-parent'),
+    'retry-gate2-failed-forbidden', build.revision_hash, 300,
+    '{"resources":[{"logical_resource_key":"campaign","resource_type":"campaign"}]}'::jsonb,
+    '00000000-0000-0000-0000-000000000061', null, null
+  ) from public.ads_campaign_builds as build join public.ads_campaign_plans as plan on plan.id = build.plan_id
+  where plan.created_by_name = 'retry-gate2-failed'$$,
+  '55000', 'Mutation retry requires a Gate 1 failed build',
+  'gate_2_failed rejects a direct retry shortcut'
+);
+select throws_ok(
+  $$select public.ads_acquire_campaign_retry_claim(
+    build.id, (select id from public.ads_campaign_gate_attempts where request_idempotency_key = 'retry-ready-parent'),
+    'retry-ready-forbidden', build.revision_hash, 300,
+    '{"resources":[{"logical_resource_key":"campaign","resource_type":"campaign"}]}'::jsonb,
+    '00000000-0000-0000-0000-000000000061', null, null
+  ) from public.ads_campaign_builds as build join public.ads_campaign_plans as plan on plan.id = build.plan_id
+  where plan.created_by_name = 'retry-ready'$$,
+  '55000', 'Mutation retry requires a Gate 1 failed build',
+  'ready_to_deliver rejects a direct retry shortcut'
+);
+select throws_ok(
+  $$select public.ads_acquire_campaign_retry_claim(
+    build.id, (select id from public.ads_campaign_gate_attempts where request_idempotency_key = 'retry-gate2-parent'),
+    'retry-gate2-forbidden', build.revision_hash, 300,
+    '{"resources":[{"logical_resource_key":"campaign","resource_type":"campaign"}]}'::jsonb,
+    '00000000-0000-0000-0000-000000000061', null, null
+  ) from public.ads_campaign_builds as build join public.ads_campaign_plans as plan on plan.id = build.plan_id
+  where plan.created_by_name = 'retry-gate2'$$,
+  '55000', 'Mutation retry requires a Gate 1 failed build',
+  'gate_2_in_progress rejects a direct retry shortcut'
+);
+select throws_ok(
+  $$select public.ads_acquire_campaign_retry_claim(
+    build.id, (select id from public.ads_campaign_gate_attempts where request_idempotency_key = 'retry-verified-parent'),
+    'retry-verified-forbidden', build.revision_hash, 300,
+    '{"resources":[{"logical_resource_key":"campaign","resource_type":"campaign"}]}'::jsonb,
+    '00000000-0000-0000-0000-000000000061', null, null
+  ) from public.ads_campaign_builds as build join public.ads_campaign_plans as plan on plan.id = build.plan_id
+  where plan.created_by_name = 'retry-verified'$$,
+  '55000', 'Mutation retry requires a Gate 1 failed build',
+  'verified rejects a direct retry shortcut'
+);
+select throws_ok(
+  $$select public.ads_acquire_campaign_retry_claim(
+    build.id, (select id from public.ads_campaign_gate_attempts where request_idempotency_key = 'retry-handoff-parent'),
+    'retry-handoff-forbidden', build.revision_hash, 300,
+    '{"resources":[{"logical_resource_key":"campaign","resource_type":"campaign"}]}'::jsonb,
+    '00000000-0000-0000-0000-000000000061', null, null
+  ) from public.ads_campaign_builds as build join public.ads_campaign_plans as plan on plan.id = build.plan_id
+  where plan.created_by_name = 'retry-handoff'$$,
+  '55000', 'Campaign build approval is no longer current and unexpired',
+  'handoff_complete rejects a direct retry shortcut before mutable recovery state'
+);
+select throws_ok(
+  $$select public.ads_acquire_campaign_retry_claim(
+    build.id, (select id from public.ads_campaign_gate_attempts where request_idempotency_key = 'retry-g1-failed-no-proof-prior'),
+    'retry-g1-failed-without-proof', build.revision_hash, 300,
+    '{"resources":[{"logical_resource_key":"campaign","resource_type":"campaign"}]}'::jsonb,
+    '00000000-0000-0000-0000-000000000061', null, null
+  ) from public.ads_campaign_builds as build join public.ads_campaign_plans as plan on plan.id = build.plan_id
+  where plan.created_by_name = 'retry-g1-failed-no-proof'$$,
+  '55000', 'Mutation retry requires every selected resource to be proven missing by newer reconciliation readback',
+  'gate_1_failed alone cannot authorize retry without newer causal missing proof'
 );
 
 insert into public.ads_campaign_build_resources (
@@ -1840,7 +2106,12 @@ declare
   v_attempt public.ads_campaign_gate_attempts%rowtype;
   v_resource public.ads_campaign_build_resources%rowtype;
   v_build public.ads_campaign_builds%rowtype;
+  v_plan public.ads_campaign_plans%rowtype;
   v_audit_count bigint;
+  v_attempt_count bigint;
+  v_resource_count bigint;
+  v_qa_count bigint;
+  v_exact_error boolean := false;
 begin
   select attempt.* into strict v_attempt
   from public.ads_campaign_gate_attempts as attempt
@@ -1848,22 +2119,31 @@ begin
   select * into strict v_resource from public.ads_campaign_build_resources
   where build_id = v_attempt.build_id and logical_resource_key = 'campaign';
   select * into strict v_build from public.ads_campaign_builds where id = v_attempt.build_id;
+  select * into strict v_plan from public.ads_campaign_plans where id = v_build.plan_id;
   select count(*) into v_audit_count from public.ads_campaign_audit_events where build_id = v_build.id;
+  select count(*) into v_attempt_count from public.ads_campaign_gate_attempts where build_id = v_build.id;
+  select count(*) into v_resource_count from public.ads_campaign_build_resources where build_id = v_build.id;
+  select count(*) into v_qa_count from public.ads_campaign_qa_results where attempt_id = v_attempt.id;
   begin
     perform public.ads_record_campaign_resource_outcome(
       v_attempt.id, v_attempt.claim_token, 'campaign', 'ambiguous', null, null,
       '{"request_sent":true}', '{"timeout":true}'
     );
   exception when sqlstate '55000' then
-    null;
+    v_exact_error := sqlerrm = 'Campaign build is not in the active state for this gate attempt';
   end;
-  return (select status = v_attempt.status and released_at is not distinct from v_attempt.released_at
-          from public.ads_campaign_gate_attempts where id = v_attempt.id)
-    and (select provider_resource_id is not distinct from v_resource.provider_resource_id
-           and provider_response = v_resource.provider_response
-         from public.ads_campaign_build_resources where id = v_resource.id)
-    and (select status = v_build.status and lock_version = v_build.lock_version
-         from public.ads_campaign_builds where id = v_build.id)
+  return v_exact_error
+    and (select to_jsonb(attempt) = to_jsonb(v_attempt)
+         from public.ads_campaign_gate_attempts as attempt where attempt.id = v_attempt.id)
+    and (select to_jsonb(resource) = to_jsonb(v_resource)
+         from public.ads_campaign_build_resources as resource where resource.id = v_resource.id)
+    and (select to_jsonb(build) = to_jsonb(v_build)
+         from public.ads_campaign_builds as build where build.id = v_build.id)
+    and (select to_jsonb(plan) = to_jsonb(v_plan)
+         from public.ads_campaign_plans as plan where plan.id = v_plan.id)
+    and (select count(*) from public.ads_campaign_gate_attempts where build_id = v_build.id) = v_attempt_count
+    and (select count(*) from public.ads_campaign_build_resources where build_id = v_build.id) = v_resource_count
+    and (select count(*) from public.ads_campaign_qa_results where attempt_id = v_attempt.id) = v_qa_count
     and (select count(*) from public.ads_campaign_audit_events where build_id = v_build.id) = v_audit_count;
 end;
 $$;
@@ -1879,25 +2159,40 @@ as $$
 declare
   v_attempt public.ads_campaign_gate_attempts%rowtype;
   v_build public.ads_campaign_builds%rowtype;
+  v_plan public.ads_campaign_plans%rowtype;
   v_audit_count bigint;
+  v_attempt_count bigint;
+  v_resource_count bigint;
+  v_qa_count bigint;
+  v_exact_error boolean := false;
 begin
   select attempt.* into strict v_attempt
   from public.ads_campaign_gate_attempts as attempt
   where request_idempotency_key = 'finalizer-state-mismatch-active';
   select * into strict v_build from public.ads_campaign_builds where id = v_attempt.build_id;
+  select * into strict v_plan from public.ads_campaign_plans where id = v_build.plan_id;
   select count(*) into v_audit_count from public.ads_campaign_audit_events where build_id = v_build.id;
+  select count(*) into v_attempt_count from public.ads_campaign_gate_attempts where build_id = v_build.id;
+  select count(*) into v_resource_count from public.ads_campaign_build_resources where build_id = v_build.id;
+  select count(*) into v_qa_count from public.ads_campaign_qa_results where attempt_id = v_attempt.id;
   begin
     perform public.ads_finalize_campaign_gate_claim(
       v_attempt.id, v_attempt.claim_token, 'failed', '{"failure":true}',
       '00000000-0000-0000-0000-000000000061', null, null
     );
   exception when sqlstate '55000' then
-    null;
+    v_exact_error := sqlerrm = 'Campaign build is not in the active state for this gate attempt';
   end;
-  return (select status = v_attempt.status and released_at is not distinct from v_attempt.released_at
-          from public.ads_campaign_gate_attempts where id = v_attempt.id)
-    and (select status = v_build.status and lock_version = v_build.lock_version
-         from public.ads_campaign_builds where id = v_build.id)
+  return v_exact_error
+    and (select to_jsonb(attempt) = to_jsonb(v_attempt)
+         from public.ads_campaign_gate_attempts as attempt where attempt.id = v_attempt.id)
+    and (select to_jsonb(build) = to_jsonb(v_build)
+         from public.ads_campaign_builds as build where build.id = v_build.id)
+    and (select to_jsonb(plan) = to_jsonb(v_plan)
+         from public.ads_campaign_plans as plan where plan.id = v_plan.id)
+    and (select count(*) from public.ads_campaign_gate_attempts where build_id = v_build.id) = v_attempt_count
+    and (select count(*) from public.ads_campaign_build_resources where build_id = v_build.id) = v_resource_count
+    and (select count(*) from public.ads_campaign_qa_results where attempt_id = v_attempt.id) = v_qa_count
     and (select count(*) from public.ads_campaign_audit_events where build_id = v_build.id) = v_audit_count;
 end;
 $$;
@@ -1912,10 +2207,13 @@ language plpgsql
 as $$
 declare
   v_attempt public.ads_campaign_gate_attempts%rowtype;
+  v_audit_count bigint;
 begin
   select attempt.* into strict v_attempt
   from public.ads_campaign_gate_attempts as attempt
   where request_idempotency_key = 'ambiguity-audit-active';
+  select count(*) into v_audit_count
+  from public.ads_campaign_audit_events where build_id = v_attempt.build_id;
   perform public.ads_record_campaign_resource_outcome(
     v_attempt.id, v_attempt.claim_token, 'campaign', 'unknown', null, null,
     '{"request_sent":true}', '{"timeout":true}'
@@ -1924,6 +2222,7 @@ begin
           from public.ads_campaign_gate_attempts where id = v_attempt.id)
     and (select status = 'reconciliation_required'
          from public.ads_campaign_builds where id = v_attempt.build_id)
+    and (select count(*) from public.ads_campaign_audit_events where build_id = v_attempt.build_id) = v_audit_count + 1
     and (
       select count(*) = 1
         and bool_and(audit.actor_id = v_attempt.actor_id)
@@ -2114,6 +2413,898 @@ select ok(
   'newer decisive negative resource evidence defeats an earlier required match'
 );
 
+-- Review-fix regressions: intent-scoped recovery, subset reconciliation, and
+-- retry proof that is newer than each resource's latest mutation.
+select pg_temp.make_claim_hardening_build(fixture, 'google', plan_status, build_status)
+from (values
+  ('intent-scope', 'launch_in_progress', 'gate_1_in_progress'),
+  ('intent-type-scope', 'launch_in_progress', 'gate_1_in_progress'),
+  ('subset-reconciliation', 'approved', 'pending_gate_1'),
+  ('stale-missing-proof', 'approved', 'pending_gate_1')
+) as fixtures(fixture, plan_status, build_status);
+
+insert into public.ads_campaign_build_resources (build_id, logical_resource_key, resource_type)
+select build.id, resource.logical_resource_key, resource.resource_type
+from public.ads_campaign_builds as build
+join public.ads_campaign_plans as plan on plan.id = build.plan_id
+cross join (values ('campaign-a', 'campaign'), ('ad-group:b', 'ad_group'))
+  as resource(logical_resource_key, resource_type)
+where plan.created_by_name in ('intent-scope', 'intent-type-scope');
+
+insert into public.ads_campaign_gate_attempts (
+  build_id, gate, action, request_idempotency_key, retry_parent_attempt_id,
+  attempt_number, revision_id, revision_hash, status, intent,
+  claim_expires_at, actor_id, actor_name
+)
+select build.id, 1, 'retry', 'intent-scope-b-only', null, 1,
+  build.revision_id, build.revision_hash, 'claimed',
+  '{"resources":[{"logical_resource_key":"ad-group:b","resource_type":"ad_group"}]}'::jsonb,
+  clock_timestamp() + interval '5 minutes',
+  '00000000-0000-0000-0000-000000000061', 'Launch Operator'
+from public.ads_campaign_builds as build
+join public.ads_campaign_plans as plan on plan.id = build.plan_id
+where plan.created_by_name = 'intent-scope';
+
+insert into public.ads_campaign_gate_attempts (
+  build_id, gate, action, request_idempotency_key, retry_parent_attempt_id,
+  attempt_number, revision_id, revision_hash, status, intent,
+  claim_expires_at, actor_id, actor_name
+)
+select build.id, 1, 'retry', 'intent-scope-a-wrong-type', null, 1,
+  build.revision_id, build.revision_hash, 'claimed',
+  '{"resources":[{"logical_resource_key":"campaign-a","resource_type":"ad_group"}]}'::jsonb,
+  clock_timestamp() + interval '5 minutes',
+  '00000000-0000-0000-0000-000000000061', 'Launch Operator'
+from public.ads_campaign_builds as build
+join public.ads_campaign_plans as plan on plan.id = build.plan_id
+where plan.created_by_name = 'intent-type-scope';
+
+create function pg_temp.out_of_intent_write_is_rejected(p_kind text)
+returns boolean
+language plpgsql
+as $$
+declare
+  v_attempt public.ads_campaign_gate_attempts%rowtype;
+  v_build public.ads_campaign_builds%rowtype;
+  v_plan public.ads_campaign_plans%rowtype;
+  v_resource public.ads_campaign_build_resources%rowtype;
+  v_attempt_count bigint;
+  v_resource_count bigint;
+  v_qa_count bigint;
+  v_audit_count bigint;
+  v_exact_error boolean := false;
+begin
+  select * into strict v_attempt from public.ads_campaign_gate_attempts
+  where request_idempotency_key = case
+    when p_kind in ('receipt-type', 'qa-type') then 'intent-scope-a-wrong-type'
+    else 'intent-scope-b-only'
+  end;
+  select * into strict v_build from public.ads_campaign_builds where id = v_attempt.build_id;
+  select * into strict v_plan from public.ads_campaign_plans where id = v_build.plan_id;
+  select * into strict v_resource from public.ads_campaign_build_resources
+  where build_id = v_build.id and logical_resource_key = 'campaign-a';
+  select count(*) into v_attempt_count from public.ads_campaign_gate_attempts where build_id = v_build.id;
+  select count(*) into v_resource_count from public.ads_campaign_build_resources where build_id = v_build.id;
+  select count(*) into v_qa_count from public.ads_campaign_qa_results where attempt_id = v_attempt.id;
+  select count(*) into v_audit_count from public.ads_campaign_audit_events where build_id = v_build.id;
+
+  begin
+    if p_kind in ('receipt', 'receipt-type') then
+      perform public.ads_record_campaign_resource_outcome(
+        v_attempt.id, v_attempt.claim_token, v_resource.logical_resource_key,
+        'succeeded', 'out-of-intent-provider-id', null, '{"status":"PAUSED"}', null
+      );
+    elsif p_kind in ('qa', 'qa-type') then
+      perform public.ads_append_campaign_qa_result(
+        v_attempt.id, v_attempt.claim_token, v_resource.id,
+        'gate_1', 'campaign.status', true, '"PAUSED"', '"PAUSED"',
+        'match', null, null, '{"status":"PAUSED"}'
+      );
+    else
+      raise exception 'unexpected intent-scope test kind' using errcode = 'P0001';
+    end if;
+    raise exception 'out-of-intent write unexpectedly succeeded' using errcode = 'P0001';
+  exception
+    when sqlstate '22023' then
+      v_exact_error := sqlerrm = case p_kind
+        when 'receipt' then 'Logical resource is outside the gate attempt intent'
+        when 'receipt-type' then 'Logical resource is outside the gate attempt intent'
+        else 'QA resource is outside the gate attempt intent'
+      end;
+    when sqlstate 'P0001' then
+      v_exact_error := false;
+  end;
+
+  return v_exact_error
+    and (select to_jsonb(attempt) = to_jsonb(v_attempt)
+         from public.ads_campaign_gate_attempts as attempt where attempt.id = v_attempt.id)
+    and (select to_jsonb(build) = to_jsonb(v_build)
+         from public.ads_campaign_builds as build where build.id = v_build.id)
+    and (select to_jsonb(plan) = to_jsonb(v_plan)
+         from public.ads_campaign_plans as plan where plan.id = v_plan.id)
+    and (select to_jsonb(resource) = to_jsonb(v_resource)
+         from public.ads_campaign_build_resources as resource where resource.id = v_resource.id)
+    and (select count(*) from public.ads_campaign_gate_attempts where build_id = v_build.id) = v_attempt_count
+    and (select count(*) from public.ads_campaign_build_resources where build_id = v_build.id) = v_resource_count
+    and (select count(*) from public.ads_campaign_qa_results where attempt_id = v_attempt.id) = v_qa_count
+    and (select count(*) from public.ads_campaign_audit_events where build_id = v_build.id) = v_audit_count;
+end;
+$$;
+
+select ok(
+  pg_temp.out_of_intent_write_is_rejected('receipt'),
+  'a B-only Gate 1 attempt rejects an A resource receipt with no side effects'
+);
+select ok(
+  pg_temp.out_of_intent_write_is_rejected('qa'),
+  'a B-only Gate 1 attempt rejects A-bound QA with no side effects'
+);
+select ok(
+  pg_temp.out_of_intent_write_is_rejected('receipt-type'),
+  'a Gate 1 receipt rejects a matching key whose persisted resource type is outside the attempt intent'
+);
+select ok(
+  pg_temp.out_of_intent_write_is_rejected('qa-type'),
+  'Gate 1 QA rejects a matching key whose persisted resource type is outside the attempt intent'
+);
+
+create function pg_temp.subset_reconciliation_recovers_without_wedge()
+returns boolean
+language plpgsql
+as $$
+declare
+  v_build public.ads_campaign_builds%rowtype;
+  v_create public.ads_campaign_gate_attempts%rowtype;
+  v_reconcile_all public.ads_campaign_gate_attempts%rowtype;
+  v_retry_b public.ads_campaign_gate_attempts%rowtype;
+  v_reconcile_b public.ads_campaign_gate_attempts%rowtype;
+  v_retry_after public.ads_campaign_gate_attempts%rowtype;
+  v_resource_a public.ads_campaign_build_resources%rowtype;
+  v_resource_b public.ads_campaign_build_resources%rowtype;
+begin
+  select build.* into strict v_build
+  from public.ads_campaign_builds as build
+  join public.ads_campaign_plans as plan on plan.id = build.plan_id
+  where plan.created_by_name = 'subset-reconciliation';
+  select * into strict v_create from public.ads_acquire_campaign_gate_claim(
+    v_build.id, 1::smallint, 'create', 'subset-create',
+    v_build.revision_id, v_build.revision_hash, 300,
+    '{"resources":[{"logical_resource_key":"campaign:a","resource_type":"campaign"},{"logical_resource_key":"ad-group:b","resource_type":"ad_group"}]}'::jsonb,
+    '00000000-0000-0000-0000-000000000061', null, null
+  );
+  perform public.ads_record_campaign_resource_outcome(
+    v_create.id, v_create.claim_token, 'campaign:a', 'succeeded',
+    'subset-campaign-a', null, '{"status":"PAUSED"}', null
+  );
+  perform public.ads_record_campaign_resource_outcome(
+    v_create.id, v_create.claim_token, 'ad-group:b', 'ambiguous',
+    null, null, '{"request_sent":true}', '{"timeout":true}'
+  );
+  select * into strict v_resource_a from public.ads_campaign_build_resources
+  where build_id = v_build.id and logical_resource_key = 'campaign:a';
+  select * into strict v_resource_b from public.ads_campaign_build_resources
+  where build_id = v_build.id and logical_resource_key = 'ad-group:b';
+
+  select * into strict v_reconcile_all from public.ads_acquire_campaign_gate_claim(
+    v_build.id, 1::smallint, 'reconcile', 'subset-reconcile-all',
+    v_build.revision_id, v_build.revision_hash, 300,
+    '{"resources":[{"logical_resource_key":"campaign:a","resource_type":"campaign"},{"logical_resource_key":"ad-group:b","resource_type":"ad_group"}]}'::jsonb,
+    '00000000-0000-0000-0000-000000000061', null, null
+  );
+  perform public.ads_append_campaign_qa_result(
+    v_reconcile_all.id, v_reconcile_all.claim_token, v_resource_a.id,
+    'reconciliation', 'provider.exists', true, 'true', 'true', 'match',
+    null, null, '{"found":true,"provider_id":"subset-campaign-a"}'
+  );
+  perform public.ads_append_campaign_qa_result(
+    v_reconcile_all.id, v_reconcile_all.claim_token, v_resource_b.id,
+    'reconciliation', 'provider.exists', true, 'false', 'false', 'missing',
+    'PROVEN_MISSING', null, '{"found":false}'
+  );
+  perform public.ads_finalize_campaign_gate_claim(
+    v_reconcile_all.id, v_reconcile_all.claim_token, 'succeeded',
+    '{"campaign:a":"found","ad-group:b":"missing"}',
+    '00000000-0000-0000-0000-000000000061', null, null
+  );
+
+  select * into strict v_retry_b from public.ads_acquire_campaign_retry_claim(
+    v_build.id, v_create.id, 'subset-retry-b', v_build.revision_hash, 300,
+    '{"resources":[{"logical_resource_key":"ad-group:b","resource_type":"ad_group"}]}'::jsonb,
+    '00000000-0000-0000-0000-000000000061', null, null
+  );
+  perform public.ads_record_campaign_resource_outcome(
+    v_retry_b.id, v_retry_b.claim_token, 'ad-group:b', 'ambiguous',
+    null, null, '{"request_sent":true}', '{"timeout":true}'
+  );
+
+  select * into strict v_reconcile_b from public.ads_acquire_campaign_gate_claim(
+    v_build.id, 1::smallint, 'reconcile', 'subset-reconcile-b',
+    v_build.revision_id, v_build.revision_hash, 300,
+    '{"resources":[{"logical_resource_key":"ad-group:b","resource_type":"ad_group"}]}'::jsonb,
+    '00000000-0000-0000-0000-000000000061', null, null
+  );
+  perform public.ads_append_campaign_qa_result(
+    v_reconcile_b.id, v_reconcile_b.claim_token, v_resource_b.id,
+    'reconciliation', 'provider.exists', true, 'false', 'false', 'missing',
+    'PROVEN_MISSING', null, '{"found":false}'
+  );
+  perform public.ads_finalize_campaign_gate_claim(
+    v_reconcile_b.id, v_reconcile_b.claim_token, 'succeeded',
+    '{"ad-group:b":"missing"}',
+    '00000000-0000-0000-0000-000000000061', null, null
+  );
+  if (select status from public.ads_campaign_builds where id = v_build.id) <> 'gate_1_failed' then
+    return false;
+  end if;
+  select * into strict v_retry_after from public.ads_acquire_campaign_retry_claim(
+    v_build.id, v_retry_b.id, 'subset-retry-b-after-readback',
+    v_build.revision_hash, 300,
+    '{"resources":[{"logical_resource_key":"ad-group:b","resource_type":"ad_group"}]}'::jsonb,
+    '00000000-0000-0000-0000-000000000061', null, null
+  );
+  return v_retry_after.retry_parent_attempt_id = v_retry_b.id
+    and v_retry_after.status = 'claimed'
+    and (select status = 'gate_1_in_progress' from public.ads_campaign_builds where id = v_build.id);
+exception when others then
+  return false;
+end;
+$$;
+
+select ok(
+  pg_temp.subset_reconciliation_recovers_without_wedge(),
+  'a B-only reconciliation resolves its subset to gate_1_failed and authorizes only the causal B retry'
+);
+
+create function pg_temp.stale_missing_proof_cannot_cross_a_later_mutation()
+returns boolean
+language plpgsql
+as $$
+declare
+  v_build public.ads_campaign_builds%rowtype;
+  v_create public.ads_campaign_gate_attempts%rowtype;
+  v_reconcile_one public.ads_campaign_gate_attempts%rowtype;
+  v_retry_one public.ads_campaign_gate_attempts%rowtype;
+  v_reconcile_two public.ads_campaign_gate_attempts%rowtype;
+  v_retry_two public.ads_campaign_gate_attempts%rowtype;
+  v_resource public.ads_campaign_build_resources%rowtype;
+  v_stale_rejected boolean := false;
+begin
+  select build.* into strict v_build
+  from public.ads_campaign_builds as build
+  join public.ads_campaign_plans as plan on plan.id = build.plan_id
+  where plan.created_by_name = 'stale-missing-proof';
+  select * into strict v_create from public.ads_acquire_campaign_gate_claim(
+    v_build.id, 1::smallint, 'create', 'stale-proof-create',
+    v_build.revision_id, v_build.revision_hash, 300,
+    '{"resources":[{"logical_resource_key":"campaign","resource_type":"campaign"}]}'::jsonb,
+    '00000000-0000-0000-0000-000000000061', null, null
+  );
+  perform public.ads_record_campaign_resource_outcome(
+    v_create.id, v_create.claim_token, 'campaign', 'ambiguous',
+    null, null, '{"request_sent":true}', '{"timeout":true}'
+  );
+  select * into strict v_resource from public.ads_campaign_build_resources
+  where build_id = v_build.id and logical_resource_key = 'campaign';
+  select * into strict v_reconcile_one from public.ads_acquire_campaign_gate_claim(
+    v_build.id, 1::smallint, 'reconcile', 'stale-proof-reconcile-one',
+    v_build.revision_id, v_build.revision_hash, 300,
+    '{"resources":[{"logical_resource_key":"campaign","resource_type":"campaign"}]}'::jsonb,
+    '00000000-0000-0000-0000-000000000061', null, null
+  );
+  perform public.ads_append_campaign_qa_result(
+    v_reconcile_one.id, v_reconcile_one.claim_token, v_resource.id,
+    'reconciliation', 'provider.exists', true, 'false', 'false', 'missing',
+    'PROVEN_MISSING', null, '{"found":false}'
+  );
+  perform public.ads_finalize_campaign_gate_claim(
+    v_reconcile_one.id, v_reconcile_one.claim_token, 'succeeded', '{"campaign":"missing"}',
+    '00000000-0000-0000-0000-000000000061', null, null
+  );
+  select * into strict v_retry_one from public.ads_acquire_campaign_retry_claim(
+    v_build.id, v_create.id, 'stale-proof-retry-one', v_build.revision_hash, 300,
+    '{"resources":[{"logical_resource_key":"campaign","resource_type":"campaign"}]}'::jsonb,
+    '00000000-0000-0000-0000-000000000061', null, null
+  );
+  perform public.ads_finalize_campaign_gate_claim(
+    v_retry_one.id, v_retry_one.claim_token, 'failed', '{"provider_error":true}',
+    '00000000-0000-0000-0000-000000000061', null, null
+  );
+
+  begin
+    perform public.ads_acquire_campaign_retry_claim(
+      v_build.id, v_create.id, 'stale-proof-illegal-reuse', v_build.revision_hash, 300,
+      '{"resources":[{"logical_resource_key":"campaign","resource_type":"campaign"}]}'::jsonb,
+      '00000000-0000-0000-0000-000000000061', null, null
+    );
+    raise exception 'stale proof unexpectedly authorized retry' using errcode = 'P0001';
+  exception
+    when sqlstate '55000' then
+      v_stale_rejected := sqlerrm = 'Retry parent must be the latest mutation for every selected resource';
+    when sqlstate 'P0001' then
+      v_stale_rejected := false;
+  end;
+
+  select * into strict v_reconcile_two from public.ads_acquire_campaign_gate_claim(
+    v_build.id, 1::smallint, 'reconcile', 'stale-proof-reconcile-two',
+    v_build.revision_id, v_build.revision_hash, 300,
+    '{"resources":[{"logical_resource_key":"campaign","resource_type":"campaign"}]}'::jsonb,
+    '00000000-0000-0000-0000-000000000061', null, null
+  );
+  perform public.ads_append_campaign_qa_result(
+    v_reconcile_two.id, v_reconcile_two.claim_token, v_resource.id,
+    'reconciliation', 'provider.exists', true, 'false', 'false', 'missing',
+    'PROVEN_MISSING', null, '{"found":false,"after_retry":true}'
+  );
+  perform public.ads_finalize_campaign_gate_claim(
+    v_reconcile_two.id, v_reconcile_two.claim_token, 'succeeded',
+    '{"campaign":"missing_after_retry"}',
+    '00000000-0000-0000-0000-000000000061', null, null
+  );
+  select * into strict v_retry_two from public.ads_acquire_campaign_retry_claim(
+    v_build.id, v_retry_one.id, 'stale-proof-retry-two', v_build.revision_hash, 300,
+    '{"resources":[{"logical_resource_key":"campaign","resource_type":"campaign"}]}'::jsonb,
+    '00000000-0000-0000-0000-000000000061', null, null
+  );
+  return v_stale_rejected
+    and v_retry_two.retry_parent_attempt_id = v_retry_one.id
+    and v_retry_two.status = 'claimed';
+exception when others then
+  return false;
+end;
+$$;
+
+select ok(
+  pg_temp.stale_missing_proof_cannot_cross_a_later_mutation(),
+  'old create proof cannot authorize retry after a later mutation; only newer post-mutation missing proof can'
+);
+
+-- Decisive Gate 1 QA is per required field after the resource's latest
+-- mutation. Unrelated later fields cannot hide a negative.
+select pg_temp.make_claim_hardening_build(fixture, 'google', 'launch_in_progress', 'gate_1_in_progress')
+from (values
+  ('field-negative-hidden'),
+  ('field-negative-superseded'),
+  ('evidence-failed-positive'),
+  ('evidence-pre-mutation'),
+  ('evidence-optional-only'),
+  ('evidence-null-resource'),
+  ('evidence-out-of-intent')
+) as fixtures(fixture);
+
+create function pg_temp.per_field_readiness_is_decisive(p_fixture text, p_supersede_budget boolean)
+returns boolean
+language plpgsql
+as $$
+declare
+  v_build public.ads_campaign_builds%rowtype;
+  v_attempt public.ads_campaign_gate_attempts%rowtype;
+  v_resource public.ads_campaign_build_resources%rowtype;
+begin
+  select build.* into strict v_build
+  from public.ads_campaign_builds as build
+  join public.ads_campaign_plans as plan on plan.id = build.plan_id
+  where plan.created_by_name = p_fixture;
+  insert into public.ads_campaign_build_resources (
+    build_id, logical_resource_key, resource_type, provider_resource_id
+  ) values (v_build.id, 'campaign', 'campaign', p_fixture || '-campaign')
+  returning * into v_resource;
+  insert into public.ads_campaign_gate_attempts (
+    build_id, gate, action, request_idempotency_key, attempt_number,
+    revision_id, revision_hash, status, intent, claim_expires_at,
+    actor_id, actor_name
+  ) values (
+    v_build.id, 1, 'create', p_fixture || '-attempt', 1,
+    v_build.revision_id, v_build.revision_hash, 'claimed',
+    '{"resources":[{"logical_resource_key":"campaign","resource_type":"campaign"}]}'::jsonb,
+    clock_timestamp() + interval '5 minutes',
+    '00000000-0000-0000-0000-000000000061', 'Launch Operator'
+  ) returning * into v_attempt;
+  perform public.ads_append_campaign_qa_result(
+    v_attempt.id, v_attempt.claim_token, v_resource.id,
+    'gate_1', 'campaign.budget', true, '100', '120', 'mismatch',
+    'BUDGET_MISMATCH', null, '{"budget":120}'
+  );
+  perform public.ads_append_campaign_qa_result(
+    v_attempt.id, v_attempt.claim_token, v_resource.id,
+    'gate_1', 'campaign.status', true, '"PAUSED"', '"PAUSED"', 'match',
+    null, null, '{"status":"PAUSED"}'
+  );
+  if p_supersede_budget then
+    perform public.ads_append_campaign_qa_result(
+      v_attempt.id, v_attempt.claim_token, v_resource.id,
+      'gate_1', 'campaign.budget', true, '100', '100', 'match',
+      null, null, '{"budget":100}'
+    );
+  end if;
+  perform public.ads_finalize_campaign_gate_claim(
+    v_attempt.id, v_attempt.claim_token, 'succeeded', '{"status":"PAUSED","budget":100}',
+    '00000000-0000-0000-0000-000000000061', null, null
+  );
+  if p_supersede_budget then
+    return (select status = 'ready_to_deliver' from public.ads_campaign_builds where id = v_build.id)
+      and (select status = 'succeeded' from public.ads_campaign_gate_attempts where id = v_attempt.id);
+  end if;
+  return (select status = 'qa_failed' from public.ads_campaign_builds where id = v_build.id)
+    and (select status = 'failed' from public.ads_campaign_gate_attempts where id = v_attempt.id);
+exception when others then
+  return false;
+end;
+$$;
+
+select ok(
+  pg_temp.per_field_readiness_is_decisive('field-negative-hidden', false),
+  'a later status match cannot conceal an unresolved required budget mismatch'
+);
+select ok(
+  pg_temp.per_field_readiness_is_decisive('field-negative-superseded', true),
+  'a later required budget match supersedes only the prior budget result while status remains independently matched'
+);
+
+create function pg_temp.non_authoritative_positive_cannot_ready(p_fixture text, p_kind text)
+returns boolean
+language plpgsql
+as $$
+declare
+  v_build public.ads_campaign_builds%rowtype;
+  v_attempt public.ads_campaign_gate_attempts%rowtype;
+  v_evidence_attempt public.ads_campaign_gate_attempts%rowtype;
+  v_resource public.ads_campaign_build_resources%rowtype;
+  v_mutation_number integer := case when p_kind = 'pre-mutation' then 2 else 1 end;
+begin
+  select build.* into strict v_build
+  from public.ads_campaign_builds as build
+  join public.ads_campaign_plans as plan on plan.id = build.plan_id
+  where plan.created_by_name = p_fixture;
+  insert into public.ads_campaign_build_resources (
+    build_id, logical_resource_key, resource_type, provider_resource_id
+  ) values (v_build.id, 'campaign', 'campaign', p_fixture || '-campaign')
+  returning * into v_resource;
+
+  if p_kind = 'pre-mutation' then
+    insert into public.ads_campaign_gate_attempts (
+      build_id, gate, action, request_idempotency_key, attempt_number,
+      revision_id, revision_hash, status, intent, claim_expires_at, released_at,
+      actor_id, actor_name
+    ) values (
+      v_build.id, 1, 'reconcile', p_fixture || '-evidence', 1,
+      v_build.revision_id, v_build.revision_hash, 'succeeded',
+      '{"resources":[{"logical_resource_key":"campaign","resource_type":"campaign"}]}'::jsonb,
+      clock_timestamp() + interval '1 minute', clock_timestamp(),
+      '00000000-0000-0000-0000-000000000061', 'Launch Operator'
+    ) returning * into v_evidence_attempt;
+  end if;
+
+  insert into public.ads_campaign_gate_attempts (
+    build_id, gate, action, request_idempotency_key, attempt_number,
+    revision_id, revision_hash, status, intent, claim_expires_at,
+    actor_id, actor_name
+  ) values (
+    v_build.id, 1, 'create', p_fixture || '-mutation', v_mutation_number,
+    v_build.revision_id, v_build.revision_hash, 'claimed',
+    '{"resources":[{"logical_resource_key":"campaign","resource_type":"campaign"}]}'::jsonb,
+    clock_timestamp() + interval '5 minutes',
+    '00000000-0000-0000-0000-000000000061', 'Launch Operator'
+  ) returning * into v_attempt;
+
+  if p_kind = 'failed-attempt' then
+    insert into public.ads_campaign_gate_attempts (
+      build_id, gate, action, request_idempotency_key, attempt_number,
+      revision_id, revision_hash, status, intent, claim_expires_at, released_at,
+      actor_id, actor_name
+    ) values (
+      v_build.id, 1, 'reconcile', p_fixture || '-evidence', 2,
+      v_build.revision_id, v_build.revision_hash, 'failed',
+      '{"resources":[{"logical_resource_key":"campaign","resource_type":"campaign"}]}'::jsonb,
+      clock_timestamp() + interval '1 minute', clock_timestamp(),
+      '00000000-0000-0000-0000-000000000061', 'Launch Operator'
+    ) returning * into v_evidence_attempt;
+  end if;
+
+  if p_kind in ('failed-attempt', 'pre-mutation') then
+    insert into public.ads_campaign_qa_results (
+      attempt_id, build_resource_id, phase, field_path, required,
+      expected_value, observed_value, result, readback_evidence
+    ) values (
+      v_evidence_attempt.id, v_resource.id, 'reconciliation', 'campaign.status', true,
+      '"PAUSED"', '"PAUSED"', 'match', '{"status":"PAUSED"}'
+    );
+  elsif p_kind = 'optional-only' then
+    perform public.ads_append_campaign_qa_result(
+      v_attempt.id, v_attempt.claim_token, v_resource.id,
+      'gate_1', 'campaign.status', false, '"PAUSED"', '"PAUSED"', 'match',
+      null, null, '{"status":"PAUSED"}'
+    );
+  elsif p_kind = 'null-resource' then
+    perform public.ads_append_campaign_qa_result(
+      v_attempt.id, v_attempt.claim_token, null,
+      'gate_1', 'campaign.status', true, '"PAUSED"', '"PAUSED"', 'match',
+      null, null, '{"status":"PAUSED"}'
+    );
+  else
+    raise exception 'unexpected non-authoritative evidence kind' using errcode = 'P0001';
+  end if;
+
+  perform public.ads_finalize_campaign_gate_claim(
+    v_attempt.id, v_attempt.claim_token, 'succeeded', '{"status":"PAUSED"}',
+    '00000000-0000-0000-0000-000000000061', null, null
+  );
+  return (select status = 'qa_failed' from public.ads_campaign_builds where id = v_build.id)
+    and (select status = 'failed' from public.ads_campaign_gate_attempts where id = v_attempt.id);
+exception when others then
+  return false;
+end;
+$$;
+
+select ok(
+  pg_temp.non_authoritative_positive_cannot_ready('evidence-failed-positive', 'failed-attempt'),
+  'positive QA from a failed attempt cannot authorize readiness'
+);
+select ok(
+  pg_temp.non_authoritative_positive_cannot_ready('evidence-pre-mutation', 'pre-mutation'),
+  'positive reconciliation evidence predating the latest mutation cannot authorize readiness'
+);
+select ok(
+  pg_temp.non_authoritative_positive_cannot_ready('evidence-optional-only', 'optional-only'),
+  'optional-only QA cannot authorize readiness without a required resource field'
+);
+select ok(
+  pg_temp.non_authoritative_positive_cannot_ready('evidence-null-resource', 'null-resource'),
+  'null-resource QA cannot authorize resource readiness'
+);
+
+create function pg_temp.out_of_intent_qa_cannot_authorize_later_readiness()
+returns boolean
+language plpgsql
+as $$
+declare
+  v_build public.ads_campaign_builds%rowtype;
+  v_create public.ads_campaign_gate_attempts%rowtype;
+  v_reconcile public.ads_campaign_gate_attempts%rowtype;
+  v_retry public.ads_campaign_gate_attempts%rowtype;
+  v_campaign public.ads_campaign_build_resources%rowtype;
+  v_group public.ads_campaign_build_resources%rowtype;
+begin
+  select build.* into strict v_build
+  from public.ads_campaign_builds as build
+  join public.ads_campaign_plans as plan on plan.id = build.plan_id
+  where plan.created_by_name = 'evidence-out-of-intent';
+  insert into public.ads_campaign_build_resources (
+    build_id, logical_resource_key, resource_type, provider_resource_id
+  ) values (v_build.id, 'campaign', 'campaign', 'out-of-intent-campaign')
+  returning * into v_campaign;
+  insert into public.ads_campaign_build_resources (
+    build_id, logical_resource_key, resource_type
+  ) values (v_build.id, 'ad-group:b', 'ad_group')
+  returning * into v_group;
+  insert into public.ads_campaign_gate_attempts (
+    build_id, gate, action, request_idempotency_key, attempt_number,
+    revision_id, revision_hash, status, intent, claim_expires_at, released_at,
+    actor_id, actor_name
+  ) values (
+    v_build.id, 1, 'create', 'out-of-intent-create', 1,
+    v_build.revision_id, v_build.revision_hash, 'reconciliation_required',
+    '{"resources":[{"logical_resource_key":"campaign","resource_type":"campaign"},{"logical_resource_key":"ad-group:b","resource_type":"ad_group"}]}'::jsonb,
+    clock_timestamp() + interval '1 minute', clock_timestamp(),
+    '00000000-0000-0000-0000-000000000061', 'Launch Operator'
+  ) returning * into v_create;
+  insert into public.ads_campaign_gate_attempts (
+    build_id, gate, action, request_idempotency_key, attempt_number,
+    revision_id, revision_hash, status, intent, claim_expires_at,
+    actor_id, actor_name
+  ) values (
+    v_build.id, 1, 'reconcile', 'out-of-intent-reconcile-b', 2,
+    v_build.revision_id, v_build.revision_hash, 'claimed',
+    '{"resources":[{"logical_resource_key":"ad-group:b","resource_type":"ad_group"}]}'::jsonb,
+    clock_timestamp() + interval '5 minutes',
+    '00000000-0000-0000-0000-000000000061', 'Launch Operator'
+  ) returning * into v_reconcile;
+  insert into public.ads_campaign_qa_results (
+    attempt_id, build_resource_id, phase, field_path, required,
+    expected_value, observed_value, result, readback_evidence
+  ) values (
+    v_reconcile.id, v_campaign.id, 'reconciliation', 'campaign.status', true,
+    '"PAUSED"', '"PAUSED"', 'match', '{"status":"PAUSED"}'
+  );
+  perform public.ads_append_campaign_qa_result(
+    v_reconcile.id, v_reconcile.claim_token, v_group.id,
+    'reconciliation', 'provider.exists', true, 'false', 'false', 'missing',
+    'PROVEN_MISSING', null, '{"found":false}'
+  );
+  perform public.ads_finalize_campaign_gate_claim(
+    v_reconcile.id, v_reconcile.claim_token, 'succeeded', '{"ad-group:b":"missing"}',
+    '00000000-0000-0000-0000-000000000061', null, null
+  );
+  select * into strict v_retry from public.ads_acquire_campaign_retry_claim(
+    v_build.id, v_create.id, 'out-of-intent-retry-b', v_build.revision_hash, 300,
+    '{"resources":[{"logical_resource_key":"ad-group:b","resource_type":"ad_group"}]}'::jsonb,
+    '00000000-0000-0000-0000-000000000061', null, null
+  );
+  perform public.ads_record_campaign_resource_outcome(
+    v_retry.id, v_retry.claim_token, 'ad-group:b', 'succeeded',
+    'out-of-intent-group-b', null, '{"status":"PAUSED"}', null
+  );
+  perform public.ads_append_campaign_qa_result(
+    v_retry.id, v_retry.claim_token, v_group.id,
+    'gate_1', 'ad_group.status', true, '"PAUSED"', '"PAUSED"', 'match',
+    null, null, '{"status":"PAUSED"}'
+  );
+  perform public.ads_finalize_campaign_gate_claim(
+    v_retry.id, v_retry.claim_token, 'succeeded', '{"ad-group:b":"created"}',
+    '00000000-0000-0000-0000-000000000061', null, null
+  );
+  return (select status <> 'ready_to_deliver' from public.ads_campaign_builds where id = v_build.id)
+    and (select status = 'succeeded' from public.ads_campaign_gate_attempts where id = v_retry.id);
+exception when others then
+  return false;
+end;
+$$;
+
+select ok(
+  pg_temp.out_of_intent_qa_cannot_authorize_later_readiness(),
+  'resource-bound QA from an attempt whose intent omits that resource cannot authorize later full-build readiness'
+);
+
+-- Nullable immutable pointers and hashes must fail closed on every existing-build
+-- path. Each call runs inside a subtransaction so an unsafe success is rolled
+-- back before the complete build-local snapshot is compared.
+select pg_temp.make_claim_hardening_build(fixture, 'google', plan_status, build_status)
+from (values
+  ('nullable-gate', 'approved', 'pending_gate_1'),
+  ('nullable-retry', 'launch_in_progress', 'gate_1_failed'),
+  ('nullable-receipt', 'launch_in_progress', 'gate_1_in_progress'),
+  ('nullable-finalizer', 'launch_in_progress', 'gate_1_in_progress'),
+  ('nullable-handoff', 'launch_in_progress', 'verified'),
+  ('nullable-active-gate', 'approved', 'pending_gate_1'),
+  ('nullable-active-retry', 'launch_in_progress', 'gate_1_failed'),
+  ('nullable-active-receipt', 'launch_in_progress', 'gate_1_in_progress'),
+  ('nullable-active-finalizer', 'launch_in_progress', 'gate_1_in_progress'),
+  ('nullable-active-handoff', 'launch_in_progress', 'verified'),
+  ('nullable-approved-gate', 'approved', 'pending_gate_1'),
+  ('nullable-approved-retry', 'launch_in_progress', 'gate_1_failed'),
+  ('nullable-approved-receipt', 'launch_in_progress', 'gate_1_in_progress'),
+  ('nullable-approved-finalizer', 'launch_in_progress', 'gate_1_in_progress'),
+  ('nullable-approved-handoff', 'launch_in_progress', 'verified')
+) as fixtures(fixture, plan_status, build_status);
+
+select pg_temp.seed_retry_proof('nullable-retry');
+select pg_temp.seed_retry_proof('nullable-active-retry');
+select pg_temp.seed_retry_proof('nullable-approved-retry');
+
+insert into public.ads_campaign_build_resources (
+  build_id, logical_resource_key, resource_type
+)
+select build.id, 'campaign', 'campaign'
+from public.ads_campaign_builds as build
+join public.ads_campaign_plans as plan on plan.id = build.plan_id
+where plan.created_by_name like 'nullable%-receipt'
+   or plan.created_by_name like 'nullable%-finalizer';
+
+insert into public.ads_campaign_gate_attempts (
+  build_id, gate, action, request_idempotency_key, attempt_number,
+  revision_id, revision_hash, status, intent, claim_expires_at,
+  actor_id, actor_name
+)
+select build.id, 1, 'create', plan.created_by_name || '-attempt', 1,
+  build.revision_id, build.revision_hash, 'claimed',
+  '{"resources":[{"logical_resource_key":"campaign","resource_type":"campaign"}]}'::jsonb,
+  clock_timestamp() + interval '5 minutes',
+  '00000000-0000-0000-0000-000000000061', 'Launch Operator'
+from public.ads_campaign_builds as build
+join public.ads_campaign_plans as plan on plan.id = build.plan_id
+where plan.created_by_name like 'nullable%-receipt'
+   or plan.created_by_name like 'nullable%-finalizer';
+
+update public.ads_campaign_builds as build
+set verified_at = clock_timestamp(),
+    final_readback_evidence = '{"status":"ENABLED","immutable":true}'::jsonb
+from public.ads_campaign_plans as plan
+where plan.id = build.plan_id and plan.created_by_name like 'nullable%-handoff';
+set local session_replication_role = replica;
+insert into public.ads_campaign_build_resources (
+  build_id, logical_resource_key, resource_type, provider_resource_id, verified_at
+)
+select build.id, 'campaign', 'campaign', 'nullable-handoff-campaign', clock_timestamp()
+from public.ads_campaign_builds as build
+join public.ads_campaign_plans as plan on plan.id = build.plan_id
+where plan.created_by_name like 'nullable%-handoff';
+set local session_replication_role = origin;
+
+update public.ads_campaign_plans
+set approved_revision_hash = null
+where created_by_name in (
+  'nullable-gate', 'nullable-retry', 'nullable-receipt',
+  'nullable-finalizer', 'nullable-handoff'
+);
+update public.ads_campaign_plans
+set active_revision_id = null
+where created_by_name like 'nullable-active-%';
+update public.ads_campaign_plans
+set approved_revision_id = null
+where created_by_name like 'nullable-approved-%';
+
+create function pg_temp.nullable_snapshot_guard_is_side_effect_free(
+  p_fixture text,
+  p_operation text
+)
+returns boolean
+language plpgsql
+as $$
+declare
+  v_build public.ads_campaign_builds%rowtype;
+  v_plan public.ads_campaign_plans%rowtype;
+  v_attempt public.ads_campaign_gate_attempts%rowtype;
+  v_parent_id bigint;
+  v_attempts_before jsonb;
+  v_resources_before jsonb;
+  v_qa_before jsonb;
+  v_approvals_before jsonb;
+  v_audits_before jsonb;
+  v_handoffs_before jsonb;
+  v_expected_message text;
+  v_exact_error boolean := false;
+begin
+  select build.* into strict v_build
+  from public.ads_campaign_builds as build
+  join public.ads_campaign_plans as plan on plan.id = build.plan_id
+  where plan.created_by_name = p_fixture;
+  select * into strict v_plan from public.ads_campaign_plans where id = v_build.plan_id;
+  select coalesce(jsonb_agg(to_jsonb(attempt) order by attempt.id), '[]'::jsonb)
+  into v_attempts_before
+  from public.ads_campaign_gate_attempts as attempt where attempt.build_id = v_build.id;
+  select coalesce(jsonb_agg(to_jsonb(resource) order by resource.id), '[]'::jsonb)
+  into v_resources_before
+  from public.ads_campaign_build_resources as resource where resource.build_id = v_build.id;
+  select coalesce(jsonb_agg(to_jsonb(qa) order by qa.id), '[]'::jsonb)
+  into v_qa_before
+  from public.ads_campaign_qa_results as qa
+  join public.ads_campaign_gate_attempts as attempt on attempt.id = qa.attempt_id
+  where attempt.build_id = v_build.id;
+  select coalesce(jsonb_agg(to_jsonb(approval) order by approval.id), '[]'::jsonb)
+  into v_approvals_before
+  from public.ads_campaign_approvals as approval where approval.plan_id = v_plan.id;
+  select coalesce(jsonb_agg(to_jsonb(audit) order by audit.id), '[]'::jsonb)
+  into v_audits_before
+  from public.ads_campaign_audit_events as audit where audit.build_id = v_build.id;
+  select coalesce(jsonb_agg(to_jsonb(handoff) order by handoff.id), '[]'::jsonb)
+  into v_handoffs_before
+  from public.ads_campaign_monitoring_handoffs as handoff where handoff.build_id = v_build.id;
+
+  v_expected_message := case
+    when p_operation in ('gate', 'retry')
+      then 'Campaign build approval is no longer current and unexpired'
+    when p_operation in ('receipt', 'finalizer')
+      then 'Campaign build is not in the active state for this gate attempt'
+    when p_operation = 'handoff'
+      then 'Monitoring handoff requires matching immutable build, revision, and launch plan snapshots'
+    else null
+  end;
+
+  begin
+    if p_operation = 'gate' then
+      perform public.ads_acquire_campaign_gate_claim(
+        v_build.id, 1::smallint, 'create', 'nullable-gate-claim',
+        v_build.revision_id, v_build.revision_hash, 300,
+        '{"resources":[{"logical_resource_key":"campaign","resource_type":"campaign"}]}'::jsonb,
+        '00000000-0000-0000-0000-000000000061', null, null
+      );
+    elsif p_operation = 'retry' then
+      select id into strict v_parent_id from public.ads_campaign_gate_attempts
+      where request_idempotency_key = p_fixture || '-parent';
+      perform public.ads_acquire_campaign_retry_claim(
+        v_build.id, v_parent_id, 'nullable-retry-claim', v_build.revision_hash, 300,
+        '{"resources":[{"logical_resource_key":"campaign","resource_type":"campaign"}]}'::jsonb,
+        '00000000-0000-0000-0000-000000000061', null, null
+      );
+    elsif p_operation = 'receipt' then
+      select * into strict v_attempt from public.ads_campaign_gate_attempts
+      where request_idempotency_key = p_fixture || '-attempt';
+      perform public.ads_record_campaign_resource_outcome(
+        v_attempt.id, v_attempt.claim_token, 'campaign', 'succeeded',
+        'nullable-receipt-provider', null, '{"status":"PAUSED"}', null
+      );
+    elsif p_operation = 'finalizer' then
+      select * into strict v_attempt from public.ads_campaign_gate_attempts
+      where request_idempotency_key = p_fixture || '-attempt';
+      perform public.ads_finalize_campaign_gate_claim(
+        v_attempt.id, v_attempt.claim_token, 'failed', '{"provider_error":true}',
+        '00000000-0000-0000-0000-000000000061', null, null
+      );
+    elsif p_operation = 'handoff' then
+      perform public.ads_create_campaign_monitoring_handoff(
+        v_build.id, v_build.lock_version, v_build.revision_hash,
+        '00000000-0000-0000-0000-000000000061', null, null
+      );
+    else
+      raise exception 'unexpected nullable snapshot operation' using errcode = 'P0001';
+    end if;
+    raise exception 'nullable snapshot operation unexpectedly succeeded' using errcode = 'P0001';
+  exception when others then
+    v_exact_error := sqlstate = '55000' and sqlerrm = v_expected_message;
+  end;
+
+  return v_exact_error
+    and (select to_jsonb(build) = to_jsonb(v_build)
+         from public.ads_campaign_builds as build where build.id = v_build.id)
+    and (select to_jsonb(plan) = to_jsonb(v_plan)
+         from public.ads_campaign_plans as plan where plan.id = v_plan.id)
+    and (select coalesce(jsonb_agg(to_jsonb(attempt) order by attempt.id), '[]'::jsonb)
+         from public.ads_campaign_gate_attempts as attempt where attempt.build_id = v_build.id) = v_attempts_before
+    and (select coalesce(jsonb_agg(to_jsonb(resource) order by resource.id), '[]'::jsonb)
+         from public.ads_campaign_build_resources as resource where resource.build_id = v_build.id) = v_resources_before
+    and (select coalesce(jsonb_agg(to_jsonb(qa) order by qa.id), '[]'::jsonb)
+         from public.ads_campaign_qa_results as qa
+         join public.ads_campaign_gate_attempts as attempt on attempt.id = qa.attempt_id
+         where attempt.build_id = v_build.id) = v_qa_before
+    and (select coalesce(jsonb_agg(to_jsonb(approval) order by approval.id), '[]'::jsonb)
+         from public.ads_campaign_approvals as approval where approval.plan_id = v_plan.id) = v_approvals_before
+    and (select coalesce(jsonb_agg(to_jsonb(audit) order by audit.id), '[]'::jsonb)
+         from public.ads_campaign_audit_events as audit where audit.build_id = v_build.id) = v_audits_before
+    and (select coalesce(jsonb_agg(to_jsonb(handoff) order by handoff.id), '[]'::jsonb)
+         from public.ads_campaign_monitoring_handoffs as handoff where handoff.build_id = v_build.id) = v_handoffs_before;
+end;
+$$;
+
+select ok(
+  pg_temp.nullable_snapshot_guard_is_side_effect_free('nullable-gate', 'gate'),
+  'a null approved hash fails the Gate claim snapshot closed with no side effects'
+);
+select ok(
+  pg_temp.nullable_snapshot_guard_is_side_effect_free('nullable-retry', 'retry'),
+  'a null approved hash fails retry causality closed with no side effects'
+);
+select ok(
+  pg_temp.nullable_snapshot_guard_is_side_effect_free('nullable-receipt', 'receipt'),
+  'a null approved hash fails the resource receipt snapshot closed with no side effects'
+);
+select ok(
+  pg_temp.nullable_snapshot_guard_is_side_effect_free('nullable-finalizer', 'finalizer'),
+  'a null approved hash fails the finalizer snapshot closed with no side effects'
+);
+select ok(
+  pg_temp.nullable_snapshot_guard_is_side_effect_free('nullable-handoff', 'handoff'),
+  'a null approved hash fails the handoff snapshot closed with no side effects'
+);
+select ok(
+  pg_temp.nullable_snapshot_guard_is_side_effect_free('nullable-active-gate', 'gate'),
+  'a null active revision fails the Gate claim snapshot closed with no side effects'
+);
+select ok(
+  pg_temp.nullable_snapshot_guard_is_side_effect_free('nullable-active-retry', 'retry'),
+  'a null active revision fails retry causality closed with no side effects'
+);
+select ok(
+  pg_temp.nullable_snapshot_guard_is_side_effect_free('nullable-active-receipt', 'receipt'),
+  'a null active revision fails the resource receipt snapshot closed with no side effects'
+);
+select ok(
+  pg_temp.nullable_snapshot_guard_is_side_effect_free('nullable-active-finalizer', 'finalizer'),
+  'a null active revision fails the finalizer snapshot closed with no side effects'
+);
+select ok(
+  pg_temp.nullable_snapshot_guard_is_side_effect_free('nullable-active-handoff', 'handoff'),
+  'a null active revision fails the handoff snapshot closed with no side effects'
+);
+select ok(
+  pg_temp.nullable_snapshot_guard_is_side_effect_free('nullable-approved-gate', 'gate'),
+  'a null approved revision fails the Gate claim snapshot closed with no side effects'
+);
+select ok(
+  pg_temp.nullable_snapshot_guard_is_side_effect_free('nullable-approved-retry', 'retry'),
+  'a null approved revision fails retry causality closed with no side effects'
+);
+select ok(
+  pg_temp.nullable_snapshot_guard_is_side_effect_free('nullable-approved-receipt', 'receipt'),
+  'a null approved revision fails the resource receipt snapshot closed with no side effects'
+);
+select ok(
+  pg_temp.nullable_snapshot_guard_is_side_effect_free('nullable-approved-finalizer', 'finalizer'),
+  'a null approved revision fails the finalizer snapshot closed with no side effects'
+);
+select ok(
+  pg_temp.nullable_snapshot_guard_is_side_effect_free('nullable-approved-handoff', 'handoff'),
+  'a null approved revision fails the handoff snapshot closed with no side effects'
+);
+
 update public.ads_campaign_builds as build
 set verified_at = clock_timestamp(),
     final_readback_evidence = '{"status":"ENABLED","immutable":true}'::jsonb
@@ -2187,6 +3378,13 @@ as $$
 declare
   v_build public.ads_campaign_builds%rowtype;
   v_plan public.ads_campaign_plans%rowtype;
+  v_build_count bigint;
+  v_attempt_count bigint;
+  v_resource_count bigint;
+  v_qa_count bigint;
+  v_audit_count bigint;
+  v_handoff_count bigint;
+  v_exact_error boolean := false;
 begin
   select build.* into strict v_build
   from public.ads_campaign_builds as build
@@ -2194,21 +3392,41 @@ begin
   where plan.created_by_name = p_fixture;
   select plan.* into strict v_plan
   from public.ads_campaign_plans as plan where plan.id = v_build.plan_id;
+  select count(*) into v_build_count
+  from public.ads_campaign_builds where plan_id = v_plan.id;
+  select count(*) into v_attempt_count
+  from public.ads_campaign_gate_attempts where build_id = v_build.id;
+  select count(*) into v_resource_count
+  from public.ads_campaign_build_resources where build_id = v_build.id;
+  select count(*) into v_qa_count
+  from public.ads_campaign_qa_results as qa
+  join public.ads_campaign_gate_attempts as attempt on attempt.id = qa.attempt_id
+  where attempt.build_id = v_build.id;
+  select count(*) into v_audit_count
+  from public.ads_campaign_audit_events where build_id = v_build.id;
+  select count(*) into v_handoff_count
+  from public.ads_campaign_monitoring_handoffs where build_id = v_build.id;
   begin
     perform public.ads_create_campaign_monitoring_handoff(
       v_build.id, v_build.lock_version, v_build.revision_hash,
       '00000000-0000-0000-0000-000000000061', null, null
     );
   exception when sqlstate '55000' then
-    null;
+    v_exact_error := sqlerrm = 'Monitoring handoff requires matching immutable build, revision, and launch plan snapshots';
   end;
-  return not exists (
-      select 1 from public.ads_campaign_monitoring_handoffs where build_id = v_build.id
-    )
-    and (select status = v_build.status and lock_version = v_build.lock_version
-         from public.ads_campaign_builds where id = v_build.id)
-    and (select status = v_plan.status and lock_version = v_plan.lock_version
-         from public.ads_campaign_plans where id = v_plan.id);
+  return v_exact_error
+    and (select count(*) from public.ads_campaign_builds where plan_id = v_plan.id) = v_build_count
+    and (select count(*) from public.ads_campaign_gate_attempts where build_id = v_build.id) = v_attempt_count
+    and (select count(*) from public.ads_campaign_build_resources where build_id = v_build.id) = v_resource_count
+    and (select count(*) from public.ads_campaign_qa_results as qa
+         join public.ads_campaign_gate_attempts as attempt on attempt.id = qa.attempt_id
+         where attempt.build_id = v_build.id) = v_qa_count
+    and (select count(*) from public.ads_campaign_monitoring_handoffs where build_id = v_build.id) = v_handoff_count
+    and (select count(*) from public.ads_campaign_audit_events where build_id = v_build.id) = v_audit_count
+    and (select to_jsonb(build) = to_jsonb(v_build)
+         from public.ads_campaign_builds as build where build.id = v_build.id)
+    and (select to_jsonb(plan) = to_jsonb(v_plan)
+         from public.ads_campaign_plans as plan where plan.id = v_plan.id);
 end;
 $$;
 select ok(

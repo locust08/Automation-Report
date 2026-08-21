@@ -1,0 +1,262 @@
+\set ON_ERROR_STOP on
+
+truncate table
+  public.ads_campaign_monitoring_handoffs,
+  public.ads_campaign_qa_results,
+  public.ads_campaign_gate_attempts,
+  public.ads_campaign_build_resources,
+  public.ads_campaign_builds,
+  public.ads_campaign_approvals,
+  public.ads_campaign_audit_events,
+  public.ads_campaign_plan_revisions,
+  public.ads_campaign_plans,
+  public.ads_budget_packages,
+  public.ads_ad_accounts
+restart identity cascade;
+
+drop table if exists public.m04_approval_parallel_results;
+drop table if exists public.m04_probe_control;
+drop table if exists public.m04_stress_release;
+drop table if exists public.m04_stress_results;
+
+create unlogged table public.m04_approval_parallel_results (
+  case_name text not null,
+  session_role text not null,
+  sqlstate text not null,
+  error_message text,
+  build_id bigint,
+  primary key (case_name, session_role)
+);
+
+create unlogged table public.m04_probe_control (
+  case_name text primary key,
+  probe_now boolean not null default false
+);
+
+create unlogged table public.m04_stress_release (
+  case_name text primary key,
+  released boolean not null default false
+);
+
+create unlogged table public.m04_stress_results (
+  case_name text not null,
+  session_role text not null check (session_role in ('claim', 'transition')),
+  sqlstate text not null,
+  error_message text,
+  result_id bigint,
+  primary key (case_name, session_role)
+);
+
+grant insert on public.m04_approval_parallel_results to service_role;
+grant insert on public.m04_stress_results to service_role;
+
+insert into public.m04_probe_control (case_name)
+values
+  ('claim'), ('retry'), ('draft'), ('cancelled'),
+  ('renewal'), ('handoff'), ('initial'), ('qa'),
+  ('same-key'), ('conflict');
+
+insert into auth.users (id, email, aud, role, email_confirmed_at)
+values
+  ('00000000-0000-0000-0000-000000000461', 'state.race@locus-t.com.my',
+   'authenticated', 'authenticated', clock_timestamp()),
+  ('00000000-0000-0000-0000-000000000463', 'state.conflict@locus-t.com.my',
+   'authenticated', 'authenticated', clock_timestamp())
+on conflict (id) do update
+set email = excluded.email,
+    aud = excluded.aud,
+    role = excluded.role,
+    email_confirmed_at = excluded.email_confirmed_at;
+
+insert into public.ad_automation_report_users (id, full_name, role, is_active)
+values
+  ('00000000-0000-0000-0000-000000000461', 'State Race Operator', 'approver', true),
+  ('00000000-0000-0000-0000-000000000463', 'State Conflict Operator', 'approver', true)
+on conflict (id) do update
+set full_name = excluded.full_name,
+    role = excluded.role,
+    is_active = excluded.is_active;
+
+insert into public.ads_ad_accounts (
+  client_id, platform, provider_account_id, account_name, currency, timezone,
+  access_status, access_evidence, access_verified_at, is_active
+) values (
+  '00000000-0000-0000-0000-000000000462', 'google',
+  'm04-state-enhanced', 'M04 State Enhanced', 'MYR', 'Asia/Kuala_Lumpur',
+  'verified', '{"source":"local-state-enhanced"}', clock_timestamp(), true
+);
+
+insert into public.ads_budget_packages (
+  client_id, package_key, package_name, currency, start_date, end_date,
+  envelope_amount, committed_amount, status
+) values (
+  '00000000-0000-0000-0000-000000000462', 'm04-state-enhanced',
+  'M04 State Enhanced', 'MYR', '2026-08-01', '2026-08-31',
+  100000, 5000, 'active'
+);
+
+with fixtures(case_name, plan_status) as (
+  values
+    ('probe-claim', 'approved'),
+    ('probe-retry', 'launch_in_progress'),
+    ('probe-draft', 'approved'),
+    ('probe-cancelled', 'approved'),
+    ('probe-renewal', 'launch_in_progress'),
+    ('probe-handoff', 'launch_in_progress'),
+    ('probe-qa', 'launch_in_progress'),
+    ('probe-initial', 'awaiting_approval'),
+    ('approval-same-key', 'awaiting_approval'),
+    ('approval-conflict', 'awaiting_approval')
+), stress_fixtures(case_name, plan_status) as (
+  select 'stress-' || variant || '-' || pg_catalog.lpad(iteration::text, 2, '0'),
+         'approved'
+  from (values ('draft'), ('cancelled')) as variants(variant)
+  cross join pg_catalog.generate_series(1, 20) as iteration
+), all_fixtures as (
+  select * from fixtures
+  union all
+  select * from stress_fixtures
+)
+insert into public.ads_campaign_plans (
+  client_id, budget_package_id, ad_account_id, platform, reserved_budget,
+  status, created_by_id, created_by_name, lock_version
+)
+select package.client_id, package.id, account.id, account.platform, 100,
+  fixture.plan_status, '00000000-0000-0000-0000-000000000461',
+  fixture.case_name, 7
+from all_fixtures as fixture
+cross join public.ads_budget_packages as package
+cross join public.ads_ad_accounts as account
+where package.package_key = 'm04-state-enhanced'
+  and account.provider_account_id = 'm04-state-enhanced';
+
+insert into public.ads_campaign_plan_revisions (
+  plan_id, revision_number, client_id, ad_account_id, budget_package_id,
+  platform, provider_account_id, currency, timezone, start_date, end_date,
+  allocated_budget, increment_amount, daily_budget, projected_total,
+  objective, destination, plan_payload, canonical_json, payload_hash,
+  created_by_id, created_by_name
+)
+select plan.id, 1, plan.client_id, plan.ad_account_id, plan.budget_package_id,
+  plan.platform, account.provider_account_id, account.currency, account.timezone,
+  '2026-08-01', '2026-08-20', 100, 0, 5, 100,
+  'leads', 'https://example.test/state-enhanced', '{"fixture":true}',
+  '{"fixture":true}', repeat('b', 64), plan.created_by_id, 'State Race Operator'
+from public.ads_campaign_plans as plan
+join public.ads_ad_accounts as account on account.id = plan.ad_account_id;
+
+update public.ads_campaign_plans as plan
+set active_revision_id = revision.id,
+    reserved_revision_id = revision.id,
+    approved_revision_id = case
+      when plan.status in ('approved', 'launch_in_progress') then revision.id
+    end,
+    approved_revision_hash = case
+      when plan.status in ('approved', 'launch_in_progress') then revision.payload_hash
+    end
+from public.ads_campaign_plan_revisions as revision
+where revision.plan_id = plan.id;
+
+insert into public.ads_campaign_approvals (
+  plan_id, revision_id, revision_hash, decision, expires_at,
+  request_idempotency_key, approved_by_id, approved_by_name
+)
+select plan.id, revision.id, revision.payload_hash, 'approved',
+  clock_timestamp() + interval '1 hour', 'initial-' || plan.created_by_name,
+  '00000000-0000-0000-0000-000000000461', 'State Race Operator'
+from public.ads_campaign_plans as plan
+join public.ads_campaign_plan_revisions as revision on revision.plan_id = plan.id
+where plan.status in ('approved', 'launch_in_progress');
+
+insert into public.ads_campaign_builds (
+  plan_id, revision_id, revision_hash, approval_id, budget_package_id,
+  ad_account_id, platform, status, lock_version
+)
+select plan.id, revision.id, revision.payload_hash, approval.id,
+  plan.budget_package_id, plan.ad_account_id, plan.platform,
+  case plan.created_by_name
+    when 'probe-retry' then 'gate_1_failed'
+    when 'probe-renewal' then 'gate_1_failed'
+    when 'probe-handoff' then 'verified'
+    when 'probe-qa' then 'gate_1_in_progress'
+    else 'pending_gate_1'
+  end,
+  3
+from public.ads_campaign_plans as plan
+join public.ads_campaign_plan_revisions as revision on revision.plan_id = plan.id
+join public.ads_campaign_approvals as approval on approval.plan_id = plan.id
+where plan.status in ('approved', 'launch_in_progress');
+
+insert into public.ads_campaign_build_resources (
+  build_id, logical_resource_key, resource_type, provider_resource_id
+)
+select build.id, 'campaign', 'campaign',
+  case when plan.created_by_name = 'probe-handoff' then 'probe-handoff-campaign' end
+from public.ads_campaign_builds as build
+join public.ads_campaign_plans as plan on plan.id = build.plan_id
+where plan.created_by_name in ('probe-retry', 'probe-handoff', 'probe-qa');
+
+insert into public.ads_campaign_gate_attempts (
+  build_id, gate, action, request_idempotency_key, attempt_number,
+  revision_id, revision_hash, status, intent, claimed_at,
+  claim_expires_at, released_at, actor_id, actor_name
+)
+select build.id, 1, attempt.action, attempt.request_key, attempt.attempt_number,
+  build.revision_id, build.revision_hash, attempt.status,
+  '{"resources":[{"logical_resource_key":"campaign","resource_type":"campaign"}]}'::jsonb,
+  clock_timestamp() + attempt.claimed_offset,
+  clock_timestamp() + attempt.expires_offset,
+  case when attempt.status = 'claimed' then null else clock_timestamp() + attempt.expires_offset end,
+  '00000000-0000-0000-0000-000000000461', 'State Race Operator'
+from (values
+  ('probe-retry', 'create', 'probe-retry-parent', 1, 'failed',
+   interval '-4 minutes', interval '-3 minutes'),
+  ('probe-retry', 'reconcile', 'probe-retry-proof', 2, 'succeeded',
+   interval '-2 minutes', interval '-1 minute'),
+  ('probe-qa', 'create', 'probe-qa-attempt', 1, 'claimed',
+   interval '0 minutes', interval '5 minutes')
+) as attempt(fixture, action, request_key, attempt_number, status, claimed_offset, expires_offset)
+join public.ads_campaign_plans as plan on plan.created_by_name = attempt.fixture
+join public.ads_campaign_builds as build on build.plan_id = plan.id;
+
+insert into public.ads_campaign_qa_results (
+  attempt_id, build_resource_id, phase, field_path, required,
+  expected_value, observed_value, result, readback_evidence
+)
+select attempt.id, resource.id, 'reconciliation', 'provider.exists', true,
+  'false', 'false', 'missing', '{"found":false}'
+from public.ads_campaign_gate_attempts as attempt
+join public.ads_campaign_build_resources as resource on resource.build_id = attempt.build_id
+where attempt.request_idempotency_key = 'probe-retry-proof';
+
+set session_replication_role = replica;
+update public.ads_campaign_builds as build
+set verified_at = clock_timestamp(),
+    final_readback_evidence = '{"status":"ENABLED","immutable":true}'::jsonb
+from public.ads_campaign_plans as plan
+where plan.id = build.plan_id and plan.created_by_name = 'probe-handoff';
+update public.ads_campaign_build_resources as resource
+set verified_at = clock_timestamp()
+from public.ads_campaign_builds as build
+join public.ads_campaign_plans as plan on plan.id = build.plan_id
+where resource.build_id = build.id and plan.created_by_name = 'probe-handoff';
+set session_replication_role = origin;
+
+insert into public.m04_stress_release (case_name)
+select created_by_name from public.ads_campaign_plans where created_by_name like 'stress-%';
+
+do $setup_assertion$
+begin
+  if (select count(*) from public.ads_campaign_plans) <> 50
+    or (select count(*) from public.ads_campaign_builds) <> 47
+    or (select count(*) from public.ads_campaign_approvals) <> 47
+    or (select count(*) from public.ads_campaign_build_resources) <> 3
+    or (select count(*) from public.ads_campaign_gate_attempts) <> 3
+    or (select count(*) from public.m04_probe_control) <> 10
+    or (select count(*) from public.m04_stress_release) <> 40 then
+    raise exception 'Enhanced state setup did not create the exact 50-plan fixture matrix';
+  end if;
+end;
+$setup_assertion$;
+
+select 'M04_STATE_ENHANCED_SETUP_READY' as result;

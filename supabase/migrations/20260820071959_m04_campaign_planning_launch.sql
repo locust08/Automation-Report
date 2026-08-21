@@ -1217,23 +1217,22 @@ begin
     or p_expected_revision_hash is distinct from v_build.revision_hash then
     raise exception 'Campaign build revision lock does not match' using errcode = '40001';
   end if;
-  select approval.* into strict v_approval
-  from public.ads_campaign_approvals as approval where approval.id = v_build.approval_id;
-  if v_approval.decision <> 'approved'
-    or v_approval.expires_at <= pg_catalog.clock_timestamp()
-    or v_approval.plan_id <> v_build.plan_id
-    or v_approval.revision_id <> v_build.revision_id
-    or v_approval.revision_hash <> v_build.revision_hash
-    or v_plan.approved_revision_id <> v_build.revision_id
-    or v_plan.approved_revision_hash <> v_build.revision_hash
-    or v_plan.active_revision_id <> v_build.revision_id then
-    raise exception 'Campaign build approval is no longer current and unexpired' using errcode = '55000';
-  end if;
   if (v_build.status = 'pending_gate_1' and v_plan.status <> 'approved')
     or (v_build.status <> 'pending_gate_1' and v_plan.status <> 'launch_in_progress') then
     raise exception 'Campaign plan and build launch states do not match' using errcode = '40001';
   end if;
-
+  select approval.* into strict v_approval
+  from public.ads_campaign_approvals as approval where approval.id = v_build.approval_id;
+  if v_approval.decision is distinct from 'approved'
+    or v_approval.expires_at <= pg_catalog.clock_timestamp()
+    or v_approval.plan_id is distinct from v_build.plan_id
+    or v_approval.revision_id is distinct from v_build.revision_id
+    or v_approval.revision_hash is distinct from v_build.revision_hash
+    or v_plan.approved_revision_id is distinct from v_build.revision_id
+    or v_plan.approved_revision_hash is distinct from v_build.revision_hash
+    or v_plan.active_revision_id is distinct from v_build.revision_id then
+    raise exception 'Campaign build approval is no longer current and unexpired' using errcode = '55000';
+  end if;
   select attempt.gate, attempt.action
   into v_expired_gate, v_expired_action
   from public.ads_campaign_gate_attempts as attempt
@@ -1487,16 +1486,16 @@ begin
   end if;
   select approval.* into strict v_approval
   from public.ads_campaign_approvals as approval where approval.id = v_build.approval_id;
-  if v_approval.plan_id <> v_build.plan_id
-    or v_approval.revision_id <> v_build.revision_id
-    or v_approval.revision_hash <> v_build.revision_hash then
+  if v_approval.plan_id is distinct from v_build.plan_id
+    or v_approval.revision_id is distinct from v_build.revision_id
+    or v_approval.revision_hash is distinct from v_build.revision_hash then
     raise exception 'Campaign build approval revision lock does not match the build' using errcode = '55000';
   end if;
-  if v_approval.decision <> 'approved' or v_approval.expires_at <= pg_catalog.clock_timestamp()
+  if v_approval.decision is distinct from 'approved' or v_approval.expires_at <= pg_catalog.clock_timestamp()
     or v_plan.status <> 'launch_in_progress'
-    or v_plan.approved_revision_id <> v_build.revision_id
-    or v_plan.approved_revision_hash <> v_build.revision_hash
-    or v_plan.active_revision_id <> v_build.revision_id then
+    or v_plan.approved_revision_id is distinct from v_build.revision_id
+    or v_plan.approved_revision_hash is distinct from v_build.revision_hash
+    or v_plan.active_revision_id is distinct from v_build.revision_id then
     raise exception 'Campaign build approval is no longer current and unexpired' using errcode = '55000';
   end if;
 
@@ -1559,6 +1558,28 @@ begin
   if exists (
     select 1
     from pg_catalog.jsonb_array_elements(p_intent -> 'resources') as item(value)
+    where (
+      select mutation.id
+      from public.ads_campaign_gate_attempts as mutation
+      where mutation.build_id = v_build.id and mutation.gate = 1
+        and mutation.action in ('create', 'retry')
+        and mutation.revision_id is not distinct from v_build.revision_id
+        and mutation.revision_hash is not distinct from v_build.revision_hash
+        and exists (
+          select 1
+          from pg_catalog.jsonb_array_elements(mutation.intent -> 'resources') as mutation_item(value)
+          where mutation_item.value ->> 'logical_resource_key' = item.value ->> 'logical_resource_key'
+            and mutation_item.value ->> 'resource_type' = item.value ->> 'resource_type'
+        )
+      order by mutation.attempt_number desc, mutation.id desc
+      limit 1
+    ) is distinct from v_parent.id
+  ) then
+    raise exception 'Retry parent must be the latest mutation for every selected resource' using errcode = '55000';
+  end if;
+  if exists (
+    select 1
+    from pg_catalog.jsonb_array_elements(p_intent -> 'resources') as item(value)
     left join public.ads_campaign_build_resources as resource
       on resource.build_id = v_build.id
      and resource.logical_resource_key = item.value ->> 'logical_resource_key'
@@ -1576,23 +1597,29 @@ begin
               and ads_internal.is_nonempty_json_object(qa.readback_evidence)
           )
           and not exists (
-            select 1 from public.ads_campaign_qa_results as qa
-            where qa.attempt_id = evidence_attempt.id
-              and qa.build_resource_id = resource.id
-              and qa.phase = 'reconciliation' and qa.required
-              and (qa.result <> 'missing'
-                or not ads_internal.is_nonempty_json_object(qa.readback_evidence))
+            select 1
+            from (
+              select distinct on (qa.field_path)
+                qa.field_path, qa.result, qa.readback_evidence
+              from public.ads_campaign_qa_results as qa
+              where qa.attempt_id = evidence_attempt.id
+                and qa.build_resource_id = resource.id
+                and qa.phase = 'reconciliation' and qa.required
+              order by qa.field_path, qa.id desc
+            ) as field_qa
+            where field_qa.result <> 'missing'
+              or not ads_internal.is_nonempty_json_object(field_qa.readback_evidence)
           )
         from public.ads_campaign_gate_attempts as evidence_attempt
-        where evidence_attempt.build_id = v_build.id
+        where evidence_attempt.build_id = v_build.id and evidence_attempt.gate = 1
           and evidence_attempt.action = 'reconcile'
-          and evidence_attempt.claimed_at > v_parent.claimed_at
+          and evidence_attempt.attempt_number > v_parent.attempt_number
           and exists (
             select 1 from pg_catalog.jsonb_array_elements(evidence_attempt.intent -> 'resources') as evidence_item(value)
             where evidence_item.value ->> 'logical_resource_key' = item.value ->> 'logical_resource_key'
               and evidence_item.value ->> 'resource_type' = item.value ->> 'resource_type'
           )
-        order by evidence_attempt.claimed_at desc, evidence_attempt.id desc limit 1
+        order by evidence_attempt.attempt_number desc, evidence_attempt.id desc limit 1
       ) is distinct from true
   ) then
     raise exception 'Mutation retry requires every selected resource to be proven missing by newer reconciliation readback' using errcode = '55000';
@@ -2241,13 +2268,21 @@ set search_path = ''
 as $$
 declare
   v_attempt public.ads_campaign_gate_attempts%rowtype;
+  v_build public.ads_campaign_builds%rowtype;
   v_resource public.ads_campaign_build_resources%rowtype;
   v_result public.ads_campaign_qa_results%rowtype;
 begin
   select attempt.* into v_attempt
-  from public.ads_campaign_gate_attempts as attempt where attempt.id = p_attempt_id for update;
+  from public.ads_campaign_gate_attempts as attempt where attempt.id = p_attempt_id;
   if not found then
     raise exception 'Gate attempt was not found' using errcode = 'P0002';
+  end if;
+  select build.* into strict v_build
+  from public.ads_campaign_builds as build where build.id = v_attempt.build_id for update;
+  select attempt.* into v_attempt
+  from public.ads_campaign_gate_attempts as attempt where attempt.id = p_attempt_id for update;
+  if not found or v_attempt.build_id is distinct from v_build.id then
+    raise exception 'Gate attempt changed while QA waited for its build lock' using errcode = '40001';
   end if;
   if v_attempt.claim_token is distinct from p_claim_token
     or v_attempt.status <> 'claimed' or v_attempt.released_at is not null
@@ -2256,9 +2291,18 @@ begin
   end if;
   if p_build_resource_id is not null then
     select resource.* into v_resource
-    from public.ads_campaign_build_resources as resource where resource.id = p_build_resource_id;
+    from public.ads_campaign_build_resources as resource
+    where resource.id = p_build_resource_id for update;
     if not found or v_resource.build_id <> v_attempt.build_id then
       raise exception 'QA resource does not belong to the gate attempt build' using errcode = '22023';
+    end if;
+    if v_attempt.gate = 1 and not exists (
+      select 1
+      from pg_catalog.jsonb_array_elements(v_attempt.intent -> 'resources') as item(value)
+      where item.value ->> 'logical_resource_key' = v_resource.logical_resource_key
+        and item.value ->> 'resource_type' = v_resource.resource_type
+    ) then
+      raise exception 'QA resource is outside the gate attempt intent' using errcode = '22023';
     end if;
   end if;
   if (p_phase = 'gate_1' and v_attempt.gate <> 1)
@@ -2933,49 +2977,52 @@ as $$
       limit 1
     ) as mutation on true
     left join lateral (
-      select qa.result, qa.readback_evidence
-      from public.ads_campaign_qa_results as qa
-      join public.ads_campaign_gate_attempts as evidence_attempt
-        on evidence_attempt.id = qa.attempt_id
-      where qa.build_resource_id = resource.id and qa.required
-        and (
-          (
-            qa.result = 'match'
-            and (
-              (
-                evidence_attempt.id = mutation.id
-                and evidence_attempt.action in ('create', 'retry')
-                and (evidence_attempt.status = 'succeeded'
-                  or evidence_attempt.id = p_current_attempt_id)
-              )
-              or (
-                evidence_attempt.action = 'reconcile'
-                and evidence_attempt.attempt_number > mutation.attempt_number
-                and (evidence_attempt.status = 'succeeded'
-                  or evidence_attempt.id = p_current_attempt_id)
-              )
-            )
+      select pg_catalog.count(*) > 0 as has_required_fields,
+        pg_catalog.bool_and(
+          field_evidence.result = 'match'
+          and ads_internal.is_nonempty_json_object(field_evidence.readback_evidence)
+        ) as all_required_fields_match
+      from (
+        select distinct on (qa.field_path)
+          qa.field_path, qa.result, qa.readback_evidence
+        from public.ads_campaign_qa_results as qa
+        join public.ads_campaign_gate_attempts as evidence_attempt
+          on evidence_attempt.id = qa.attempt_id
+        where qa.build_resource_id = resource.id and qa.required
+          and evidence_attempt.build_id = resource.build_id
+          and evidence_attempt.gate = 1
+          and exists (
+            select 1
+            from pg_catalog.jsonb_array_elements(evidence_attempt.intent -> 'resources') as item(value)
+            where item.value ->> 'logical_resource_key' = resource.logical_resource_key
+              and item.value ->> 'resource_type' = resource.resource_type
           )
-          or (
-            qa.result <> 'match'
-            and (
+          and (
+            (
               evidence_attempt.id = mutation.id
-              or (
-                evidence_attempt.action = 'reconcile'
-                and evidence_attempt.attempt_number > mutation.attempt_number
-              )
+              and evidence_attempt.action in ('create', 'retry')
+              and qa.phase = 'gate_1'
+            )
+            or (
+              evidence_attempt.action = 'reconcile'
+              and evidence_attempt.attempt_number > mutation.attempt_number
+              and qa.phase = 'reconciliation'
             )
           )
-        )
-      order by evidence_attempt.attempt_number desc, qa.id desc
-      limit 1
+          and (
+            qa.result <> 'match'
+            or evidence_attempt.status = 'succeeded'
+            or evidence_attempt.id = p_current_attempt_id
+          )
+        order by qa.field_path, evidence_attempt.attempt_number desc, qa.id desc
+      ) as field_evidence
     ) as decisive_evidence on true
     where resource.build_id = p_build_id
       and (
         mutation.id is null
         or resource.provider_resource_id is null
-        or decisive_evidence.result is distinct from 'match'
-        or not ads_internal.is_nonempty_json_object(decisive_evidence.readback_evidence)
+        or decisive_evidence.has_required_fields is distinct from true
+        or decisive_evidence.all_required_fields_match is distinct from true
       )
   );
 $$;
@@ -3023,9 +3070,9 @@ begin
   end if;
   v_expected_build_status := case when v_attempt.gate = 1 then 'gate_1_in_progress' else 'gate_2_in_progress' end;
   if v_build.status <> v_expected_build_status or v_plan.status <> 'launch_in_progress'
-    or v_plan.active_revision_id <> v_build.revision_id
-    or v_plan.approved_revision_id <> v_build.revision_id
-    or v_plan.approved_revision_hash <> v_build.revision_hash then
+    or v_plan.active_revision_id is distinct from v_build.revision_id
+    or v_plan.approved_revision_id is distinct from v_build.revision_id
+    or v_plan.approved_revision_hash is distinct from v_build.revision_hash then
     raise exception 'Campaign build is not in the active state for this gate attempt' using errcode = '55000';
   end if;
   if pg_catalog.btrim(coalesce(p_logical_resource_key, '')) = '' then
@@ -3040,6 +3087,14 @@ begin
     and resource.logical_resource_key = p_logical_resource_key for update;
   if not found then
     raise exception 'Logical resource was not declared by the persisted intent' using errcode = 'P0002';
+  end if;
+  if v_attempt.gate = 1 and not exists (
+    select 1
+    from pg_catalog.jsonb_array_elements(v_attempt.intent -> 'resources') as item(value)
+    where item.value ->> 'logical_resource_key' = v_resource.logical_resource_key
+      and item.value ->> 'resource_type' = v_resource.resource_type
+  ) then
+    raise exception 'Logical resource is outside the gate attempt intent' using errcode = '22023';
   end if;
   if v_resource.provider_resource_id is not null
     and p_provider_resource_id is not null
@@ -3151,30 +3206,42 @@ begin
   end if;
   v_from_status := case when v_attempt.gate = 1 then 'gate_1_in_progress' else 'gate_2_in_progress' end;
   if v_build.status <> v_from_status or v_plan.status <> 'launch_in_progress'
-    or v_plan.active_revision_id <> v_build.revision_id
-    or v_plan.approved_revision_id <> v_build.revision_id
-    or v_plan.approved_revision_hash <> v_build.revision_hash then
+    or v_plan.active_revision_id is distinct from v_build.revision_id
+    or v_plan.approved_revision_id is distinct from v_build.revision_id
+    or v_plan.approved_revision_hash is distinct from v_build.revision_hash then
     raise exception 'Campaign build is not in the active state for this gate attempt' using errcode = '55000';
   end if;
 
   if v_attempt.gate = 1 and v_attempt.action = 'reconcile' then
     select not exists (
       select 1
-      from public.ads_campaign_build_resources as resource
+      from pg_catalog.jsonb_array_elements(v_attempt.intent -> 'resources') as item(value)
+      left join public.ads_campaign_build_resources as resource
+        on resource.build_id = v_build.id
+       and resource.logical_resource_key = item.value ->> 'logical_resource_key'
+       and resource.resource_type = item.value ->> 'resource_type'
       left join lateral (
-        select qa.result, qa.readback_evidence
-        from public.ads_campaign_qa_results as qa
-        where qa.attempt_id = v_attempt.id and qa.build_resource_id = resource.id
-          and qa.phase = 'reconciliation' and qa.required
-        order by qa.id desc limit 1
-      ) as latest_qa on true
-      where resource.build_id = v_build.id
-        and (
-          latest_qa.result is null
-          or not ads_internal.is_nonempty_json_object(latest_qa.readback_evidence)
-          or (resource.provider_resource_id is not null and latest_qa.result <> 'match')
-          or (resource.provider_resource_id is null and latest_qa.result <> 'missing')
-        )
+        select pg_catalog.count(*) > 0 as has_required_fields,
+          pg_catalog.bool_and(
+            ads_internal.is_nonempty_json_object(field_qa.readback_evidence)
+            and field_qa.result = case
+              when resource.provider_resource_id is null then 'missing'
+              else 'match'
+            end
+          ) as all_required_fields_resolved
+        from (
+          select distinct on (qa.field_path)
+            qa.field_path, qa.result, qa.readback_evidence
+          from public.ads_campaign_qa_results as qa
+          where qa.attempt_id = v_attempt.id
+            and qa.build_resource_id = resource.id
+            and qa.phase = 'reconciliation' and qa.required
+          order by qa.field_path, qa.id desc
+        ) as field_qa
+      ) as reconciliation_qa on true
+      where resource.id is null
+        or reconciliation_qa.has_required_fields is distinct from true
+        or reconciliation_qa.all_required_fields_resolved is distinct from true
     ) into v_reconciliation_all_resolved;
     select ads_internal.campaign_gate_1_full_intent_ready(v_build.id, v_attempt.id)
     into v_full_intent_ready;
@@ -3208,15 +3275,23 @@ begin
          and resource.logical_resource_key = item.value ->> 'logical_resource_key'
          and resource.resource_type = item.value ->> 'resource_type'
         left join lateral (
-          select qa.result, qa.readback_evidence
-          from public.ads_campaign_qa_results as qa
-          where qa.attempt_id = v_attempt.id and qa.build_resource_id = resource.id
-            and qa.phase = 'gate_1' and qa.required
-          order by qa.id desc limit 1
-        ) as latest_qa on true
+          select pg_catalog.count(*) > 0 as has_required_fields,
+            pg_catalog.bool_and(
+              field_qa.result = 'match'
+              and ads_internal.is_nonempty_json_object(field_qa.readback_evidence)
+            ) as all_required_fields_match
+          from (
+            select distinct on (qa.field_path)
+              qa.field_path, qa.result, qa.readback_evidence
+            from public.ads_campaign_qa_results as qa
+            where qa.attempt_id = v_attempt.id and qa.build_resource_id = resource.id
+              and qa.phase = 'gate_1' and qa.required
+            order by qa.field_path, qa.id desc
+          ) as field_qa
+        ) as current_qa on true
         where resource.id is null or resource.provider_resource_id is null
-          or latest_qa.result is distinct from 'match'
-          or not ads_internal.is_nonempty_json_object(latest_qa.readback_evidence)
+          or current_qa.has_required_fields is distinct from true
+          or current_qa.all_required_fields_match is distinct from true
       ) into v_current_intent_ready;
       select ads_internal.campaign_gate_1_full_intent_ready(v_build.id, v_attempt.id)
       into v_full_intent_ready;
@@ -3405,18 +3480,18 @@ begin
   select revision.* into strict v_revision
   from public.ads_campaign_plan_revisions as revision
   where revision.id = v_build.revision_id and revision.plan_id = v_build.plan_id;
-  if v_plan.status <> 'launch_in_progress'
-    or v_plan.client_id <> v_revision.client_id
-    or v_plan.ad_account_id <> v_revision.ad_account_id
-    or v_plan.budget_package_id <> v_revision.budget_package_id
-    or v_plan.platform <> v_revision.platform
-    or v_plan.active_revision_id <> v_revision.id
-    or v_plan.approved_revision_id <> v_revision.id
-    or v_plan.approved_revision_hash <> v_revision.payload_hash
-    or v_build.revision_hash <> v_revision.payload_hash
-    or v_build.ad_account_id <> v_revision.ad_account_id
-    or v_build.budget_package_id <> v_revision.budget_package_id
-    or v_build.platform <> v_revision.platform then
+  if v_plan.status is distinct from 'launch_in_progress'
+    or v_plan.client_id is distinct from v_revision.client_id
+    or v_plan.ad_account_id is distinct from v_revision.ad_account_id
+    or v_plan.budget_package_id is distinct from v_revision.budget_package_id
+    or v_plan.platform is distinct from v_revision.platform
+    or v_plan.active_revision_id is distinct from v_revision.id
+    or v_plan.approved_revision_id is distinct from v_revision.id
+    or v_plan.approved_revision_hash is distinct from v_revision.payload_hash
+    or v_build.revision_hash is distinct from v_revision.payload_hash
+    or v_build.ad_account_id is distinct from v_revision.ad_account_id
+    or v_build.budget_package_id is distinct from v_revision.budget_package_id
+    or v_build.platform is distinct from v_revision.platform then
     raise exception 'Monitoring handoff requires matching immutable build, revision, and launch plan snapshots' using errcode = '55000';
   end if;
   select resource.* into v_campaign
@@ -3687,9 +3762,7 @@ begin
   -- Initial approval is the only plan -> package lock path.
   select plan.* into strict v_plan
   from public.ads_campaign_plans as plan where plan.id = p_plan_id for update;
-  if v_plan.status is distinct from v_pre_status then
-    raise exception 'Campaign plan status changed while approval waited' using errcode = '40001';
-  end if;
+  -- A request inserted while this path waited is still exact-idempotent.
   select approval.* into v_existing_approval
   from public.ads_campaign_approvals as approval
   where approval.plan_id = v_plan.id
@@ -3703,6 +3776,9 @@ begin
     select build.* into strict v_build from public.ads_campaign_builds as build
     where build.plan_id = v_plan.id and build.revision_id = p_revision_id;
     return v_build;
+  end if;
+  if v_plan.status is distinct from v_pre_status then
+    raise exception 'Campaign plan status changed while approval waited' using errcode = '40001';
   end if;
   if v_plan.lock_version is distinct from p_expected_plan_lock_version then
     raise exception 'Campaign plan lock version is stale' using errcode = '40001';
