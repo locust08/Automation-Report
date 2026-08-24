@@ -6,6 +6,8 @@ import { useEffect, useState } from "react";
 import {
   BarChart3Icon,
   CalendarDaysIcon,
+  CheckIcon,
+  ChevronDownIcon,
   GitCompareArrowsIcon,
   ClipboardListIcon,
   EyeIcon,
@@ -13,6 +15,7 @@ import {
   IdCardIcon,
   ListChecksIcon,
   LogOutIcon,
+  MenuIcon,
   MegaphoneIcon,
   SearchCheckIcon,
   SettingsIcon,
@@ -23,11 +26,13 @@ import {
 } from "lucide-react";
 
 import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuGroup,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { useScreenshotMode } from "@/components/reporting/use-screenshot-mode";
 import { isAdminRole, type AuthRole } from "@/lib/auth/roles";
 import { buildReportContextQuery } from "@/lib/reporting/report-navigation";
@@ -90,6 +95,55 @@ export function ReportShell({
     changeControl: "/change-control",
     settings: "/settings",
   };
+  const navigationGroups: ReportNavigationGroup[] = [
+    {
+      label: "Reports",
+      items: [
+        { href: hrefs.overall, label: "Monthly Performance", active: pathname === "/overall", icon: BarChart3Icon },
+        { href: hrefs.preview, label: "Campaign Preview", active: pathname === "/preview", icon: EyeIcon },
+        { href: hrefs.advanced, label: "Advanced Report", active: pathname === "/advanced", icon: SparklesIcon },
+      ],
+    },
+    {
+      label: "Planning & Operations",
+      items: [
+        { href: hrefs.campaigns, label: "Campaign Planning & Launch", active: pathname === "/campaigns", icon: MegaphoneIcon },
+        { href: hrefs.mediaPlan, label: "Create Media Plan", active: pathname === "/dashboard/media-plan", icon: ClipboardListIcon },
+        { href: hrefs.metaImport, label: "Import Meta CSV", active: pathname === "/meta-import", icon: UploadCloudIcon },
+        { href: hrefs.billing, label: "Billing Operations", active: pathname === "/billing", icon: ListChecksIcon },
+      ],
+    },
+    {
+      label: "Google",
+      items: [
+        { href: hrefs.googleManagement, label: "Google Ads Management", active: pathname.startsWith("/manage/google"), icon: SlidersHorizontalIcon },
+        ...(isAdmin
+          ? [
+              {
+                href: hrefs.googleOptimization,
+                label: "Google Optimization",
+                active: pathname === "/google-optimization" || pathname === "/search-term-optimization" || pathname === "/placement-optimization",
+                icon: SearchCheckIcon,
+              },
+              { href: hrefs.optimizationScheduling, label: "Optimization Scheduling", active: pathname === "/optimization-scheduling", icon: CalendarDaysIcon },
+            ]
+          : []),
+      ],
+    },
+    ...(isAdmin
+      ? [
+          {
+            label: "Admin",
+            items: [
+              { href: hrefs.changeControl, label: "Change Control", active: pathname === "/change-control", icon: GitCompareArrowsIcon },
+              { href: hrefs.userManagement, label: "User Management", active: pathname === "/user-management", icon: UsersRoundIcon },
+              { href: hrefs.settings, label: "Workflow Settings", active: pathname === "/settings", icon: SettingsIcon },
+            ],
+          },
+        ]
+      : []),
+  ];
+  const navigationIsActive = navigationGroups.some((group) => group.items.some((item) => item.active));
 
   return (
     <main
@@ -125,111 +179,6 @@ export function ReportShell({
                 >
                   {title}
                 </h1>
-                <TooltipProvider delayDuration={200}>
-                  <nav
-                    className="flex flex-wrap items-center gap-2"
-                    data-report-export-exclude="true"
-                    aria-label="Report navigation"
-                  >
-                    <ReportNavLink href={hrefs.home} label="Home" active={pathname === "/"}>
-                      <HouseIcon className="size-5" />
-                    </ReportNavLink>
-                    <ReportNavLink
-                      href={hrefs.overall}
-                      label="Monthly Performance"
-                      active={pathname === "/overall"}
-                    >
-                      <BarChart3Icon className="size-5" />
-                    </ReportNavLink>
-                    <ReportNavLink
-                      href={hrefs.preview}
-                      label="Campaign Preview"
-                      active={pathname === "/preview"}
-                    >
-                      <EyeIcon className="size-5" />
-                    </ReportNavLink>
-                    <ReportNavLink
-                      href={hrefs.advanced}
-                      label="Advanced Report"
-                      active={pathname === "/advanced"}
-                    >
-                      <SparklesIcon className="size-5" />
-                    </ReportNavLink>
-                    <ReportNavLink
-                      href={hrefs.campaigns}
-                      label="Campaign Planning & Launch"
-                      active={pathname === "/campaigns"}
-                    >
-                      <MegaphoneIcon className="size-5" />
-                    </ReportNavLink>
-                    <ReportNavLink
-                      href={hrefs.mediaPlan}
-                      label="Create Media Plan"
-                      active={pathname === "/dashboard/media-plan"}
-                    >
-                      <ClipboardListIcon className="size-5" />
-                    </ReportNavLink>
-                    <ReportNavLink
-                      href={hrefs.metaImport}
-                      label="Import Meta CSV"
-                      active={pathname === "/meta-import"}
-                    >
-                      <UploadCloudIcon className="size-5" />
-                    </ReportNavLink>
-                    <ReportNavLink
-                      href={hrefs.billing}
-                      label="Billing Operations"
-                      active={pathname === "/billing"}
-                    >
-                      <ListChecksIcon className="size-5" />
-                    </ReportNavLink>
-                    <ReportNavLink
-                      href={hrefs.googleManagement}
-                      label="Google Ads Management"
-                      active={pathname.startsWith("/manage/google")}
-                    >
-                      <SlidersHorizontalIcon className="size-5" />
-                    </ReportNavLink>
-                    {isAdmin ? <>
-                      <ReportNavLink
-                        href={hrefs.googleOptimization}
-                        label="Google Optimization"
-                        active={pathname === "/google-optimization" || pathname === "/search-term-optimization" || pathname === "/placement-optimization"}
-                      >
-                        <SearchCheckIcon className="size-5" />
-                      </ReportNavLink>
-                      <ReportNavLink
-                        href={hrefs.optimizationScheduling}
-                        label="Optimization Scheduling"
-                        active={pathname === "/optimization-scheduling"}
-                      >
-                        <CalendarDaysIcon className="size-5" />
-                      </ReportNavLink>
-                      <ReportNavLink
-                        href={hrefs.changeControl}
-                        label="Change Control"
-                        active={pathname === "/change-control"}
-                      >
-                        <GitCompareArrowsIcon className="size-5" />
-                      </ReportNavLink>
-                      <ReportNavLink
-                        href={hrefs.userManagement}
-                        label="User Management"
-                        active={pathname === "/user-management"}
-                      >
-                        <UsersRoundIcon className="size-5" />
-                      </ReportNavLink>
-                      <ReportNavLink
-                        href={hrefs.settings}
-                        label="Workflow Settings"
-                        active={pathname === "/settings"}
-                      >
-                        <SettingsIcon className="size-5" />
-                      </ReportNavLink>
-                    </> : null}
-                    <ReportLogoutButton />
-                  </nav>
-                </TooltipProvider>
               </div>
               {headerDateControl ? (
                 <div
@@ -251,6 +200,68 @@ export function ReportShell({
                 </div>
               )}
             </div>
+            <nav
+              className="mt-4 flex w-full flex-wrap items-center justify-start gap-2"
+              data-report-export-exclude="true"
+              aria-label="Report navigation"
+            >
+              <Link
+                href={hrefs.home}
+                aria-current={pathname === "/" ? "page" : undefined}
+                className={`inline-flex min-h-11 items-center gap-2 rounded-lg px-4 text-sm font-semibold outline-none transition focus-visible:ring-2 focus-visible:ring-white/90 focus-visible:ring-offset-2 focus-visible:ring-offset-red-900 ${
+                  pathname === "/"
+                    ? "bg-white text-[#9f0712] shadow-md"
+                    : "bg-white/10 text-white hover:bg-white/20"
+                }`}
+              >
+                <HouseIcon className="size-5" />
+                <span>Home</span>
+              </Link>
+
+              <DropdownMenu>
+                <DropdownMenuTrigger
+                  className={`group relative inline-flex min-h-11 items-center gap-2 rounded-lg px-4 text-sm font-semibold outline-none transition focus-visible:ring-2 focus-visible:ring-white/90 focus-visible:ring-offset-2 focus-visible:ring-offset-red-900 data-[state=open]:z-[60] data-[state=open]:rounded-b-none data-[state=open]:border data-[state=open]:border-b-0 data-[state=open]:border-[#e6d7d9] data-[state=open]:bg-white data-[state=open]:text-[#9f0712] data-[state=open]:shadow-none ${
+                    navigationIsActive
+                      ? "bg-white text-[#9f0712] shadow-md"
+                      : "bg-white/10 text-white hover:bg-white/20"
+                  }`}
+                >
+                  <MenuIcon className="size-5" />
+                  <span>Navigation</span>
+                  <ChevronDownIcon className="size-4 opacity-75 transition-transform group-data-[state=open]:rotate-180" />
+                </DropdownMenuTrigger>
+                <DropdownMenuContent
+                  align="start"
+                  alignOffset={-96}
+                  sideOffset={-1}
+                  className="w-[min(68rem,calc(100vw-2rem))] rounded-xl border border-[#e6d7d9] bg-white p-3 text-[#211114] shadow-2xl"
+                >
+                  <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+                    {navigationGroups.map((group, groupIndex) => (
+                      <div
+                        key={group.label}
+                        className={
+                          groupIndex === 0
+                            ? "min-w-0"
+                            : "min-w-0 border-t border-[#eadfe0] pt-2 md:border-l md:border-t-0 md:pl-2 md:pt-0"
+                        }
+                      >
+                        <DropdownMenuLabel className="px-3 pb-1 pt-2 text-xs font-bold uppercase tracking-[0.14em] text-[#8a6268]">
+                          {group.label}
+                        </DropdownMenuLabel>
+                        <DropdownMenuGroup className="space-y-1.5">
+                          {group.items.map((item) => (
+                            <ReportMenuItem key={item.href} {...item} />
+                          ))}
+                        </DropdownMenuGroup>
+                      </div>
+                    ))}
+                  </div>
+                </DropdownMenuContent>
+              </DropdownMenu>
+
+              <ReportLogoutButton />
+            </nav>
             {headerBottomControl ? (
               <div className="mt-4" data-report-export-exclude="true">
                 {headerBottomControl}
@@ -280,66 +291,50 @@ export function ReportShell({
   );
 }
 
-function ReportNavLink({
-  href,
-  label,
-  active,
-  children,
-}: {
+type ReportNavigationItem = {
   href: string;
   label: string;
   active: boolean;
-  children: React.ReactNode;
-}) {
+  icon: typeof HouseIcon;
+};
+
+type ReportNavigationGroup = {
+  label: string;
+  items: ReportNavigationItem[];
+};
+
+function ReportMenuItem({ href, label, active, icon: Icon }: ReportNavigationItem) {
   return (
-    <Tooltip>
-      <TooltipTrigger asChild>
-        <Link
-          href={href}
-          aria-label={label}
-          aria-current={active ? "page" : undefined}
-          className={`inline-flex size-10 items-center justify-center rounded-md outline-none transition focus-visible:ring-2 focus-visible:ring-white/90 focus-visible:ring-offset-2 focus-visible:ring-offset-red-900 ${
-            active
-              ? "bg-white text-[#9f0712] shadow-md hover:bg-white"
-              : "bg-white/10 text-white hover:bg-white/20"
-          }`}
-        >
-          {children}
-        </Link>
-      </TooltipTrigger>
-      <TooltipContent
-        side="top"
-        sideOffset={8}
-        className="border border-white/15 bg-[#211114] px-3 py-2 text-sm font-medium text-white shadow-xl"
+    <DropdownMenuItem
+      asChild
+      className={`min-h-11 cursor-pointer rounded-lg p-0 focus:bg-[#fff0f1] focus:text-[#8f0712] ${
+        active ? "bg-[#fff0f1] text-[#8f0712]" : "text-[#2f2023]"
+      }`}
+    >
+      <Link
+        href={href}
+        aria-current={active ? "page" : undefined}
+        className="flex min-h-11 w-full items-center gap-3 rounded-lg px-3 py-2 text-sm font-semibold outline-none"
       >
-        {label}
-      </TooltipContent>
-    </Tooltip>
+        <Icon className="size-5 text-current" />
+        <span className="min-w-0 flex-1 leading-snug">{label}</span>
+        {active ? <CheckIcon className="size-4 text-[#d40016]" /> : null}
+      </Link>
+    </DropdownMenuItem>
   );
 }
 
 function ReportLogoutButton() {
   return (
-    <Tooltip>
-      <TooltipTrigger asChild>
-        <form action="/api/auth/logout" method="post">
-          <button
-            type="submit"
-            aria-label="Logout"
-            className="inline-flex size-10 items-center justify-center rounded-md bg-white/10 text-white outline-none transition hover:bg-white/20 focus-visible:ring-2 focus-visible:ring-white/90 focus-visible:ring-offset-2 focus-visible:ring-offset-red-900"
-          >
-            <LogOutIcon className="size-5" />
-          </button>
-        </form>
-      </TooltipTrigger>
-      <TooltipContent
-        side="top"
-        sideOffset={8}
-        className="border border-white/15 bg-[#211114] px-3 py-2 text-sm font-medium text-white shadow-xl"
+    <form action="/api/auth/logout" method="post">
+      <button
+        type="submit"
+        className="inline-flex min-h-11 items-center gap-2 rounded-lg bg-white/10 px-4 text-sm font-semibold text-white outline-none transition hover:bg-white/20 focus-visible:ring-2 focus-visible:ring-white/90 focus-visible:ring-offset-2 focus-visible:ring-offset-red-900"
       >
-        Logout
-      </TooltipContent>
-    </Tooltip>
+        <LogOutIcon className="size-5" />
+        <span>Logout</span>
+      </button>
+    </form>
   );
 }
 
