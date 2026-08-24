@@ -349,9 +349,10 @@ export function PreviewPageClient() {
           filters={filters}
           dateMode="month"
           showDateFilters={false}
-          showResetButton={false}
+          showResetButton
           submitLabel="Reload"
           compact
+          immediateAccountApply
           footerContent={<ReportDownloadButton fileNamePrefix={title} />}
           onApply={(next) => setFilters(next, {
             clearParams: ["campaignId", "campaignName", "adGroupId", "adGroupName", "adId", "adName"],

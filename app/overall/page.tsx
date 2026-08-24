@@ -16,7 +16,9 @@ function getValues(value: string | string[] | undefined): string[] {
 }
 
 function toPlatform(value: string | undefined): ReportFilters["platform"] | undefined {
-  return value === "meta" || value === "google" || value === "googleYoutube" ? value : undefined;
+  return value === "meta" || value === "google" || value === "googleYoutube" || value === "tiktok"
+    ? value
+    : undefined;
 }
 
 export default async function OverallPage({
@@ -29,6 +31,7 @@ export default async function OverallPage({
     accountId: getSingleValue(resolvedSearchParams?.accountId),
     metaAccountId: getSingleValue(resolvedSearchParams?.metaAccountId),
     googleAccountId: getSingleValue(resolvedSearchParams?.googleAccountId),
+    tiktokAccountId: getSingleValue(resolvedSearchParams?.tiktokAccountId),
     startDate: getSingleValue(resolvedSearchParams?.startDate),
     endDate: getSingleValue(resolvedSearchParams?.endDate),
     platform: toPlatform(getSingleValue(resolvedSearchParams?.platform)),

@@ -1,15 +1,12 @@
 "use client";
 
-import { FormEvent, KeyboardEvent, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
-import { useRouter, useSearchParams } from "next/navigation";
 import {
   ArrowRightIcon,
   CalendarDaysIcon,
-  ChevronDownIcon,
   ClipboardListIcon,
   EyeIcon,
-  LinkIcon,
   ListChecksIcon,
   Loader2Icon,
   LogOutIcon,
@@ -21,41 +18,6 @@ import {
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import {
-  buildReportAccountQuery,
-  extractAdAccountIdFromAccountSearchInput,
-  formatAccountSuggestionLabel,
-} from "@/components/reporting/home-account-search";
-
-const COUNTRIES = [
-  { value: "MY", label: "🇲🇾 MY" },
-  { value: "SG", label: "🇸🇬 SG" },
-  { value: "AU", label: "🇦🇺 AU" },
-  { value: "US", label: "🇺🇸 US" },
-];
-
-const SUPPORTED_COUNTRIES = new Set(COUNTRIES.map((country) => country.value));
-const ACCOUNT_SEARCH_DEBOUNCE_MS = 300;
-const RECENT_ACCOUNTS_STORAGE_KEY = "ads-reporting-recent-accounts";
-const RECENT_ACCOUNTS_LIMIT = 5;
-
-type AccountSearchSuggestion = {
-  accountName: string;
-  adAccountId: string;
-  country: string | null;
-  notionPageId: string;
-  platform?: "meta" | "google" | "tiktok" | null;
-};
-
-type AccountSearchState = "idle" | "loading" | "success" | "error";
 type ManualReportType = "monthly" | "advanced" | "biweekly";
 type ManualSendDeliveryMode = "test" | "live" | "dryRun";
 
@@ -132,23 +94,6 @@ type HomePageClientProps = {
 
 export function HomePageClient({ displayName, role }: HomePageClientProps) {
   const isBasicUser = role === "user";
-  const router = useRouter();
-
-  const searchParams = useSearchParams();
-  const initialCountry = useMemo(() => searchParams.get("country") ?? "MY", [searchParams]);
-  const [accountName, setAccountName] = useState("");
-  const [accountId, setAccountId] = useState("");
-  const [accountPlatform, setAccountPlatform] = useState<AccountSearchSuggestion["platform"]>(null);
-  const [accountSearchQuery, setAccountSearchQuery] = useState("");
-  const [country, setCountry] = useState(initialCountry);
-  const [accountSuggestions, setAccountSuggestions] = useState<AccountSearchSuggestion[]>([]);
-  const [accountSearchState, setAccountSearchState] = useState<AccountSearchState>("idle");
-  const [accountSearchError, setAccountSearchError] = useState<string | null>(null);
-  const [isAccountDropdownOpen, setIsAccountDropdownOpen] = useState(false);
-  const [highlightedAccountIndex, setHighlightedAccountIndex] = useState(-1);
-  const [recentAccounts, setRecentAccounts] = useState<AccountSearchSuggestion[]>([]);
-  const accountSearchRequestId = useRef(0);
-  const accountSearchInputRef = useRef<HTMLInputElement>(null);
   const [isSendModalOpen, setIsSendModalOpen] = useState(false);
   const [selectedReportType, setSelectedReportType] = useState<ManualReportType>("monthly");
   const [isSending, setIsSending] = useState(false);
@@ -223,200 +168,12 @@ export function HomePageClient({ displayName, role }: HomePageClientProps) {
     return () => { cancelled = true; };
   }, [selectedReportType, workerJobId, isSending]);
 
-  const reportQueryString = useMemo(() => {
-    return buildReportAccountQuery({ adAccountId: accountId, platform: accountPlatform, country });
-  }, [accountId, accountPlatform, country]);
-
-  const overallHref = `/overall${reportQueryString ? `?${reportQueryString}` : ""}`;
-  const previewHref = `/preview${reportQueryString ? `?${reportQueryString}` : ""}`;
-  const advancedHref = `/advanced${reportQueryString ? `?${reportQueryString}` : ""}`;
+  const overallHref = "/overall";
+  const previewHref = "/preview";
+  const advancedHref = "/advanced";
   const mediaPlanHref = "/dashboard/media-plan";
-  const googleManagementHref = `/manage/google?accountId=${encodeURIComponent(accountId.trim())}&accountName=${encodeURIComponent(accountName || `Account ${accountId.trim()}`)}`;
   const billingHref = "/billing";
   const googleOptimizationHref = "/google-optimization";
-  const hasAccountSelection = Boolean(accountId.trim());
-  const hasGoogleAccountSelection = /^\d{10}$/.test(accountId.replace(/\D/g, ""));
-  const normalizedAccountSearchQuery = accountSearchQuery.trim();
-  const resultAccountSuggestions = accountSuggestions.filter(
-    (suggestion) =>
-      !recentAccounts.some((recent) => recent.notionPageId === suggestion.notionPageId)
-  );
-  const visibleAccountSuggestions = [...recentAccounts, ...resultAccountSuggestions];
-
-  useEffect(() => {
-    try {
-      const storedValue = window.localStorage.getItem(RECENT_ACCOUNTS_STORAGE_KEY);
-      const storedAccounts = storedValue ? (JSON.parse(storedValue) as unknown) : [];
-      if (Array.isArray(storedAccounts)) {
-        setRecentAccounts(
-          storedAccounts
-            .filter(
-              (account): account is AccountSearchSuggestion =>
-                Boolean(
-                  account &&
-                    typeof account === "object" &&
-                    "accountName" in account &&
-                    typeof account.accountName === "string" &&
-                    "adAccountId" in account &&
-                    typeof account.adAccountId === "string" &&
-                    "notionPageId" in account &&
-                    typeof account.notionPageId === "string"
-                )
-            )
-            .slice(0, RECENT_ACCOUNTS_LIMIT)
-        );
-      }
-    } catch {
-      window.localStorage.removeItem(RECENT_ACCOUNTS_STORAGE_KEY);
-    }
-  }, []);
-
-  useEffect(() => {
-    const query = normalizedAccountSearchQuery;
-    accountSearchRequestId.current += 1;
-    const requestId = accountSearchRequestId.current;
-
-    if (query.length < 2) {
-      setAccountSuggestions([]);
-      setAccountSearchState("idle");
-      setAccountSearchError(null);
-      setHighlightedAccountIndex(-1);
-      return;
-    }
-
-    setAccountSearchState("loading");
-    setAccountSearchError(null);
-    setIsAccountDropdownOpen(true);
-
-    const controller = new AbortController();
-    const timeoutId = window.setTimeout(async () => {
-      try {
-        const response = await fetch(
-          `/api/notion/accounts/search?q=${encodeURIComponent(query)}`,
-          {
-            cache: "no-store",
-            signal: controller.signal,
-          }
-        );
-        const payload = (await response.json().catch(() => null)) as
-          | { accounts?: AccountSearchSuggestion[]; error?: string; message?: string }
-          | null;
-
-        if (controller.signal.aborted || requestId !== accountSearchRequestId.current) {
-          return;
-        }
-
-        if (!response.ok || !payload) {
-          throw new Error(payload?.error ?? payload?.message ?? "Unable to search accounts.");
-        }
-
-        const accounts = Array.isArray(payload.accounts) ? payload.accounts : [];
-        setAccountSuggestions(accounts);
-        setAccountSearchState("success");
-        setHighlightedAccountIndex(accounts.length > 0 ? recentAccounts.length : -1);
-      } catch (error) {
-        if (controller.signal.aborted || requestId !== accountSearchRequestId.current) {
-          return;
-        }
-
-        setAccountSuggestions([]);
-        setAccountSearchState("error");
-        setHighlightedAccountIndex(-1);
-        setAccountSearchError(error instanceof Error ? error.message : "Unable to search accounts.");
-      }
-    }, ACCOUNT_SEARCH_DEBOUNCE_MS);
-
-    return () => {
-      controller.abort();
-      window.clearTimeout(timeoutId);
-    };
-  }, [normalizedAccountSearchQuery, recentAccounts.length]);
-
-  useEffect(() => {
-    if (!isAccountDropdownOpen) {
-      return;
-    }
-    const frameId = window.requestAnimationFrame(() => accountSearchInputRef.current?.focus());
-    return () => window.cancelAnimationFrame(frameId);
-  }, [isAccountDropdownOpen]);
-
-  function handleSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (!hasAccountSelection) {
-      return;
-    }
-    router.push(overallHref);
-  }
-
-  function selectAccountSuggestion(suggestion: AccountSearchSuggestion) {
-    setAccountName(formatAccountSuggestionLabel(suggestion));
-    setAccountId(suggestion.adAccountId);
-    setAccountPlatform(suggestion.platform ?? null);
-    if (suggestion.country && SUPPORTED_COUNTRIES.has(suggestion.country)) {
-      setCountry(suggestion.country);
-    }
-    setRecentAccounts((current) => {
-      const next = [
-        suggestion,
-        ...current.filter((account) => account.notionPageId !== suggestion.notionPageId),
-      ].slice(0, RECENT_ACCOUNTS_LIMIT);
-      try {
-        window.localStorage.setItem(RECENT_ACCOUNTS_STORAGE_KEY, JSON.stringify(next));
-      } catch {
-        // Keep recent accounts available for this session when storage is unavailable.
-      }
-      return next;
-    });
-    setAccountSearchQuery("");
-    setIsAccountDropdownOpen(false);
-    setHighlightedAccountIndex(-1);
-  }
-
-  function handleAccountNameKeyDown(event: KeyboardEvent<HTMLInputElement>) {
-    if (event.key === "Escape") {
-      setIsAccountDropdownOpen(false);
-      setHighlightedAccountIndex(-1);
-      return;
-    }
-
-    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
-      if (visibleAccountSuggestions.length === 0) {
-        return;
-      }
-
-      event.preventDefault();
-      setIsAccountDropdownOpen(true);
-      setHighlightedAccountIndex((current) => {
-        if (event.key === "ArrowDown") {
-          return current < visibleAccountSuggestions.length - 1 ? current + 1 : 0;
-        }
-        return current > 0 ? current - 1 : visibleAccountSuggestions.length - 1;
-      });
-      return;
-    }
-
-    if (event.key === "Enter" && isAccountDropdownOpen && highlightedAccountIndex >= 0) {
-      const suggestion = visibleAccountSuggestions[highlightedAccountIndex];
-      if (suggestion) {
-        event.preventDefault();
-        selectAccountSuggestion(suggestion);
-        return;
-      }
-    }
-
-    if (event.key === "Enter") {
-      const directAccountId = extractAdAccountIdFromAccountSearchInput(accountSearchQuery);
-      if (directAccountId) {
-        event.preventDefault();
-        setAccountName(directAccountId);
-        setAccountId(directAccountId);
-        setAccountPlatform(null);
-        setAccountSearchQuery("");
-        setIsAccountDropdownOpen(false);
-        setHighlightedAccountIndex(-1);
-      }
-    }
-  }
 
   async function handleManualSend() {
     setIsSending(true);
@@ -509,255 +266,69 @@ export function HomePageClient({ displayName, role }: HomePageClientProps) {
           Ads Reporting Dashboard
         </h1>
 
-        <form onSubmit={handleSubmit} className="mt-8 space-y-4">
-          <div
-            className="relative block space-y-2"
-            onBlur={(event) => {
-              if (!event.currentTarget.contains(event.relatedTarget)) {
-                setIsAccountDropdownOpen(false);
-                setHighlightedAccountIndex(-1);
-              }
-            }}
-          >
-            <span className="text-sm text-white/80">Account Name / Ad Account ID *</span>
-            <button
-              type="button"
-              onClick={() => {
-                setIsAccountDropdownOpen((current) => !current);
-                setHighlightedAccountIndex(recentAccounts.length > 0 ? 0 : -1);
-              }}
-              aria-label="Account Name / Ad Account ID"
-              aria-describedby={!hasAccountSelection ? "account-selection-warning" : undefined}
-              aria-expanded={isAccountDropdownOpen}
-              aria-haspopup="listbox"
-              className="flex h-11 w-full items-center gap-3 rounded-md border border-white/30 bg-white/10 px-3 text-left text-sm text-white outline-none transition hover:bg-white/15 focus-visible:border-white/60 focus-visible:ring-2 focus-visible:ring-white/30"
-            >
-              <SearchIcon className="size-4 shrink-0 text-white/60" />
-              <span
-                className={`min-w-0 flex-1 truncate ${
-                  hasAccountSelection ? "text-white" : "text-white/60"
-                }`}
-              >
-                {accountName || "Select an account"}
-              </span>
-              <ChevronDownIcon
-                className={`size-4 shrink-0 text-white/60 transition-transform ${
-                  isAccountDropdownOpen ? "rotate-180" : ""
-                }`}
-              />
-            </button>
-
-            {!hasAccountSelection ? (
-              <span
-                id="account-selection-warning"
-                className="block text-xs font-medium text-amber-200"
-                role="status"
-              >
-                {isBasicUser
-                  ? "Select an account to open reports."
-                  : "Select an account to open reports. Bulk Send Report and Create Media Plan are available without one."}
-              </span>
-            ) : null}
-
-            {isAccountDropdownOpen ? (
-              <div className="absolute left-0 right-0 top-full z-30 mt-2 overflow-hidden rounded-xl border border-white/20 bg-black/90 p-2 shadow-2xl backdrop-blur-md">
-                <div className="relative">
-                  <SearchIcon className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-white/50" />
-                  <Input
-                    ref={accountSearchInputRef}
-                    value={accountSearchQuery}
-                    onChange={(event) => {
-                      setAccountSearchQuery(event.target.value);
-                      setHighlightedAccountIndex(-1);
-                    }}
-                    onKeyDown={handleAccountNameKeyDown}
-                    placeholder="Search account name or ID"
-                    autoComplete="off"
-                    aria-label="Search accounts"
-                    aria-autocomplete="list"
-                    className="h-11 border-white/25 bg-white/10 pl-9 text-white placeholder:text-white/50"
-                  />
-                </div>
-
-                <div className="mt-2 max-h-80 overflow-auto">
-                  <div className="px-2 py-1.5 text-xs font-semibold uppercase tracking-wide text-white/55">
-                    Recent
-                  </div>
-                  {recentAccounts.length > 0 ? (
-                    <ul className="space-y-1" role="listbox">
-                      {recentAccounts.map((suggestion, index) => (
-                        <li key={suggestion.notionPageId}>
-                          <button
-                            type="button"
-                            role="option"
-                            aria-selected={index === highlightedAccountIndex}
-                            onMouseDown={(event) => event.preventDefault()}
-                            onMouseEnter={() => setHighlightedAccountIndex(index)}
-                            onClick={() => selectAccountSuggestion(suggestion)}
-                            className={`grid w-full gap-1 rounded-md px-3 py-2 text-left text-sm transition ${
-                              index === highlightedAccountIndex
-                                ? "bg-red-600 text-white"
-                                : "text-white hover:bg-white/10"
-                            }`}
-                          >
-                            <span className="font-semibold">
-                              {formatAccountSuggestionLabel(suggestion)}
-                            </span>
-                            <span className="text-xs text-white/65">
-                              {suggestion.country ?? "No country set"}
-                            </span>
-                          </button>
-                        </li>
-                      ))}
-                    </ul>
-                  ) : (
-                    <p className="px-2 py-2 text-sm text-white/55">No recent accounts yet.</p>
-                  )}
-
-                  <div className="mt-1 border-t border-white/10 px-2 pb-1 pt-3 text-xs font-semibold uppercase tracking-wide text-white/55">
-                    Results
-                  </div>
-                  {normalizedAccountSearchQuery.length < 2 ? (
-                    <p className="px-2 py-2 text-sm text-white/55">
-                      Type at least 2 characters to search accounts.
-                    </p>
-                  ) : accountSearchState === "loading" ? (
-                    <div className="flex items-center gap-2 px-3 py-3 text-sm text-white/75">
-                    <Loader2Icon className="size-4 animate-spin" />
-                    Searching accounts...
-                  </div>
-                  ) : accountSearchState === "error" ? (
-                    <div className="px-3 py-3 text-sm text-red-200">
-                    {accountSearchError ?? "Unable to search accounts."}
-                  </div>
-                  ) : accountSearchState === "success" && accountSuggestions.length === 0 ? (
-                    <div className="px-3 py-3 text-sm text-white/60">
-                      No matching account found.
-                    </div>
-                  ) : resultAccountSuggestions.length > 0 ? (
-                    <ul className="space-y-1" role="listbox">
-                      {resultAccountSuggestions.map((suggestion, resultIndex) => {
-                        const index = recentAccounts.length + resultIndex;
-                        return (
-                      <li key={suggestion.notionPageId}>
-                        <button
-                          type="button"
-                          role="option"
-                          aria-selected={index === highlightedAccountIndex}
-                          onMouseDown={(event) => event.preventDefault()}
-                          onMouseEnter={() => setHighlightedAccountIndex(index)}
-                          onClick={() => selectAccountSuggestion(suggestion)}
-                          className={`grid w-full gap-1 rounded-md px-3 py-2 text-left text-sm transition ${
-                            index === highlightedAccountIndex
-                              ? "bg-red-600 text-white"
-                              : "text-white hover:bg-white/10"
-                          }`}
-                        >
-                          <span className="font-semibold">{formatAccountSuggestionLabel(suggestion)}</span>
-                          <span className="text-xs text-white/70">
-                            {suggestion.country ? suggestion.country : "No country set"}
-                          </span>
-                        </button>
-                      </li>
-                        );
-                      })}
-                  </ul>
-                  ) : null}
-                </div>
-              </div>
-            ) : null}
-          </div>
-
-          <label className="block space-y-2">
-            <span className="text-sm text-white/80">Country</span>
-            <Select value={country} onValueChange={setCountry}>
-              <SelectTrigger className="h-11 w-full border-white/30 bg-white/10 text-white">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {COUNTRIES.map((item) => (
-                  <SelectItem key={item.value} value={item.value}>
-                    {item.label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </label>
-
-          <div className="space-y-3">
-            <Button
-              type="submit"
-              disabled={!hasAccountSelection}
-              className="h-auto min-h-16 w-full whitespace-normal bg-red-600 px-6 py-4 text-center text-base font-semibold leading-snug shadow-lg shadow-red-950/25 hover:bg-red-700"
-            >
-              View Monthly Performance
-              <ArrowRightIcon data-icon="inline-end" />
-            </Button>
-
-            <div className="grid gap-3 sm:grid-cols-2">
-              {hasAccountSelection ? (
-                <Button
-                  asChild
-                  variant="outline"
-                  className="h-auto min-h-12 w-full whitespace-normal border-white/30 bg-white/10 px-4 py-3 text-center leading-snug text-white shadow-none hover:bg-white/20 hover:text-white"
-                >
-                  <a href={previewHref}>
-                    Campaign Preview
-                    <EyeIcon data-icon="inline-end" />
-                  </a>
-                </Button>
-              ) : (
-                <Button
-                  type="button"
-                  variant="outline"
-                  disabled
-                  className="h-auto min-h-12 w-full whitespace-normal border-white/30 bg-white/10 px-4 py-3 text-center leading-snug text-white shadow-none"
-                >
-                  Campaign Preview
-                  <EyeIcon data-icon="inline-end" />
-                </Button>
-              )}
-
-              {hasAccountSelection ? (
-                <Button
-                  asChild
-                  variant="outline"
-                  className="h-auto min-h-12 w-full whitespace-normal border-white/30 bg-white/10 px-4 py-3 text-center leading-snug text-white shadow-none hover:bg-white/20 hover:text-white"
-                >
-                  <a href={advancedHref}>
-                    Open Advanced Report
-                    <SlidersHorizontalIcon data-icon="inline-end" />
-                  </a>
-                </Button>
-              ) : (
-                <Button
-                  type="button"
-                  variant="outline"
-                  disabled
-                  className="h-auto min-h-12 w-full whitespace-normal border-white/30 bg-white/10 px-4 py-3 text-center leading-snug text-white shadow-none"
-                >
-                  Open Advanced Report
-                  <SlidersHorizontalIcon data-icon="inline-end" />
-                </Button>
-              )}
+        <section
+          className="mt-8 rounded-2xl border border-white/20 bg-white/[0.06] p-4 sm:p-5"
+          aria-labelledby="reports-heading"
+        >
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
+            <div className="min-w-0 flex-1">
+              <h2 id="reports-heading" className="text-lg font-semibold">Reports</h2>
+              <p className="mt-1 text-sm text-white/65">Open a report, then search for its advertising account there.</p>
             </div>
-
-            {!isBasicUser ? <Button
-              type="button"
-              onClick={() => {
-                setIsSendModalOpen(true);
-                setSendError(null);
-              }}
-              disabled={sendControlsLocked}
-              className="h-auto min-h-16 w-full whitespace-normal bg-red-600 px-6 py-4 text-center text-base font-semibold leading-snug shadow-lg shadow-red-950/25 hover:bg-red-700"
-            >
-              Send Report
-              <SendIcon data-icon="inline-end" />
-            </Button> : null}
+            <span className="w-fit shrink-0 whitespace-nowrap rounded-full border border-emerald-200/30 bg-emerald-200/10 px-3 py-1 text-xs font-semibold text-emerald-100">
+              Choose account inside
+            </span>
           </div>
-        </form>
 
-        {!isBasicUser ? <><div className="mt-5 grid gap-3 sm:grid-cols-2">
+          <div className="mt-5 grid gap-3 sm:grid-cols-3">
+            <Button asChild className="h-auto min-h-14 whitespace-normal bg-red-600 px-4 py-3 text-center font-semibold leading-snug hover:bg-red-700">
+              <Link href={overallHref}>
+                View Monthly Performance
+                <ArrowRightIcon data-icon="inline-end" />
+              </Link>
+            </Button>
+            <Button asChild variant="outline" className="h-auto min-h-14 whitespace-normal border-white/30 bg-white/10 px-4 py-3 text-center text-white hover:bg-white/20 hover:text-white">
+              <Link href={previewHref}>
+                Campaign Preview
+                <EyeIcon data-icon="inline-end" />
+              </Link>
+            </Button>
+            <Button asChild variant="outline" className="h-auto min-h-14 whitespace-normal border-white/30 bg-white/10 px-4 py-3 text-center text-white hover:bg-white/20 hover:text-white">
+              <Link href={advancedHref}>
+                Open Advanced Report
+                <SlidersHorizontalIcon data-icon="inline-end" />
+              </Link>
+            </Button>
+          </div>
+        </section>
+
+        {!isBasicUser ? <section
+          className="mt-5 rounded-2xl border border-white/20 bg-white/[0.06] p-4 sm:p-5"
+          aria-labelledby="dashboard-tools-heading"
+        >
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
+            <div className="min-w-0 flex-1">
+              <h2 id="dashboard-tools-heading" className="text-lg font-semibold">Dashboard tools</h2>
+              <p className="mt-1 text-sm text-white/65">Open these workflows directly. Select their account inside the destination page when needed.</p>
+            </div>
+            <span className="w-fit shrink-0 whitespace-nowrap rounded-full border border-emerald-200/30 bg-emerald-200/10 px-3 py-1 text-xs font-semibold text-emerald-100">
+              No account required here
+            </span>
+          </div>
+
+        <div className="mt-5 grid gap-3 sm:grid-cols-3">
+          <Button
+            type="button"
+            onClick={() => {
+              setIsSendModalOpen(true);
+              setSendError(null);
+            }}
+            disabled={sendControlsLocked}
+            className="h-auto min-h-14 w-full whitespace-normal bg-red-600 px-4 py-3 text-center font-semibold leading-snug shadow-lg shadow-red-950/25 hover:bg-red-700"
+          >
+            Send Report
+            <SendIcon data-icon="inline-end" />
+          </Button>
           <a
             href={mediaPlanHref}
             className="flex items-center rounded-2xl border border-white/25 bg-white/10 p-4 text-white transition hover:bg-white/15"
@@ -795,7 +366,7 @@ export function HomePageClient({ displayName, role }: HomePageClientProps) {
           <h2 id="google-tools-heading" className="mb-3 text-sm font-semibold uppercase tracking-[0.18em] text-white/70">Google</h2>
           <div className={`grid gap-3 ${role === "admin" ? "md:grid-cols-3" : "md:grid-cols-1"}`}>
             <Link
-              href={hasGoogleAccountSelection ? googleManagementHref : "/manage/google"}
+              href="/manage/google"
               className="flex items-center rounded-2xl border border-white/25 bg-white/10 p-4 text-white transition hover:bg-white/15"
             >
               <span className="flex items-center gap-2 text-base font-semibold">
@@ -824,23 +395,7 @@ export function HomePageClient({ displayName, role }: HomePageClientProps) {
           </div>
         </section>
 
-        {hasAccountSelection ? (
-          <a
-            href={advancedHref}
-            className="mt-5 inline-flex items-center gap-2 text-xs text-white/80 underline-offset-4 hover:underline"
-          >
-            <LinkIcon className="size-4" />
-            Open advanced report without prefilled ID
-          </a>
-        ) : (
-          <span
-            className="mt-5 inline-flex cursor-not-allowed items-center gap-2 text-xs text-white/40"
-            aria-disabled="true"
-          >
-            <LinkIcon className="size-4" />
-            Select an account to open the advanced report
-          </span>
-        )}</> : null}
+        </section> : null}
         </div>
       </div>
 

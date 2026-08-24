@@ -245,9 +245,10 @@ export function OverallPageClient({
           filters={filters}
           dateMode="month"
           showDateFilters={false}
-          showResetButton={false}
+          showResetButton
           submitLabel="Reload"
           compact
+          immediateAccountApply
           footerContent={<ReportDownloadButton fileNamePrefix={title} />}
           onApply={(next) => {
             const unchanged =
