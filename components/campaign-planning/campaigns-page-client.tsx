@@ -20,7 +20,7 @@ import { Stepper, StepperDescription, StepperIndicator, StepperItem, StepperNav,
 import type { AuthRole } from "@/lib/auth/roles";
 import { buildCampaignRows, filterCampaigns, paginateCampaigns, type CampaignPlatformFilter, type CampaignStatusFilter } from "@/lib/campaign-planning/campaign-list-view";
 import { flattenCampaignDetail } from "@/lib/campaign-planning/campaign-detail-table";
-import { CAMPAIGN_EDITING_SECTION_ORDER, EDIT_DRAFT_RESET_LABEL, selectCampaignDetail, toggleCampaignCreator, toggleCampaignEditor } from "@/lib/campaign-planning/campaign-workspace-view";
+import { CAMPAIGN_EDITING_SECTION_ORDER, EDIT_DRAFT_RESET_LABEL, closeCampaignDetail, selectCampaignDetail, toggleCampaignCreator, toggleCampaignEditor } from "@/lib/campaign-planning/campaign-workspace-view";
 import { hydrateCampaignWizardFromRevision } from "@/lib/campaign-planning/campaign-wizard-payload";
 import { evaluateCampaignProviderReadiness } from "@/lib/campaign-planning/campaign-provider-readiness";
 import { mapCampaignIssueToWizardField, validateCampaignSubmission, type CampaignApiValidationIssue, type CampaignWizardIssue } from "@/lib/campaign-planning/campaign-submission-validation";
@@ -293,6 +293,15 @@ export function CampaignsPageClient({ initialRole }: { initialRole: AuthRole }) 
     setEditingCampaignId(nextView.editingCampaignId);
   }
 
+  function closePlan() {
+    const nextView = closeCampaignDetail({ creatorOpen: showCreate, selectedCampaignId: selectedId, editingCampaignId });
+    setShowCreate(nextView.creatorOpen);
+    setSelectedId(nextView.selectedCampaignId);
+    setEditingCampaignId(nextView.editingCampaignId);
+    setSelected(null);
+    setDetailLoading(false);
+  }
+
   const accounts = data?.accounts.filter((item) => item.platform === form.platform) ?? [];
   const selectedAccount = accounts.find((item) => String(item.id) === form.accountId);
   const packages = data?.packages.filter((item) => !selectedAccount || (
@@ -335,7 +344,7 @@ export function CampaignsPageClient({ initialRole }: { initialRole: AuthRole }) 
                   {row.map((campaign) => <CampaignCard key={campaign.id} campaign={campaign} selected={selectedId === campaign.id} onClick={() => void openPlan(campaign.id)} />)}
                 </div>
                 {selectedId && editingCampaignId !== selectedId && row.some((campaign) => campaign.id === selectedId) ? (
-                  detailLoading ? <CampaignDetailSkeleton /> : selected ? <CampaignDetail detail={selected} busy={busy} isAdmin={isAdmin} approvalRequired={m04ApprovalRequired} editing={false} onToggleEdit={toggleEditCampaign} runReadinessAction={runReadinessAction} /> : null
+                  detailLoading ? <CampaignDetailSkeleton /> : selected ? <CampaignDetail detail={selected} busy={busy} isAdmin={isAdmin} approvalRequired={m04ApprovalRequired} editing={false} onToggleEdit={toggleEditCampaign} onClose={closePlan} runReadinessAction={runReadinessAction} /> : null
                 ) : null}
               </div>
             ))}
@@ -344,7 +353,7 @@ export function CampaignsPageClient({ initialRole }: { initialRole: AuthRole }) 
           </CardContent>
         </Card>
         {data && selected && editingCampaignId === selected.plan.id ? CAMPAIGN_EDITING_SECTION_ORDER.map((section) => section === "detail"
-          ? <CampaignDetail key="detail" detail={selected} busy={busy} isAdmin={isAdmin} approvalRequired={m04ApprovalRequired} editing onToggleEdit={toggleEditCampaign} runReadinessAction={runReadinessAction} />
+          ? <CampaignDetail key="detail" detail={selected} busy={busy} isAdmin={isAdmin} approvalRequired={m04ApprovalRequired} editing onToggleEdit={toggleEditCampaign} onClose={closePlan} runReadinessAction={runReadinessAction} />
           : <CampaignEditWizard key="editor" detail={selected} accounts={data.accounts} packages={data.packages} busy={busy} onCancel={toggleEditCampaign} onSave={(campaign) => updatePlan(selected, campaign)} />
         ) : null}
         {data && showCreate ? <Card className="overflow-hidden border-red-200 shadow-sm">
@@ -585,8 +594,8 @@ function KeywordList({ keywords, matchTypes, onChange }: { keywords: string; mat
 
 function MultiToggle({ value, options, onChange }: { value: string; options: string[]; onChange: (value: string) => void }) { const selected = new Set(split(value)); return <div className="flex flex-wrap gap-2">{options.map((option) => <Button key={option} type="button" size="sm" variant={selected.has(option) ? "default" : "outline"} onClick={() => { const next = new Set(selected); if (next.has(option)) next.delete(option); else next.add(option); onChange(options.filter((item) => next.has(item)).join(", ")); }}>{option}</Button>)}</div>; }
 
-function CampaignDetail({ detail, busy, isAdmin, approvalRequired, editing, onToggleEdit, runReadinessAction }: { detail: CampaignPlanDetail; busy: boolean; isAdmin: boolean; approvalRequired: boolean; editing: boolean; onToggleEdit: () => void; runReadinessAction: (detail: CampaignPlanDetail, action: "validate_readiness" | "approve_readiness") => void }) {
-  return <Card className="border-red-200 bg-white shadow-sm"><CardHeader><div className="flex items-start justify-between gap-3"><div><CardTitle>{detail.plan.campaignName}</CardTitle><CardDescription>{detail.plan.platform.toUpperCase()} · Revision {detail.currentRevision.revisionNo} · immutable revision</CardDescription></div><div className="flex items-center gap-2">{isAdmin && detail.plan.status === "draft" ? <Button type="button" variant="outline" size="sm" onClick={onToggleEdit}>{editing ? <XIcon /> : <PencilIcon />}{editing ? "Cancel edit" : "Edit details"}</Button> : null}<Badge>{humanize(detail.plan.status)}</Badge></div></div></CardHeader><CardContent className="space-y-5">
+function CampaignDetail({ detail, busy, isAdmin, approvalRequired, editing, onToggleEdit, onClose, runReadinessAction }: { detail: CampaignPlanDetail; busy: boolean; isAdmin: boolean; approvalRequired: boolean; editing: boolean; onToggleEdit: () => void; onClose: () => void; runReadinessAction: (detail: CampaignPlanDetail, action: "validate_readiness" | "approve_readiness") => void }) {
+  return <Card className="border-red-200 bg-white shadow-sm"><CardHeader><div className="flex items-start justify-between gap-3"><div><CardTitle>{detail.plan.campaignName}</CardTitle><CardDescription>{detail.plan.platform.toUpperCase()} · Revision {detail.currentRevision.revisionNo} · immutable revision</CardDescription></div><div className="flex items-center gap-2">{isAdmin && detail.plan.status === "draft" ? <Button type="button" variant="outline" size="sm" onClick={onToggleEdit}>{editing ? <XIcon /> : <PencilIcon />}{editing ? "Cancel edit" : "Edit details"}</Button> : null}<Badge>{humanize(detail.plan.status)}</Badge><Button type="button" variant="ghost" size="icon-sm" aria-label="Close campaign details" onClick={onClose}><XIcon /></Button></div></div></CardHeader><CardContent className="space-y-5">
     <CampaignDetailTable detail={detail} />
     <CampaignReadiness detail={detail} busy={busy} isAdmin={isAdmin} approvalRequired={approvalRequired} onAction={(action) => runReadinessAction(detail, action)} />
   </CardContent></Card>;

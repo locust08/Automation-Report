@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   CAMPAIGN_EDITING_SECTION_ORDER,
+  closeCampaignDetail,
   EDIT_DRAFT_RESET_LABEL,
   openCampaignEditor,
   openCampaignCreator,
@@ -10,6 +11,14 @@ import {
   toggleCampaignEditor,
   toggleCampaignCreator,
 } from "./campaign-workspace-view";
+
+test("closing campaign details clears both launched and draft selections", () => {
+  assert.deepEqual(closeCampaignDetail({ creatorOpen: false, selectedCampaignId: 17, editingCampaignId: 17 }), {
+    creatorOpen: false,
+    selectedCampaignId: null,
+    editingCampaignId: null,
+  });
+});
 
 test("editing presents campaign details before the wizard with a clear reset label", () => {
   assert.deepEqual(CAMPAIGN_EDITING_SECTION_ORDER, ["detail", "editor"]);

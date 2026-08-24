@@ -21,6 +21,10 @@ export function selectCampaignDetail(view: CampaignWorkspaceView, campaignId: nu
   return { ...view, creatorOpen: false, selectedCampaignId: campaignId, editingCampaignId: null };
 }
 
+export function closeCampaignDetail(view: CampaignWorkspaceView): CampaignWorkspaceView {
+  return { ...view, selectedCampaignId: null, editingCampaignId: null };
+}
+
 export function openCampaignEditor(view: CampaignWorkspaceView, campaignId: number): CampaignWorkspaceView {
   return { ...view, creatorOpen: false, selectedCampaignId: campaignId, editingCampaignId: campaignId };
 }
