@@ -42,8 +42,6 @@ const PLATFORM_DETAIL_TABLE = {
   tiktok: "m04_ads_tiktok_campaign_revision_details",
 } as const;
 
-const CRM08_DEVELOPMENT_ACTOR_ID = "c4b46e06-bbe9-4f91-855e-d43d6e31c8fe";
-
 export class CampaignPlanningRepositoryError extends Error {
   constructor(message: string, public readonly status = 400) {
     super(message);
@@ -409,14 +407,13 @@ export async function approveReadyCampaign(
   }
   const config = getLocalSupabaseConfig();
   if (detail.plan.status === "draft") {
-    await supabaseRequest<JsonObject[]>(config, "rpc/m04_ads_transition_campaign_plan", {
+    await supabaseRequest<JsonObject[]>(config, "rpc/m04_ads_reserve_campaign_budget", {
       method: "POST",
       body: {
         p_plan_id: planId,
-        p_expected_lock_version: detail.plan.lockVersion,
-        p_expected_from_status: "draft",
-        p_to_status: "awaiting_approval",
-        p_reason: "Dashboard readiness checks passed; provider execution remains locked.",
+        p_revision_id: detail.currentRevision.id,
+        p_expected_revision_hash: detail.currentRevision.payloadHash,
+        p_expected_plan_lock_version: detail.plan.lockVersion,
         p_actor_id: resolveCampaignActorId(requestContext.actorId),
         p_trusted_ip: requestContext.ip || null,
         p_trusted_user_agent: requestContext.userAgent?.trim().slice(0, 1_000) || "m04-readiness-approval",
@@ -539,8 +536,12 @@ export function resolveCampaignActorId(sessionSubject: string): string {
   if (process.env.NODE_ENV !== "production"
     && process.env.DEV_AUTH_BYPASS === "true"
     && sessionSubject === "local-development-admin") {
-    const configuredActorId = process.env.DEV_AUTH_BYPASS_ACTOR_ID?.trim() || CRM08_DEVELOPMENT_ACTOR_ID;
-    if (isPostgresUuid(configuredActorId)) return configuredActorId;
+    const configuredActorId = process.env.DEV_AUTH_BYPASS_ACTOR_ID?.trim();
+    if (configuredActorId && isPostgresUuid(configuredActorId)) return configuredActorId;
+    throw new CampaignPlanningRepositoryError(
+      "DEV_AUTH_BYPASS_ACTOR_ID must reference an existing active CRM08 administrator.",
+      503,
+    );
   }
   throw new CampaignPlanningRepositoryError("Campaign access requires an approved CRM08 staff identity.", 403);
 }

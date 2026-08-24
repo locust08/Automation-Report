@@ -6,6 +6,7 @@ import { useEffect, useState } from "react";
 import {
   BarChart3Icon,
   CalendarDaysIcon,
+  GitCompareArrowsIcon,
   ClipboardListIcon,
   EyeIcon,
   HouseIcon,
@@ -85,6 +86,7 @@ export function ReportShell({
     userManagement: "/user-management",
     optimizationScheduling: "/optimization-scheduling",
     campaigns: "/campaigns",
+    changeControl: "/change-control",
   };
 
   return (
@@ -187,6 +189,13 @@ export function ReportShell({
                       <SlidersHorizontalIcon className="size-5" />
                     </ReportNavLink>
                     {isAdmin ? <>
+                      <ReportNavLink
+                        href={hrefs.changeControl}
+                        label="Change Control"
+                        active={pathname === "/change-control"}
+                      >
+                        <GitCompareArrowsIcon className="size-5" />
+                      </ReportNavLink>
                       <ReportNavLink
                         href={hrefs.googleOptimization}
                         label="Google Optimization"
