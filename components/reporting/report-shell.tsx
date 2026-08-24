@@ -15,6 +15,7 @@ import {
   LogOutIcon,
   MegaphoneIcon,
   SearchCheckIcon,
+  SettingsIcon,
   SlidersHorizontalIcon,
   SparklesIcon,
   UploadCloudIcon,
@@ -87,6 +88,7 @@ export function ReportShell({
     optimizationScheduling: "/optimization-scheduling",
     campaigns: "/campaigns",
     changeControl: "/change-control",
+    settings: "/settings",
   };
 
   return (
@@ -154,18 +156,18 @@ export function ReportShell({
                       <SparklesIcon className="size-5" />
                     </ReportNavLink>
                     <ReportNavLink
+                      href={hrefs.campaigns}
+                      label="Campaign Planning & Launch"
+                      active={pathname === "/campaigns"}
+                    >
+                      <MegaphoneIcon className="size-5" />
+                    </ReportNavLink>
+                    <ReportNavLink
                       href={hrefs.mediaPlan}
                       label="Create Media Plan"
                       active={pathname === "/dashboard/media-plan"}
                     >
                       <ClipboardListIcon className="size-5" />
-                    </ReportNavLink>
-                    <ReportNavLink
-                      href={hrefs.campaigns}
-                      label="Campaigns"
-                      active={pathname === "/campaigns"}
-                    >
-                      <MegaphoneIcon className="size-5" />
                     </ReportNavLink>
                     <ReportNavLink
                       href={hrefs.metaImport}
@@ -190,13 +192,6 @@ export function ReportShell({
                     </ReportNavLink>
                     {isAdmin ? <>
                       <ReportNavLink
-                        href={hrefs.changeControl}
-                        label="Change Control"
-                        active={pathname === "/change-control"}
-                      >
-                        <GitCompareArrowsIcon className="size-5" />
-                      </ReportNavLink>
-                      <ReportNavLink
                         href={hrefs.googleOptimization}
                         label="Google Optimization"
                         active={pathname === "/google-optimization" || pathname === "/search-term-optimization" || pathname === "/placement-optimization"}
@@ -211,11 +206,25 @@ export function ReportShell({
                         <CalendarDaysIcon className="size-5" />
                       </ReportNavLink>
                       <ReportNavLink
+                        href={hrefs.changeControl}
+                        label="Change Control"
+                        active={pathname === "/change-control"}
+                      >
+                        <GitCompareArrowsIcon className="size-5" />
+                      </ReportNavLink>
+                      <ReportNavLink
                         href={hrefs.userManagement}
                         label="User Management"
                         active={pathname === "/user-management"}
                       >
                         <UsersRoundIcon className="size-5" />
+                      </ReportNavLink>
+                      <ReportNavLink
+                        href={hrefs.settings}
+                        label="Workflow Settings"
+                        active={pathname === "/settings"}
+                      >
+                        <SettingsIcon className="size-5" />
                       </ReportNavLink>
                     </> : null}
                     <ReportLogoutButton />

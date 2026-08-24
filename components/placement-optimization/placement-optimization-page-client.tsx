@@ -40,6 +40,7 @@ import {
 } from "@/components/ui/select";
 import { Spinner } from "@/components/ui/spinner";
 import { GoogleAccountSearchField } from "@/components/optimization/google-account-search-field";
+import { useWorkflowPolicies } from "@/components/workflow-settings/use-workflow-policies";
 import { isAdminRole, type AuthRole } from "@/lib/auth/roles";
 import type {
   PlacementApproverDecision,
@@ -50,6 +51,7 @@ import type {
   PlacementOptimizationRow,
   PlacementWorkflowMode,
 } from "@/lib/placement-optimization/types";
+import { approvalRequired } from "@/lib/workflow-settings/policy";
 
 const modeForRole = (role: AuthRole): PlacementWorkflowMode =>
   role === "approver" ? "approver" : role === "pm" ? "pm" : "optimizer";
@@ -73,6 +75,8 @@ const PLACEMENTS_PER_PAGE = 20;
 export function PlacementOptimizationPageClient({ role, embedded = false, externalAccount }: { role: AuthRole; embedded?: boolean; externalAccount?: { accountName: string; adAccountId: string } | null }) {
   const searchParams = useSearchParams();
   const mode = modeForRole(role);
+  const workflowPolicies = useWorkflowPolicies();
+  const placementApprovalRequired = approvalRequired(workflowPolicies, "placement_exclusion_approval");
   const [data, setData] = useState<PlacementDashboardPayload | null>(null);
   const [loading, setLoading] = useState(false);
   const [loadStartedAt, setLoadStartedAt] = useState<number | null>(null);
@@ -366,7 +370,7 @@ export function PlacementOptimizationPageClient({ role, embedded = false, extern
   ].sort();
   const campaignTypes = [...new Set((data?.rows ?? []).map((row) => row.campaignType || "PERFORMANCE_MAX"))].sort();
   const canOptimizer = role === "co" || role === "approver" || isAdminRole(role);
-  const canApprover = role === "approver" || isAdminRole(role);
+  const canApprover = placementApprovalRequired && (role === "approver" || isAdminRole(role));
   function decide(
     endpoint: string,
     decision: PlacementDecision | PlacementApproverDecision,
@@ -389,7 +393,7 @@ export function PlacementOptimizationPageClient({ role, embedded = false, extern
       const response = await fetch(endpoint, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ decision, accountId: data?.account.customerId, startDate: data?.account.startDate, endDate: data?.account.endDate, placements: (data?.rows ?? []).filter((row) => ids.includes(row.id)).map(toExclusionPayload) }),
+        body: JSON.stringify({ decision, recommendationIds: ids, accountId: data?.account.customerId, startDate: data?.account.startDate, endDate: data?.account.endDate, placements: (data?.rows ?? []).filter((row) => ids.includes(row.id)).map(toExclusionPayload) }),
       });
       const result = (await response.json()) as {
         error?: string;
@@ -528,7 +532,7 @@ export function PlacementOptimizationPageClient({ role, embedded = false, extern
           <section className="flex items-center justify-between gap-4 rounded-2xl border bg-white p-5 shadow-sm">
             <div>
               <h3 className="font-semibold">All placements</h3>
-              <p className="text-sm text-neutral-500">Browse placements and exclude selected websites or videos directly from Google Ads after confirmation.</p>
+              <p className="text-sm text-neutral-500">Browse placements and record exclusion decisions for the dashboard workflow. Google Ads publishing remains locked.</p>
             </div>
             <div className="flex flex-wrap items-center justify-end gap-2">
               <Button type="button" disabled={!placementStorageAvailable||!data.placementOverview.placementCount} className="cursor-pointer bg-red-700 hover:bg-red-800" onClick={() => {setDecisionPage(1);setDecisionsOpen(true);}}>
@@ -556,11 +560,13 @@ export function PlacementOptimizationPageClient({ role, embedded = false, extern
           selected={selected}
           onSelectedChange={setSelected}
           canOptimizer={canOptimizer}
+          canApprover={canApprover}
           saving={decisionSaving}
           loading={decisionRowsLoading}
           loadError={decisionRowsError}
           onRetry={() => void loadRowsPage(decisionPage)}
           onOptimizerDecision={(decision, ids) => void decide("/api/placement-optimization/decisions", decision, ids)}
+          onApproverDecision={(decision, ids) => void decide("/api/placement-optimization/approvals", decision, ids)}
         />
         {error && loadErrorDetails?.code === "GOOGLE_ADS_ACCESS_PATH_INVALID" ? (
           <section role="alert" className="rounded-2xl border border-amber-300 bg-amber-50 p-5 text-amber-950 shadow-sm">
@@ -754,12 +760,12 @@ export function PlacementOptimizationPageClient({ role, embedded = false, extern
           <AlertDialogHeader>
             <AlertDialogTitle>Exclude these placements?</AlertDialogTitle>
             <AlertDialogDescription>
-              This will immediately modify Google Ads for {data?.account.customerName ?? "the selected account"} and stop ads from showing on the selected placements.
+              {placementApprovalRequired ? "This sends the selected placements to a separate dashboard approval step." : "This records the selected placements for M03 review without contacting Google Ads."}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <div className="rounded-xl border border-red-200 bg-red-50 p-4">
             <p className="text-sm font-semibold text-neutral-900">{pendingExclusionIds?.length ?? 0} placement{pendingExclusionIds?.length === 1 ? "" : "s"}</p>
-            <p className="mt-1 text-sm text-neutral-600">Creates campaign-level placement exclusions in Google Ads.</p>
+            <p className="mt-1 text-sm text-neutral-600">Provider execution remains locked. No Google Ads mutation is made here.</p>
             <div className="mt-3 space-y-1 text-xs text-neutral-600">
               {(pendingExclusionIds ?? []).slice(0, 3).map((id) => {
                 const row = data?.rows.find((item) => item.id === id);
@@ -779,7 +785,7 @@ export function PlacementOptimizationPageClient({ role, embedded = false, extern
                 void saveDecision("/api/placement-optimization/decisions", "exclude", ids);
               }}
             >
-              Exclude in Google Ads
+              {placementApprovalRequired ? "Send for approval" : "Confirm exclusion decision"}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -1085,11 +1091,13 @@ function PlacementDecisionsSheet({
   selected,
   onSelectedChange,
   canOptimizer,
+  canApprover,
   saving,
   loading,
   loadError,
   onRetry,
   onOptimizerDecision,
+  onApproverDecision,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -1109,11 +1117,13 @@ function PlacementDecisionsSheet({
   selected: Set<string>;
   onSelectedChange: React.Dispatch<React.SetStateAction<Set<string>>>;
   canOptimizer: boolean;
+  canApprover: boolean;
   saving: boolean;
   loading: boolean;
   loadError: string | null;
   onRetry: () => void;
   onOptimizerDecision: (decision: PlacementDecision, ids: string[]) => void;
+  onApproverDecision: (decision: PlacementApproverDecision, ids: string[]) => void;
 }) {
   const { sidebarWidth, resizing, resizeHandleProps } = useResizableSheet(720, 0.65);
   const selectedIds = [...selected];
@@ -1129,7 +1139,7 @@ function PlacementDecisionsSheet({
         <SheetHeader className="border-b">
           <SheetTitle>Google Ads placements</SheetTitle>
           <SheetDescription>
-            Exclusions are published directly to Google Ads after confirmation. Keep and Keep in View remain internal decisions.
+            Placement decisions are stored in the dashboard for M03 review. Provider execution remains locked.
           </SheetDescription>
         </SheetHeader>
         <div className="space-y-4 border-b p-5">
@@ -1189,7 +1199,11 @@ function PlacementDecisionsSheet({
                   <PlacementDecisionButton action="exclude" disabled={saving} onClick={() => onOptimizerDecision("exclude", selectedIds)}>Exclude</PlacementDecisionButton>
                 </>
               ) : null}
-              {view === "excluded" ? <span className="text-sm text-neutral-500">Published exclusion history cannot be removed here.</span> : null}
+              {canApprover && view === "excluded" && selectedIds.every((id) => rows.find((row) => row.id === id)?.reviewStatus === "ready_for_approval") ? <>
+                <Button type="button" disabled={saving} onClick={() => onApproverDecision("approved", selectedIds)}>Approve</Button>
+                <Button type="button" variant="outline" disabled={saving} onClick={() => onApproverDecision("returned", selectedIds)}>Return</Button>
+                <Button type="button" variant="destructive" disabled={saving} onClick={() => onApproverDecision("rejected", selectedIds)}>Reject</Button>
+              </> : view === "excluded" ? <span className="text-sm text-neutral-500">Saved exclusion history cannot be removed here.</span> : null}
               {saving ? <span className="inline-flex items-center gap-2 text-sm text-neutral-500"><Spinner className="size-4" /> Saving history…</span> : null}
             </div>
           ) : null}

@@ -26,6 +26,7 @@ import { ReportDatePicker, type ReportDateSelection } from "@/components/search-
 import { ReportShell } from "@/components/reporting/report-shell";
 import { AccountEscalationNotice } from "@/components/team-lead-monitoring/account-escalation-notice";
 import { GoogleAccountSearchField } from "@/components/optimization/google-account-search-field";
+import { useWorkflowPolicies } from "@/components/workflow-settings/use-workflow-policies";
 import { isAdminRole, type AuthRole } from "@/lib/auth/roles";
 import { fetchDashboardWithRetry } from "@/lib/search-term-optimization/dashboard-load";
 import type {
@@ -33,6 +34,7 @@ import type {
   OptimizationResult,
   GoogleKeywordRecommendation,
 } from "@/lib/search-term-optimization/types";
+import { approvalRequired } from "@/lib/workflow-settings/policy";
 
 type CategoryFilter =
   | "all"
@@ -81,7 +83,9 @@ export function SearchTermOptimizationPageClient({ role, embedded = false, exter
   useEffect(()=>{setEmbeddedHeaderTarget(embeddedHeaderTargetId?document.getElementById(embeddedHeaderTargetId):null);},[embeddedHeaderTargetId]);
   const [categoryFilter, setCategoryFilter] = useState<CategoryFilter>("special review needed");
   const canReview = REVIEW_ROLES.includes(role);
-  const canApprove = false;
+  const workflowPolicies = useWorkflowPolicies();
+  const searchApprovalRequired = approvalRequired(workflowPolicies, "search_term_approval");
+  const canApprove = searchApprovalRequired && (role === "approver" || isAdmin);
   const [data, setData] = useState<OptimizationDashboardPayload | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loadErrorCode, setLoadErrorCode] = useState<DashboardLoadErrorCode>(null);
@@ -873,8 +877,8 @@ export function SearchTermOptimizationPageClient({ role, embedded = false, exter
                         onDecision={decideCategory}
                         onApproverDecision={decideApproval}
                         canReview={canReview && !decisionSaving && !["approved", "rejected"].includes(action)}
-                        canApprove={false}
-                        approverView={false}
+                        canApprove={canApprove && action === "awaiting_approval"}
+                        approverView={searchApprovalRequired && action === "awaiting_approval"}
                       />;
                     })}
                   </div>

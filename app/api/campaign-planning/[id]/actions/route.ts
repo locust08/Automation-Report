@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 
 import { getServerAuthSession } from "@/lib/auth/server-session";
 import { approveReadyCampaign, CampaignPlanningRepositoryError, validateCampaignReadiness } from "@/lib/campaign-planning/supabase-repository";
+import { isWorkflowApprovalRequired } from "@/lib/workflow-settings/repository";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -32,9 +33,19 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
       userAgent: request.headers.get("user-agent"),
       idempotencyKey,
     };
-    return NextResponse.json(action === "validate_readiness"
-      ? await validateCampaignReadiness(Number(id), requestContext)
-      : await approveReadyCampaign(Number(id), requestContext));
+    if (action === "approve_readiness") {
+      if (!await isWorkflowApprovalRequired("m04_campaign_readiness_approval")) {
+        return NextResponse.json({ error: "A separate M04 approval is disabled in Workflow Settings." }, { status: 409 });
+      }
+      return NextResponse.json(await approveReadyCampaign(Number(id), requestContext));
+    }
+    const detail = await validateCampaignReadiness(Number(id), requestContext);
+    if (!await isWorkflowApprovalRequired("m04_campaign_readiness_approval")
+      && detail.readiness?.result === "passed"
+      && detail.providerReadiness.providerReady) {
+      return NextResponse.json(await approveReadyCampaign(Number(id), { ...requestContext, idempotencyKey: `${idempotencyKey}:auto` }));
+    }
+    return NextResponse.json(detail);
   } catch (error) {
     const status = error instanceof CampaignPlanningRepositoryError ? error.status : 500;
     return NextResponse.json({ error: error instanceof Error ? error.message : "Campaign readiness action failed." }, { status });
