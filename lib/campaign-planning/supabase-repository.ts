@@ -7,12 +7,15 @@ import { prepareCampaignPlanDraft } from "@/lib/campaign-planning/campaign-plan-
 import type { CampaignEditDraft, CampaignWizardDraft, CampaignWizardForm } from "@/lib/campaign-planning/campaign-wizard";
 import type {
   CampaignAccountOption,
+  CampaignAuditEvent,
   CampaignPackageOption,
   CampaignPlanDetail,
   CampaignPlanningListPayload,
   CampaignPlanSummary,
   CampaignPlatform,
   CampaignRevision,
+  CampaignReadinessCheck,
+  CampaignReadinessSnapshot,
   LocalSupabaseStage2Meta,
 } from "@/lib/campaign-planning/types";
 
@@ -121,7 +124,7 @@ export async function getCampaignPlan(planId: number): Promise<CampaignPlanDetai
 
   const accountId = numberValue(planRow.ad_account_id, "ad account id");
   const packageId = numberValue(planRow.budget_package_id, "budget package id");
-  const [revisionRows, accountRows, packageRows] = await Promise.all([
+  const [revisionRows, accountRows, packageRows, readinessRows, approvalRows, buildRows, auditRows] = await Promise.all([
     readRows(config, "m04_ads_campaign_plan_revisions", {
       select: revisionSelect(),
       plan_id: `eq.${planId}`,
@@ -136,6 +139,30 @@ export async function getCampaignPlan(planId: number): Promise<CampaignPlanDetai
       select: "id,client_id,package_name,currency,start_date,end_date,envelope_amount,committed_amount,status",
       id: `eq.${packageId}`,
       limit: "1",
+    }),
+    readRows(config, "m04_ads_campaign_readiness_checks", {
+      select: "id,revision_id,revision_hash,result,checks,issues,created_at",
+      plan_id: `eq.${planId}`,
+      order: "created_at.desc,id.desc",
+      limit: "1",
+    }),
+    readRows(config, "m04_ads_campaign_approvals", {
+      select: "id,revision_id,revision_hash,expires_at,approved_by_name,created_at",
+      plan_id: `eq.${planId}`,
+      order: "created_at.desc,id.desc",
+      limit: "1",
+    }),
+    readRows(config, "m04_ads_campaign_builds", {
+      select: "id,revision_id,status,created_at",
+      plan_id: `eq.${planId}`,
+      order: "created_at.desc,id.desc",
+      limit: "1",
+    }),
+    readRows(config, "m04_ads_campaign_audit_events", {
+      select: "id,event_type,actor_name,created_at",
+      plan_id: `eq.${planId}`,
+      order: "created_at.desc,id.desc",
+      limit: "20",
     }),
   ]);
 
@@ -184,6 +211,23 @@ export async function getCampaignPlan(planId: number): Promise<CampaignPlanDetai
       platform,
       values: detailRows[0],
     },
+    readiness: readinessRows[0] ? mapReadiness(readinessRows[0]) : null,
+    approval: approvalRows[0] ? {
+      id: numberValue(approvalRows[0].id, "approval id"),
+      revisionId: numberValue(approvalRows[0].revision_id, "approval revision id"),
+      revisionHash: stringValue(approvalRows[0].revision_hash, "approval revision hash"),
+      expiresAt: stringValue(approvalRows[0].expires_at, "approval expiry"),
+      approvedBy: stringValue(approvalRows[0].approved_by_name, "approval actor"),
+      createdAt: stringValue(approvalRows[0].created_at, "approval creation time"),
+    } : null,
+    build: buildRows[0] ? {
+      id: numberValue(buildRows[0].id, "build id"),
+      revisionId: numberValue(buildRows[0].revision_id, "build revision id"),
+      status: stringValue(buildRows[0].status, "build status"),
+      createdAt: stringValue(buildRows[0].created_at, "build creation time"),
+    } : null,
+    audit: auditRows.map(mapAuditEvent),
+    providerExecutionLocked: true,
   };
 }
 
@@ -286,6 +330,116 @@ export async function runMockCampaignWorkflow(planId: number, actorId: string): 
       p_plan_id: planId,
       p_actor_id: resolveCampaignActorId(actorId),
       p_request_idempotency_key: `mock-workflow:${planId}`,
+    },
+  });
+  return getCampaignPlan(planId);
+}
+
+export async function validateCampaignReadiness(
+  planId: number,
+  requestContext: { actorId: string; ip?: string | null; userAgent?: string | null; idempotencyKey: string },
+): Promise<CampaignPlanDetail> {
+  const detail = await getCampaignPlan(planId);
+  if (detail.plan.status !== "draft" && detail.plan.status !== "awaiting_approval") {
+    throw new CampaignPlanningRepositoryError("Only a draft campaign can be checked for readiness.", 409);
+  }
+  const config = getLocalSupabaseConfig();
+  const [accountRows, packageRows, domainRows, trustedRows] = await Promise.all([
+    readRows(config, "m04_ads_ad_accounts", { select: "access_status,access_evidence,access_verified_at,is_active", id: `eq.${detail.plan.accountId}`, limit: "1" }),
+    readRows(config, "m04_ads_budget_packages", { select: "start_date,end_date,envelope_amount,committed_amount,status", id: `eq.${detail.plan.packageId}`, limit: "1" }),
+    readRows(config, "m04_ads_approved_domains", { select: "domain", client_id: `eq.${detail.plan.clientId}`, is_active: "eq.true" }),
+    requestContext.ip
+      ? supabaseRequest<boolean>(config, "rpc/m04_ads_is_trusted_network", { method: "POST", body: { p_ip: requestContext.ip } })
+      : Promise.resolve(false),
+  ]);
+  const account = accountRows[0] ?? {};
+  const budgetPackage = packageRows[0] ?? {};
+  const destinationHost = destinationHostname(detail.plan.destination);
+  const approvedDomains = domainRows.map((row) => optionalString(row.domain)).filter((value): value is string => Boolean(value));
+  const accessEvidence = objectValue(account.access_evidence);
+  const schemaResult = campaignPlanSchema.safeParse(detail.currentRevision.payload);
+  const trusted = trustedRows === true;
+  const approvedDestination = destinationHost
+    ? approvedDomains.some((domain) => destinationHost === domain || destinationHost.endsWith(`.${domain}`))
+    : false;
+  const checks: CampaignReadinessCheck[] = [
+    readinessCheck("revision", "Exact immutable revision", detail.plan.id > 0 && detail.currentRevision.payloadHash.length === 64, `Revision ${detail.currentRevision.revisionNo} · ${detail.currentRevision.payloadHash}`),
+    readinessCheck("account", "Account identity and access evidence", account.is_active === true && account.access_status === "verified" && Boolean(account.access_verified_at) && Object.keys(accessEvidence).length > 0, "Stored account identity, verification time, and access evidence must all be present."),
+    readinessCheck("budget", "Budget package and flight", budgetPackage.status === "active" && detail.plan.startDate >= String(budgetPackage.start_date) && detail.plan.endDate <= String(budgetPackage.end_date) && detail.currentRevision.projectedTotal <= detail.plan.allocatedBudget + 0.01 && detail.plan.allocatedBudget <= numberValue(budgetPackage.envelope_amount, "package envelope") - numberValue(budgetPackage.committed_amount, "package committed amount"), "Allocation, dates, and projected total must fit the active package."),
+    readinessCheck("domain", "Approved destination domain", approvedDestination, destinationHost ? `${destinationHost} must be in the M04 approved-domain list.` : "A valid destination URL is required."),
+    readinessCheck("platform", `${humanizePlatform(detail.plan.platform)} required fields`, schemaResult.success, schemaResult.success ? "The active revision matches the strict platform schema." : "The active revision is missing platform-required fields."),
+    readinessCheck("permission", "Administrator permission", true, "The authenticated server route confirmed administrator access."),
+    {
+      key: "network",
+      label: "M04 trusted network",
+      status: trusted ? "passed" : requestContext.ip ? "failed" : "attention",
+      detail: requestContext.ip ? (trusted ? `${requestContext.ip} matches an active M04 network.` : `${requestContext.ip} is not in the M04 trusted-network list.`) : "The request did not include a trusted client IP.",
+    },
+  ];
+  const issues = checks.filter((check) => check.status !== "passed").map((check) => `${check.label}: ${check.detail}`);
+  const result = checks.every((check) => check.status === "passed") ? "passed" : checks.some((check) => check.status === "failed") ? "failed" : "attention";
+  await supabaseRequest<JsonObject[]>(config, "rpc/m04_ads_record_campaign_readiness", {
+    method: "POST",
+    body: {
+      p_plan_id: planId,
+      p_revision_id: detail.currentRevision.id,
+      p_expected_revision_hash: detail.currentRevision.payloadHash,
+      p_result: result,
+      p_checks: checks,
+      p_issues: issues,
+      p_validation_snapshot: { platform: detail.plan.platform, destination_host: destinationHost, provider_execution_locked: true },
+      p_actor_id: resolveCampaignActorId(requestContext.actorId),
+      p_trusted_ip: requestContext.ip || null,
+      p_trusted_user_agent: requestContext.userAgent?.trim().slice(0, 1_000) || "m04-readiness",
+      p_request_idempotency_key: requestContext.idempotencyKey,
+    },
+  });
+  return getCampaignPlan(planId);
+}
+
+export async function approveReadyCampaign(
+  planId: number,
+  requestContext: { actorId: string; ip?: string | null; userAgent?: string | null; idempotencyKey: string },
+): Promise<CampaignPlanDetail> {
+  let detail = await getCampaignPlan(planId);
+  if (!detail.readiness || detail.readiness.result !== "passed"
+    || detail.readiness.revisionId !== detail.currentRevision.id
+    || detail.readiness.revisionHash !== detail.currentRevision.payloadHash) {
+    throw new CampaignPlanningRepositoryError("Run readiness validation and resolve every check before approval.", 409);
+  }
+  const config = getLocalSupabaseConfig();
+  if (detail.plan.status === "draft") {
+    await supabaseRequest<JsonObject[]>(config, "rpc/m04_ads_transition_campaign_plan", {
+      method: "POST",
+      body: {
+        p_plan_id: planId,
+        p_expected_lock_version: detail.plan.lockVersion,
+        p_expected_from_status: "draft",
+        p_to_status: "awaiting_approval",
+        p_reason: "Dashboard readiness checks passed; provider execution remains locked.",
+        p_actor_id: resolveCampaignActorId(requestContext.actorId),
+        p_trusted_ip: requestContext.ip || null,
+        p_trusted_user_agent: requestContext.userAgent?.trim().slice(0, 1_000) || "m04-readiness-approval",
+      },
+    });
+    detail = await getCampaignPlan(planId);
+  }
+  if (detail.plan.status !== "awaiting_approval" && detail.plan.status !== "approved") {
+    throw new CampaignPlanningRepositoryError("Campaign is not eligible for readiness approval.", 409);
+  }
+  await supabaseRequest<JsonObject[]>(config, "rpc/m04_ads_approve_campaign_plan_revision", {
+    method: "POST",
+    body: {
+      p_plan_id: planId,
+      p_revision_id: detail.currentRevision.id,
+      p_expected_revision_hash: detail.currentRevision.payloadHash,
+      p_expected_plan_lock_version: detail.plan.lockVersion,
+      p_approval_expires_at: new Date(Date.now() + 24 * 60 * 60 * 1_000).toISOString(),
+      p_request_idempotency_key: requestContext.idempotencyKey,
+      p_comment: "Ready for provider integration. Provider execution remains locked.",
+      p_actor_id: resolveCampaignActorId(requestContext.actorId),
+      p_trusted_ip: requestContext.ip || null,
+      p_trusted_user_agent: requestContext.userAgent?.trim().slice(0, 1_000) || "m04-readiness-approval",
     },
   });
   return getCampaignPlan(planId);
@@ -689,6 +843,60 @@ function mapCampaignEditDraft(row: JsonObject): CampaignEditDraft {
     baseRevisionId: numberValue(row.base_revision_id, "edit draft base revision id"),
     baseLockVersion: numberValue(row.base_lock_version, "edit draft base lock version"),
   };
+}
+
+function mapReadiness(row: JsonObject): CampaignReadinessSnapshot {
+  const result = row.result;
+  if (result !== "passed" && result !== "failed" && result !== "attention") {
+    throw new CampaignPlanningRepositoryError("Stored readiness result is invalid.", 500);
+  }
+  const rawChecks = Array.isArray(row.checks) ? row.checks : [];
+  return {
+    id: numberValue(row.id, "readiness id"),
+    revisionId: numberValue(row.revision_id, "readiness revision id"),
+    revisionHash: stringValue(row.revision_hash, "readiness revision hash"),
+    result,
+    checks: rawChecks.map((value) => {
+      const check = objectValue(value);
+      const status = check.status;
+      if (status !== "passed" && status !== "failed" && status !== "attention") {
+        throw new CampaignPlanningRepositoryError("Stored readiness check status is invalid.", 500);
+      }
+      return {
+        key: stringValue(check.key, "readiness check key"),
+        label: stringValue(check.label, "readiness check label"),
+        status,
+        detail: stringValue(check.detail, "readiness check detail"),
+      };
+    }),
+    issues: Array.isArray(row.issues) ? row.issues.filter((value): value is string => typeof value === "string") : [],
+    createdAt: stringValue(row.created_at, "readiness creation time"),
+  };
+}
+
+function mapAuditEvent(row: JsonObject): CampaignAuditEvent {
+  return {
+    id: numberValue(row.id, "audit event id"),
+    eventType: stringValue(row.event_type, "audit event type"),
+    actorName: optionalString(row.actor_name) ?? null,
+    createdAt: stringValue(row.created_at, "audit event time"),
+  };
+}
+
+function readinessCheck(key: string, label: string, passed: boolean, detail: string): CampaignReadinessCheck {
+  return { key, label, status: passed ? "passed" : "failed", detail };
+}
+
+function destinationHostname(destination: string): string | null {
+  try {
+    return new URL(destination).hostname.toLowerCase();
+  } catch {
+    return null;
+  }
+}
+
+function humanizePlatform(platform: CampaignPlatform): string {
+  return platform === "tiktok" ? "TikTok" : platform[0].toUpperCase() + platform.slice(1);
 }
 
 function parseResponse(value: string): unknown {

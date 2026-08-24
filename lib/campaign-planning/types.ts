@@ -100,6 +100,46 @@ export type CampaignPlatformDetail = {
   values: Record<string, unknown>;
 };
 
+export type CampaignReadinessCheck = {
+  key: string;
+  label: string;
+  status: "passed" | "failed" | "attention";
+  detail: string;
+};
+
+export type CampaignReadinessSnapshot = {
+  id: number;
+  revisionId: number;
+  revisionHash: string;
+  result: "passed" | "failed" | "attention";
+  checks: CampaignReadinessCheck[];
+  issues: string[];
+  createdAt: string;
+};
+
+export type CampaignApprovalSnapshot = {
+  id: number;
+  revisionId: number;
+  revisionHash: string;
+  expiresAt: string;
+  approvedBy: string;
+  createdAt: string;
+} | null;
+
+export type CampaignBuildSnapshot = {
+  id: number;
+  revisionId: number;
+  status: string;
+  createdAt: string;
+} | null;
+
+export type CampaignAuditEvent = {
+  id: number;
+  eventType: string;
+  actorName: string | null;
+  createdAt: string;
+};
+
 export type CampaignPlanDetail = LocalSupabaseStage2Meta & {
   plan: CampaignPlanSummary & {
     accountId: number;
@@ -113,6 +153,11 @@ export type CampaignPlanDetail = LocalSupabaseStage2Meta & {
   currentRevision: CampaignRevision;
   revisions: CampaignRevision[];
   platformDetail: CampaignPlatformDetail;
+  readiness: CampaignReadinessSnapshot | null;
+  approval: CampaignApprovalSnapshot;
+  build: CampaignBuildSnapshot;
+  audit: CampaignAuditEvent[];
+  providerExecutionLocked: true;
 };
 
 export type CreateCampaignPlanInput = CampaignPlanDraftInput;

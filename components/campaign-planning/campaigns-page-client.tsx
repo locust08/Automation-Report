@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { AlertCircleIcon, CalendarIcon, CheckIcon, ChevronLeftIcon, ChevronRightIcon, CloudCheckIcon, LoaderCircleIcon, PencilIcon, PlusIcon, RefreshCwIcon, RotateCcwIcon, XIcon } from "lucide-react";
+import { AlertCircleIcon, BanIcon, CalendarIcon, CheckCircle2Icon, CheckIcon, ChevronLeftIcon, ChevronRightIcon, CloudCheckIcon, LoaderCircleIcon, PencilIcon, PlusIcon, RefreshCwIcon, RotateCcwIcon, ShieldCheckIcon, XIcon } from "lucide-react";
 
 import { ReportShell } from "@/components/reporting/report-shell";
 import { Badge } from "@/components/ui/badge";
@@ -153,14 +153,18 @@ export function CampaignsPageClient({ initialRole }: { initialRole: AuthRole }) 
     }
   }
 
-  async function runMockWorkflow(id: number) {
+  async function runReadinessAction(detail: CampaignPlanDetail, action: "validate_readiness" | "approve_readiness") {
     setBusy(true); setError(null);
     try {
-      const response = await fetch(`/api/campaign-planning/${id}/actions`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ action: "run_full_mock" }) });
+      const response = await fetch(`/api/campaign-planning/${detail.plan.id}/actions`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ action, idempotency_key: `${action}:${detail.plan.id}:${detail.currentRevision.id}` }),
+      });
       const payload = await response.json() as CampaignPlanDetail & { error?: string };
-      if (!response.ok) throw new Error(payload.error || "Mock workflow failed.");
+      if (!response.ok) throw new Error(payload.error || "Campaign readiness action failed.");
       setSelected(payload); await load();
-    } catch (cause) { setError(cause instanceof Error ? cause.message : "Mock workflow failed."); }
+    } catch (cause) { setError(cause instanceof Error ? cause.message : "Campaign readiness action failed."); }
     finally { setBusy(false); }
   }
 
@@ -304,7 +308,7 @@ export function CampaignsPageClient({ initialRole }: { initialRole: AuthRole }) 
                   {row.map((campaign) => <CampaignCard key={campaign.id} campaign={campaign} selected={selectedId === campaign.id} onClick={() => void openPlan(campaign.id)} />)}
                 </div>
                 {selectedId && editingCampaignId !== selectedId && row.some((campaign) => campaign.id === selectedId) ? (
-                  detailLoading ? <CampaignDetailSkeleton /> : selected ? <CampaignDetail detail={selected} busy={busy} isAdmin={isAdmin} editing={false} onToggleEdit={toggleEditCampaign} runMockWorkflow={runMockWorkflow} /> : null
+                  detailLoading ? <CampaignDetailSkeleton /> : selected ? <CampaignDetail detail={selected} busy={busy} isAdmin={isAdmin} editing={false} onToggleEdit={toggleEditCampaign} runReadinessAction={runReadinessAction} /> : null
                 ) : null}
               </div>
             ))}
@@ -313,7 +317,7 @@ export function CampaignsPageClient({ initialRole }: { initialRole: AuthRole }) 
           </CardContent>
         </Card>
         {data && selected && editingCampaignId === selected.plan.id ? CAMPAIGN_EDITING_SECTION_ORDER.map((section) => section === "detail"
-          ? <CampaignDetail key="detail" detail={selected} busy={busy} isAdmin={isAdmin} editing onToggleEdit={toggleEditCampaign} runMockWorkflow={runMockWorkflow} />
+          ? <CampaignDetail key="detail" detail={selected} busy={busy} isAdmin={isAdmin} editing onToggleEdit={toggleEditCampaign} runReadinessAction={runReadinessAction} />
           : <CampaignEditWizard key="editor" detail={selected} accounts={data.accounts} packages={data.packages} busy={busy} onCancel={toggleEditCampaign} onSave={(campaign) => updatePlan(selected, campaign)} />
         ) : null}
         {data && showCreate ? <Card className="overflow-hidden border-red-200 shadow-sm">
@@ -512,11 +516,31 @@ function CreativeFields({ form, set, google = false, errors }: { form: FormState
   </>;
 }
 
-function CampaignDetail({ detail, busy, isAdmin, editing, onToggleEdit, runMockWorkflow }: { detail: CampaignPlanDetail; busy: boolean; isAdmin: boolean; editing: boolean; onToggleEdit: () => void; runMockWorkflow: (id: number) => void }) {
+function CampaignDetail({ detail, busy, isAdmin, editing, onToggleEdit, runReadinessAction }: { detail: CampaignPlanDetail; busy: boolean; isAdmin: boolean; editing: boolean; onToggleEdit: () => void; runReadinessAction: (detail: CampaignPlanDetail, action: "validate_readiness" | "approve_readiness") => void }) {
   return <Card className="border-red-200 bg-white shadow-sm"><CardHeader><div className="flex items-start justify-between gap-3"><div><CardTitle>{detail.plan.campaignName}</CardTitle><CardDescription>{detail.plan.platform.toUpperCase()} · Revision {detail.currentRevision.revisionNo} · immutable revision</CardDescription></div><div className="flex items-center gap-2">{isAdmin && detail.plan.status === "draft" ? <Button type="button" variant="outline" size="sm" onClick={onToggleEdit}>{editing ? <XIcon /> : <PencilIcon />}{editing ? "Cancel edit" : "Edit details"}</Button> : null}<Badge>{humanize(detail.plan.status)}</Badge></div></div></CardHeader><CardContent className="space-y-5">
     <CampaignDetailTable detail={detail} />
-    {detail.plan.status === "draft" ? <Button type="button" className="w-full" disabled={busy} onClick={() => runMockWorkflow(detail.plan.id)}>Run complete offline mock workflow</Button> : <div className="rounded-xl border border-emerald-300 bg-emerald-50 p-4 text-sm text-emerald-900">Mock workflow complete. No provider request was made and no M03/M05 record was published.</div>}
+    <CampaignReadiness detail={detail} busy={busy} isAdmin={isAdmin} onAction={(action) => runReadinessAction(detail, action)} />
   </CardContent></Card>;
+}
+
+function CampaignReadiness({ detail, busy, isAdmin, onAction }: { detail: CampaignPlanDetail; busy: boolean; isAdmin: boolean; onAction: (action: "validate_readiness" | "approve_readiness") => void }) {
+  const ready = detail.readiness?.result === "passed"
+    && detail.readiness.revisionId === detail.currentRevision.id
+    && detail.readiness.revisionHash === detail.currentRevision.payloadHash;
+  const approved = detail.plan.status === "approved" && detail.approval && detail.build;
+  const canCheck = detail.plan.status === "draft" || detail.plan.status === "awaiting_approval";
+  return <section className="overflow-hidden rounded-xl border bg-white">
+    <div className="flex flex-wrap items-start justify-between gap-3 border-b px-4 py-4">
+      <div><div className="flex items-center gap-2 font-semibold"><ShieldCheckIcon className="size-5 text-red-600" /> Campaign readiness</div><p className="mt-1 text-sm text-muted-foreground">Validate the exact immutable revision before any future provider integration.</p></div>
+      {approved ? <Badge className="bg-emerald-600">Ready for provider integration</Badge> : detail.readiness ? <Badge variant="outline">{humanize(detail.readiness.result)}</Badge> : <Badge variant="outline">Not checked</Badge>}
+    </div>
+    <div className="space-y-4 p-4">
+      {detail.readiness ? <div className="grid gap-2 md:grid-cols-2">{detail.readiness.checks.map((check) => <div key={check.key} className={`rounded-lg border p-3 ${check.status === "passed" ? "border-emerald-200 bg-emerald-50" : check.status === "failed" ? "border-red-200 bg-red-50" : "border-amber-200 bg-amber-50"}`}><div className="flex items-start gap-2">{check.status === "passed" ? <CheckCircle2Icon className="mt-0.5 size-4 shrink-0 text-emerald-700" /> : <AlertCircleIcon className={`mt-0.5 size-4 shrink-0 ${check.status === "failed" ? "text-red-700" : "text-amber-700"}`} />}<div><p className="text-sm font-medium">{check.label}</p><p className="mt-1 text-xs leading-relaxed text-muted-foreground">{check.detail}</p></div></div></div>)}</div> : <div className="rounded-lg border border-dashed p-4 text-sm text-muted-foreground">No readiness snapshot exists for this revision yet.</div>}
+      {approved ? <div className="rounded-lg border border-emerald-300 bg-emerald-50 p-4"><p className="font-medium text-emerald-950">Ready for provider integration</p><p className="mt-1 text-sm text-emerald-900">Approval #{detail.approval?.id} created pending Gate 1 build #{detail.build?.id}. No provider request was made.</p></div> : <div className="flex flex-wrap gap-2"><Button type="button" variant="outline" disabled={busy || !isAdmin || !canCheck} onClick={() => onAction("validate_readiness")}>{busy ? <LoaderCircleIcon className="animate-spin" /> : <RefreshCwIcon />} Run readiness checks</Button><Button type="button" disabled={busy || !isAdmin || !canCheck || !ready} onClick={() => onAction("approve_readiness")}><CheckIcon /> Approve exact revision</Button>{!canCheck ? <p className="basis-full text-xs text-muted-foreground">Readiness approval is available only before a campaign leaves draft workflow.</p> : null}</div>}
+      <div className="grid gap-2 border-t pt-4 sm:grid-cols-2 lg:grid-cols-4">{["Provider creation", "Activation", "Provider readback", "M05 handoff"].map((label) => <Button key={label} type="button" variant="outline" disabled className="justify-start"><BanIcon /> {label}</Button>)}</div>
+      <p className="text-xs text-muted-foreground">Provider execution is locked. These controls will be enabled only in a separately reviewed integration phase.</p>
+    </div>
+  </section>;
 }
 
 function CampaignEditWizard({ detail, accounts, packages, busy, onCancel, onSave }: { detail: CampaignPlanDetail; accounts: CampaignPlanningListPayload["accounts"]; packages: CampaignPlanningListPayload["packages"]; busy: boolean; onCancel: () => void; onSave: (campaign: CampaignPlanDraftInput) => Promise<CampaignUpdateResult> }) {
