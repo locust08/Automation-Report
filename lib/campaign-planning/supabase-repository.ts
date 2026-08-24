@@ -1,9 +1,10 @@
 import {
   campaignPlanSchema,
-  prepareCampaignPlanDraft,
   type CampaignPlan,
   type CampaignPlanDraftInput,
 } from "@/lib/campaign-planning/domain";
+import { prepareCampaignPlanDraft } from "@/lib/campaign-planning/campaign-plan-preparation";
+import type { CampaignEditDraft, CampaignWizardDraft, CampaignWizardForm } from "@/lib/campaign-planning/campaign-wizard";
 import type {
   CampaignAccountOption,
   CampaignPackageOption,
@@ -235,6 +236,45 @@ export async function createCampaignPlanDraft(
   return getCampaignPlan(numberValue(result.plan_id, "created plan id"));
 }
 
+export async function updateCampaignPlanRevision(
+  planId: number,
+  expectedLockVersion: number,
+  input: CampaignPlanDraftInput,
+  requestContext: { actorId: string; userAgent?: string | null },
+): Promise<CampaignPlanDetail> {
+  const current = await getCampaignPlan(planId);
+  if (current.plan.status !== "draft") throw new CampaignPlanningRepositoryError("Only draft campaigns can be edited.", 409);
+  if (current.plan.lockVersion !== expectedLockVersion) throw new CampaignPlanningRepositoryError("This campaign changed while you were editing it. Refresh and try again.", 409);
+
+  const prepared = prepareCampaignPlanDraft({
+    ...input,
+    platform: current.plan.platform,
+    client_id: current.currentRevision.payload.client_id,
+    client_name: current.currentRevision.payload.client_name,
+    ad_account_id: current.plan.accountId,
+    budget_package_id: current.plan.packageId,
+    provider_account_id: current.plan.providerAccountId,
+    currency: current.plan.currency,
+    timezone: current.plan.timezone,
+  });
+  const config = getLocalSupabaseConfig();
+  await supabaseRequest<JsonObject[]>(config, "rpc/m04_ads_update_campaign_plan_draft", {
+    method: "POST",
+    body: {
+      p_plan_id: planId,
+      p_expected_plan_lock_version: expectedLockVersion,
+      p_revision_payload: prepared.plan,
+      p_canonical_json: prepared.canonical_json,
+      p_expected_payload_hash: prepared.payload_hash,
+      p_platform_detail: serializePlatformDetail(prepared.plan),
+      p_actor_id: resolveCampaignActorId(requestContext.actorId),
+      p_trusted_ip: null,
+      p_trusted_user_agent: requestContext.userAgent?.trim().slice(0, 1_000) || "m04-crm08-edit",
+    },
+  });
+  return getCampaignPlan(planId);
+}
+
 export async function runMockCampaignWorkflow(planId: number, actorId: string): Promise<CampaignPlanDetail> {
   if (!Number.isSafeInteger(planId) || planId < 1) {
     throw new CampaignPlanningRepositoryError("Invalid campaign ID.", 400);
@@ -249,6 +289,95 @@ export async function runMockCampaignWorkflow(planId: number, actorId: string): 
     },
   });
   return getCampaignPlan(planId);
+}
+
+export async function getCampaignWizardDraft(sessionSubject: string): Promise<CampaignWizardDraft | null> {
+  const ownerId = resolveCampaignActorId(sessionSubject);
+  const rows = await readRows(getLocalSupabaseConfig(), "m04_ads_campaign_wizard_drafts", {
+    select: "platform,current_step,highest_reached_step,form_data,updated_at",
+    owner_id: `eq.${ownerId}`,
+    limit: "1",
+  });
+  if (!rows[0]) return null;
+  return mapCampaignWizardDraft(rows[0]);
+}
+
+export async function upsertCampaignWizardDraft(
+  sessionSubject: string,
+  input: { platform: CampaignPlatform; current_step: number; highest_reached_step: number; form_data: Record<string, unknown> },
+): Promise<CampaignWizardDraft> {
+  const ownerId = resolveCampaignActorId(sessionSubject);
+  const rows = await supabaseRequest<JsonObject[]>(
+    getLocalSupabaseConfig(),
+    "m04_ads_campaign_wizard_drafts?on_conflict=owner_id",
+    {
+      method: "POST",
+      prefer: "resolution=merge-duplicates,return=representation",
+      body: {
+        owner_id: ownerId,
+        platform: input.platform,
+        current_step: input.current_step,
+        highest_reached_step: input.highest_reached_step,
+        form_data: input.form_data,
+        updated_at: new Date().toISOString(),
+      },
+    },
+  );
+  if (!rows[0]) throw new CampaignPlanningRepositoryError("CRM08 Supabase did not return the saved wizard draft.", 500);
+  return mapCampaignWizardDraft(rows[0]);
+}
+
+export async function deleteCampaignWizardDraft(sessionSubject: string): Promise<void> {
+  const ownerId = resolveCampaignActorId(sessionSubject);
+  await supabaseRequest<unknown>(
+    getLocalSupabaseConfig(),
+    `m04_ads_campaign_wizard_drafts?owner_id=eq.${ownerId}`,
+    { method: "DELETE", prefer: "return=minimal" },
+  );
+}
+
+export async function getCampaignEditDraft(planId: number, sessionSubject: string): Promise<CampaignEditDraft | null> {
+  const ownerId = resolveCampaignActorId(sessionSubject);
+  const rows = await readRows(getLocalSupabaseConfig(), "m04_ads_campaign_edit_drafts", {
+    select: "plan_id,base_revision_id,base_lock_version,platform,current_step,highest_reached_step,form_data,updated_at",
+    owner_id: `eq.${ownerId}`,
+    plan_id: `eq.${planId}`,
+    limit: "1",
+  });
+  return rows[0] ? mapCampaignEditDraft(rows[0]) : null;
+}
+
+export async function upsertCampaignEditDraft(
+  planId: number,
+  sessionSubject: string,
+  input: { base_revision_id: number; base_lock_version: number; platform: CampaignPlatform; current_step: number; highest_reached_step: number; form_data: Record<string, unknown> },
+): Promise<CampaignEditDraft> {
+  const ownerId = resolveCampaignActorId(sessionSubject);
+  const rows = await supabaseRequest<JsonObject[]>(
+    getLocalSupabaseConfig(),
+    "m04_ads_campaign_edit_drafts?on_conflict=owner_id,plan_id",
+    {
+      method: "POST",
+      prefer: "resolution=merge-duplicates,return=representation",
+      body: {
+        owner_id: ownerId,
+        plan_id: planId,
+        ...input,
+        updated_at: new Date().toISOString(),
+      },
+    },
+  );
+  if (!rows[0]) throw new CampaignPlanningRepositoryError("CRM08 Supabase did not return the saved campaign edit.", 500);
+  return mapCampaignEditDraft(rows[0]);
+}
+
+export async function deleteCampaignEditDraft(planId: number, sessionSubject: string): Promise<void> {
+  const ownerId = resolveCampaignActorId(sessionSubject);
+  await supabaseRequest<unknown>(
+    getLocalSupabaseConfig(),
+    `m04_ads_campaign_edit_drafts?owner_id=eq.${ownerId}&plan_id=eq.${planId}`,
+    { method: "DELETE", prefer: "return=minimal" },
+  );
 }
 
 export function resolveCampaignActorId(sessionSubject: string): string {
@@ -496,7 +625,7 @@ async function readRows(
 async function supabaseRequest<T>(
   config: LocalSupabaseConfig,
   path: string,
-  init: { method: "GET" | "POST"; body?: JsonObject },
+  init: { method: "GET" | "POST" | "DELETE"; body?: JsonObject; prefer?: string },
 ): Promise<T> {
   let response: Response;
   try {
@@ -508,6 +637,7 @@ async function supabaseRequest<T>(
         authorization: `Bearer ${config.serviceRoleKey}`,
         "content-profile": "public",
         "content-type": "application/json",
+        ...(init.prefer ? { prefer: init.prefer } : {}),
       },
       body: init.body ? JSON.stringify(init.body) : undefined,
       cache: "no-store",
@@ -531,6 +661,34 @@ async function supabaseRequest<T>(
     throw new CampaignPlanningRepositoryError(message, databaseErrorStatus(code, response.status));
   }
   return payload as T;
+}
+
+function mapCampaignWizardDraft(row: JsonObject): CampaignWizardDraft {
+  const platform = platformValue(row.platform);
+  const currentStep = numberValue(row.current_step, "wizard current step");
+  const highestReachedStep = numberValue(row.highest_reached_step, "wizard highest reached step");
+  if (!Number.isInteger(currentStep) || !Number.isInteger(highestReachedStep)
+    || currentStep < 0 || currentStep > 4 || highestReachedStep < currentStep || highestReachedStep > 4) {
+    throw new CampaignPlanningRepositoryError("Stored campaign wizard progress is invalid.", 500);
+  }
+  const formData = objectValue(row.form_data) as Partial<CampaignWizardForm>;
+  return {
+    platform,
+    currentStep,
+    highestReachedStep,
+    formData,
+    updatedAt: stringValue(row.updated_at, "wizard update time"),
+  };
+}
+
+function mapCampaignEditDraft(row: JsonObject): CampaignEditDraft {
+  const draft = mapCampaignWizardDraft(row);
+  return {
+    ...draft,
+    planId: numberValue(row.plan_id, "edit draft plan id"),
+    baseRevisionId: numberValue(row.base_revision_id, "edit draft base revision id"),
+    baseLockVersion: numberValue(row.base_lock_version, "edit draft base lock version"),
+  };
 }
 
 function parseResponse(value: string): unknown {

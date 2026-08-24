@@ -10,8 +10,8 @@ const {
   campaignPlanDraftInputSchema,
   canTransitionCampaignBuild,
   evaluateCampaignApproval,
-  prepareCampaignPlanDraft,
 } = require("../lib/campaign-planning/domain.ts") as typeof import("../lib/campaign-planning/domain.ts");
+const { prepareCampaignPlanDraft } = require("../lib/campaign-planning/campaign-plan-preparation.ts") as typeof import("../lib/campaign-planning/campaign-plan-preparation.ts");
 
 const commonDraft = {
   client_id: "10000000-0000-4000-8000-000000000001",

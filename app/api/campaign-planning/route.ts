@@ -5,6 +5,7 @@ import { getServerAuthSession } from "@/lib/auth/server-session";
 import {
   CampaignPlanningRepositoryError,
   createCampaignPlanDraft,
+  deleteCampaignWizardDraft,
   disconnectedStage2Meta,
   listCampaignPlans,
 } from "@/lib/campaign-planning/supabase-repository";
@@ -39,6 +40,7 @@ export async function POST(request: Request) {
       actorId: session.sub,
       userAgent: request.headers.get("user-agent"),
     });
+    await deleteCampaignWizardDraft(session.sub).catch(() => undefined);
     return NextResponse.json(detail, { status: 201 });
   } catch (error) {
     if (error instanceof ZodError) {

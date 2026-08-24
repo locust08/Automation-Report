@@ -1,5 +1,3 @@
-import { createHash } from "node:crypto";
-
 import { z } from "zod";
 
 export const CAMPAIGN_BUDGET_INCREMENT = {
@@ -333,12 +331,6 @@ export type CampaignBudgetProjection = {
   projected_total: number;
 };
 
-export type PreparedCampaignPlanDraft = {
-  plan: CampaignPlan;
-  canonical_json: string;
-  payload_hash: string;
-};
-
 export function calculateCampaignBudget(input: {
   platform: keyof typeof CAMPAIGN_BUDGET_INCREMENT;
   allocated_budget: number;
@@ -378,35 +370,12 @@ export function inclusiveFlightDays(startDate: string, endDate: string): number 
   return Math.floor((end - start) / 86_400_000) + 1;
 }
 
-export function prepareCampaignPlanDraft(input: unknown): PreparedCampaignPlanDraft {
-  const draft = campaignPlanDraftInputSchema.parse(input);
-  const budget = calculateCampaignBudget(draft);
-  const plan = campaignPlanSchema.parse({
-    ...draft,
-    increment_amount: budget.increment_amount,
-    daily_budget: budget.daily_budget,
-    projected_total: budget.projected_total,
-  });
-  const normalizedPlan = normalizeCampaignPlan(plan) as CampaignPlan;
-  const canonicalJsonValue = canonicalJson(normalizedPlan);
-
-  return {
-    plan: normalizedPlan,
-    canonical_json: canonicalJsonValue,
-    payload_hash: sha256Hex(canonicalJsonValue),
-  };
-}
-
 export function normalizeCampaignPlan<T>(value: T): T {
   return normalizeCampaignValue(value) as T;
 }
 
 export function canonicalJson(value: unknown): string {
   return JSON.stringify(canonicalize(value));
-}
-
-export function sha256Hex(canonicalJsonValue: string): string {
-  return createHash("sha256").update(canonicalJsonValue, "utf8").digest("hex");
 }
 
 export type CampaignApprovalEvaluation =
