@@ -4,10 +4,12 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AlertCircleIcon, BanIcon, CalendarIcon, CheckCircle2Icon, CheckIcon, ChevronLeftIcon, ChevronRightIcon, CloudCheckIcon, LoaderCircleIcon, PencilIcon, PlusIcon, RefreshCwIcon, RotateCcwIcon, ShieldCheckIcon, XIcon } from "lucide-react";
 
 import { ReportShell } from "@/components/reporting/report-shell";
+import { useWorkflowPolicies } from "@/components/workflow-settings/use-workflow-policies";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Calendar } from "@/components/ui/calendar";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -19,7 +21,8 @@ import type { AuthRole } from "@/lib/auth/roles";
 import { buildCampaignRows, filterCampaigns, paginateCampaigns, type CampaignPlatformFilter, type CampaignStatusFilter } from "@/lib/campaign-planning/campaign-list-view";
 import { flattenCampaignDetail } from "@/lib/campaign-planning/campaign-detail-table";
 import { CAMPAIGN_EDITING_SECTION_ORDER, EDIT_DRAFT_RESET_LABEL, selectCampaignDetail, toggleCampaignCreator, toggleCampaignEditor } from "@/lib/campaign-planning/campaign-workspace-view";
-import { buildCampaignDraftRequest, hydrateCampaignWizardFromRevision } from "@/lib/campaign-planning/campaign-wizard-payload";
+import { hydrateCampaignWizardFromRevision } from "@/lib/campaign-planning/campaign-wizard-payload";
+import { evaluateCampaignProviderReadiness } from "@/lib/campaign-planning/campaign-provider-readiness";
 import { mapCampaignIssueToWizardField, validateCampaignSubmission, type CampaignApiValidationIssue, type CampaignWizardIssue } from "@/lib/campaign-planning/campaign-submission-validation";
 import {
   createCampaignWizardForm,
@@ -41,6 +44,7 @@ import type {
   CampaignPlanningListPayload,
   CampaignPlatform,
 } from "@/lib/campaign-planning/types";
+import { approvalRequired } from "@/lib/workflow-settings/policy";
 
 type FormState = CampaignWizardForm;
 type CampaignUpdateResult =
@@ -49,6 +53,8 @@ type CampaignUpdateResult =
 type CampaignEditSubmitError = { message: string; issue?: CampaignWizardIssue };
 
 export function CampaignsPageClient({ initialRole }: { initialRole: AuthRole }) {
+  const workflowPolicies = useWorkflowPolicies();
+  const m04ApprovalRequired = approvalRequired(workflowPolicies, "m04_campaign_readiness_approval");
   const [data, setData] = useState<CampaignPlanningListPayload | null>(null);
   const [selected, setSelected] = useState<CampaignPlanDetail | null>(null);
   const [selectedId, setSelectedId] = useState<number | null>(null);
@@ -68,6 +74,7 @@ export function CampaignsPageClient({ initialRole }: { initialRole: AuthRole }) 
   const [listLoading, setListLoading] = useState(true);
   const [detailLoading, setDetailLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [createSubmitError, setCreateSubmitError] = useState<CampaignEditSubmitError | null>(null);
   const isAdmin = initialRole === "admin";
 
   const load = useCallback(async () => {
@@ -188,6 +195,7 @@ export function CampaignsPageClient({ initialRole }: { initialRole: AuthRole }) 
   }
 
   async function createDraft() {
+    setCreateSubmitError(null);
     for (let step = 0; step < 4; step += 1) {
       const errors = validateCampaignWizardStep(form, step);
       if (errors.length) {
@@ -197,17 +205,28 @@ export function CampaignsPageClient({ initialRole }: { initialRole: AuthRole }) 
       }
     }
     const account = data?.accounts.find((item) => String(item.id) === form.accountId);
-    if (!account) return setError("Select a local mock ad account.");
+    if (!account) return setCreateSubmitError({ message: "Select a local mock ad account." });
+    const validated = validateCampaignSubmission(form, account);
+    if (!validated.success) {
+      const issue = validated.issues[0];
+      setCreateSubmitError({ message: issue?.message ?? validated.error, issue });
+      return;
+    }
     setBusy(true);
     setError(null);
     try {
       const response = await fetch("/api/campaign-planning", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify(buildCampaignDraftRequest(form, account)),
+        body: JSON.stringify(validated.campaign),
       });
-      const payload = await response.json();
-      if (!response.ok) throw new Error(payload.error || "Unable to create the draft.");
+      const payload = await response.json() as CampaignPlanDetail & { error?: string; issues?: CampaignApiValidationIssue[] };
+      if (!response.ok) {
+        const apiIssue = payload.issues?.[0];
+        const issue = apiIssue ? { ...apiIssue, field: mapCampaignIssueToWizardField(apiIssue.path).field } : undefined;
+        setCreateSubmitError({ message: apiIssue?.message ?? payload.error ?? "Unable to create the draft.", issue });
+        return;
+      }
       setSelected(payload);
       setSelectedId(payload.plan.id);
       setShowCreate(false);
@@ -216,10 +235,18 @@ export function CampaignsPageClient({ initialRole }: { initialRole: AuthRole }) 
       await fetch("/api/campaign-planning/wizard-draft", { method: "DELETE" }).catch(() => undefined);
       await load();
     } catch (reason) {
-      setError(errorMessage(reason));
+      setCreateSubmitError({ message: errorMessage(reason) });
     } finally {
       setBusy(false);
     }
+  }
+
+  function goToCreateSubmitError() {
+    if (!createSubmitError?.issue) return;
+    const { field, message, step } = createSubmitError.issue;
+    setWizardStep(step);
+    setWizardErrors([{ field, message }]);
+    focusWizardError({ field, message });
   }
 
   function goToNextWizardStep() {
@@ -308,7 +335,7 @@ export function CampaignsPageClient({ initialRole }: { initialRole: AuthRole }) 
                   {row.map((campaign) => <CampaignCard key={campaign.id} campaign={campaign} selected={selectedId === campaign.id} onClick={() => void openPlan(campaign.id)} />)}
                 </div>
                 {selectedId && editingCampaignId !== selectedId && row.some((campaign) => campaign.id === selectedId) ? (
-                  detailLoading ? <CampaignDetailSkeleton /> : selected ? <CampaignDetail detail={selected} busy={busy} isAdmin={isAdmin} editing={false} onToggleEdit={toggleEditCampaign} runReadinessAction={runReadinessAction} /> : null
+                  detailLoading ? <CampaignDetailSkeleton /> : selected ? <CampaignDetail detail={selected} busy={busy} isAdmin={isAdmin} approvalRequired={m04ApprovalRequired} editing={false} onToggleEdit={toggleEditCampaign} runReadinessAction={runReadinessAction} /> : null
                 ) : null}
               </div>
             ))}
@@ -317,7 +344,7 @@ export function CampaignsPageClient({ initialRole }: { initialRole: AuthRole }) 
           </CardContent>
         </Card>
         {data && selected && editingCampaignId === selected.plan.id ? CAMPAIGN_EDITING_SECTION_ORDER.map((section) => section === "detail"
-          ? <CampaignDetail key="detail" detail={selected} busy={busy} isAdmin={isAdmin} editing onToggleEdit={toggleEditCampaign} runReadinessAction={runReadinessAction} />
+          ? <CampaignDetail key="detail" detail={selected} busy={busy} isAdmin={isAdmin} approvalRequired={m04ApprovalRequired} editing onToggleEdit={toggleEditCampaign} runReadinessAction={runReadinessAction} />
           : <CampaignEditWizard key="editor" detail={selected} accounts={data.accounts} packages={data.packages} busy={busy} onCancel={toggleEditCampaign} onSave={(campaign) => updatePlan(selected, campaign)} />
         ) : null}
         {data && showCreate ? <Card className="overflow-hidden border-red-200 shadow-sm">
@@ -326,7 +353,7 @@ export function CampaignsPageClient({ initialRole }: { initialRole: AuthRole }) 
             <Button type="button" variant="ghost" size="icon-sm" aria-label="Close campaign creator" onClick={toggleCreateCampaign}><XIcon /></Button>
           </CardHeader>
           <CardContent className="flex h-[min(820px,calc(100vh-8rem))] min-h-[560px] flex-col overflow-hidden p-0">
-            {wizardReady ? <CreateForm form={form} setForm={setForm} accounts={accounts} packages={packages} busy={busy} submit={createDraft} currentStep={wizardStep} highestReachedStep={highestReachedStep} errors={wizardErrors} saveStatus={saveStatus} onStepClick={(step) => { if (step <= highestReachedStep) { setWizardStep(step); setWizardErrors([]); } }} onNext={goToNextWizardStep} onPrevious={goToPreviousWizardStep} onDiscard={() => void discardWizard()} onRetrySave={() => void saveWizard()} onPlatformChange={changeWizardPlatform} /> : <div className="flex flex-1 items-center justify-center"><LoaderCircleIcon className="size-6 animate-spin text-muted-foreground" /><span className="ml-2 text-sm text-muted-foreground">Restoring your setup…</span></div>}
+            {wizardReady ? <CreateForm form={form} setForm={setForm} accounts={accounts} packages={packages} busy={busy} submit={createDraft} currentStep={wizardStep} highestReachedStep={highestReachedStep} errors={wizardErrors} saveStatus={saveStatus} onStepClick={(step) => { if (step <= highestReachedStep) { setWizardStep(step); setWizardErrors([]); } }} onNext={goToNextWizardStep} onPrevious={goToPreviousWizardStep} onDiscard={() => void discardWizard()} onRetrySave={() => void saveWizard()} onPlatformChange={changeWizardPlatform} submitError={createSubmitError} onGoToSubmitError={goToCreateSubmitError} /> : <div className="flex flex-1 items-center justify-center"><LoaderCircleIcon className="size-6 animate-spin text-muted-foreground" /><span className="ml-2 text-sm text-muted-foreground">Restoring your setup…</span></div>}
           </CardContent>
         </Card> : null}
       </div>
@@ -384,7 +411,11 @@ function CreateForm({ form, setForm, accounts, packages, busy, submit, currentSt
           {currentStep === 1 ? <div className="space-y-6">
             <OptionCards label="Choose your objective" value={form.objective} options={objectiveOptions(form.platform)} onChange={(value) => setForm((current) => objectiveForm(current, value))} />
             {form.platform === "google" ? <OptionCards label="Select a campaign type" value={form.campaignType} options={[{ value: "performance_max", label: "Performance Max" }, { value: "search", label: "Search" }, { value: "demand_gen", label: "Demand Gen" }]} onChange={(value) => setForm((current) => googleTypeForm(current, value))} /> : null}
-            <div className="grid gap-4 md:grid-cols-2">{field("campaignName", "Campaign name", <Input required value={form.campaignName} onChange={(event) => set("campaignName", event.target.value)} />)}</div>
+            <div className="grid gap-4 md:grid-cols-2">
+              {field("campaignName", "Campaign name", <Input required value={form.campaignName} onChange={(event) => set("campaignName", event.target.value)} />)}
+              {form.platform === "meta" ? field("specialAdCategories", "Special ad category declaration", <Choice value={form.specialAdCategories} placeholder="Select declaration" options={[{ value: "none", label: "None" }, ...["credit", "employment", "housing", "social_issues"].map(option)]} onChange={(value) => set("specialAdCategories", value)} />) : null}
+              {form.platform === "tiktok" ? field("specialIndustries", "Special industry declaration", <Choice value={form.specialIndustries} placeholder="Select declaration" options={[{ value: "none", label: "None" }, { value: "housing", label: "Housing" }, { value: "employment", label: "Employment" }, { value: "credit", label: "Credit" }]} onChange={(value) => set("specialIndustries", value)} />) : null}
+            </div>
           </div> : null}
           {currentStep === 2 ? <div className="grid gap-4 md:grid-cols-2">
             {field("destination", "Destination URL", <Input required type="url" value={form.destination} onChange={(event) => set("destination", event.target.value)} />)}
@@ -401,7 +432,7 @@ function CreateForm({ form, setForm, accounts, packages, busy, submit, currentSt
             {form.platform === "meta" ? <MetaFields section="creative" form={form} set={set} errors={errors} /> : null}
             {form.platform === "tiktok" ? <TikTokFields section="creative" form={form} set={set} errors={errors} /> : null}
           </div> : null}
-          {currentStep === 4 ? <CampaignWizardReview form={form} accountName={account?.accountName} packageName={packages.find((item) => String(item.id) === form.packageId)?.name} mode={mode} /> : null}
+          {currentStep === 4 ? <CampaignWizardReview form={form} account={account} packageName={packages.find((item) => String(item.id) === form.packageId)?.name} mode={mode} /> : null}
         </div>
       </div>
       <div className="flex flex-wrap items-center gap-3 border-t bg-white p-4">
@@ -409,7 +440,7 @@ function CreateForm({ form, setForm, accounts, packages, busy, submit, currentSt
           <Button type="button" variant="ghost" size="sm" className="h-9 items-center leading-none" disabled={busy} onClick={onDiscard}><RotateCcwIcon className="shrink-0" /> <span className="leading-none">{mode === "edit" ? EDIT_DRAFT_RESET_LABEL : "Discard setup"}</span></Button>
           <SaveStatus status={currentStep === 4 ? "ready" : saveStatus} retry={onRetrySave} readyLabel={mode === "edit" ? "Ready to save revision" : "Ready to create"} />
         </div>
-        <div className="ml-auto flex max-w-full flex-col items-end gap-2"><div className="flex gap-2"><Button type="button" variant="outline" disabled={busy || currentStep === 0} onClick={onPrevious}><ChevronLeftIcon /> Back</Button>{primaryAction.kind === "next" ? <Button type={primaryAction.buttonType} disabled={busy} onClick={onNext}>Next <ChevronRightIcon /></Button> : <Button type={primaryAction.buttonType} disabled={busy} onClick={submit}>{busy ? <LoaderCircleIcon className="animate-spin" /> : <CheckIcon />} {mode === "edit" ? "Save new revision" : "Create local draft"}</Button>}</div>{mode === "edit" && currentStep === 4 && submitError ? <div role="alert" className="flex max-w-xl flex-wrap items-center justify-end gap-2 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-right text-xs text-red-800"><span>{submitError.message}</span>{submitError.issue && onGoToSubmitError ? <Button type="button" variant="ghost" size="xs" className="h-6 px-2 text-red-800 hover:bg-red-100" onClick={onGoToSubmitError}>Go to field</Button> : null}</div> : null}</div>
+        <div className="ml-auto flex max-w-full flex-col items-end gap-2"><div className="flex gap-2"><Button type="button" variant="outline" disabled={busy || currentStep === 0} onClick={onPrevious}><ChevronLeftIcon /> Back</Button>{primaryAction.kind === "next" ? <Button type={primaryAction.buttonType} disabled={busy} onClick={onNext}>Next <ChevronRightIcon /></Button> : <Button type={primaryAction.buttonType} disabled={busy} onClick={submit}>{busy ? <LoaderCircleIcon className="animate-spin" /> : <CheckIcon />} {mode === "edit" ? "Save new revision" : "Create local draft"}</Button>}</div>{currentStep === 4 && submitError ? <div role="alert" className="flex max-w-xl flex-wrap items-center justify-end gap-2 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-right text-xs text-red-800"><span>{submitError.message}</span>{submitError.issue && onGoToSubmitError ? <Button type="button" variant="ghost" size="xs" className="h-6 px-2 text-red-800 hover:bg-red-100" onClick={onGoToSubmitError}>Go to field</Button> : null}</div> : null}</div>
       </div>
     </form>
   );
@@ -428,10 +459,14 @@ function OptionCards({ label, value, options, onChange }: { label: string; value
   return <section className="rounded-xl border bg-white"><div className="border-b px-4 py-3 font-medium">{label}</div><div className="grid gap-3 p-4 sm:grid-cols-2 lg:grid-cols-3">{options.map((item) => <button type="button" key={item.value} aria-pressed={value === item.value} onClick={() => onChange(item.value)} className={`min-h-32 rounded-lg border-2 p-4 text-left transition hover:border-red-300 ${value === item.value ? "border-red-500 bg-red-50/60 ring-2 ring-red-100" : "border-border bg-white"}`}><span className="font-medium">{item.label}</span><span className="mt-2 block text-sm text-muted-foreground">{descriptions[item.value] ?? "Configure this campaign option."}</span></button>)}</div></section>;
 }
 
-function CampaignWizardReview({ form, accountName, packageName, mode = "create" }: { form: FormState; accountName?: string; packageName?: string; mode?: "create" | "edit" }) {
-  const rows = [["Platform", humanize(form.platform)], ["Account", accountName || "—"], ["Budget package", packageName || "—"], ["Campaign", form.campaignName], ["Objective", humanize(form.objective)], ["Flight", `${form.startDate} → ${form.endDate}`], ["Allocated budget", form.allocatedBudget], ["Destination", form.destination], [form.platform === "google" ? "Campaign type" : "Optimization goal", humanize(form.platform === "google" ? form.campaignType : form.optimizationGoal)], [form.platform === "meta" ? "Ad format" : form.platform === "tiktok" ? "Video" : "Ad group", form.platform === "meta" ? humanize(form.creativeFormat) : form.platform === "tiktok" ? form.assetIds : form.groupName]];
-  return <div className="overflow-hidden rounded-xl border bg-white"><div className="border-b px-5 py-4"><p className="font-medium">Review campaign setup</p><p className="text-sm text-muted-foreground">Nothing is sent to an ad provider. {mode === "edit" ? "Saving creates a new immutable revision." : "This creates a validated local draft."}</p></div><dl className="grid sm:grid-cols-2">{rows.map(([label, value]) => <div key={label} className="border-b p-4 sm:odd:border-r"><dt className="text-xs uppercase tracking-wide text-muted-foreground">{label}</dt><dd className="mt-1 break-words font-medium">{value}</dd></div>)}</dl></div>;
+function CampaignWizardReview({ form, account, packageName, mode = "create" }: { form: FormState; account?: CampaignPlanningListPayload["accounts"][number]; packageName?: string; mode?: "create" | "edit" }) {
+  const validation = account ? validateCampaignSubmission(form, account) : null;
+  const readiness = validation?.success ? evaluateCampaignProviderReadiness(validation.campaign) : null;
+  const rows = [["Platform", humanize(form.platform)], ["Account", account?.accountName || "—"], ["Budget package", packageName || "—"], ["Campaign", form.campaignName], ["Objective", humanize(form.objective)], ["Flight", `${form.startDate} → ${form.endDate}`], ["Allocated budget", form.allocatedBudget], ["Destination", form.destination], [form.platform === "google" ? "Campaign type" : "Optimization goal", humanize(form.platform === "google" ? form.campaignType : form.optimizationGoal)], [form.platform === "meta" ? "Ad format" : form.platform === "tiktok" ? "Video" : "Ad group", form.platform === "meta" ? humanize(form.creativeFormat) : form.platform === "tiktok" ? form.assetIds : form.groupName]];
+  return <div className="space-y-4"><div className="overflow-hidden rounded-xl border bg-white"><div className="border-b px-5 py-4"><p className="font-medium">Review campaign setup</p><p className="text-sm text-muted-foreground">Nothing is sent to an ad provider. {mode === "edit" ? "Saving creates a new immutable revision." : "This creates a validated local draft."}</p></div><dl className="grid sm:grid-cols-2">{rows.map(([label, value]) => <div key={label} className="border-b p-4 sm:odd:border-r"><dt className="text-xs uppercase tracking-wide text-muted-foreground">{label}</dt><dd className="mt-1 break-words font-medium">{value}</dd></div>)}</dl></div><div className="grid gap-3 md:grid-cols-2"><ReviewCheck title="Supabase validation" passed={validation?.success === true} detail={validation?.success ? "Structurally valid and ready to save as an immutable revision." : validation?.error ?? "Select an account to validate."} /><ReviewCheck title="Future provider integration" passed={readiness?.providerReady === true} attention detail={readiness?.providerReady ? "All resource references are resolved. Provider execution remains locked." : `${readiness?.unresolvedResources.length ?? 0} provider resource reference(s) remain unresolved. This does not block Supabase saving.`} /></div></div>;
 }
+
+function ReviewCheck({ title, passed, attention = false, detail }: { title: string; passed: boolean; attention?: boolean; detail: string }) { return <div className={`rounded-xl border p-4 ${passed ? "border-emerald-200 bg-emerald-50" : attention ? "border-amber-200 bg-amber-50" : "border-red-200 bg-red-50"}`}><div className="flex items-center gap-2 font-medium">{passed ? <CheckCircle2Icon className="size-4 text-emerald-700" /> : <AlertCircleIcon className={`size-4 ${attention ? "text-amber-700" : "text-red-700"}`} />}{title}</div><p className="mt-2 text-sm text-muted-foreground">{detail}</p></div>; }
 
 function GoogleFields({ form, set, section, errors }: { form: FormState; set: (key: keyof FormState, value: string) => void; section: "settings" | "creative"; errors: CampaignWizardFieldError[] }) {
   const bidOptions = form.campaignType === "search"
@@ -440,22 +475,24 @@ function GoogleFields({ form, set, section, errors }: { form: FormState; set: (k
   if (section === "creative") return <>
     <Field label={form.campaignType === "performance_max" ? "Asset group name" : "Ad group name"} field="groupName" error={wizardError(errors, "groupName")}><Input required value={form.groupName} onChange={(event) => set("groupName", event.target.value)} /></Field>
     <CreativeFields form={form} set={set} google errors={errors} />
-    {form.campaignType === "search" ? <Field label="Keywords (comma separated)" field="keywords" error={wizardError(errors, "keywords")} className="md:col-span-2"><FixedTextarea required value={form.keywords} onChange={(event) => set("keywords", event.target.value)} /></Field> : null}
+    {form.campaignType === "search" ? <Field label="Keywords and match types" field="keywords" error={wizardError(errors, "keywords")} className="md:col-span-2"><KeywordList keywords={form.keywords} matchTypes={form.keywordMatchTypes} onChange={(keywords, matchTypes) => { set("keywords", keywords); set("keywordMatchTypes", matchTypes); }} /></Field> : null}
   </>;
   return <>
     <Field label="Bidding strategy"><Choice value={form.biddingStrategy} options={bidOptions.map(option)} onChange={(value) => set("biddingStrategy", value)} /></Field>
     {form.biddingStrategy === "target_cpa" ? <Field label="Target CPA"><Input required type="number" min="0.01" step="0.01" value={form.targetCpa} onChange={(event) => set("targetCpa", event.target.value)} /></Field> : null}
     {form.biddingStrategy === "target_roas" ? <Field label="Target ROAS"><Input required type="number" min="0.01" step="0.01" value={form.targetRoas} onChange={(event) => set("targetRoas", event.target.value)} /></Field> : null}
     {form.campaignType === "search" ? <Field label="Search partners"><Choice value={form.searchPartners} options={[{ value: "false", label: "Off" }, { value: "true", label: "On" }]} onChange={(value) => set("searchPartners", value)} /></Field> : null}
-    <Field label="Locations (comma separated)"><Input required value={form.locations} onChange={(event) => set("locations", event.target.value)} /></Field>
-    <Field label="Languages (comma separated)"><Input required value={form.languages} onChange={(event) => set("languages", event.target.value)} /></Field>
+    <Field label="Locations"><RepeatableList value={form.locations} onChange={(value) => set("locations", value)} addLabel="Add location" placeholder="Location reference" /></Field>
+    <Field label="Languages"><RepeatableList value={form.languages} onChange={(value) => set("languages", value)} addLabel="Add language" placeholder="Language reference" /></Field>
     <Field label="Conversion action ID"><Input required value={form.conversionActionId} onChange={(event) => set("conversionActionId", event.target.value)} /></Field>
     <Field label="Conversion category"><Choice value={form.conversionCategory} options={["purchase", "submit_lead_form", "page_view"].map(option)} onChange={(value) => set("conversionCategory", value)} /></Field>
+    <Field label="EU political advertising declaration" field="euPoliticalAds" error={wizardError(errors, "euPoliticalAds")}><Choice value={form.euPoliticalAds} placeholder="Select declaration" options={[{ value: "does_not_contain", label: "Does not contain EU political advertising" }, { value: "contains", label: "Contains EU political advertising" }]} onChange={(value) => set("euPoliticalAds", value)} /></Field>
+    <AdvancedPanel className="md:col-span-2"><Field label="Performance Max brand guidelines"><Choice value={form.googleBrandGuidelines} options={[{ value: "disabled", label: "Disabled · assets belong to asset group" }, { value: "enabled", label: "Enabled · brand assets belong to campaign" }]} onChange={(value) => set("googleBrandGuidelines", value)} /></Field>{form.campaignType === "search" ? <div className="grid gap-4 md:grid-cols-2"><Field label="Display path 1"><Input maxLength={15} value={form.urlPath1} onChange={(event) => set("urlPath1", event.target.value)} /></Field><Field label="Display path 2"><Input maxLength={15} value={form.urlPath2} onChange={(event) => set("urlPath2", event.target.value)} /></Field></div> : null}</AdvancedPanel>
   </>;
 }
 
 function MetaFields({ form, set, section, errors }: { form: FormState; set: (key: keyof FormState, value: string) => void; section: "settings" | "creative"; errors: CampaignWizardFieldError[] }) {
-  if (section === "creative") return <CreativeFields form={form} set={set} errors={errors} />;
+  if (section === "creative") return <><Field label="Creative name" field="creativeName" error={wizardError(errors, "creativeName")}><Input required value={form.creativeName} onChange={(event) => set("creativeName", event.target.value)} /></Field><Field label="Ad name" field="adName" error={wizardError(errors, "adName")}><Input required value={form.adName} onChange={(event) => set("adName", event.target.value)} /></Field><Field label="Facebook Page reference" field="pageId" error={wizardError(errors, "pageId")}><Input required value={form.pageId} onChange={(event) => set("pageId", event.target.value)} /></Field><Field label="Instagram actor reference (optional)"><Input value={form.instagramActorId} onChange={(event) => set("instagramActorId", event.target.value)} /></Field><CreativeFields form={form} set={set} errors={errors} /></>;
   return <>
     <Field label="Buying type"><Input value="Auction" readOnly className="bg-slate-100" /></Field>
     <Field label="Conversion location"><Input value="Website" readOnly className="bg-slate-100" /></Field>
@@ -463,13 +500,16 @@ function MetaFields({ form, set, section, errors }: { form: FormState; set: (key
     <Field label="Billing event"><Choice value={form.billingEvent} options={[{ value: "impressions", label: "Impressions" }]} onChange={(value) => set("billingEvent", value)} /></Field>
     <Field label="Pixel ID"><Input required value={form.pixelId} onChange={(event) => set("pixelId", event.target.value)} /></Field>
     <Field label="Conversion event"><Choice value={form.conversionEvent} options={metaEventOptions(form.objective)} onChange={(value) => set("conversionEvent", value)} /></Field>
+    <Field label="Ad set name" field="groupName" error={wizardError(errors, "groupName")}><Input required value={form.groupName} onChange={(event) => set("groupName", event.target.value)} /></Field>
     <PlacementFields form={form} set={set} meta errors={errors} />
     <AudienceFields form={form} set={set} meta errors={errors} />
+    <AdvancedPanel className="md:col-span-2"><div className="grid gap-4 md:grid-cols-2"><Field label="Budget scope"><Choice value={form.budgetScope} options={[{ value: "campaign", label: "Campaign" }, { value: "ad_group", label: "Ad set" }]} onChange={(value) => set("budgetScope", value)} /></Field><Field label="Budget mode"><Choice value={form.budgetMode} options={[{ value: "daily", label: "Daily" }, { value: "lifetime", label: "Lifetime" }]} onChange={(value) => set("budgetMode", value)} /></Field><Field label="Bid strategy"><Choice value={form.deliveryBidStrategy} options={["lowest_cost", "cost_cap", "bid_cap"].map(option)} onChange={(value) => set("deliveryBidStrategy", value)} /></Field>{form.deliveryBidStrategy !== "lowest_cost" ? <Field label="Bid amount"><Input type="number" min="0.01" step="0.01" value={form.bidAmount} onChange={(event) => set("bidAmount", event.target.value)} /></Field> : null}<Field label="Attribution window"><Choice value={form.attributionWindow} options={[{ value: "7d_click_1d_view", label: "7-day click / 1-day view" }, { value: "1d_click_1d_view", label: "1-day click / 1-day view" }]} onChange={(value) => set("attributionWindow", value)} /></Field></div></AdvancedPanel>
   </>;
 }
 
 function TikTokFields({ form, set, section, errors }: { form: FormState; set: (key: keyof FormState, value: string) => void; section: "settings" | "creative"; errors: CampaignWizardFieldError[] }) {
   if (section === "creative") return <>
+    <Field label="Ad name" field="adName" error={wizardError(errors, "adName")}><Input required value={form.adName} onChange={(event) => set("adName", event.target.value)} /></Field>
     <Field label="Regular identity display name" field="identityName"><Input required value={form.identityName} onChange={(event) => set("identityName", event.target.value)} /></Field>
     <Field label="Video ID" field="assetIds"><Input required value={split(form.assetIds)[0] ?? ""} onChange={(event) => set("assetIds", event.target.value)} /></Field>
     <Field label="Ad copy" field="primaryText" className="md:col-span-2"><FixedTextarea required value={form.primaryText} onChange={(event) => set("primaryText", event.target.value)} /></Field>
@@ -477,12 +517,15 @@ function TikTokFields({ form, set, section, errors }: { form: FormState; set: (k
   </>;
   return <>
     <Field label="Campaign type"><Input value="Auction" readOnly className="bg-slate-100" /></Field>
-    <Field label="Budget mode"><Input value="Daily" readOnly className="bg-slate-100" /></Field>
-    <Field label="Optimization goal"><Choice value={form.optimizationGoal} options={tikTokGoalOptions(form.objective)} onChange={(value) => set("optimizationGoal", value)} /></Field>
+    <Field label="Budget mode"><Choice value={form.budgetMode} options={[{ value: "daily", label: "Daily" }, { value: "lifetime", label: "Lifetime" }]} onChange={(value) => set("budgetMode", value)} /></Field>
+    <Field label="Optimization goal"><Choice value={form.optimizationGoal} options={tikTokGoalOptions(form.objective)} onChange={(value) => { set("optimizationGoal", value); set("billingEvent", tikTokBillingForGoal(value)); }} /></Field>
     <Field label="Pixel ID"><Input required value={form.pixelId} onChange={(event) => set("pixelId", event.target.value)} /></Field>
     <Field label="Conversion event"><Choice value={form.conversionEvent} options={tikTokEventOptions(form.objective)} onChange={(value) => set("conversionEvent", value)} /></Field>
+    <Field label="Ad group name" field="groupName" error={wizardError(errors, "groupName")}><Input required value={form.groupName} onChange={(event) => set("groupName", event.target.value)} /></Field>
+    <Field label="Billing event" field="billingEvent" error={wizardError(errors, "billingEvent")}><Input value={form.billingEvent.toUpperCase()} readOnly className="bg-slate-100" /></Field>
     <PlacementFields form={form} set={set} errors={errors} />
     <AudienceFields form={form} set={set} errors={errors} />
+    <AdvancedPanel className="md:col-span-2"><div className="grid gap-4 md:grid-cols-2"><Field label="Promotion type"><Choice value={form.promotionType} options={[{ value: "website", label: "Website" }]} onChange={(value) => set("promotionType", value)} /></Field><Field label="Placement type"><Choice value={form.placementType} options={[{ value: "automatic", label: "Automatic" }, { value: "normal", label: "TikTok only" }]} onChange={(value) => set("placementType", value)} /></Field><Field label="Bid type"><Choice value={form.deliveryBidStrategy} options={[{ value: "lowest_cost", label: "Lowest cost" }, { value: "cost_cap", label: "Cost cap" }]} onChange={(value) => set("deliveryBidStrategy", value)} /></Field>{form.deliveryBidStrategy === "cost_cap" ? <Field label="Bid amount"><Input type="number" min="0.01" step="0.01" value={form.bidAmount} onChange={(event) => set("bidAmount", event.target.value)} /></Field> : null}<Field label="Pacing"><Choice value={form.pacing} options={[{ value: "smooth", label: "Smooth" }]} onChange={(value) => set("pacing", value)} /></Field><Field label="Click attribution"><Choice value={form.clickAttributionWindow} options={[{ value: "1d", label: "1 day" }, { value: "7d", label: "7 days" }]} onChange={(value) => set("clickAttributionWindow", value)} /></Field><Field label="View attribution"><Choice value={form.viewAttributionWindow} options={[{ value: "off", label: "Off" }, { value: "1d", label: "1 day" }]} onChange={(value) => set("viewAttributionWindow", value)} /></Field></div></AdvancedPanel>
   </>;
 }
 
@@ -496,7 +539,7 @@ function PlacementFields({ form, set, meta = false, errors }: { form: FormState;
 function AudienceFields({ form, set, meta = false, errors }: { form: FormState; set: (key: keyof FormState, value: string) => void; meta?: boolean; errors: CampaignWizardFieldError[] }) {
   return <>
     <Field label="Countries" field="countries" error={wizardError(errors, "countries")}><Input required value={form.countries} onChange={(event) => set("countries", event.target.value)} /></Field>
-    {meta ? <><Field label="Minimum age"><Input required type="number" min="18" max="65" value={form.ageMin} onChange={(event) => set("ageMin", event.target.value)} /></Field><Field label="Maximum age"><Input required type="number" min="18" max="65" value={form.ageMax} onChange={(event) => set("ageMax", event.target.value)} /></Field></> : <Field label="Age groups"><Input required value="25-34, 35-44" readOnly className="bg-slate-100" /></Field>}
+    {meta ? <><Field label="Minimum age"><Input required type="number" min="18" max="65" value={form.ageMin} onChange={(event) => set("ageMin", event.target.value)} /></Field><Field label="Maximum age"><Input required type="number" min="18" max="65" value={form.ageMax} onChange={(event) => set("ageMax", event.target.value)} /></Field></> : <Field label="Age groups"><MultiToggle value={form.ageGroups} options={["18-24", "25-34", "35-44", "45-54", "55+"]} onChange={(value) => set("ageGroups", value)} /></Field>}
     <Field label="Genders"><Input required value={form.genders} onChange={(event) => set("genders", event.target.value)} /></Field>
     <Field label="Interests"><Input value={form.interests} onChange={(event) => set("interests", event.target.value)} /></Field>
     {!meta ? <><Field label="Languages"><Input required value={form.languages} onChange={(event) => set("languages", event.target.value)} /></Field><Field label="Operating systems"><Input required value={form.operatingSystems} onChange={(event) => set("operatingSystems", event.target.value)} /></Field></> : null}
@@ -509,34 +552,61 @@ function CreativeFields({ form, set, google = false, errors }: { form: FormState
     : ["image", "video", "carousel", "existing_post"].map(option);
   return <>
     <Field label="Creative format"><Choice value={form.creativeFormat} options={formats} onChange={(value) => set("creativeFormat", value)} /></Field>
-    <Field label={form.creativeFormat === "existing_post" ? "Eligible existing post ID" : form.creativeFormat.includes("video") || form.creativeFormat === "video" ? "Video asset ID" : "Asset IDs (comma separated)"} field="assetIds" error={wizardError(errors, "assetIds")}><Input required value={form.assetIds} onChange={(event) => set("assetIds", event.target.value)} /></Field>
-    {form.creativeFormat !== "existing_post" ? <><Field label={google ? "Headlines (comma separated)" : "Headline"} field="headline" error={wizardError(errors, "headline")} className="md:col-span-2"><Input required value={form.headline} onChange={(event) => set("headline", event.target.value)} /></Field><Field label={google ? "Descriptions (comma separated)" : "Primary text"} field={google ? "descriptions" : "primaryText"} error={wizardError(errors, google ? "descriptions" : "primaryText")} className="md:col-span-2"><FixedTextarea required value={google ? form.descriptions : form.primaryText} onChange={(event) => set(google ? "descriptions" : "primaryText", event.target.value)} /></Field></> : null}
+    {google && form.campaignType === "demand_gen" ? <Field label="Demand Gen ad format"><Choice value={form.demandGenFormat} options={[{ value: "multi_asset", label: "Multi-asset" }, { value: "carousel", label: "Carousel" }, { value: "video_responsive", label: "Video responsive" }]} onChange={(value) => set("demandGenFormat", value)} /></Field> : null}
+    {google && form.campaignType !== "search" ? <Field label={form.campaignType === "performance_max" ? "Landscape image references" : "Image references"} field="assetIds" error={wizardError(errors, "assetIds")}><RepeatableList value={form.assetIds} onChange={(value) => set("assetIds", value)} addLabel="Add image" placeholder="Local or provider image reference" /></Field> : null}
+    {!google ? <Field label={form.creativeFormat === "existing_post" ? "Existing post reference" : form.creativeFormat === "video" ? "Video reference" : "Asset references"} field="assetIds" error={wizardError(errors, "assetIds")}><RepeatableList value={form.assetIds} onChange={(value) => set("assetIds", value)} addLabel="Add asset" placeholder="Local or provider reference" /></Field> : null}
+    {google && form.campaignType === "performance_max" ? <><Field label="Square image references" field="squareAssetIds" error={wizardError(errors, "squareAssetIds")}><RepeatableList value={form.squareAssetIds} onChange={(value) => set("squareAssetIds", value)} addLabel="Add square image" placeholder="Square image reference" /></Field><Field label="Logo references" field="logoAssetIds" error={wizardError(errors, "logoAssetIds")}><RepeatableList value={form.logoAssetIds} onChange={(value) => set("logoAssetIds", value)} addLabel="Add logo" placeholder="Logo reference" /></Field><Field label="Portrait image references (optional)"><RepeatableList value={form.portraitAssetIds} onChange={(value) => set("portraitAssetIds", value)} addLabel="Add portrait image" placeholder="Portrait image reference" allowEmpty /></Field></> : null}
+    {google && form.campaignType !== "search" ? <Field label="Video references (optional)" field="videoAssetIds" error={wizardError(errors, "videoAssetIds")}><RepeatableList value={form.videoAssetIds} onChange={(value) => set("videoAssetIds", value)} addLabel="Add video" placeholder="Video reference" allowEmpty /></Field> : null}
+    {form.creativeFormat !== "existing_post" ? <><Field label={google ? "Headlines" : form.creativeFormat === "carousel" ? "Card headlines" : "Headline"} field="headline" error={wizardError(errors, "headline")} className="md:col-span-2">{google || form.creativeFormat === "carousel" ? <RepeatableList value={form.headline} onChange={(value) => set("headline", value)} addLabel="Add headline" placeholder="Headline" maxLength={google && form.campaignType === "demand_gen" ? 40 : google ? 30 : 255} /> : <Input required maxLength={255} value={form.headline} onChange={(event) => set("headline", event.target.value)} />}</Field>{!google && form.creativeFormat === "carousel" ? <Field label="Card destinations" field="carouselDestinations" error={wizardError(errors, "carouselDestinations")} className="md:col-span-2"><RepeatableList value={form.carouselDestinations} onChange={(value) => set("carouselDestinations", value)} addLabel="Add destination" placeholder="https://example.com/card" /></Field> : null}{google && form.campaignType === "performance_max" ? <Field label="Long headlines" field="longHeadlines" error={wizardError(errors, "longHeadlines")} className="md:col-span-2"><RepeatableList value={form.longHeadlines} onChange={(value) => set("longHeadlines", value)} addLabel="Add long headline" placeholder="Long headline" maxLength={90} /></Field> : null}<Field label={google ? "Descriptions" : "Primary text"} field={google ? "descriptions" : "primaryText"} error={wizardError(errors, google ? "descriptions" : "primaryText")} className="md:col-span-2">{google ? <RepeatableList value={form.descriptions} onChange={(value) => set("descriptions", value)} addLabel="Add description" placeholder="Description" maxLength={90} /> : <FixedTextarea required value={form.primaryText} maxLength={2200} onChange={(event) => set("primaryText", event.target.value)} />}</Field></> : null}
     {google && form.campaignType !== "search" ? <Field label="Business name"><Input required value={form.businessName} onChange={(event) => set("businessName", event.target.value)} /></Field> : null}
     {!google && form.creativeFormat !== "existing_post" ? <Field label="Call to action"><Choice value={form.callToAction} options={CTA_OPTIONS} onChange={(value) => set("callToAction", value)} /></Field> : null}
   </>;
 }
 
-function CampaignDetail({ detail, busy, isAdmin, editing, onToggleEdit, runReadinessAction }: { detail: CampaignPlanDetail; busy: boolean; isAdmin: boolean; editing: boolean; onToggleEdit: () => void; runReadinessAction: (detail: CampaignPlanDetail, action: "validate_readiness" | "approve_readiness") => void }) {
+function AdvancedPanel({ children, className = "" }: { children: React.ReactNode; className?: string }) { return <Collapsible className={`rounded-xl border bg-white ${className}`}><CollapsibleTrigger asChild><Button type="button" variant="ghost" className="w-full justify-between px-4">Advanced provider settings <ChevronRightIcon className="size-4" /></Button></CollapsibleTrigger><CollapsibleContent className="space-y-4 border-t p-4">{children}</CollapsibleContent></Collapsible>; }
+
+function RepeatableList({ value, onChange, addLabel, placeholder, maxLength, allowEmpty = false }: { value: string; onChange: (value: string) => void; addLabel: string; placeholder: string; maxLength?: number; allowEmpty?: boolean }) {
+  const parsed = split(value);
+  const [pendingRows, setPendingRows] = useState(0);
+  const visibleItems = [...(parsed.length ? parsed : allowEmpty ? [] : [""]), ...Array.from({ length: pendingRows }, () => "")];
+  const commit = (values: string[]) => { setPendingRows(0); onChange(values.filter((item) => item.trim()).join(", ")); };
+  const update = (index: number, next: string) => { const values = [...visibleItems]; values[index] = next; commit(values); };
+  return <div className="space-y-2">{visibleItems.map((item, index) => <div key={`${index}-${visibleItems.length}`} className="flex items-start gap-2"><div className="min-w-0 flex-1"><Input value={item} maxLength={maxLength} placeholder={placeholder} onChange={(event) => update(index, event.target.value)} />{maxLength ? <p className="mt-1 text-right text-[11px] text-muted-foreground">{item.length}/{maxLength}</p> : null}</div><Button type="button" variant="outline" size="icon" aria-label={`Remove ${placeholder}`} disabled={!allowEmpty && visibleItems.length === 1} onClick={() => commit(visibleItems.filter((_, itemIndex) => itemIndex !== index))}><XIcon /></Button></div>)}<Button type="button" variant="outline" size="sm" onClick={() => setPendingRows((count) => count + 1)}><PlusIcon /> {addLabel}</Button></div>;
+}
+
+function KeywordList({ keywords, matchTypes, onChange }: { keywords: string; matchTypes: string; onChange: (keywords: string, matchTypes: string) => void }) {
+  const keywordItems = split(keywords);
+  const typeItems = split(matchTypes);
+  const [pendingRows, setPendingRows] = useState(0);
+  const rows = [...(keywordItems.length ? keywordItems : [""]).map((keyword, index) => ({ keyword, matchType: typeItems[index] ?? "phrase" })), ...Array.from({ length: pendingRows }, () => ({ keyword: "", matchType: "phrase" }))];
+  const commit = (next: Array<{ keyword: string; matchType: string }>) => { setPendingRows(0); const completed = next.filter((item) => item.keyword.trim()); onChange(completed.map((item) => item.keyword).join(", "), completed.map((item) => item.matchType).join(", ")); };
+  return <div className="space-y-2">{rows.map((row, index) => <div key={`${index}-${rows.length}`} className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_9rem_auto]"><Input value={row.keyword} placeholder="Keyword" onChange={(event) => { const next = [...rows]; next[index] = { ...row, keyword: event.target.value }; commit(next); }} /><Choice value={row.matchType} options={[{ value: "exact", label: "Exact" }, { value: "phrase", label: "Phrase" }, { value: "broad", label: "Broad" }]} onChange={(value) => { const next = [...rows]; next[index] = { ...row, matchType: value }; commit(next); }} /><Button type="button" variant="outline" size="icon" aria-label="Remove keyword" disabled={rows.length === 1} onClick={() => commit(rows.filter((_, rowIndex) => rowIndex !== index))}><XIcon /></Button></div>)}<Button type="button" variant="outline" size="sm" onClick={() => setPendingRows((count) => count + 1)}><PlusIcon /> Add keyword</Button></div>;
+}
+
+function MultiToggle({ value, options, onChange }: { value: string; options: string[]; onChange: (value: string) => void }) { const selected = new Set(split(value)); return <div className="flex flex-wrap gap-2">{options.map((option) => <Button key={option} type="button" size="sm" variant={selected.has(option) ? "default" : "outline"} onClick={() => { const next = new Set(selected); if (next.has(option)) next.delete(option); else next.add(option); onChange(options.filter((item) => next.has(item)).join(", ")); }}>{option}</Button>)}</div>; }
+
+function CampaignDetail({ detail, busy, isAdmin, approvalRequired, editing, onToggleEdit, runReadinessAction }: { detail: CampaignPlanDetail; busy: boolean; isAdmin: boolean; approvalRequired: boolean; editing: boolean; onToggleEdit: () => void; runReadinessAction: (detail: CampaignPlanDetail, action: "validate_readiness" | "approve_readiness") => void }) {
   return <Card className="border-red-200 bg-white shadow-sm"><CardHeader><div className="flex items-start justify-between gap-3"><div><CardTitle>{detail.plan.campaignName}</CardTitle><CardDescription>{detail.plan.platform.toUpperCase()} · Revision {detail.currentRevision.revisionNo} · immutable revision</CardDescription></div><div className="flex items-center gap-2">{isAdmin && detail.plan.status === "draft" ? <Button type="button" variant="outline" size="sm" onClick={onToggleEdit}>{editing ? <XIcon /> : <PencilIcon />}{editing ? "Cancel edit" : "Edit details"}</Button> : null}<Badge>{humanize(detail.plan.status)}</Badge></div></div></CardHeader><CardContent className="space-y-5">
     <CampaignDetailTable detail={detail} />
-    <CampaignReadiness detail={detail} busy={busy} isAdmin={isAdmin} onAction={(action) => runReadinessAction(detail, action)} />
+    <CampaignReadiness detail={detail} busy={busy} isAdmin={isAdmin} approvalRequired={approvalRequired} onAction={(action) => runReadinessAction(detail, action)} />
   </CardContent></Card>;
 }
 
-function CampaignReadiness({ detail, busy, isAdmin, onAction }: { detail: CampaignPlanDetail; busy: boolean; isAdmin: boolean; onAction: (action: "validate_readiness" | "approve_readiness") => void }) {
+function CampaignReadiness({ detail, busy, isAdmin, approvalRequired, onAction }: { detail: CampaignPlanDetail; busy: boolean; isAdmin: boolean; approvalRequired: boolean; onAction: (action: "validate_readiness" | "approve_readiness") => void }) {
   const ready = detail.readiness?.result === "passed"
     && detail.readiness.revisionId === detail.currentRevision.id
     && detail.readiness.revisionHash === detail.currentRevision.payloadHash;
-  const approved = detail.plan.status === "approved" && detail.approval && detail.build;
+  const approvalRecorded = detail.plan.status === "approved" && detail.approval && detail.build;
+  const approved = approvalRecorded && detail.providerReadiness.providerReady;
   const canCheck = detail.plan.status === "draft" || detail.plan.status === "awaiting_approval";
   return <section className="overflow-hidden rounded-xl border bg-white">
     <div className="flex flex-wrap items-start justify-between gap-3 border-b px-4 py-4">
       <div><div className="flex items-center gap-2 font-semibold"><ShieldCheckIcon className="size-5 text-red-600" /> Campaign readiness</div><p className="mt-1 text-sm text-muted-foreground">Validate the exact immutable revision before any future provider integration.</p></div>
-      {approved ? <Badge className="bg-emerald-600">Ready for provider integration</Badge> : detail.readiness ? <Badge variant="outline">{humanize(detail.readiness.result)}</Badge> : <Badge variant="outline">Not checked</Badge>}
+      {approved ? <Badge className="bg-emerald-600">Ready for provider integration</Badge> : approvalRecorded ? <Badge variant="outline" className="border-amber-300 text-amber-800">Provider resolution pending</Badge> : detail.readiness ? <Badge variant="outline">{humanize(detail.readiness.result)}</Badge> : <Badge variant="outline">Not checked</Badge>}
     </div>
     <div className="space-y-4 p-4">
       {detail.readiness ? <div className="grid gap-2 md:grid-cols-2">{detail.readiness.checks.map((check) => <div key={check.key} className={`rounded-lg border p-3 ${check.status === "passed" ? "border-emerald-200 bg-emerald-50" : check.status === "failed" ? "border-red-200 bg-red-50" : "border-amber-200 bg-amber-50"}`}><div className="flex items-start gap-2">{check.status === "passed" ? <CheckCircle2Icon className="mt-0.5 size-4 shrink-0 text-emerald-700" /> : <AlertCircleIcon className={`mt-0.5 size-4 shrink-0 ${check.status === "failed" ? "text-red-700" : "text-amber-700"}`} />}<div><p className="text-sm font-medium">{check.label}</p><p className="mt-1 text-xs leading-relaxed text-muted-foreground">{check.detail}</p></div></div></div>)}</div> : <div className="rounded-lg border border-dashed p-4 text-sm text-muted-foreground">No readiness snapshot exists for this revision yet.</div>}
-      {approved ? <div className="rounded-lg border border-emerald-300 bg-emerald-50 p-4"><p className="font-medium text-emerald-950">Ready for provider integration</p><p className="mt-1 text-sm text-emerald-900">Approval #{detail.approval?.id} created pending Gate 1 build #{detail.build?.id}. No provider request was made.</p></div> : <div className="flex flex-wrap gap-2"><Button type="button" variant="outline" disabled={busy || !isAdmin || !canCheck} onClick={() => onAction("validate_readiness")}>{busy ? <LoaderCircleIcon className="animate-spin" /> : <RefreshCwIcon />} Run readiness checks</Button><Button type="button" disabled={busy || !isAdmin || !canCheck || !ready} onClick={() => onAction("approve_readiness")}><CheckIcon /> Approve exact revision</Button>{!canCheck ? <p className="basis-full text-xs text-muted-foreground">Readiness approval is available only before a campaign leaves draft workflow.</p> : null}</div>}
+      {approved ? <div className="rounded-lg border border-emerald-300 bg-emerald-50 p-4"><p className="font-medium text-emerald-950">Ready for provider integration</p><p className="mt-1 text-sm text-emerald-900">Approval #{detail.approval?.id} created pending Gate 1 build #{detail.build?.id}. No provider request was made.</p></div> : approvalRecorded ? <div className="rounded-lg border border-amber-300 bg-amber-50 p-4"><p className="font-medium text-amber-950">Approved revision still needs provider resources</p><p className="mt-1 text-sm text-amber-900">This historical approval is preserved, but it is not provider-ready until every required reference and provider-dependent check is resolved.</p></div> : <div className="flex flex-wrap gap-2"><Button type="button" variant="outline" disabled={busy || !isAdmin || !canCheck} onClick={() => onAction("validate_readiness")}>{busy ? <LoaderCircleIcon className="animate-spin" /> : <RefreshCwIcon />} {approvalRequired ? "Run readiness checks" : "Run checks and approve"}</Button>{approvalRequired ? <Button type="button" disabled={busy || !isAdmin || !canCheck || !ready} onClick={() => onAction("approve_readiness")}><CheckIcon /> Approve exact revision</Button> : null}{!canCheck ? <p className="basis-full text-xs text-muted-foreground">Readiness approval is available only before a campaign leaves draft workflow.</p> : null}</div>}
       <div className="grid gap-2 border-t pt-4 sm:grid-cols-2 lg:grid-cols-4">{["Provider creation", "Activation", "Provider readback", "M05 handoff"].map((label) => <Button key={label} type="button" variant="outline" disabled className="justify-start"><BanIcon /> {label}</Button>)}</div>
       <p className="text-xs text-muted-foreground">Provider execution is locked. These controls will be enabled only in a separately reviewed integration phase.</p>
     </div>
@@ -665,7 +735,7 @@ function CampaignEditWizard({ detail, accounts, packages, busy, onCancel, onSave
       const stepErrors = validateCampaignWizardStep(form, step);
       if (stepErrors.length) {
         const first = stepErrors[0];
-        setSubmitError({ message: first.message, issue: { ...first, step, path: [] } });
+        setSubmitError({ message: first.message, issue: { ...first, step, path: [], severity: "error" } });
         return;
       }
     }
@@ -747,7 +817,7 @@ function CampaignDetailSkeleton() { return <Card className="border-red-200"><Car
 
 function objectiveForm(current: FormState, objective: string): FormState {
   if (current.platform === "meta") return { ...current, objective, optimizationGoal: objective === "traffic" ? "landing_page_views" : "offsite_conversions", conversionEvent: objective === "traffic" ? "view_content" : objective === "sales" ? "purchase" : "lead" };
-  if (current.platform === "tiktok") return { ...current, objective, optimizationGoal: objective === "traffic" ? "click" : objective === "web_conversions" ? "complete_payment" : "lead", conversionEvent: objective === "traffic" ? "page_view" : objective === "web_conversions" ? "purchase" : "submit_form" };
+  if (current.platform === "tiktok") { const optimizationGoal = objective === "traffic" ? "click" : objective === "web_conversions" ? "complete_payment" : "lead"; return { ...current, objective, optimizationGoal, billingEvent: tikTokBillingForGoal(optimizationGoal), conversionEvent: objective === "traffic" ? "page_view" : objective === "web_conversions" ? "purchase" : "submit_form" }; }
   return { ...current, objective };
 }
 
@@ -760,6 +830,7 @@ function metaGoalOptions(objective: string) { return (objective === "traffic" ? 
 function metaEventOptions(objective: string) { return [objective === "traffic" ? "view_content" : objective === "sales" ? "purchase" : "lead"].map(option); }
 function tikTokGoalOptions(objective: string) { return (objective === "traffic" ? ["click", "landing_page_view"] : objective === "web_conversions" ? ["complete_payment"] : ["lead"]).map(option); }
 function tikTokEventOptions(objective: string) { return [objective === "traffic" ? "page_view" : objective === "web_conversions" ? "purchase" : "submit_form"].map(option); }
+function tikTokBillingForGoal(goal: string) { return goal === "click" ? "cpc" : "ocpm"; }
 const PLATFORM_OPTIONS = [{ value: "google", label: "Google Ads" }, { value: "meta", label: "Meta Ads" }, { value: "tiktok", label: "TikTok Ads" }];
 const PLATFORM_FILTER_OPTIONS = [{ value: "all", label: "All platforms" }, ...PLATFORM_OPTIONS];
 const STATUS_FILTER_OPTIONS = ["all", "draft", "awaiting_approval", "approved", "launch_in_progress", "launched", "cancelled"].map((value) => ({ value, label: value === "all" ? "All statuses" : humanize(value) }));

@@ -4,6 +4,7 @@ import type { LeadQualityImportRow, LeadQualityValues } from "@/lib/search-term-
 import { getSearchTermAccountSettings } from "@/lib/search-term-optimization/supabase-settings";
 import type { OptimizationDashboardPayload, OptimizationResult } from "@/lib/search-term-optimization/types";
 import type { RawCurrentSearchTerm } from "@/lib/search-term-optimization/repository";
+import { isWorkflowApprovalRequired } from "@/lib/workflow-settings/repository";
 
 export type SpecialistDecision="approved"|"rejected"; export type ApproverDecision="accepted"|"rejected";
 export type SearchTermDecisionSummaryRow={customerId:string;customerName:string;searchTerm:string;campaign:string;outcome:"approved"|"negative";clicks:number;spend:number;conversions:number;classification:string;decidedAt:string|null};
@@ -94,15 +95,16 @@ function numberOr(fallback:number|null,value:unknown){return value==null?fallbac
 async function loadItems(ids:string[]){const parsed=ids.map(ref);if(new Set(parsed.map(p=>p.runId)).size!==1)throw new Error("Selected recommendations must belong to one analysis run.");const runs=await supabaseRest<Run[]>(`ad_automation_search_term_analysis_runs?id=eq.${parsed[0].runId}&select=*`);if(!runs[0])throw new Error("Analysis run was not found.");return {run:runs[0],items:parsed.map(p=>({key:p.key,row:runs[0].recommendations[p.index]})).filter(x=>x.row)};}
 async function save(ids:string[],status:string,decision:string,reviewer:{id:string;email:string;role:string},metadata:Record<string,unknown>={}){const {run,items}=await loadItems(ids);await supabaseRest("ad_automation_search_term_decisions?on_conflict=analysis_run_id,recommendation_key",{method:"POST",headers:{Prefer:"resolution=merge-duplicates,return=minimal"},body:jsonBody(items.map(i=>({analysis_run_id:run.id,recommendation_key:i.key,item_key:stableSearchTermKey(i.row),status,decision,reviewer_user_id:reviewer.id,reviewer_email:reviewer.email,reviewer_role:reviewer.role,reviewed_at:new Date().toISOString(),metadata,updated_at:new Date().toISOString()})))});return {updated:items.length,skipped:ids.length-items.length,decision};}
 export async function saveSpecialistDecision(input:{recommendationIds:string[];decision:SpecialistDecision;reviewer:{id:string;email:string;role:string}}){
- if(input.recommendationIds.every(id=>id.startsWith("rel:")))return saveRelationalDecision(input.recommendationIds,input.decision,input.reviewer);
- return save(input.recommendationIds,input.decision==="approved"?"ready_for_m03":"rejected",input.decision==="approved"?"submit_for_m03":"reject",input.reviewer,{googleMutationRequested:false});
+ const approvalRequired=await isWorkflowApprovalRequired("search_term_approval");
+ if(input.recommendationIds.every(id=>id.startsWith("rel:")))return saveRelationalDecision(input.recommendationIds,input.decision,input.reviewer,approvalRequired);
+ return save(input.recommendationIds,input.decision==="approved"?(approvalRequired?"ready_for_approval":"ready_for_m03"):"rejected",input.decision==="approved"?(approvalRequired?"submit_for_approval":"submit_for_m03"):"reject",input.reviewer,{googleMutationRequested:false,approvalBypassed:input.decision==="approved"&&!approvalRequired});
 }
 export async function saveApproverDecision(input:{recommendationIds:string[];decision:ApproverDecision;approver:{id:string;email:string;role:string}}){if(input.recommendationIds.every(id=>id.startsWith("rel:")))return saveRelationalDecision(input.recommendationIds,input.decision,input.approver);if(input.decision==="rejected")return save(input.recommendationIds,"returned_for_clarification","return_to_specialist",input.approver);return save(input.recommendationIds,"ready_for_m03","approver_approved_for_m03",input.approver,{googleMutationRequested:false});}
-async function saveRelationalDecision(ids:string[],decision:SpecialistDecision|ApproverDecision,reviewer:{id:string;email:string;role:string}){
+async function saveRelationalDecision(ids:string[],decision:SpecialistDecision|ApproverDecision,reviewer:{id:string;email:string;role:string},approvalRequired=false){
  const rowIds=ids.map(id=>Number(id.slice(4))).filter(Number.isInteger);if(!rowIds.length)return{updated:0,skipped:ids.length,decision};
  const rows=await supabaseRest<Array<DurableRow&{job_id:string}>>(`ad_automation_search_term_analysis_rows?id=in.(${rowIds.join(",")})&select=id,job_id,result_json,review_status,review_decision,updated_at`);
  const jobs=await supabaseRest<DurableJob[]>(`ad_automation_search_term_analysis_jobs?id=eq.${qs(rows[0]?.job_id??"")}&select=*`);if(!jobs[0])throw new Error("Analysis job was not found.");
- const reviewStatus=decision==="accepted"?"ready_for_m03":decision==="rejected"?"rejected":"ready_for_m03";
+ const reviewStatus=decision==="accepted"?"ready_for_m03":decision==="rejected"?"rejected":approvalRequired?"ready_for_approval":"ready_for_m03";
  await supabaseRest(`ad_automation_search_term_analysis_rows?id=in.(${rowIds.join(",")})`,{method:"PATCH",body:jsonBody({review_status:reviewStatus,review_decision:decision,updated_at:new Date().toISOString()})});
  return{updated:rows.length,skipped:ids.length-rows.length,decision,reviewer:reviewer.email};
 }

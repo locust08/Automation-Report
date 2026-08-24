@@ -3,6 +3,7 @@ import type { M03DraftInput, ReviewInput } from "@/lib/traffic-quality/decision-
 import type { PriorityThresholds } from "@/lib/traffic-quality/priority";
 import { calculateTrafficQualityPriority, priorityCadence } from "@/lib/traffic-quality/priority";
 import { normalizeTrafficQualityRecommendation } from "@/lib/traffic-quality/contracts";
+import type { PlacementOptimizationRow } from "@/lib/placement-optimization/types";
 
 type RecommendationRow = {
   id: string;
@@ -13,6 +14,14 @@ type RecommendationRow = {
   source_snapshot: Record<string, unknown>;
   current_status: string;
   recommended_action: string;
+  source_item_key?: string;
+  campaign_id?: string | null;
+  campaign_name?: string | null;
+  ad_group_id?: string | null;
+  ad_group_name?: string | null;
+  classification?: string | null;
+  ai_confidence?: number | null;
+  explanation?: string | null;
 };
 
 const STATUS_BY_ACTION = {
@@ -26,6 +35,10 @@ const STATUS_BY_ACTION = {
 } as const;
 
 export async function saveTrafficQualityDecision(input: ReviewInput) {
+  return saveTrafficQualityDecisionWithStatus(input);
+}
+
+async function saveTrafficQualityDecisionWithStatus(input: ReviewInput, statusOverride?: string) {
   const rows = await supabaseRest<RecommendationRow[]>(`traffic_quality_recommendations?id=eq.${qs(input.recommendationId)}&account_id=eq.${qs(input.accountId)}&select=*`);
   const recommendation = rows[0];
   if (!recommendation) throw new Error("Traffic-quality recommendation was not found in this account.");
@@ -45,7 +58,7 @@ export async function saveTrafficQualityDecision(input: ReviewInput) {
   });
   await supabaseRest(`traffic_quality_recommendations?id=eq.${qs(recommendation.id)}&account_id=eq.${qs(input.accountId)}`, {
     method: "PATCH",
-    body: jsonBody({ current_status: STATUS_BY_ACTION[input.action], last_reviewed_at: new Date().toISOString(), updated_at: new Date().toISOString() }),
+    body: jsonBody({ current_status: statusOverride ?? STATUS_BY_ACTION[input.action], last_reviewed_at: new Date().toISOString(), updated_at: new Date().toISOString() }),
   });
   if (input.action === "add_agency_risk") {
     await supabaseRest("traffic_quality_agency_placement_risks?on_conflict=placement_key,placement_type", {
@@ -179,6 +192,7 @@ export async function saveLivePlacementReviews(input: {
   action: ReviewInput["action"];
   comment?: string;
   actor: ReviewInput["actor"];
+  approvalRequired?: boolean;
 }) {
   if (input.action === "add_agency_risk" && !["tl", "approver", "admin"].includes(input.actor.role)) {
     throw new Error("Only an authorised team lead or administrator can add a placement to the agency risk list.");
@@ -222,6 +236,57 @@ export async function saveLivePlacementReviews(input: {
       };
     })),
   });
-  const decisions = await Promise.all(rows.map((row) => saveTrafficQualityDecision({ recommendationId: row.id, accountId: input.accountId, itemType: "placement", action: input.action, comment: input.comment, actor: input.actor })));
-  return { updated: decisions.length, decision: input.action, recommendationIds: rows.map((row) => row.id), status: "saved_for_m03_review", googleMutationRequested: false };
+  const awaitingApproval = input.action === "exclude" && input.approvalRequired === true;
+  const decisions = await Promise.all(rows.map((row) => saveTrafficQualityDecisionWithStatus({ recommendationId: row.id, accountId: input.accountId, itemType: "placement", action: input.action, comment: input.comment, actor: input.actor }, awaitingApproval ? "ready_for_approval" : undefined)));
+  return { updated: decisions.length, decision: input.action, recommendationIds: rows.map((row) => row.id), status: awaitingApproval ? "ready_for_approval" : "saved_for_m03_review", googleMutationRequested: false, approvalBypassed: input.action === "exclude" && !awaitingApproval };
+}
+
+export async function saveLivePlacementApproval(input: {
+  recommendationIds: string[];
+  accountId?: string;
+  placements?: LivePlacementReview[];
+  decision: "approved" | "rejected" | "returned";
+  actor: ReviewInput["actor"];
+}) {
+  const ids = [...new Set(input.recommendationIds.map((id) => id.trim()).filter(Boolean))];
+  let rows = ids.length ? await supabaseRest<RecommendationRow[]>(`traffic_quality_recommendations?id=in.(${ids.map(qs).join(",")})&current_status=eq.ready_for_approval&select=*`) : [];
+  if (rows.length !== ids.length && input.accountId && input.placements?.length) {
+    rows = (await Promise.all(input.placements.map(async (placement) => {
+      const key = `${placement.campaignId}|${placement.placementType}|${placement.placement}`;
+      return supabaseRest<RecommendationRow[]>(`traffic_quality_recommendations?account_id=eq.${qs(input.accountId!)}&source_kind=eq.placement&source_item_key=eq.${qs(key)}&current_status=eq.ready_for_approval&select=*&limit=1`);
+    }))).flat();
+  }
+  if (!rows.length || rows.length !== (input.placements?.length || ids.length)) throw new Error("Every selected placement must be awaiting approval.");
+  const status = input.decision === "approved" ? "excluded" : input.decision === "returned" ? "returned_for_clarification" : "rejected";
+  await Promise.all(rows.map(async (row) => {
+    await supabaseRest("traffic_quality_decision_events", { method: "POST", body: jsonBody({ recommendation_id: row.id, account_id: row.account_id, action: `approver_${input.decision}`, actor_id: input.actor.id, actor_email: input.actor.email, actor_role: input.actor.role, recommendation_snapshot: row }) });
+    await supabaseRest(`traffic_quality_recommendations?id=eq.${qs(row.id)}`, { method: "PATCH", body: jsonBody({ current_status: status, last_reviewed_at: new Date().toISOString(), updated_at: new Date().toISOString() }) });
+  }));
+  return { updated: rows.length, decision: input.decision, status, googleMutationRequested: false };
+}
+
+export async function loadPendingPlacementApprovalRows(input: { accountId: string; page: number; pageSize: number }) {
+  const offset = Math.max(0, (input.page - 1) * input.pageSize);
+  const base = `traffic_quality_recommendations?account_id=eq.${qs(input.accountId)}&source_kind=eq.placement&current_status=in.(ready_for_approval,excluded,rejected,returned_for_clarification)`;
+  const { supabaseRestCount } = await import("@/lib/optimization/supabase-rest");
+  const [rows, total] = await Promise.all([
+    supabaseRest<RecommendationRow[]>(`${base}&select=*&order=updated_at.desc&offset=${offset}&limit=${input.pageSize}`),
+    supabaseRestCount(`${base}&select=id&limit=1`),
+  ]);
+  return { rows: rows.map(mapPlacementApprovalRow), total };
+}
+
+function mapPlacementApprovalRow(row: RecommendationRow): PlacementOptimizationRow {
+  const snapshot = row.source_snapshot as Partial<LivePlacementReview>;
+  return {
+    id: row.id, resourceName: String(snapshot.placement ?? row.item_value), placement: String(snapshot.placement ?? row.item_value),
+    displayName: String(snapshot.placement ?? row.item_value), placementType: String(snapshot.placementType ?? row.item_type ?? "UNKNOWN"), targetUrl: snapshot.targetUrl ?? null,
+    campaignId: String(snapshot.campaignId ?? row.campaign_id ?? ""), campaignName: String(snapshot.campaignName ?? row.campaign_name ?? "Unknown campaign"), campaignType: String(snapshot.campaignType ?? "UNKNOWN"),
+    adGroupId: snapshot.adGroupId ?? row.ad_group_id ?? null, adGroupName: String(snapshot.adGroupName ?? row.ad_group_name ?? ""),
+    impressions: Number(snapshot.impressions ?? 0), clicks: Number(snapshot.clicks ?? 0), spend: Number(snapshot.spend ?? 0), conversions: Number(snapshot.conversions ?? 0), videoViews: 0,
+    classification: String(snapshot.classification ?? row.classification ?? "reviewed"), recommendedAction: "exclude",
+    confidence: Number(snapshot.confidence ?? row.ai_confidence ?? 0), reason: String(snapshot.reason ?? row.explanation ?? "Placement exclusion decision."),
+    confirmationRequired: Boolean(snapshot.clientConfirmationRequired), aiStatus: "not_required", reviewStatus: row.current_status,
+    currentDecision: row.current_status === "ready_for_approval" ? "exclude" : row.current_status, reviewHistory: [],
+  };
 }

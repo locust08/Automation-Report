@@ -66,7 +66,42 @@ const trackingSchema = z.object({
   impression_tracking_url: httpUrl.optional(),
 }).strict();
 
+export const providerResourceReferenceSchema = z.object({
+  logical_key: nonEmptyText(200),
+  resource_type: nonEmptyText(80),
+  role: nonEmptyText(100),
+  source: z.enum(["local", "provider"]),
+  reference_id: nonEmptyText(500),
+  provider_resource_id: nonEmptyText(500).nullable().default(null),
+  resolution_status: z.enum(["unresolved", "resolved"]),
+}).strict().superRefine((value, context) => {
+  if (value.resolution_status === "resolved" && !value.provider_resource_id) {
+    context.addIssue({ code: "custom", path: ["provider_resource_id"], message: "Resolved references require a provider resource ID." });
+  }
+});
+
+const providerPreparationSchema = z.object({
+  provider_execution_locked: z.literal(true).default(true),
+  compliance: z.record(z.string(), z.unknown()).default({}),
+  intended_statuses: z.record(z.string(), z.enum(["PAUSED", "DISABLED"])).default({}),
+  provider_fields: z.record(z.string(), z.unknown()).default({}),
+  resource_references: z.array(providerResourceReferenceSchema).default([]),
+}).strict().default({ provider_execution_locked: true, compliance: {}, intended_statuses: {}, provider_fields: {}, resource_references: [] });
+
+const providerNeutralEntitiesSchema = z.object({
+  campaign: z.object({ name: nonEmptyText(160), objective: nonEmptyText(80), intended_status: z.enum(["PAUSED", "DISABLED"]) }).strict(),
+  budget: z.object({ scope: z.enum(["campaign", "ad_group"]), mode: z.enum(["daily", "lifetime"]), amount: positiveCurrencyAmount, start_date: isoDate, end_date: isoDate }).strict(),
+  groups: z.array(z.object({ name: nonEmptyText(255), kind: z.enum(["ad_group", "asset_group"]), intended_status: z.enum(["PAUSED", "DISABLED"]) }).strict()).min(1).max(200),
+  targeting: z.object({ location_references: z.array(nonEmptyText(255)).max(100), language_references: z.array(nonEmptyText(100)).max(50), placement_mode: nonEmptyText(80) }).strict(),
+  conversion: z.object({ event: nonEmptyText(100), resource_reference: nonEmptyText(255) }).strict(),
+  creatives: z.array(z.object({ name: nonEmptyText(255), format: nonEmptyText(80), resource_roles: z.array(nonEmptyText(100)).max(50), intended_status: z.enum(["PAUSED", "DISABLED"]) }).strict()).min(1).max(200),
+  compliance: z.record(z.string(), z.unknown()),
+}).strict();
+
 const commonDraftShape = {
+  schema_version: z.union([z.literal(1), z.literal(2)]).default(1),
+  entities: providerNeutralEntitiesSchema.optional(),
+  provider_preparation: providerPreparationSchema,
   client_id: z.string().uuid(),
   client_name: nonEmptyText(120),
   ad_account_id: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
@@ -128,6 +163,8 @@ const googleCreativeSchema = z.discriminatedUnion("format", [
     descriptions: z.array(nonEmptyText(90)).min(2).max(5),
     business_name: nonEmptyText(25),
     image_asset_ids: unorderedStrings(1, 20),
+    square_image_asset_ids: unorderedStrings(0, 20).default([]),
+    portrait_image_asset_ids: unorderedStrings(0, 20).default([]),
     logo_asset_ids: unorderedStrings(1, 5),
     video_asset_ids: unorderedStrings(0, 5),
   }).strict(),
@@ -136,6 +173,7 @@ const googleCreativeSchema = z.discriminatedUnion("format", [
     headlines: z.array(nonEmptyText(40)).min(1).max(5),
     descriptions: z.array(nonEmptyText(90)).min(1).max(5),
     business_name: nonEmptyText(25),
+    ad_format: z.enum(["multi_asset", "carousel", "video_responsive"]).default("multi_asset"),
     image_asset_ids: unorderedStrings(1, 20),
     video_asset_ids: unorderedStrings(0, 5),
   }).strict(),
@@ -227,7 +265,7 @@ const metaCreativeSchema = z.discriminatedUnion("format", [
   z.object({
     format: z.literal("existing_post"),
     post_id: identifier,
-    eligibility_confirmed: z.literal(true),
+    eligibility_confirmed: z.boolean(),
   }).strict(),
 ]);
 
@@ -282,7 +320,7 @@ const tikTokDraftObjectSchema = z.object({
   platform: z.literal("tiktok"),
   objective: z.enum(["traffic", "web_conversions", "lead_generation"]),
   campaign_type: z.literal("auction"),
-  budget_mode: z.literal("daily"),
+  budget_mode: z.enum(["daily", "lifetime"]),
   optimization_goal: z.enum(["click", "landing_page_view", "complete_payment", "lead"]),
   pixel_id: identifier,
   conversion_event: z.enum(["page_view", "purchase", "submit_form"]),
@@ -319,6 +357,8 @@ export const campaignPlanSchema = z.discriminatedUnion("platform", [
 
 export type CampaignPlanDraftInput = z.input<typeof campaignPlanDraftInputSchema>;
 export type CampaignPlan = z.output<typeof campaignPlanSchema>;
+export type CampaignPlanV2 = CampaignPlan & { schema_version: 2 };
+export type ProviderResourceReference = z.output<typeof providerResourceReferenceSchema>;
 export type GoogleCampaignPlan = Extract<CampaignPlan, { platform: "google" }>;
 export type MetaCampaignPlan = Extract<CampaignPlan, { platform: "meta" }>;
 export type TikTokCampaignPlan = Extract<CampaignPlan, { platform: "tiktok" }>;
@@ -426,6 +466,35 @@ function validateCampaignPlanCombination(value: unknown, context: z.RefinementCt
     context.addIssue({ code: "custom", path: ["end_date"], message: "End date must be on or after start date." });
   }
 
+  if (plan.schema_version === 2) {
+    if (!plan.entities) {
+      context.addIssue({ code: "custom", path: ["entities"], message: "CampaignPlanV2 requires provider-neutral campaign entities." });
+    }
+    if (plan.provider_preparation.provider_execution_locked !== true) {
+      context.addIssue({ code: "custom", path: ["provider_preparation", "provider_execution_locked"], message: "Provider execution must remain locked." });
+    }
+    if (plan.platform === "google" && !["contains", "does_not_contain"].includes(String(plan.provider_preparation.compliance.eu_political_advertising ?? ""))) {
+      context.addIssue({ code: "custom", path: ["provider_preparation", "compliance", "eu_political_advertising"], message: "Declare whether this campaign contains EU political advertising." });
+    }
+    if (plan.platform === "meta" && !String(plan.provider_preparation.compliance.special_ad_categories_declared ?? "").trim()) {
+      context.addIssue({ code: "custom", path: ["provider_preparation", "compliance", "special_ad_categories_declared"], message: "Declare the Meta special ad category, including None." });
+    }
+    if (plan.platform === "tiktok" && !String(plan.provider_preparation.compliance.special_industries_declared ?? "").trim()) {
+      context.addIssue({ code: "custom", path: ["provider_preparation", "compliance", "special_industries_declared"], message: "Declare the TikTok special industry, including None." });
+    }
+    validateProviderPreparation(plan, context);
+    if (plan.entities && (plan.entities.campaign.name !== plan.campaign_name || plan.entities.campaign.objective !== plan.objective)) {
+      context.addIssue({ code: "custom", path: ["entities", "campaign"], message: "Provider-neutral campaign identity must match the platform plan." });
+    }
+  } else {
+    if (plan.platform === "meta" && plan.creative.format === "existing_post" && plan.creative.eligibility_confirmed !== true) {
+      context.addIssue({ code: "custom", path: ["creative", "eligibility_confirmed"], message: "V1 existing-post plans require confirmed eligibility." });
+    }
+    if (plan.platform === "tiktok" && plan.budget_mode !== "daily") {
+      context.addIssue({ code: "custom", path: ["budget_mode"], message: "V1 TikTok plans support daily budget mode only." });
+    }
+  }
+
   if (plan.platform === "google") {
     const expectedInventory = {
       search: "google_search",
@@ -459,6 +528,13 @@ function validateCampaignPlanCombination(value: unknown, context: z.RefinementCt
         context.addIssue({ code: "custom", path: ["bidding_strategy"], message: "Maximize clicks is supported only for Search in M04 V1." });
       }
     }
+    if (plan.schema_version === 2 && plan.creative.format === "performance_max_asset_group" && plan.creative.square_image_asset_ids.length === 0) {
+      context.addIssue({ code: "custom", path: ["creative", "square_image_asset_ids"], message: "Performance Max requires at least one square image reference." });
+    }
+    if (plan.schema_version === 2 && plan.creative.format === "demand_gen_asset") {
+      if (plan.creative.ad_format === "carousel" && plan.creative.image_asset_ids.length < 2) context.addIssue({ code: "custom", path: ["creative", "image_asset_ids"], message: "Demand Gen carousel requires at least two image references." });
+      if (plan.creative.ad_format === "video_responsive" && plan.creative.video_asset_ids.length === 0) context.addIssue({ code: "custom", path: ["creative", "video_asset_ids"], message: "Demand Gen video-responsive ads require a video reference." });
+    }
 
     const hasTargetCpa = plan.bid_targets.target_cpa !== undefined;
     const hasTargetRoas = plan.bid_targets.target_roas !== undefined;
@@ -491,6 +567,40 @@ function validateCampaignPlanCombination(value: unknown, context: z.RefinementCt
     if (!supported) {
       context.addIssue({ code: "custom", path: ["optimization_goal"], message: "TikTok optimization and event must match the objective." });
     }
+    if (plan.schema_version === 2) {
+      const billingEvent = String(plan.provider_preparation.provider_fields.billing_event ?? "");
+      const expectedBillingEvent = plan.optimization_goal === "click" ? "cpc" : "ocpm";
+      if (billingEvent !== expectedBillingEvent) context.addIssue({ code: "custom", path: ["provider_preparation", "provider_fields", "billing_event"], message: "TikTok billing event must match the optimization goal." });
+    }
+  }
+}
+
+function validateProviderPreparation(
+  plan: z.output<typeof googleDraftObjectSchema> | z.output<typeof metaDraftObjectSchema> | z.output<typeof tikTokDraftObjectSchema>,
+  context: z.RefinementCtx,
+) {
+  const preparation = plan.provider_preparation;
+  const roles = new Set(preparation.resource_references.map((reference) => reference.role));
+  const requiredRoles = plan.platform === "google"
+    ? ["conversion_action", ...(plan.campaign_type === "performance_max" ? ["marketing_image_landscape", "marketing_image_square", "logo_square"] : plan.campaign_type === "demand_gen" ? [`demand_gen_${plan.creative.format === "demand_gen_asset" ? plan.creative.ad_format : "multi_asset"}_image`, ...(plan.creative.format === "demand_gen_asset" && plan.creative.ad_format === "video_responsive" ? ["demand_gen_video"] : [])] : [])]
+    : plan.platform === "meta"
+      ? ["facebook_page", "meta_pixel", plan.creative.format]
+      : ["tiktok_pixel", "tiktok_identity", "video", "location"];
+  for (const role of requiredRoles) {
+    if (!roles.has(role)) context.addIssue({ code: "custom", path: ["provider_preparation", "resource_references"], message: `Add the required ${role.replaceAll("_", " ")} reference.` });
+  }
+  const requiredStatuses = plan.platform === "google" ? ["campaign", "ad_group", "ad"] : plan.platform === "meta" ? ["campaign", "ad_set", "creative", "ad"] : ["campaign", "ad_group", "ad"];
+  for (const status of requiredStatuses) {
+    if (!preparation.intended_statuses[status]) context.addIssue({ code: "custom", path: ["provider_preparation", "intended_statuses", status], message: `Store the intended ${status.replaceAll("_", " ")} status.` });
+  }
+  const requiredFields = plan.platform === "google"
+    ? plan.campaign_type === "performance_max" ? ["brand_guidelines"] : plan.campaign_type === "demand_gen" ? ["demand_gen_ad_format"] : []
+    : plan.platform === "meta"
+      ? ["ad_set_name", "creative_name", "ad_name", "budget_scope", "budget_mode", "bid_strategy", "attribution_window", "promoted_object"]
+      : ["ad_group_name", "ad_name", "promotion_type", "placement_type", "billing_event", "bid_type", "pacing", "click_attribution_window", "view_attribution_window"];
+  for (const field of requiredFields) {
+    const value = preparation.provider_fields[field];
+    if (value === undefined || value === null || value === "") context.addIssue({ code: "custom", path: ["provider_preparation", "provider_fields", field], message: `Store the provider-ready ${field.replaceAll("_", " ")} value.` });
   }
 }
 

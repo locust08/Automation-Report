@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 
 import { getServerAuthSession } from "@/lib/auth/server-session";
 import { saveApproverDecision, type ApproverDecision } from "@/lib/search-term-optimization/supabase-repository";
+import { isWorkflowApprovalRequired } from "@/lib/workflow-settings/repository";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -11,6 +12,9 @@ export async function POST(request: Request) {
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   if (session.role !== "approver" && session.role !== "admin") {
     return NextResponse.json({ error: "Only an approver can authorize change sets." }, { status: 403 });
+  }
+  if (!await isWorkflowApprovalRequired("search_term_approval")) {
+    return NextResponse.json({ error: "A separate search-term approval is disabled in Workflow Settings." }, { status: 409 });
   }
 
   const body = await request.json() as { recommendationIds?: unknown; decision?: unknown };

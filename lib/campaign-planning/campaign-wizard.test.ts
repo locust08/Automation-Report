@@ -90,3 +90,18 @@ test("review uses an explicit button action instead of implicit form submission"
   assert.deepEqual(getCampaignWizardPrimaryAction(3), { kind: "next", buttonType: "button" });
   assert.deepEqual(getCampaignWizardPrimaryAction(4), { kind: "submit", buttonType: "button" });
 });
+
+test("Google setup requires an explicit EU political advertising declaration", () => {
+  const form = { ...createCampaignWizardForm("google"), euPoliticalAds: "" } as ReturnType<typeof createCampaignWizardForm>;
+  assert.equal(validateCampaignWizardStep(form, 2).some((error) => error.field === "euPoliticalAds"), true);
+});
+
+test("Meta setup requires an explicit special-ad-category declaration", () => {
+  const form = { ...createCampaignWizardForm("meta"), specialAdCategories: "" } as ReturnType<typeof createCampaignWizardForm>;
+  assert.equal(validateCampaignWizardStep(form, 1).some((error) => error.field === "specialAdCategories"), true);
+});
+
+test("TikTok setup validates optimization and billing-event compatibility", () => {
+  const form = { ...createCampaignWizardForm("tiktok"), optimizationGoal: "click", billingEvent: "ocpm" } as ReturnType<typeof createCampaignWizardForm>;
+  assert.equal(validateCampaignWizardStep(form, 2).some((error) => error.field === "billingEvent"), true);
+});

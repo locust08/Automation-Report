@@ -38,6 +38,12 @@ import {
 } from "@/components/reporting/home-account-search";
 import { cn } from "@/lib/utils";
 import { switchReportAccountEntryPlatform } from "@/lib/reporting/preview-platform-context";
+import {
+  clearRememberedReportAccount,
+  readRememberedReportAccount,
+  type RememberedReportAccount,
+  writeRememberedReportAccount,
+} from "@/lib/reporting/remembered-report-account";
 
 interface ReportFiltersBarProps {
   filters: ReportFilters;
@@ -50,6 +56,10 @@ interface ReportFiltersBarProps {
   submitLabel?: string;
   compact?: boolean;
   footerContent?: ReactNode;
+  immediateAccountApply?: boolean;
+  allowMultipleAccounts?: boolean;
+  rememberAccountSelection?: boolean;
+  onAccountSelected?: (account: RememberedReportAccount) => void;
 }
 
 type SearchPlatform = "meta" | "google" | "tiktok";
@@ -84,6 +94,10 @@ export function ReportFiltersBar({
   submitLabel = "Load Report",
   compact = false,
   footerContent,
+  immediateAccountApply = false,
+  allowMultipleAccounts = true,
+  rememberAccountSelection = true,
+  onAccountSelected,
 }: ReportFiltersBarProps) {
   const [searchEntries, setSearchEntries] = useState<SearchEntry[]>([]);
   const nextSearchEntryId = useRef(0);
@@ -91,6 +105,7 @@ export function ReportFiltersBar({
   const [endDate, setEndDate] = useState(filters.endDate);
   const [selectedMonth, setSelectedMonth] = useState(toMonthValue(filters.startDate));
   const [platform, setPlatform] = useState(filters.platform);
+  const restoredRememberedAccount = useRef(false);
 
   useEffect(() => {
     const parsedEntries = parseSearchEntries(filters);
@@ -108,20 +123,35 @@ export function ReportFiltersBar({
     setPlatform(filters.platform);
   }, [filters]);
 
-  function handleSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const monthDateRange = toMonthDateRange(selectedMonth);
-    const serialized = serializeSearchEntries(searchEntries);
+  useEffect(() => {
+    if (
+      restoredRememberedAccount.current ||
+      !rememberAccountSelection ||
+      hasAccountFilters(filters)
+    ) {
+      return;
+    }
+    restoredRememberedAccount.current = true;
+    const remembered = readRememberedReportAccount(window.localStorage);
+    if (!remembered) return;
+    onAccountSelected?.(remembered);
+    onApply(toReportAccountFilters(remembered));
+  }, [filters, onAccountSelected, onApply, rememberAccountSelection]);
 
+  function applyEntries(entries: SearchEntry[], nextPlatform: SearchPlatform) {
+    const monthDateRange = toMonthDateRange(selectedMonth);
+    const serialized = serializeSearchEntries(entries);
     onApply({
-      accountId: serialized.accountId,
-      metaAccountId: serialized.metaAccountId,
-      googleAccountId: serialized.googleAccountId,
-      tiktokAccountId: serialized.tiktokAccountId,
+      ...serialized,
       startDate: dateMode === "month" ? monthDateRange.startDate : startDate,
       endDate: dateMode === "month" ? monthDateRange.endDate : endDate,
-      platform,
+      platform: nextPlatform,
     });
+  }
+
+  function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    applyEntries(searchEntries, platform === "googleYoutube" ? "google" : platform);
   }
 
   function addSearchRow() {
@@ -156,13 +186,20 @@ export function ReportFiltersBar({
   function updateSearchRowAccountId(key: string, value: string) {
     const accountId = extractAdAccountIdFromAccountSearchInput(value);
     const detected = detectAccountIdInputPlatform(accountId);
-    updateSearchRow(key, {
+    const nextPlatform = detected?.platform ?? searchEntries.find((entry) => entry.key === key)?.platform ?? "meta";
+    const nextEntry = {
       searchText: value,
       accountId: detected?.accountId ?? accountId,
       ...(detected?.platform ? { platform: detected.platform } : {}),
-    });
+    };
+    const nextEntries = searchEntries.map((entry) => entry.key === key ? { ...entry, ...nextEntry } : entry);
+    setSearchEntries(nextEntries);
     if (detected?.platform) {
       setPlatform(detected.platform);
+    }
+    if (accountId) {
+      rememberAccount({ accountId: detected?.accountId ?? accountId, platform: nextPlatform, displayName: value || accountId, country: null });
+      if (immediateAccountApply) applyEntries(nextEntries, nextPlatform);
     }
   }
 
@@ -170,14 +207,31 @@ export function ReportFiltersBar({
     const detected = suggestion.platform
       ? { platform: suggestion.platform, accountId: suggestion.adAccountId }
       : detectAccountIdInputPlatform(suggestion.adAccountId);
-    updateSearchRow(key, {
+    const nextPlatform = detected?.platform ?? searchEntries.find((entry) => entry.key === key)?.platform ?? "meta";
+    const nextEntry = {
       searchText: formatAccountSuggestionLabel(suggestion),
       accountId: suggestion.adAccountId,
       ...(detected?.platform ? { platform: detected.platform } : {}),
-    });
+    };
+    const nextEntries = searchEntries.map((entry) => entry.key === key ? { ...entry, ...nextEntry } : entry);
+    setSearchEntries(nextEntries);
     if (detected?.platform) {
       setPlatform(detected.platform);
     }
+    rememberAccount({
+      accountId: suggestion.adAccountId,
+      platform: nextPlatform,
+      displayName: formatAccountSuggestionLabel(suggestion),
+      country: suggestion.country,
+    });
+    if (immediateAccountApply) applyEntries(nextEntries, nextPlatform);
+  }
+
+  function rememberAccount(account: RememberedReportAccount) {
+    if (rememberAccountSelection) {
+      writeRememberedReportAccount(window.localStorage, account);
+    }
+    onAccountSelected?.(account);
   }
 
   function removeSearchRow(key: string) {
@@ -229,7 +283,7 @@ export function ReportFiltersBar({
               onSelect={(suggestion) => selectSearchRowAccount(entry.key, suggestion)}
             />
 
-            <Button
+            {allowMultipleAccounts ? <Button
               type="button"
               variant="outline"
               className="h-10 shrink-0 px-3"
@@ -238,11 +292,11 @@ export function ReportFiltersBar({
               title="Remove"
             >
               <XIcon className="size-4" />
-            </Button>
+            </Button> : null}
           </div>
         ))}
 
-        <Button
+        {allowMultipleAccounts ? <Button
           type="button"
           variant="outline"
           className="h-9 w-full sm:w-auto sm:self-start"
@@ -250,7 +304,7 @@ export function ReportFiltersBar({
         >
           <PlusIcon data-icon="inline-start" />
           Add Account
-        </Button>
+        </Button> : null}
 
         {!searchEntries.some((entry) => Boolean(entry.accountId.trim())) ? (
           <p className="text-xs font-medium text-amber-700" role="status">
@@ -347,7 +401,10 @@ export function ReportFiltersBar({
               type="button"
               variant="outline"
               className="h-10 w-full items-center justify-center gap-2 px-4 text-sm font-medium leading-none sm:min-w-[148px] sm:w-auto"
-              onClick={onReset}
+              onClick={() => {
+                if (rememberAccountSelection) clearRememberedReportAccount(window.localStorage);
+                onReset();
+              }}
             >
               <RefreshCcwIcon data-icon="inline-start" className="shrink-0" />
               Reset
@@ -919,4 +976,18 @@ function nextSearchEntryKey(counter: MutableRefObject<number>): string {
   const key = `search-entry-${counter.current}`;
   counter.current += 1;
   return key;
+}
+
+function hasAccountFilters(filters: Pick<ReportFilters, "accountId" | "metaAccountId" | "googleAccountId" | "tiktokAccountId">) {
+  return Boolean(filters.accountId || filters.metaAccountId || filters.googleAccountId || filters.tiktokAccountId);
+}
+
+function toReportAccountFilters(account: RememberedReportAccount): Partial<ReportFilters> {
+  return {
+    accountId: "",
+    metaAccountId: account.platform === "meta" ? account.accountId : "",
+    googleAccountId: account.platform === "google" ? account.accountId : "",
+    tiktokAccountId: account.platform === "tiktok" ? account.accountId : "",
+    platform: account.platform,
+  };
 }

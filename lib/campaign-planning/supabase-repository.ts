@@ -3,6 +3,7 @@ import {
   type CampaignPlan,
   type CampaignPlanDraftInput,
 } from "@/lib/campaign-planning/domain";
+import { evaluateCampaignProviderReadiness } from "@/lib/campaign-planning/campaign-provider-readiness";
 import { prepareCampaignPlanDraft } from "@/lib/campaign-planning/campaign-plan-preparation";
 import type { CampaignEditDraft, CampaignWizardDraft, CampaignWizardForm } from "@/lib/campaign-planning/campaign-wizard";
 import type {
@@ -193,6 +194,9 @@ export async function getCampaignPlan(planId: number): Promise<CampaignPlanDetai
 
   return {
     ...connectedStage2Meta(config),
+    schemaVersion: currentRevision.payload.schema_version,
+    structuralValidation: { status: "valid", issues: [] },
+    providerReadiness: evaluateCampaignProviderReadiness(currentRevision.payload),
     plan: {
       ...plan,
       accountId: account.id,
@@ -366,6 +370,7 @@ export async function validateCampaignReadiness(
     readinessCheck("budget", "Budget package and flight", budgetPackage.status === "active" && detail.plan.startDate >= String(budgetPackage.start_date) && detail.plan.endDate <= String(budgetPackage.end_date) && detail.currentRevision.projectedTotal <= detail.plan.allocatedBudget + 0.01 && detail.plan.allocatedBudget <= numberValue(budgetPackage.envelope_amount, "package envelope") - numberValue(budgetPackage.committed_amount, "package committed amount"), "Allocation, dates, and projected total must fit the active package."),
     readinessCheck("domain", "Approved destination domain", approvedDestination, destinationHost ? `${destinationHost} must be in the M04 approved-domain list.` : "A valid destination URL is required."),
     readinessCheck("platform", `${humanizePlatform(detail.plan.platform)} required fields`, schemaResult.success, schemaResult.success ? "The active revision matches the strict platform schema." : "The active revision is missing platform-required fields."),
+    readinessCheck("provider_resources", "Provider resource readiness", detail.providerReadiness.providerReady, detail.providerReadiness.providerReady ? "All required references and provider-dependent checks are resolved." : `${detail.providerReadiness.unresolvedResources.length} resource reference(s) remain unresolved, or a provider-dependent check is pending.`),
     readinessCheck("permission", "Administrator permission", true, "The authenticated server route confirmed administrator access."),
     {
       key: "network",
@@ -385,7 +390,7 @@ export async function validateCampaignReadiness(
       p_result: result,
       p_checks: checks,
       p_issues: issues,
-      p_validation_snapshot: { platform: detail.plan.platform, destination_host: destinationHost, provider_execution_locked: true },
+      p_validation_snapshot: { platform: detail.plan.platform, destination_host: destinationHost, provider_execution_locked: true, provider_readiness: detail.providerReadiness },
       p_actor_id: resolveCampaignActorId(requestContext.actorId),
       p_trusted_ip: requestContext.ip || null,
       p_trusted_user_agent: requestContext.userAgent?.trim().slice(0, 1_000) || "m04-readiness",
@@ -402,7 +407,8 @@ export async function approveReadyCampaign(
   let detail = await getCampaignPlan(planId);
   if (!detail.readiness || detail.readiness.result !== "passed"
     || detail.readiness.revisionId !== detail.currentRevision.id
-    || detail.readiness.revisionHash !== detail.currentRevision.payloadHash) {
+    || detail.readiness.revisionHash !== detail.currentRevision.payloadHash
+    || !detail.providerReadiness.providerReady) {
     throw new CampaignPlanningRepositoryError("Run readiness validation and resolve every check before approval.", 409);
   }
   const config = getLocalSupabaseConfig();

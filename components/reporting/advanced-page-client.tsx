@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment, FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import {
   AlertTriangleIcon,
@@ -19,6 +19,7 @@ import {
 
 import { CampaignNameFilterControl } from "@/components/reporting/campaign-name-filter-control";
 import { ReportDownloadButton } from "@/components/reporting/screenshot-mode-toggle";
+import { ReportFiltersBar } from "@/components/reporting/report-filters-bar";
 import { AccountReportContent } from "@/components/reporting/overall-page-client";
 import { ReportShell } from "@/components/reporting/report-shell";
 import { useReportSectionQuery, useTikTokInsightsStage } from "@/components/reporting/use-report-data";
@@ -31,14 +32,6 @@ import {
   ReportWarnings,
 } from "@/components/reporting/report-state";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import type { CampaignNameFilter } from "@/lib/reporting/campaign-name-filter";
 import {
   filterRowsByCampaignName,
@@ -61,13 +54,8 @@ import type {
 } from "@/lib/reporting/advanced-types";
 import type { OverallReportPayload } from "@/lib/reporting/types";
 import { buildReportContextQuery } from "@/lib/reporting/report-navigation";
-
-const COUNTRIES = [
-  { value: "MY", label: "🇲🇾 MY" },
-  { value: "SG", label: "🇸🇬 SG" },
-  { value: "AU", label: "🇦🇺 AU" },
-  { value: "US", label: "🇺🇸 US" },
-];
+import type { ReportFilters } from "@/components/reporting/use-report-filters";
+import type { RememberedReportAccount } from "@/lib/reporting/remembered-report-account";
 
 interface ApiDebugRecord {
   method: "GET" | "POST";
@@ -96,9 +84,78 @@ export function AdvancedPageClient({
   ...props
 }: AdvancedPageClientProps) {
   if (initialTikTokAccountId && initialPlatform === "tiktok") {
-    return <TikTokAdvancedPageClient {...props} initialAccountId={initialTikTokAccountId} />;
+    return <TikTokAdvancedPageClient {...props} initialAccountId={initialTikTokAccountId} initialPlatform="tiktok" />;
   }
-  return <LegacyAdvancedPageClient {...props} />;
+  return <LegacyAdvancedPageClient {...props} initialPlatform={initialPlatform} />;
+}
+
+function AdvancedAccountFilters({
+  initialAccountId,
+  initialPlatform,
+  initialCountry,
+  initialStartDate,
+  initialEndDate,
+  footerContent,
+}: AdvancedPageClientProps & { footerContent?: ReactNode }) {
+  const router = useRouter();
+  const countryRef = useRef(initialCountry ?? "MY");
+  const platform = normalizeAdvancedPlatform(initialPlatform, initialAccountId);
+  const filters = useMemo<ReportFilters>(() => ({
+    accountId: "",
+    metaAccountId: platform === "meta" ? initialAccountId ?? "" : "",
+    googleAccountId: platform === "google" ? initialAccountId ?? "" : "",
+    tiktokAccountId: platform === "tiktok" ? initialAccountId ?? "" : "",
+    startDate: initialStartDate ?? "",
+    endDate: initialEndDate ?? "",
+    platform,
+    campaignNameFilterMode: "include",
+    campaignNameFilterValues: [],
+    source: "api",
+  }), [initialAccountId, initialEndDate, initialStartDate, platform]);
+
+  function openAccount(next: Partial<ReportFilters>) {
+    const params = new URLSearchParams();
+    const nextPlatform = next.platform === "googleYoutube" ? "google" : next.platform ?? platform;
+    const accountId =
+      nextPlatform === "google"
+        ? next.googleAccountId
+        : nextPlatform === "tiktok"
+          ? next.tiktokAccountId
+          : next.metaAccountId;
+    if (!accountId) return;
+    params.set(`${nextPlatform}AccountId`, accountId);
+    params.set("platform", nextPlatform);
+    params.set("country", countryRef.current);
+    if (next.startDate) params.set("startDate", next.startDate);
+    if (next.endDate) params.set("endDate", next.endDate);
+    router.push(`/advanced?${params.toString()}`);
+  }
+
+  return (
+    <ReportFiltersBar
+      filters={filters}
+      onApply={openAccount}
+      onReset={() => router.push("/advanced")}
+      onAccountSelected={(account: RememberedReportAccount) => {
+        countryRef.current = account.country ?? initialCountry ?? "MY";
+      }}
+      dateMode="month"
+      showDateFilters={false}
+      submitLabel="Reload"
+      compact
+      immediateAccountApply
+      allowMultipleAccounts={false}
+      footerContent={footerContent}
+    />
+  );
+}
+
+function normalizeAdvancedPlatform(
+  platform: string | undefined,
+  accountId: string | undefined,
+): "meta" | "google" | "tiktok" {
+  if (platform === "google" || platform === "tiktok" || platform === "meta") return platform;
+  return accountId && /^\d{10}$/.test(accountId.replace(/\D/g, "")) ? "google" : "meta";
 }
 
 function TikTokAdvancedPageClient({
@@ -128,7 +185,16 @@ function TikTokAdvancedPageClient({
       dateLabel={initialStartDate && initialEndDate ? `${initialStartDate} – ${initialEndDate}` : "Selected period"}
       activeQuery={queryString}
       reportReady={Boolean(data && !loading)}
-      headerBottomControl={<ReportDownloadButton />}
+      headerBottomControl={
+        <AdvancedAccountFilters
+          initialAccountId={initialAccountId}
+          initialPlatform="tiktok"
+          initialCountry={initialCountry}
+          initialStartDate={initialStartDate}
+          initialEndDate={initialEndDate}
+          footerContent={<ReportDownloadButton />}
+        />
+      }
     >
       <div className="space-y-5">
         {!initialAccountId ? <ReportEmptyState title="No TikTok account selected" message="Choose a TikTok Ads account to view its insights." /> : null}
@@ -147,6 +213,7 @@ function TikTokAdvancedPageClient({
 
 function LegacyAdvancedPageClient({
   initialAccountId,
+  initialPlatform,
   initialCountry,
   initialStartDate,
   initialEndDate,
@@ -182,8 +249,6 @@ function LegacyAdvancedPageClient({
   const [error, setError] = useState<string | null>(null);
   const [apiDebugRecords, setApiDebugRecords] = useState<ApiDebugRecord[]>([]);
   const [debugModalOpen, setDebugModalOpen] = useState(false);
-  const [switchAccountId, setSwitchAccountId] = useState(initialAccountId ?? "");
-  const [switchCountry, setSwitchCountry] = useState(initialCountry ?? "MY");
   const handleCampaignNameFilterChange = useCallback(
     (nextFilter: CampaignNameFilter | null) => {
       setCampaignNameFilter(nextFilter);
@@ -298,48 +363,21 @@ function LegacyAdvancedPageClient({
   const dateLabel = payload?.metadata.dateRange.currentLabel ?? "Last month";
   const diagnosticsPayload = buildTroubleshootingPayload(payload, error, apiDebugRecords);
 
-  function handleSwitchAccount(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const params = new URLSearchParams();
-    if (switchAccountId.trim()) {
-      params.set("accountId", switchAccountId.trim());
-    }
-    params.set("country", switchCountry);
-    writeCampaignNameFilterParams(params, campaignNameFilter);
-    router.push(`/advanced?${params.toString()}`);
-  }
-
   return (
     <ReportShell
       title={title}
       dateLabel={dateLabel}
       activeQuery={activeQueryString}
       headerBottomControl={
-        initialAccountId ? (
-          <div className="space-y-3">
-            <form onSubmit={handleSwitchAccount} className="grid gap-3 rounded-2xl bg-white/15 p-3 sm:grid-cols-[1fr_130px_auto]">
-              <Input
-                value={switchAccountId}
-                onChange={(event) => setSwitchAccountId(event.target.value)}
-                placeholder="Enter another account ID"
-                className="h-11 border-white/30 bg-white/20 text-white placeholder:text-white/70"
-              />
-              <Select value={switchCountry} onValueChange={setSwitchCountry}>
-                <SelectTrigger className="h-11 border-white/30 bg-white/20 text-white">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {COUNTRIES.map((item) => (
-                    <SelectItem key={item.value} value={item.value}>
-                      {item.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              <Button type="submit" className="h-11 bg-white text-[#9f0019] hover:bg-white/90">
-                Switch Account
-              </Button>
-            </form>
+        <div className="space-y-3">
+            <AdvancedAccountFilters
+              initialAccountId={initialAccountId}
+              initialPlatform={initialPlatform}
+              initialCountry={initialCountry}
+              initialStartDate={initialStartDate}
+              initialEndDate={initialEndDate}
+            />
+            {initialAccountId ? (
             <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
               <div className="rounded-2xl bg-white/15 px-4 py-3 text-sm font-medium text-white">
                 {payload ? `${payload.metadata.country.emoji} ${payload.metadata.country.label} market analysis` : "Advanced report"}
@@ -363,14 +401,14 @@ function LegacyAdvancedPageClient({
                 <ReportDownloadButton fileNamePrefix={title} />
               </div>
             </div>
+            ) : null}
           </div>
-        ) : null
       }
     >
       {!initialAccountId ? (
-        <ReportErrorState
-          kind="insights"
-          message="Enter an Ad Account ID on the home page before opening the advanced report."
+        <ReportEmptyState
+          title="Choose an advertising account"
+          message="Search for an account above to open its advanced report."
         />
       ) : null}
 
