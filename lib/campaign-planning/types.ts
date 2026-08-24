@@ -1,4 +1,5 @@
 import type { CampaignPlan, CampaignPlanDraftInput } from "./domain";
+import type { CampaignProviderReadiness } from "./campaign-provider-readiness";
 
 export type CampaignPlatform = "google" | "meta" | "tiktok";
 
@@ -141,6 +142,9 @@ export type CampaignAuditEvent = {
 };
 
 export type CampaignPlanDetail = LocalSupabaseStage2Meta & {
+  schemaVersion: number;
+  structuralValidation: { status: "valid"; issues: [] };
+  providerReadiness: CampaignProviderReadiness;
   plan: CampaignPlanSummary & {
     accountId: number;
     packageId: number;

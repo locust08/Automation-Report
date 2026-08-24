@@ -7,6 +7,8 @@ import type { CampaignAccountOption } from "./types";
 
 export type CampaignApiValidationIssue = {
   path: Array<string | number>;
+  step: number;
+  severity: "error" | "attention";
   message: string;
 };
 
@@ -17,7 +19,6 @@ export type CampaignValidationPayload = {
 
 export type CampaignWizardIssue = CampaignApiValidationIssue & {
   field: keyof CampaignWizardForm;
-  step: number;
 };
 
 export type CampaignSubmissionValidationResult =
@@ -32,17 +33,17 @@ export function validateCampaignSubmission(form: CampaignWizardForm, account: Ca
   return {
     success: false,
     error: formatted.error,
-    issues: formatted.issues.map((issue) => ({ ...issue, ...mapCampaignIssueToWizardField(issue.path) })),
+    issues: formatted.issues.map((issue) => ({ ...issue, field: mapCampaignIssueToWizardField(issue.path).field })),
   };
 }
 
 export function formatCampaignValidationError(error: ZodError): CampaignValidationPayload {
   return {
     error: "Some campaign fields need attention.",
-    issues: error.issues.map((issue) => ({
-      path: issue.path.filter((part): part is string | number => typeof part === "string" || typeof part === "number"),
-      message: friendlyIssueMessage(issue),
-    })),
+    issues: error.issues.map((issue) => {
+      const path = issue.path.filter((part): part is string | number => typeof part === "string" || typeof part === "number");
+      return { path, step: mapCampaignIssueToWizardField(path).step, severity: "error" as const, message: friendlyIssueMessage(issue) };
+    }),
   };
 }
 
@@ -51,6 +52,9 @@ export function mapCampaignIssueToWizardField(path: Array<string | number>): { f
   if (keys.includes("campaign_name")) return { field: "campaignName", step: 1 };
   if (keys.includes("objective")) return { field: "objective", step: 1 };
   if (keys.includes("campaign_type")) return { field: "campaignType", step: 1 };
+  if (keys.includes("eu_political_advertising")) return { field: "euPoliticalAds", step: 2 };
+  if (keys.includes("special_ad_categories_declared")) return { field: "specialAdCategories", step: 1 };
+  if (keys.includes("special_industries_declared")) return { field: "specialIndustries", step: 1 };
   if (keys.includes("destination")) return { field: "destination", step: 2 };
   if (keys.includes("start_date")) return { field: "startDate", step: 2 };
   if (keys.includes("end_date")) return { field: "endDate", step: 2 };
@@ -62,13 +66,18 @@ export function mapCampaignIssueToWizardField(path: Array<string | number>): { f
   if (keys.includes("languages")) return { field: "languages", step: 2 };
   if (keys.includes("conversion")) return { field: "conversionActionId", step: 2 };
   if (keys.includes("optimization_goal")) return { field: "optimizationGoal", step: 2 };
+  if (keys.includes("billing_event")) return { field: "billingEvent", step: 2 };
   if (keys.includes("conversion_event")) return { field: "conversionEvent", step: 2 };
   if (keys.includes("pixel_id")) return { field: "pixelId", step: 2 };
-  if (keys.includes("headlines") || keys.includes("long_headlines")) return { field: "headline", step: 3 };
+  if (keys.includes("long_headlines")) return { field: "longHeadlines", step: 3 };
+  if (keys.includes("headlines")) return { field: "headline", step: 3 };
+  if (keys.includes("square_image_asset_ids")) return { field: "squareAssetIds", step: 3 };
+  if (keys.includes("video_asset_ids")) return { field: "videoAssetIds", step: 3 };
   if (keys.includes("descriptions")) return { field: "descriptions", step: 3 };
   if (keys.includes("business_name")) return { field: "businessName", step: 3 };
   if (keys.some((key) => key.endsWith("asset_ids") || key.endsWith("asset_id")) || keys.includes("video_id") || keys.includes("post_id")) return { field: "assetIds", step: 3 };
   if (keys.includes("primary_text") || keys.includes("ad_text")) return { field: "primaryText", step: 3 };
+  if (keys.includes("cards") && keys.includes("destination")) return { field: "carouselDestinations", step: 3 };
   if (keys.includes("call_to_action")) return { field: "callToAction", step: 3 };
   if (keys.includes("display_name")) return { field: "identityName", step: 3 };
   if (keys.includes("groups") && keys.includes("keywords")) return { field: "keywords", step: 3 };

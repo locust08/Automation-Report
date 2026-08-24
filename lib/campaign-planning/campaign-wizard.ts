@@ -5,11 +5,17 @@ export type CampaignWizardForm = {
   accountId: string; packageId: string; campaignName: string; objective: string;
   destination: string; startDate: string; endDate: string; allocatedBudget: string; trackingTemplate: string;
   campaignType: string; biddingStrategy: string; targetCpa: string; targetRoas: string; searchPartners: string;
-  locations: string; languages: string; conversionActionId: string; conversionCategory: string; groupName: string; keywords: string;
+  locations: string; languages: string; conversionActionId: string; conversionCategory: string; groupName: string; keywords: string; keywordMatchTypes: string;
   optimizationGoal: string; billingEvent: string; pixelId: string; conversionEvent: string; placementMode: string;
   manualPlacements: string; countries: string; ageMin: string; ageMax: string; genders: string; interests: string;
   operatingSystems: string; creativeFormat: string; assetIds: string; primaryText: string; headline: string;
   descriptions: string; businessName: string; callToAction: string; identityName: string;
+  longHeadlines: string; squareAssetIds: string; portraitAssetIds: string; logoAssetIds: string; videoAssetIds: string;
+  euPoliticalAds: string; googleBrandGuidelines: string; demandGenFormat: string; urlPath1: string; urlPath2: string;
+  creativeName: string; adName: string; pageId: string; instagramActorId: string; specialAdCategories: string;
+  budgetScope: string; budgetMode: string; deliveryBidStrategy: string; bidAmount: string; attributionWindow: string;
+  ageGroups: string; promotionType: string; placementType: string; pacing: string;
+  clickAttributionWindow: string; viewAttributionWindow: string; specialIndustries: string; carouselDestinations: string;
 };
 
 export type CampaignWizardStep = { id: string; label: string; description: string };
@@ -58,13 +64,19 @@ const BASE_FORM: CampaignWizardForm = {
   trackingTemplate: "{lpurl}?utm_source=m04_stage2", campaignType: "search", biddingStrategy: "target_cpa", targetCpa: "50",
   targetRoas: "", searchPartners: "false", locations: "MY-KUL, MY-SEL", languages: "en, ms",
   conversionActionId: "mock-conversion-action", conversionCategory: "submit_lead_form", groupName: "Core intent",
-  keywords: "stage two campaign, local campaign draft", optimizationGoal: "offsite_conversions", billingEvent: "impressions",
+  keywords: "stage two campaign, local campaign draft", keywordMatchTypes: "phrase, phrase", optimizationGoal: "offsite_conversions", billingEvent: "impressions",
   pixelId: "mock-pixel-id", conversionEvent: "lead", placementMode: "automatic", manualPlacements: "facebook_feed, instagram_feed",
   countries: "MY", ageMin: "21", ageMax: "55", genders: "all", interests: "business software", operatingSystems: "android, ios",
-  creativeFormat: "responsive_search_ad", assetIds: "mock-image-1, mock-image-2, mock-image-3",
+  creativeFormat: "responsive_search_ad", assetIds: "",
   primaryText: "Planned locally. No provider calls are made.", headline: "Local Stage 2 campaign",
   descriptions: "A validated campaign draft, Stored only in local Supabase", businessName: "Stage 2 Business",
   callToAction: "learn_more", identityName: "Stage 2 Business",
+  longHeadlines: "A longer campaign headline", squareAssetIds: "", portraitAssetIds: "", logoAssetIds: "", videoAssetIds: "",
+  euPoliticalAds: "", googleBrandGuidelines: "disabled", demandGenFormat: "multi_asset", urlPath1: "", urlPath2: "",
+  creativeName: "Stage 2 creative", adName: "Stage 2 ad", pageId: "mock-page-id", instagramActorId: "", specialAdCategories: "",
+  budgetScope: "ad_group", budgetMode: "daily", deliveryBidStrategy: "lowest_cost", bidAmount: "", attributionWindow: "7d_click_1d_view",
+  ageGroups: "25-34, 35-44", promotionType: "website", placementType: "automatic", pacing: "smooth",
+  clickAttributionWindow: "7d", viewAttributionWindow: "1d", specialIndustries: "", carouselDestinations: "https://example.test/landing, https://example.test/landing",
 };
 
 export function getCampaignWizardSteps(platform: CampaignPlatform): CampaignWizardStep[] { return STEP_LABELS[platform]; }
@@ -76,8 +88,8 @@ export function getCampaignWizardPrimaryAction(step: number): { kind: "next" | "
 }
 
 export function createCampaignWizardForm(platform: CampaignPlatform = "google"): CampaignWizardForm {
-  if (platform === "meta") return { ...BASE_FORM, platform, objective: "leads", optimizationGoal: "offsite_conversions", conversionEvent: "lead", creativeFormat: "image" };
-  if (platform === "tiktok") return { ...BASE_FORM, platform, objective: "traffic", optimizationGoal: "click", conversionEvent: "page_view", creativeFormat: "single_video", manualPlacements: "tiktok", assetIds: "mock-video-id" };
+  if (platform === "meta") return { ...BASE_FORM, platform, objective: "leads", optimizationGoal: "offsite_conversions", conversionEvent: "lead", creativeFormat: "image", billingEvent: "impressions" };
+  if (platform === "tiktok") return { ...BASE_FORM, platform, objective: "traffic", optimizationGoal: "click", conversionEvent: "page_view", creativeFormat: "single_video", manualPlacements: "tiktok", assetIds: "", billingEvent: "cpc" };
   return { ...BASE_FORM };
 }
 
@@ -108,14 +120,17 @@ function required(form: CampaignWizardForm, fields: (keyof CampaignWizardForm)[]
 export function validateCampaignWizardStep(form: CampaignWizardForm, step: number): CampaignWizardFieldError[] {
   if (step === 0) return required(form, ["accountId", "packageId"]);
   if (step === 1) {
-    const errors = required(form, form.platform === "google" ? ["objective", "campaignType", "campaignName"] : ["objective", "campaignName"]);
+    const fields: (keyof CampaignWizardForm)[] = form.platform === "google" ? ["objective", "campaignType", "campaignName"] : ["objective", "campaignName"];
+    if (form.platform === "meta") fields.push("specialAdCategories");
+    if (form.platform === "tiktok") fields.push("specialIndustries");
+    const errors = required(form, fields);
     if (form.campaignName.trim().length > 160) errors.push({ field: "campaignName", message: "Campaign name must be 160 characters or fewer." });
     return errors;
   }
   if (step === 2) {
     const common: (keyof CampaignWizardForm)[] = ["destination", "startDate", "endDate", "allocatedBudget"];
-    if (form.platform === "google") common.push("biddingStrategy", "locations", "languages", "conversionActionId");
-    else common.push("optimizationGoal", "pixelId", "conversionEvent", "countries", "genders");
+    if (form.platform === "google") common.push("biddingStrategy", "locations", "languages", "conversionActionId", "euPoliticalAds");
+    else common.push("optimizationGoal", "pixelId", "conversionEvent", "countries", "genders", "groupName");
     if (form.placementMode === "manual") common.push("manualPlacements");
     const errors = required(form, common);
     if (form.startDate && form.endDate && form.endDate < form.startDate) errors.push({ field: "endDate", message: "End date must be on or after the start date." });
@@ -127,6 +142,7 @@ export function validateCampaignWizardStep(form: CampaignWizardForm, step: numbe
     if (form.platform === "google" && form.campaignType !== "search" && form.biddingStrategy === "maximize_clicks") errors.push({ field: "biddingStrategy", message: "Maximize clicks is available only for Search campaigns." });
     if (form.platform === "meta" && !validMetaCombination(form)) errors.push({ field: "optimizationGoal", message: "Meta optimization and conversion event must match the objective." });
     if (form.platform === "tiktok" && !validTikTokCombination(form)) errors.push({ field: "optimizationGoal", message: "TikTok optimization and conversion event must match the objective." });
+    if (form.platform === "tiktok" && form.billingEvent !== tikTokBillingEvent(form.optimizationGoal)) errors.push({ field: "billingEvent", message: "TikTok billing event must match the optimization goal." });
     return errors;
   }
   if (step === 3) {
@@ -153,20 +169,33 @@ function validateGoogleCreative(form: CampaignWizardForm): CampaignWizardFieldEr
     if (assets.length > 20) errors.push({ field: "assetIds", message: "Use no more than 20 image asset IDs." });
     if (form.businessName.trim().length > 25) errors.push({ field: "businessName", message: "Business name must be 25 characters or fewer." });
   }
+  if (form.campaignType === "performance_max") {
+    addListErrors(errors, "longHeadlines", "Performance Max long headline", splitItems(form.longHeadlines), 1, 5, 90);
+    if (!splitItems(form.squareAssetIds).length) errors.push({ field: "squareAssetIds", message: "At least one square image reference is required." });
+    if (!splitItems(form.logoAssetIds).length) errors.push({ field: "logoAssetIds", message: "At least one logo reference is required." });
+  }
+  if (form.campaignType === "demand_gen" && form.demandGenFormat === "video_responsive" && !splitItems(form.videoAssetIds).length) errors.push({ field: "videoAssetIds", message: "A video reference is required for a video-responsive Demand Gen ad." });
   return dedupeErrors(errors);
 }
 
 function validateMetaCreative(form: CampaignWizardForm): CampaignWizardFieldError[] {
-  const errors = required(form, ["creativeFormat", "assetIds", ...(form.creativeFormat === "existing_post" ? [] : ["primaryText" as const, "headline" as const])]);
+  const errors = required(form, ["creativeFormat", "assetIds", "creativeName", "adName", "pageId", ...(form.creativeFormat === "existing_post" ? [] : ["primaryText" as const, "headline" as const])]);
   if (form.primaryText.length > 2_200) errors.push({ field: "primaryText", message: "Primary text must be 2,200 characters or fewer." });
   if (form.headline.length > 255) errors.push({ field: "headline", message: "Headline must be 255 characters or fewer." });
   const assets = splitItems(form.assetIds);
   if (form.creativeFormat === "carousel" && (assets.length < 2 || assets.length > 10)) errors.push({ field: "assetIds", message: "Carousel ads require between 2 and 10 asset IDs." });
+  if (form.creativeFormat === "carousel") {
+    const headlines = splitItems(form.headline);
+    const destinations = splitItems(form.carouselDestinations);
+    if (headlines.length !== assets.length) errors.push({ field: "headline", message: "Add one headline for each carousel card." });
+    if (destinations.length !== assets.length) errors.push({ field: "carouselDestinations", message: "Add one destination for each carousel card." });
+    if (destinations.some((destination) => !isHttpUrl(destination))) errors.push({ field: "carouselDestinations", message: "Every carousel destination must be a valid HTTP or HTTPS URL." });
+  }
   return dedupeErrors(errors);
 }
 
 function validateTikTokCreative(form: CampaignWizardForm): CampaignWizardFieldError[] {
-  const errors = required(form, ["identityName", "assetIds", "primaryText", "callToAction"]);
+  const errors = required(form, ["identityName", "assetIds", "primaryText", "callToAction", "adName"]);
   if (form.identityName.length > 40) errors.push({ field: "identityName", message: "Identity name must be 40 characters or fewer." });
   if (form.primaryText.length > 100) errors.push({ field: "primaryText", message: "Ad text must be 100 characters or fewer." });
   return dedupeErrors(errors);
@@ -190,6 +219,8 @@ function validTikTokCombination(form: CampaignWizardForm) {
   if (form.objective === "web_conversions") return form.optimizationGoal === "complete_payment" && form.conversionEvent === "purchase";
   return form.optimizationGoal === "lead" && form.conversionEvent === "submit_form";
 }
+
+function tikTokBillingEvent(goal: string) { return goal === "click" ? "cpc" : "ocpm"; }
 
 function fieldLabel(field: keyof CampaignWizardForm) {
   return String(field).replace(/([a-z])([A-Z])/g, "$1 $2").replace(/^./, (letter) => letter.toUpperCase());

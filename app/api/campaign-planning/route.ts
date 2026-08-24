@@ -10,6 +10,7 @@ import {
   listCampaignPlans,
 } from "@/lib/campaign-planning/supabase-repository";
 import { createCampaignPlanSchema } from "@/lib/campaign-planning/validation";
+import { formatCampaignValidationError } from "@/lib/campaign-planning/campaign-submission-validation";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -44,7 +45,7 @@ export async function POST(request: Request) {
     return NextResponse.json(detail, { status: 201 });
   } catch (error) {
     if (error instanceof ZodError) {
-      return NextResponse.json({ error: error.issues[0]?.message || "Invalid campaign draft." }, { status: 400 });
+      return NextResponse.json(formatCampaignValidationError(error), { status: 400 });
     }
     const response = repositoryError(error, "Unable to create the local Supabase campaign draft.");
     return NextResponse.json({ error: response.message }, { status: response.status });
