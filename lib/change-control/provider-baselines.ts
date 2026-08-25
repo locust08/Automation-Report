@@ -7,6 +7,7 @@ import { getCredentials } from "@/lib/reporting/env";
 import { createTikTokAdsClient, type TikTokAdsClient } from "@/lib/tiktok/ads-client";
 import type { TikTokAdsActionName } from "@/lib/tiktok/ads-actions";
 import { canonicalizeMetaPayload, createMetaM03Adapter } from "@/lib/change-control/meta-provider-adapter";
+import { createTikTokM03Adapter } from "@/lib/change-control/tiktok-provider-adapter";
 
 type BaselineInput = { accountIdentity: string; campaignIdentity: string; items: Array<M03ChangeItem | M03ChangeItemInput> };
 type BaselineDependencies = {
@@ -18,6 +19,9 @@ type BaselineDependencies = {
 export function createM03OfficialProviderAdapter(platform: M03Platform, dependencies: BaselineDependencies = {}): M03ProviderAdapter {
   if (platform === "meta") {
     return createMetaM03Adapter({ retrieveBaseline: (input) => retrieveOfficialM03Baseline("meta", input, dependencies) });
+  }
+  if (platform === "tiktok") {
+    return createTikTokM03Adapter({ retrieveBaseline: (input) => retrieveOfficialM03Baseline("tiktok", input, dependencies) });
   }
   return createM03ProviderAdapter(platform, {
     retrieveBaseline: (input) => retrieveOfficialM03Baseline(platform, input, dependencies),
@@ -178,7 +182,14 @@ function tiktokProviderPath(path: string) {
     "campaign.budget.amount": "budget", "campaign.budget.daily": "budget",
     "campaign.schedule.start_date": "schedule_start_time", "campaign.schedule.end_date": "schedule_end_time",
     "ad_group.name": "adgroup_name", "ad_group.status": "operation_status",
+    "ad_group.budget.amount": "budget", "ad_group.budget.daily": "budget",
+    "ad_group.schedule.start_time": "schedule_start_time", "ad_group.schedule.end_time": "schedule_end_time",
+    "ad_group.bid.type": "bid_type", "ad_group.bid.amount": "bid_price",
+    "ad_group.placements.type": "placement_type",
     "ad.name": "ad_name", "ad.status": "operation_status",
+    "ad.copy.primary_text": "ad_text", "ad.creative.call_to_action": "call_to_action",
+    "ad.creative.destination_url": "landing_page_url", "ad.creative.tracking_url": "tracking_url",
+    "ad.creative.video_reference": "video_id", "ad.creative.identity_reference": "identity_id",
   };
   if (aliases[normalized]) return aliases[normalized];
   if (normalized.startsWith("campaign.bid.") || normalized.startsWith("ad_group.bid.")) return normalized.split(".").at(-1) ?? normalized;

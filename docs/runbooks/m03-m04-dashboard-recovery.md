@@ -75,6 +75,36 @@ Use soft activation/deactivation only. Do not delete configuration rows.
 4. If recovery requires compensation, create a new rollback request. Do not edit prior revisions or erase attempt evidence.
 5. Confirm the audit trail records the provider request ID, normalized error, readback, and resulting replacement stage.
 
+## TikTok token, permission, or API-version failure
+
+1. Keep provider execution locked and do not retry a mutation.
+2. Confirm the server-side Doppler authorization is current and that the exact advertiser is readable. Never copy tokens into the browser, Supabase, or audit evidence.
+3. Confirm the pinned TikTok Business API v1.3 action is still available and re-run capability validation if the provider changes an editable field.
+4. Use the synchronized-resource endpoint to read one campaign, ad group, ad, identity, video, or pixel required by the request.
+5. Preserve the draft and show a safe permission or capability error when access remains unavailable.
+
+## TikTok baseline conflict or readback mismatch
+
+1. Stop before mutation planning if the official canonical baseline differs from the reviewed values or the stored baseline is older than 15 minutes.
+2. Present the reviewed, latest official, and proposed values without overwriting any of them.
+3. Resolve the change in a new immutable revision and approve only its exact hash.
+4. Treat an accepted TikTok response as unverified until an exact GET readback matches the approved value.
+5. Keep mismatches in `partially_completed` or `failed` state with normalized evidence; never silently coerce provider values.
+
+## TikTok idempotency or Supabase persistence failure
+
+1. Resolve the existing M03 operation resource, stable operation key, and attempt before issuing a new idempotency key.
+2. A repeated key must return the original logical result without creating another replacement ad or duplicate attempt.
+3. If Supabase cannot durably record the next stage, stop before calling TikTok.
+4. Repair schema failures only with an additive migration that references `public.m03_ads_*`; do not modify or use another module's tables.
+
+## TikTok provider-lock confirmation
+
+- Publish, retry, verify, conflict-resolution, and rollback mutation routes return HTTP 423 before a TikTok mutation client is created.
+- Read-only synchronized-resource discovery and baseline retrieval may use TikTok GET endpoints.
+- No POST or DELETE is permitted during this implementation phase.
+- A future pilot still requires the deployment flag, `tiktok` platform allowlist, exact advertiser allowlist, fresh baseline, trusted operator/network, and exact approved revision.
+
 ## Meta token, permission, or API-version failure
 
 1. Keep provider execution locked and do not retry a mutation.

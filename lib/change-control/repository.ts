@@ -273,6 +273,78 @@ export async function finalizeM03MetaItem(input: {
     ...contextBody(input.context), p_idempotency_key: input.idempotency_key,
   });
 }
+
+export async function recordM03TikTokOperationResource(input: {
+  request_id: string; revision_id: string; item_id: string; resource_mapping_id?: number | null;
+  resource_role: "previous_ad" | "replacement_ad"; provider_resource_identity?: string | null;
+  lifecycle_state: M03ProviderOperationResourceState; creation_evidence?: Record<string, unknown>;
+  readback_evidence?: Record<string, unknown>; normalized_error?: Record<string, unknown>;
+  expected_current_state?: M03ProviderOperationResourceState | null; context: TrustedRequestContext; idempotency_key: string;
+}): Promise<JsonObject> {
+  return rpc("m03_ads_record_tiktok_operation_resource_v1", {
+    p_request_id: input.request_id, p_revision_id: input.revision_id, p_item_id: input.item_id,
+    p_resource_mapping_id: input.resource_mapping_id ?? null, p_resource_role: input.resource_role,
+    p_provider_resource_identity: input.provider_resource_identity ?? null, p_lifecycle_state: input.lifecycle_state,
+    p_creation_evidence: input.creation_evidence ?? {}, p_readback_evidence: input.readback_evidence ?? {},
+    p_normalized_error: input.normalized_error ?? {}, p_expected_lifecycle_state: input.expected_current_state ?? null,
+    ...contextBody(input.context), p_idempotency_key: input.idempotency_key,
+  });
+}
+
+export async function finalizeM03TikTokItem(input: {
+  request_id: string; revision_id: string; item_id: string;
+  result: "provider_execution_locked" | "pending" | "succeeded" | "failed" | "verified" | "mismatch" | "compensation_required";
+  provider_result_evidence?: Record<string, unknown>; readback_evidence?: Record<string, unknown>;
+  normalized_error?: Record<string, unknown>; context: TrustedRequestContext; idempotency_key: string;
+}): Promise<JsonObject> {
+  return rpc("m03_ads_finalize_tiktok_item_v1", {
+    p_request_id: input.request_id, p_revision_id: input.revision_id, p_item_id: input.item_id,
+    p_result: input.result, p_provider_result_evidence: input.provider_result_evidence ?? {},
+    p_readback_evidence: input.readback_evidence ?? {}, p_normalized_error: input.normalized_error ?? {},
+    ...contextBody(input.context), p_idempotency_key: input.idempotency_key,
+  });
+}
+
+export async function recordM03TikTokItemAttempt(input: {
+  request_id: string; revision_id: string; item_id: string; operation_key: string;
+  attempt_number: number; action: "publish" | "readback" | "rollback";
+  result: "provider_execution_locked" | "pending" | "succeeded" | "failed" | "verified" | "mismatch" | "compensation_required";
+  replacement_stage?: string | null; idempotency_key: string;
+  provider_request?: Record<string, unknown>; provider_result_evidence?: Record<string, unknown>;
+  readback_evidence?: Record<string, unknown>; normalized_error?: Record<string, unknown>;
+  context: TrustedRequestContext;
+}): Promise<JsonObject> {
+  return rpc("m03_ads_record_tiktok_item_attempt_v1", {
+    p_request_id: input.request_id, p_revision_id: input.revision_id, p_item_id: input.item_id,
+    p_operation_key: input.operation_key, p_attempt_number: input.attempt_number, p_action: input.action,
+    p_result: input.result, p_replacement_stage: input.replacement_stage ?? null,
+    p_provider_request: input.provider_request ?? {}, p_provider_result_evidence: input.provider_result_evidence ?? {},
+    p_readback_evidence: input.readback_evidence ?? {}, p_normalized_error: input.normalized_error ?? {},
+    ...contextBody(input.context), p_idempotency_key: input.idempotency_key,
+  });
+}
+
+export async function recordM03TikTokReadback(input: {
+  request_id: string; revision_id: string; item_id: string; operation_key: string;
+  readback_evidence: Record<string, unknown>; matches_approved: boolean;
+  context: TrustedRequestContext; idempotency_key: string;
+}): Promise<JsonObject> {
+  return rpc("m03_ads_record_tiktok_readback_v1", {
+    p_request_id: input.request_id, p_revision_id: input.revision_id, p_item_id: input.item_id,
+    p_operation_key: input.operation_key, p_readback_evidence: input.readback_evidence,
+    p_matches_approved: input.matches_approved, ...contextBody(input.context),
+    p_idempotency_key: input.idempotency_key,
+  });
+}
+
+export async function deriveM03TikTokRequestStatus(input: {
+  request_id: string; revision_id: string; context: TrustedRequestContext; idempotency_key: string;
+}): Promise<JsonObject> {
+  return rpc("m03_ads_derive_tiktok_request_status_v1", {
+    p_request_id: input.request_id, p_revision_id: input.revision_id,
+    ...contextBody(input.context), p_idempotency_key: input.idempotency_key,
+  });
+}
 async function optionalRows(path: string): Promise<JsonObject[]> {
   try { return await request<JsonObject[]>(path, { method: "GET" }); }
   catch (error) { if (error instanceof M03RepositoryError && error.status === 404) return []; throw error; }
@@ -311,6 +383,6 @@ function mapBaseline(row: JsonObject): M03ProviderBaselineSnapshot { return { id
 function mapSourceVerification(row: JsonObject): M03SourceVerification { return { id: stringValue(row, "id"), request_id: stringValue(row, "request_id"), source_kind: stringValue(row, "source_kind") as M03SourceVerification["source_kind"], source_m04_plan_id: row.source_m04_plan_id == null ? null : numberValue(row, "source_m04_plan_id"), source_m04_revision_id: row.source_m04_revision_id == null ? null : numberValue(row, "source_m04_revision_id"), platform: stringValue(row, "platform") as M03Platform, provider_account_identity: stringValue(row, "provider_account_identity"), provider_campaign_identity: stringValue(row, "provider_campaign_identity"), source_revision_hash: nullableString(row, "source_revision_hash"), evidence: objectValue(row, "evidence"), verified_at: stringValue(row, "verified_at") }; }
 function mapResourceMapping(row: JsonObject): M03ProviderResourceMapping { return { id: numberValue(row, "id"), item_id: stringValue(row, "item_id"), provider_resource_type: stringValue(row, "provider_resource_type"), previous_resource_identity: nullableString(row, "previous_resource_identity"), replacement_resource_identity: nullableString(row, "replacement_resource_identity"), replacement_stage: stringValue(row, "replacement_stage", "not_required"), capability_registry_version: numberValue(row, "capability_registry_version"), operation_plan: arrayValue(row, "operation_plan"), rollback_evidence: objectValue(row, "rollback_evidence"), updated_at: stringValue(row, "updated_at") }; }
 function mapAttempt(row: JsonObject): M03ItemAttempt { return { id: numberValue(row, "id"), item_id: stringValue(row, "item_id"), revision_id: nullableString(row, "revision_id"), action: stringValue(row, "action") as M03ItemAttempt["action"], attempt_number: numberValue(row, "attempt_number"), operation_key: nullableString(row, "operation_key"), result: stringValue(row, "result") as M03ItemAttempt["result"], replacement_stage: nullableString(row, "replacement_stage"), provider_result_evidence: objectValue(row, "provider_result_evidence"), readback_evidence: objectValue(row, "readback_evidence"), normalized_error: objectValue(row, "normalized_error"), created_at: stringValue(row, "created_at") }; }
-function mapOperationResource(row: JsonObject): M03ProviderOperationResource { return { id: numberValue(row, "id"), request_id: stringValue(row, "request_id"), revision_id: stringValue(row, "revision_id"), item_id: stringValue(row, "item_id"), resource_mapping_id: row.resource_mapping_id == null ? null : numberValue(row, "resource_mapping_id"), platform: "meta", resource_role: stringValue(row, "resource_role") as M03ProviderOperationResource["resource_role"], provider_resource_identity: nullableString(row, "provider_resource_identity"), lifecycle_state: stringValue(row, "lifecycle_state") as M03ProviderOperationResource["lifecycle_state"], creation_evidence: objectValue(row, "creation_evidence"), readback_evidence: objectValue(row, "readback_evidence"), normalized_error: objectValue(row, "normalized_error"), idempotency_key: stringValue(row, "idempotency_key"), created_at: stringValue(row, "created_at"), updated_at: stringValue(row, "updated_at") }; }
+function mapOperationResource(row: JsonObject): M03ProviderOperationResource { return { id: numberValue(row, "id"), request_id: stringValue(row, "request_id"), revision_id: stringValue(row, "revision_id"), item_id: stringValue(row, "item_id"), resource_mapping_id: row.resource_mapping_id == null ? null : numberValue(row, "resource_mapping_id"), platform: stringValue(row, "platform") as M03ProviderOperationResource["platform"], resource_role: stringValue(row, "resource_role") as M03ProviderOperationResource["resource_role"], provider_resource_identity: nullableString(row, "provider_resource_identity"), lifecycle_state: stringValue(row, "lifecycle_state") as M03ProviderOperationResource["lifecycle_state"], creation_evidence: objectValue(row, "creation_evidence"), readback_evidence: objectValue(row, "readback_evidence"), normalized_error: objectValue(row, "normalized_error"), idempotency_key: stringValue(row, "idempotency_key"), created_at: stringValue(row, "created_at"), updated_at: stringValue(row, "updated_at") }; }
 function mapSetting(module: "m03" | "m04", kind: WorkflowSetting["kind"], row: JsonObject): WorkflowSetting { return { id: numberValue(row, "id"), module, kind, value: stringValue(row, kind === "trusted_network" ? "network" : "domain"), label: nullableString(row, "label"), client_id: nullableString(row, "client_id"), is_active: row.is_active === true, created_at: stringValue(row, "created_at"), updated_at: nullableString(row, "updated_at") }; }
 const M03_STATUS_VALUES = ["draft", "validation_in_progress", "validation_failed", "awaiting_approval", "approved", "conflict_detected", "ready_to_publish", "publishing", "published", "verification_in_progress", "verified", "partially_completed", "failed", "reverted", "cancelled", "provider_execution_locked"] as const;

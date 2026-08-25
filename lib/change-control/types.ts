@@ -132,7 +132,7 @@ export type M03ProviderOperationResource = {
   revision_id: string;
   item_id: string;
   resource_mapping_id: number | null;
-  platform: "meta";
+  platform: "meta" | "tiktok";
   resource_role: M03ProviderOperationResourceRole;
   provider_resource_identity: string | null;
   lifecycle_state: M03ProviderOperationResourceState;

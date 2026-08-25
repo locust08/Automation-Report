@@ -7,6 +7,7 @@ import {
 import { PROVIDER_EXECUTION_LOCKED } from "@/lib/change-control/types";
 import { ProviderExecutionLockedError } from "@/lib/change-control/provider-execution-lock";
 import { createMetaM03Adapter } from "@/lib/change-control/meta-provider-adapter";
+import { createTikTokM03Adapter } from "@/lib/change-control/tiktok-provider-adapter";
 
 type AdapterHooks = {
   retrieveBaseline?: M03ProviderAdapter["retrieveBaseline"];
@@ -83,7 +84,7 @@ export function createM03ProviderAdapter(platform: M03Platform, hooks: AdapterHo
 
 export const googleM03Adapter = createM03ProviderAdapter("google");
 export const metaM03Adapter = createMetaM03Adapter();
-export const tiktokM03Adapter = createM03ProviderAdapter("tiktok");
+export const tiktokM03Adapter = createTikTokM03Adapter();
 
 function operation(item: M03ChangeItem, platform: M03Platform, providerResource: string, mode: "direct_update" | "creative_replacement", action: M03ProviderOperation["action"], key: string, dependsOn: string[], revisionHash: string): M03ProviderOperation {
   return {
