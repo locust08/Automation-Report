@@ -15,8 +15,6 @@ import { Calendar02 } from "@/components/shadcn-studio/calendar/calendar-02";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { ChartContainer, ChartTooltip, ChartTooltipContent, type ChartConfig } from "@/components/ui/chart";
 import { CartesianGrid, Line, LineChart, XAxis, YAxis } from "recharts";
-import { AccountHistoryPanel } from "@/components/ads-management/history-page-client";
-import { ChangeRequestPageClient } from "@/components/ads-management/change-request-page-client";
 import { ReportShell } from "@/components/reporting/report-shell";
 import { ReportErrorState } from "@/components/reporting/report-state";
 import { canEditAds, type AuthenticatedAdsUser } from "@/lib/auth/permissions";
@@ -24,7 +22,7 @@ import { formatAdsManagementUserError } from "@/lib/ads-management/user-error";
 import type { AdsChangeSetRecord, DraftChangeInput, DraftEditorContext, ManagedAd, ManagedAdTextAsset, ManagedAssetAutomationSetting, ManagedCampaign, ManagedCampaignPerformancePoint, ManagedCustomParameter, ManagedFieldValue, ManagedPerformanceMetrics, ManagedRecommendation, ManagedRecommendationCategory, ManagedRecommendationDetailFamily, ManagedRecommendationDetailSection, ManagedSitelink, ManagedSitelinkAssociation, ManagedSitelinkScope } from "@/lib/ads-management/types";
 
 type SaveState = "idle" | "saving" | "saved" | "failed";
-type ManagementView = "recommendations" | "campaigns" | "ad_groups" | "ads" | "history";
+type ManagementView = "recommendations" | "campaigns" | "ad_groups" | "ads";
 type ManagementAccountSuggestion = { accountName: string; adAccountId: string };
 const MANAGEMENT_ACCOUNT_CACHE_KEY = "google-management-account-search-cache-v1";
 const MANAGEMENT_RECENT_ACCOUNTS_KEY = "google-management-recent-accounts-v1";
@@ -156,11 +154,13 @@ function ManagementDateRangePicker({
 }
 
 export function GoogleManagementPageClient({ currentUser }: { currentUser: AuthenticatedAdsUser }) {
-  const canEdit = canEditAds(currentUser.role);
+  const canRequestChanges = canEditAds(currentUser.role);
+  const canEdit = false;
+  const router = useRouter();
   const params = useSearchParams();
   const accountId = params.get("accountId")?.trim() || "";
   const accountName = params.get("accountName")?.trim() || `Account ${accountId}`;
-  const resumeRequestId = params.get("requestId")?.trim() || "";
+  const resumeRequestId = "";
   const [campaigns, setCampaigns] = useState<ManagedCampaign[]>([]);
   const [syncedAt, setSyncedAt] = useState("");
   const [loading, setLoading] = useState(true);
@@ -195,6 +195,23 @@ export function GoogleManagementPageClient({ currentUser }: { currentUser: Authe
   } | null>(null);
   const [editableDrafts, setEditableDrafts] = useState<AdsChangeSetRecord[]>([]);
   const [draftsLoading, setDraftsLoading] = useState(canEdit);
+  const requestChange = useCallback((context?: { campaignId?: string; adGroupId?: string; adId?: string; fieldPath?: string; title?: string; reason?: string }) => {
+    if (!canRequestChanges) return;
+    const query = new URLSearchParams({
+      open: "new",
+      platform: "google",
+      account_identity: accountId,
+      account_name: accountName,
+    });
+    if (context?.campaignId) query.set("campaign_identity", context.campaignId);
+    if (context?.adId) { query.set("entity_type", "ad"); query.set("entity_identity", context.adId); }
+    else if (context?.adGroupId) { query.set("entity_type", "ad_group"); query.set("entity_identity", context.adGroupId); }
+    else if (context?.campaignId) { query.set("entity_type", "campaign"); query.set("entity_identity", context.campaignId); }
+    if (context?.fieldPath) query.set("field_path", context.fieldPath);
+    if (context?.title) query.set("title", context.title);
+    if (context?.reason) query.set("reason", context.reason);
+    router.push(`/change-control?${query.toString()}`);
+  }, [accountId, accountName, canRequestChanges, router]);
   const handleReviewProgress = useCallback((busy: boolean, status: string) => {
     setReviewBusy(busy);
     setReviewStatus(status);
@@ -589,7 +606,7 @@ export function GoogleManagementPageClient({ currentUser }: { currentUser: Authe
   if (error && !campaigns.length && !loading && !draftsLoading) return <ReportErrorState kind="management" message={error} onRetry={() => window.location.reload()} />;
   return (
     <ReportShell title={`${managementAccountLabel(accountName)} Google Ads Management`} dateLabel={syncedAt ? `Synchronized ${new Date(syncedAt).toLocaleString()}` : "Latest Google Ads values"} activeQuery={activeQuery} reportReady>
-      <div className={`mx-auto max-w-[1600px] space-y-5 text-slate-900 ${canEdit ? "" : "[&_.ads-edit-action]:hidden"}`}>
+      <div className="mx-auto max-w-[1600px] space-y-5 text-slate-900">
         <GoogleManagementAccountSearch currentAccount={{ accountName, adAccountId: accountId }} synchronizedAt={syncedAt} />
         {loading || draftsLoading ? <GoogleManagementLoading startedAt={loadingStartedAt} stage={loading ? "Retrieving the latest campaigns, ad groups, and ads from Google Ads..." : "Aligning Google Ads values with your saved drafts..."} /> : null}
         {error ? (
@@ -637,21 +654,12 @@ export function GoogleManagementPageClient({ currentUser }: { currentUser: Authe
                   setAdEditorOpen(false);
                 }}
               />
-              <ResourceTab
-                active={view === "history"}
-                label="History"
-                onClick={() => {
-                  setView("history");
-                  setSettingsEditorOpen(false);
-                  setAdEditorOpen(false);
-                }}
-              />
             </nav>
             <section className="min-w-0 space-y-4">
               {view === "recommendations" ? (
-                <RecommendationsPage accountId={accountId} accountName={accountName} recommendations={recommendations} loading={recommendationsLoading} error={recommendationsError} optimizationScore={optimizationScore} optimizationScoreUrl={optimizationScoreUrl} filter={recommendationFilter} onFilter={setRecommendationFilter} currentUser={currentUser} canEdit={canEdit} onReviewRequest={openReviewPanel} onManageAds={() => setView("ads")} />
+                <RecommendationsPage accountId={accountId} accountName={accountName} recommendations={recommendations} loading={recommendationsLoading} error={recommendationsError} optimizationScore={optimizationScore} optimizationScoreUrl={optimizationScoreUrl} filter={recommendationFilter} onFilter={setRecommendationFilter} canEdit={canRequestChanges} onRequestChange={(recommendation) => requestChange({ campaignId: recommendation.campaignResourceName?.split("/").pop(), title: recommendation.title, reason: recommendation.description, fieldPath: "recommendation.apply" })} />
               ) : view === "campaigns" ? (
-                <CampaignsPage campaigns={campaigns} startDate={reportDates.startDate} endDate={reportDates.endDate} onDatesChange={setReportDates} onEdit={canEdit ? (campaignId) => void openEditor({ view: "campaigns", campaignId }) : undefined} />
+                <CampaignsPage campaigns={campaigns} startDate={reportDates.startDate} endDate={reportDates.endDate} onDatesChange={setReportDates} onEdit={canRequestChanges ? (campaignId) => requestChange({ campaignId }) : undefined} />
               ) : view === "ad_groups" ? (
                 <AdGroupsPage
                   campaigns={campaigns}
@@ -659,13 +667,9 @@ export function GoogleManagementPageClient({ currentUser }: { currentUser: Authe
                   endDate={reportDates.endDate}
                   onDatesChange={setReportDates}
                   onEdit={
-                    canEdit
+                    canRequestChanges
                       ? (campaignId, adGroupId) =>
-                          void openEditor({
-                            view: "ad_groups",
-                            campaignId,
-                            adGroupId,
-                          })
+                          requestChange({ campaignId, adGroupId })
                       : undefined
                   }
                 />
@@ -676,80 +680,14 @@ export function GoogleManagementPageClient({ currentUser }: { currentUser: Authe
                   endDate={reportDates.endDate}
                   onDatesChange={setReportDates}
                   onEdit={
-                    canEdit
+                    canRequestChanges
                       ? (campaignId, adGroupId, adId) =>
-                          void openEditor({
-                            view: "ads",
-                            campaignId,
-                            adGroupId,
-                            adId,
-                          })
+                          requestChange({ campaignId, adGroupId, adId })
                       : undefined
                   }
                 />
-              ) : (
-                <AccountHistoryPanel accountId={accountId} accountName={accountName} onResumeRequest={canEdit ? resumeHistoryRequest : undefined} />
-              )}
+              ) : null}
             </section>
-          </div>
-        ) : null}
-        {(view === "campaigns" || view === "ad_groups") && settingsEditorOpen && campaign ? <SettingsEditorSidePanel kind={view === "campaigns" ? "campaign" : "ad_group"} campaign={campaign} adGroup={view === "ad_groups" ? selectedAdGroup : null} values={values} creator={creator} changesCount={changes.length} saveState={saveState} canSubmit={Boolean(request && saveState === "saved" && changes.length)} submitting={submitting} onFieldChange={(field, value) => setValues((current) => ({ ...current, [fieldId(field)]: value }))} onSave={() => void saveDraft()} onSubmit={() => void submit()} onClose={() => setSettingsEditorOpen(false)} /> : null}
-        {view === "ads" && adEditorOpen && campaign && selectedAd ? <AdEditorSidePanel campaign={campaign} adGroupName={selectedAdGroup?.name || "—"} ad={selectedAd} values={values} creator={creator} changesCount={changes.length} saveState={saveState} canSubmit={Boolean(request && saveState === "saved" && changes.length)} submitting={submitting} onFieldChange={(field, value) => setValues((current) => ({ ...current, [fieldId(field)]: value }))} onSave={() => void saveDraft()} onSubmit={() => void submit()} onClose={() => setAdEditorOpen(false)} /> : null}
-        {reviewRequestId ? (
-          <ChangeRequestPageClient
-            id={reviewRequestId}
-            currentUser={currentUser}
-            embedded
-            open={reviewPanelOpen}
-            onClose={(keepAlive) => {
-              setReviewPanelOpen(false);
-              if (!keepAlive) setReviewRequestId("");
-            }}
-            onProgressChange={handleReviewProgress}
-          />
-        ) : null}
-        {reviewRequestId && !reviewPanelOpen ? (
-          <Button type="button" className="fixed bottom-5 right-5 z-50 shadow-lg" onClick={() => setReviewPanelOpen(true)}>
-            {reviewBusy ? <Loader2Icon className="animate-spin" /> : <CheckCircle2Icon />}
-            {reviewBusy ? "View publish progress" : reviewStatus === "verified" ? "View publish result" : "Return to review"}
-          </Button>
-        ) : null}
-        {draftChoice ? (
-          <div className="fixed inset-0 z-[60] grid place-items-center bg-slate-950/45 p-4" role="dialog" aria-modal="true" aria-labelledby="draft-choice-title">
-            <div className="w-full max-w-lg rounded-2xl border bg-white p-6 shadow-2xl">
-              <p className="text-xs font-semibold uppercase tracking-wide text-red-700">Unfinished draft found</p>
-              <h2 id="draft-choice-title" className="mt-1 text-2xl font-semibold">
-                Continue your saved changes?
-              </h2>
-              <p className="mt-3 text-sm leading-6 text-slate-600">This draft was last saved {new Date(draftChoice.request.updated_at).toLocaleString()}. Resume it to keep your proposed values, or start with the latest synchronized Google values. Starting fresh will not delete the saved draft from Change history.</p>
-              <div className="mt-5 flex flex-wrap justify-end gap-2">
-                <Button type="button" variant="outline" onClick={() => setDraftChoice(null)}>
-                  Cancel
-                </Button>
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={() => {
-                    const context = draftChoice.context;
-                    setDraftChoice(null);
-                    openFreshEditor(context);
-                  }}
-                >
-                  Start from latest Google
-                </Button>
-                <Button
-                  type="button"
-                  onClick={() => {
-                    const saved = draftChoice.request;
-                    const context = draftChoice.context;
-                    setDraftChoice(null);
-                    resumeDraftInContext(saved, context);
-                  }}
-                >
-                  Resume draft
-                </Button>
-              </div>
-            </div>
           </div>
         ) : null}
       </div>
@@ -1447,11 +1385,7 @@ function PerformancePanel({ performance, title, subtitle, dateRangeControl }: { 
     </section>
   );
 }
-function RecommendationsPage({ accountId, accountName, recommendations, loading, error, optimizationScore, optimizationScoreUrl, filter, onFilter, currentUser, canEdit, onReviewRequest, onManageAds }: { accountId: string; accountName: string; recommendations: ManagedRecommendation[]; loading: boolean; error: string | null; optimizationScore: number | null; optimizationScoreUrl: string | null; filter: "all" | ManagedRecommendationCategory; onFilter: (filter: "all" | ManagedRecommendationCategory) => void; currentUser: AuthenticatedAdsUser; canEdit: boolean; onReviewRequest: (requestId: string) => void; onManageAds: () => void }) {
-  const [selectedForApply, setSelectedForApply] = useState<ManagedRecommendation[]>([]);
-  const actorName = currentUser.displayName;
-  const [creatingRequest, setCreatingRequest] = useState(false);
-  const [applyError, setApplyError] = useState<string | null>(null);
+function RecommendationsPage({ recommendations, loading, error, optimizationScore, optimizationScoreUrl, filter, onFilter, canEdit, onRequestChange }: { accountId: string; accountName: string; recommendations: ManagedRecommendation[]; loading: boolean; error: string | null; optimizationScore: number | null; optimizationScoreUrl: string | null; filter: "all" | ManagedRecommendationCategory; onFilter: (filter: "all" | ManagedRecommendationCategory) => void; canEdit: boolean; onRequestChange: (recommendation: Pick<ManagedRecommendation, "title" | "description"> & Partial<Pick<ManagedRecommendation, "campaignResourceName">>) => void }) {
   const filters: Array<{
     key: "all" | ManagedRecommendationCategory;
     label: string;
@@ -1472,47 +1406,8 @@ function RecommendationsPage({ accountId, accountName, recommendations, loading,
     }, {}),
   ).sort((left, right) => recommendationGroupUplift(right) - recommendationGroupUplift(left));
   function prepareApply(items: ManagedRecommendation[]) {
-    if (!canEdit) return;
-    setSelectedForApply(items);
-    setApplyError(null);
-  }
-  async function createApplyRequest() {
-    if (!actorName.trim() || !selectedForApply.length) return;
-    setCreatingRequest(true);
-    setApplyError(null);
-    try {
-      const response = await fetch("/api/ads-management/change-requests", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          accountId,
-          accountName,
-          title: `${selectedForApply.length === 1 ? selectedForApply[0].title : `${selectedForApply.length} Google recommendations`}`,
-          reason: "",
-          creatorName: actorName.trim(),
-          baselineCapturedAt: new Date().toISOString(),
-          changes: selectedForApply.map((recommendation) => ({
-            entityType: "campaign",
-            entityId: recommendation.resourceName,
-            entityName: recommendation.campaignName || recommendation.adGroupName || recommendation.title,
-            fieldKey: "recommendation.apply",
-            fieldLabel: `Apply Google recommendation: ${recommendation.title}`,
-            valueType: "recommendation",
-            baselineValue: "ACTIVE",
-            proposedValue: "APPLIED",
-          })),
-        }),
-      });
-      const payload = await response.json();
-      if (!response.ok) throw new Error(payload.error || "Unable to create the recommendation request.");
-      if (!payload.id) throw new Error("The recommendation request was created without an ID.");
-      setSelectedForApply([]);
-      setCreatingRequest(false);
-      onReviewRequest(String(payload.id));
-    } catch (cause) {
-      setApplyError(cause instanceof Error ? cause.message : "Unable to create the recommendation request.");
-      setCreatingRequest(false);
-    }
+    if (!canEdit || !items.length) return;
+    onRequestChange(items[0]);
   }
   return (
     <div className={`space-y-5 ${canEdit ? "" : "[&_.recommendation-apply-action]:hidden"}`}>
@@ -1553,7 +1448,7 @@ function RecommendationsPage({ accountId, accountName, recommendations, loading,
             </div>
             {visible.length > 1 ? (
               <Button type="button" size="sm" className="recommendation-apply-action bg-red-600 text-white hover:bg-red-700" onClick={() => prepareApply(visible)}>
-                Apply all ({visible.length})
+                Request selected change
               </Button>
             ) : null}
           </div>
@@ -1592,53 +1487,14 @@ function RecommendationsPage({ accountId, accountName, recommendations, loading,
           <div className="rounded-2xl border bg-white p-5 shadow-sm">
             <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Additional Google Ads guidance</p>
             <h3 className="mt-1 text-2xl font-semibold">Setup opportunities</h3>
-            <p className="mt-1 max-w-3xl text-sm leading-6 text-slate-600">These suggestions are not returned as live Recommendation API resources. Asset-related items can be managed with this dashboard&apos;s ad editor; account-level setup still requires Google Ads.</p>
+            <p className="mt-1 max-w-3xl text-sm leading-6 text-slate-600">These suggestions are not returned as live Recommendation API resources. Post-launch changes are reviewed in Change Control; account-level setup still requires Google Ads.</p>
           </div>
           <div className="grid gap-4 xl:grid-cols-2 2xl:grid-cols-3">
             {visibleGoogleAdsGuidance.map((item) => (
-              <GoogleAdsViewOnlyCard key={item.title} item={item} googleUrl={optimizationScoreUrl} onManageAds={onManageAds} />
+              <GoogleAdsViewOnlyCard key={item.title} item={item} googleUrl={optimizationScoreUrl} onRequestChange={() => onRequestChange({ title: item.title, description: item.description })} />
             ))}
           </div>
         </section>
-      ) : null}
-      {selectedForApply.length ? (
-        <div className="fixed inset-0 z-50 grid place-items-center bg-slate-950/40 p-4" role="dialog" aria-modal="true" aria-labelledby="apply-recommendation-title">
-          <div className="w-full max-w-xl rounded-2xl border bg-white p-6 shadow-2xl">
-            <p className="text-xs font-semibold uppercase tracking-wide text-red-700">Controlled application</p>
-            <h3 id="apply-recommendation-title" className="mt-1 text-2xl font-semibold">
-              Apply Google recommendation
-            </h3>
-            <p className="mt-2 text-sm text-slate-600">The dashboard creates a draft, then opens the final review where you can edit the completion email message before publishing.</p>
-            <div className="mt-4 max-h-36 space-y-2 overflow-y-auto rounded-xl bg-slate-50 p-3">
-              {selectedForApply.map((item) => (
-                <div key={item.resourceName} className="text-sm">
-                  <span className="font-medium">{item.title}</span>
-                  {item.campaignName ? <span className="text-slate-500"> · {item.campaignName}</span> : null}
-                </div>
-              ))}
-            </div>
-            <div className="mt-4 rounded-xl bg-slate-50 p-3 text-sm">
-              <span className="text-slate-500">Editing as </span>
-              <strong>{actorName}</strong>
-            </div>
-            {applyError ? <p className="mt-3 text-sm text-red-700">{applyError}</p> : null}
-            <div className="mt-5 flex justify-end gap-2">
-              <Button type="button" variant="outline" disabled={creatingRequest} onClick={() => setSelectedForApply([])}>
-                Cancel
-              </Button>
-              <Button type="button" disabled={!actorName.trim() || creatingRequest} onClick={() => void createApplyRequest()}>
-                {creatingRequest ? (
-                  <>
-                    <Loader2Icon className="animate-spin" />
-                    Opening review…
-                  </>
-                ) : (
-                  "Continue to review"
-                )}
-              </Button>
-            </div>
-          </div>
-        </div>
       ) : null}
     </div>
   );
@@ -1699,7 +1555,7 @@ const googleAdsViewOnlyGuidance: GoogleAdsViewOnlyGuidanceItem[] = [
     category: "repairs",
   },
 ];
-function GoogleAdsViewOnlyCard({ item, googleUrl, onManageAds }: { item: GoogleAdsViewOnlyGuidanceItem; googleUrl: string; onManageAds: () => void }) {
+function GoogleAdsViewOnlyCard({ item, googleUrl, onRequestChange }: { item: GoogleAdsViewOnlyGuidanceItem; googleUrl: string; onRequestChange: () => void }) {
   return (
     <article className="flex min-h-56 flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
       <div className="flex-1 p-5">
@@ -1707,7 +1563,7 @@ function GoogleAdsViewOnlyCard({ item, googleUrl, onManageAds }: { item: GoogleA
           <span className="grid size-9 place-items-center rounded-full bg-slate-100 text-slate-600">
             <ArrowUpRightIcon className="size-4" />
           </span>
-          <span className={`rounded-full px-3 py-1 text-xs font-semibold ${item.editableInDashboard ? "bg-red-50 text-red-700" : "bg-slate-100 text-slate-600"}`}>{item.editableInDashboard ? "Editable here" : "Google Ads setup"}</span>
+          <span className={`rounded-full px-3 py-1 text-xs font-semibold ${item.editableInDashboard ? "bg-red-50 text-red-700" : "bg-slate-100 text-slate-600"}`}>{item.editableInDashboard ? "Change Control" : "Google Ads setup"}</span>
         </div>
         <p className="mt-4 text-xs font-semibold uppercase tracking-wide text-slate-500">{recommendationCategoryLabel(item.category)}</p>
         <h4 className="mt-1 text-lg font-semibold">{item.title}</h4>
@@ -1715,8 +1571,8 @@ function GoogleAdsViewOnlyCard({ item, googleUrl, onManageAds }: { item: GoogleA
       </div>
       <div className="flex justify-end border-t px-5 py-3">
         {item.editableInDashboard ? (
-          <Button type="button" size="sm" variant="outline" onClick={onManageAds}>
-            Manage ads here
+          <Button type="button" size="sm" variant="outline" onClick={onRequestChange}>
+            Request change
           </Button>
         ) : (
           <Button asChild size="sm" variant="outline">

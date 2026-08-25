@@ -1,3 +1,5 @@
-import { Suspense } from "react";
-import { HistoryPageClient } from "@/components/ads-management/history-page-client";
-export default function HistoryPage() { return <Suspense fallback={<div className="p-8">Loading history…</div>}><HistoryPageClient /></Suspense>; }
+import { redirect } from "next/navigation";
+export default async function HistoryPage({ searchParams }: { searchParams: Promise<{ accountId?: string }> }) {
+  const accountId = (await searchParams).accountId?.trim();
+  redirect(`/change-control?legacy=google${accountId ? `&legacy_account_id=${encodeURIComponent(accountId)}` : ""}`);
+}
