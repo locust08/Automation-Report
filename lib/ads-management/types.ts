@@ -116,6 +116,7 @@ export interface AdsFieldChangeRecord {
   validation_errors: string[]; publish_status: string; verification_status: string;
   platform_response: unknown | null; last_error_message: string | null; publish_attempts: number;
   idempotency_key?: string | null; execution_claim_id?: string | null;
+  source_recommendation_id?: string | null;
 }
 
 export interface AdsChangeSetRevisionRecord {
@@ -152,6 +153,7 @@ export interface AdsChangeSetRecord {
   approved_revision_id?: string | null; approved_payload_hash?: string | null;
   preflight_state_hash?: string | null; approval_expires_at?: string | null;
   reverts_change_set_id?: string | null; source_optimization_action_id?: number | null;
+  source_module?: string | null; source_reference?: string | null; idempotency_key?: string | null;
   ads_field_changes?: AdsFieldChangeRecord[]; ads_change_approvals?: Array<Record<string, unknown>>;
   ads_change_events?: Array<Record<string, unknown>>; ads_change_notifications?: Array<Record<string, unknown>>;
   ads_change_set_revisions?: AdsChangeSetRevisionRecord[]; ads_change_follow_ups?: AdsChangeFollowUpRecord[];

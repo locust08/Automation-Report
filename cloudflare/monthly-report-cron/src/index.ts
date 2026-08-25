@@ -224,7 +224,7 @@ const ADVANCED_REPORT_READY_POLL_MS = 5000;
 const EMAIL_SAFE_PDF_SIZE_BYTES = 35 * 1024 * 1024;
 const DEFAULT_COMPLETION_NOTIFICATION_TO = ["waiing@locus-t.com.my"];
 const DEFAULT_COMPLETION_NOTIFICATION_CC = ["eason@locus-t.com.my", "ava@locus-t.com.my"];
-const DEFAULT_MANUAL_LIFECYCLE_NOTIFICATION_TO = ["jakettm6799@gmail.com"];
+const DEFAULT_MANUAL_LIFECYCLE_NOTIFICATION_TO = ["ava@locus-t.com.my"];
 const DEFAULT_FROM_ADDRESS = "LOCUS-T Reports <reports@locus-t.com.my>";
 const DEFAULT_EMAIL_LOGO_URL = "https://www.locus-t.com.my/wp-content/uploads/2024/09/LT-Logo-25.svg";
 
