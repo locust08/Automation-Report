@@ -29,7 +29,7 @@ export async function assertM03ProviderAction(input: { requestId: string; revisi
   if (preview.conflict_issues.length) throw new M03RepositoryError(preview.conflict_issues.map((issue) => issue.message).join(" "), 409);
   if (preview.capability_issues.some((issue) => issue.severity !== "warning")) throw new M03RepositoryError(preview.capability_issues.map((issue) => issue.message).join(" "), 400);
   for (const item of detail.items) {
-    const operations = preview.mutation_plan.operations.filter((operation) => operation.item_id === item.id);
+    const operations = preview.mutation_plan.operations.filter((operation) => operation.item_id === item.id || operation.affected_item_ids?.includes(item.id));
     if (!operations.length) continue;
     const first = operations[0]!;
     await recordM03ResourceMapping({

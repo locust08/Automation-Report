@@ -74,3 +74,49 @@ Use soft activation/deactivation only. Do not delete configuration rows.
 3. If creation succeeded but the switch failed, keep the verified replacement disabled and expose a reviewed retry.
 4. If recovery requires compensation, create a new rollback request. Do not edit prior revisions or erase attempt evidence.
 5. Confirm the audit trail records the provider request ID, normalized error, readback, and resulting replacement stage.
+
+## Meta token, permission, or API-version failure
+
+1. Keep provider execution locked and do not retry a mutation.
+2. Confirm the server-side Meta token is current and has the reviewed `ads_management` access for the exact ad account. Never copy the token into the browser, Supabase, or an audit event.
+3. Confirm `META_GRAPH_API_VERSION` is the pinned, reviewed version. Re-run capability validation when Meta removes or changes a field.
+4. Use the read-only synchronized-resource endpoint to verify access to one campaign, ad set, ad, and creative.
+5. If access remains unavailable, preserve the draft and show a readable permission error. Do not fall back to caller-provided credentials.
+
+## Meta baseline conflict
+
+1. Stop before mutation planning when the fresh official baseline hash differs from the reviewed baseline.
+2. Show the latest official value beside the reviewed and proposed values.
+3. Resolve each item by keeping the official value, reapplying the proposal in a new revision, entering another value, cancelling the item, or escalating the request.
+4. Validate and approve the new immutable revision. Never reuse the superseded approval.
+
+## Meta direct-update partial failure
+
+1. Record the normalized Meta code, subcode, transient flag, user-facing message, and trace ID without storing credentials.
+2. Do not repeat successful items. Refresh the official baseline for failed items and check their stable operation keys and attempts.
+3. Retry only through an explicit reviewed action after the prior result is known. A failed or ambiguous POST is never retried automatically.
+4. Derive the request status from all item outcomes; use `partially_completed` when only some items succeeded.
+
+## Meta creative replacement recovery
+
+The durable order is replacement creative created and verified, replacement ad created paused and verified, replacement activated, previous ad paused, then final readback.
+
+- If creative creation succeeds but ad creation fails, preserve the verified creative ID and resume without recreating it.
+- If the replacement ad exists but remains paused, preserve it and require an explicit retry after readback.
+- If the replacement activates but pausing the previous ad fails, mark `compensation_required`; do not silently leave both ads active.
+- A readback mismatch must remain unverified and include the exact expected and actual canonical values.
+- Rollback always starts a new immutable M03 request from the latest official state. Never delete provider evidence or prior revisions.
+
+## Meta idempotency or Supabase persistence failure
+
+1. Resolve the prior M03 idempotency key, operation resource, and item attempt before issuing a new key.
+2. A repeated key must return the original logical row and must not create another Meta creative or ad.
+3. If Supabase becomes unavailable, stop before provider execution. Never mutate Meta unless the durable operation stage can be recorded first.
+4. Repair schema failures only with an additive M03-only forward migration and re-run the failed isolation assertions.
+
+## Meta provider-lock confirmation
+
+- Publish, retry, verify, conflict-resolution, and rollback mutation routes return HTTP 423 before baseline or mutation transport is invoked.
+- The response identifies `provider_execution_locked` and states that Meta execution is disabled for the deployment.
+- Read-only baseline and synchronized-resource discovery may use Meta; no POST or DELETE is permitted during this phase.
+- Enabling a future pilot still requires the deployment flag, the `meta` platform allowlist, the exact account allowlist, and the exact approved revision.

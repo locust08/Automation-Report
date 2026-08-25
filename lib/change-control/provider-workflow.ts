@@ -1,7 +1,7 @@
 import type { M03ChangeRequestDetail, M03Platform, M03ValidationIssue } from "@/lib/change-control/types";
 import type { M03MutationPlan, M03ProviderAdapter, M03ProviderBaseline, M03ProviderExecutionResult, M03ProviderReadback } from "@/lib/change-control/provider-contract";
 import { canonicalM03Hash, m03BaselineKey } from "@/lib/change-control/provider-contract";
-import { ProviderExecutionLockedError } from "@/lib/change-control/provider-adapters";
+import { ProviderExecutionLockedError } from "@/lib/change-control/provider-execution-lock";
 
 export const M03_BASELINE_MAX_AGE_MS = 15 * 60 * 1000;
 

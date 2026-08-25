@@ -47,7 +47,17 @@ export type M03MockChangeRequestEditInput = Omit<
   "platform" | "workflow_mode" | "account_identity" | "campaign_identity" | "client_id" | "idempotency_key"
 > & { expected_lock_version: number; idempotency_key: string };
 
-export type M03ValidationIssue = { path: string; message: string; severity?: "error" | "warning" };
+export type M03ValidationIssue = {
+  path: string;
+  message: string;
+  severity?: "error" | "warning";
+  entity_type?: string;
+  entity_identity?: string;
+  provider_field?: string;
+  capability_registry_version?: number;
+  section?: string;
+  suggested_correction?: string;
+};
 
 export type M03ChangeRequestSummary = {
   id: string; platform: M03Platform; status: M03Status; title: string; reason: string;
@@ -113,9 +123,30 @@ export type M03ProviderResourceMapping = {
   operation_plan: Array<Record<string, unknown>>; rollback_evidence: Record<string, unknown>; updated_at: string;
 };
 
+export type M03ProviderOperationResourceRole = "previous_ad" | "replacement_creative" | "replacement_ad";
+export type M03ProviderOperationResourceState =
+  | "planned" | "created" | "verified" | "activated" | "disabled" | "failed" | "compensation_required";
+export type M03ProviderOperationResource = {
+  id: number;
+  request_id: string;
+  revision_id: string;
+  item_id: string;
+  resource_mapping_id: number | null;
+  platform: "meta";
+  resource_role: M03ProviderOperationResourceRole;
+  provider_resource_identity: string | null;
+  lifecycle_state: M03ProviderOperationResourceState;
+  creation_evidence: Record<string, unknown>;
+  readback_evidence: Record<string, unknown>;
+  normalized_error: Record<string, unknown>;
+  idempotency_key: string;
+  created_at: string;
+  updated_at: string;
+};
+
 export type M03ItemAttempt = {
   id: number; item_id: string; revision_id: string | null; action: "publish" | "readback" | "rollback";
-  attempt_number: number; operation_key: string | null; result: "provider_execution_locked" | "pending" | "succeeded" | "failed";
+  attempt_number: number; operation_key: string | null; result: "provider_execution_locked" | "pending" | "succeeded" | "failed" | "verified" | "mismatch" | "compensation_required";
   replacement_stage: string | null; provider_result_evidence: Record<string, unknown>;
   readback_evidence: Record<string, unknown>; normalized_error: Record<string, unknown>; created_at: string;
 };
@@ -125,7 +156,7 @@ export type M03ChangeRequestDetail = {
   validations: M03ValidationRecord[]; approvals: M03Approval[]; events: M03AuditEvent[];
   source_verification: M03SourceVerification | null;
   baselines: M03ProviderBaselineSnapshot[]; resource_mappings: M03ProviderResourceMapping[];
-  attempts: M03ItemAttempt[];
+  attempts: M03ItemAttempt[]; operation_resources: M03ProviderOperationResource[];
   provider_execution_locked: true;
 };
 

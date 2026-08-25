@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { createM03ProviderAdapter, ProviderExecutionLockedError } from "@/lib/change-control/provider-adapters";
+import { createMetaM03Adapter } from "@/lib/change-control/meta-provider-adapter";
 import { canonicalM03Hash } from "@/lib/change-control/provider-contract";
 import { buildM03ProviderWorkflowPreview, buildM03RollbackDraft, executeM03MutationPlan } from "@/lib/change-control/provider-workflow";
 import { m03MockChangeRequestSchema } from "@/lib/change-control/schema";
@@ -10,13 +11,16 @@ import type { M03ChangeItem, M03ChangeRequestDetail, M03Platform } from "@/lib/c
 for (const platform of ["google", "meta", "tiktok"] as const) {
   test(`${platform} adapter plans direct updates and provider-native creative replacement`, async () => {
     const detail = fixture(platform);
-    const preview = await buildM03ProviderWorkflowPreview(detail, createM03ProviderAdapter(platform));
+    const adapter = platform === "meta" ? createMetaM03Adapter() : createM03ProviderAdapter(platform);
+    const preview = await buildM03ProviderWorkflowPreview(detail, adapter);
     assert.equal(preview.conflict_issues.length, 0);
     assert.equal(preview.capability_issues.length, 0);
     assert.equal(preview.mutation_plan.operations.filter((operation) => operation.mode === "direct_update").length, 1);
     const replacement = preview.mutation_plan.operations.filter((operation) => operation.mode === "creative_replacement");
-    assert.deepEqual(replacement.map((operation) => operation.action), ["create_inactive_replacement", "verify_replacement", "activate_replacement", "disable_previous"]);
-    assert.equal(replacement[0]?.payload.intended_initial_state, "inactive");
+    assert.deepEqual(replacement.map((operation) => operation.action), platform === "meta"
+      ? ["create_replacement_creative", "verify_replacement_creative", "create_paused_replacement_ad", "verify_replacement_ad", "activate_replacement", "disable_previous", "verify_final_state"]
+      : ["create_inactive_replacement", "verify_replacement", "activate_replacement", "disable_previous"]);
+    if (platform !== "meta") assert.equal(replacement[0]?.payload.intended_initial_state, "inactive");
   });
 }
 
@@ -39,7 +43,7 @@ test("fresh baseline mismatch becomes an explicit conflict", async () => {
 
 test("execution lock prevents every provider mutation call", async () => {
   const detail = fixture("meta"); let calls = 0;
-  const adapter = createM03ProviderAdapter("meta", { executeOperation: async (operation) => { calls += 1; return { operation_key: operation.operation_key, outcome: "succeeded", provider_response: {} }; } });
+  const adapter = createMetaM03Adapter({ transport: { request: async () => { calls += 1; return { payload: {} }; } } });
   const preview = await buildM03ProviderWorkflowPreview(detail, adapter);
   await assert.rejects(() => executeM03MutationPlan(adapter, preview.mutation_plan, { deployment_enabled: false, platform_allowlisted: true, account_allowlisted: true, exact_revision_selected: true }), ProviderExecutionLockedError);
   assert.equal(calls, 0);
@@ -78,6 +82,7 @@ test("rollback creates a new immutable M03 draft and does not reference M05", ()
 
 function fixture(platform: M03Platform): M03ChangeRequestDetail {
   const items: M03ChangeItem[] = [item("1", "campaign.name", "Old", "New"), item("2", "ad.creative.headline", "Old creative", "New creative")];
+  if (platform === "meta") items[1]!.platform_resource_mapping = { account_id: "123456", ad_set_id: "654321", page_id: "111", intended_status: "PAUSED" };
   const payload = { request: "request", items: items.map((entry) => ({ field_path: entry.field_path, proposed_value: entry.proposed_value })) };
   const hash = canonicalM03Hash(payload);
   return {
@@ -86,7 +91,7 @@ function fixture(platform: M03Platform): M03ChangeRequestDetail {
     revisions: [{ id: "00000000-0000-4000-8000-000000000002", request_id: "00000000-0000-4000-8000-000000000001", revision_number: 1, canonical_payload: payload, payload_hash: hash, evidence: {}, validation_issues: [], created_by_id: "actor", created_at: new Date().toISOString() }],
     validations: [], approvals: [{ id: "approval", revision_id: "00000000-0000-4000-8000-000000000002", revision_hash: hash, decision: "approved", comment: null, created_at: new Date().toISOString() }], events: [],
     source_verification: { id: "source", request_id: "00000000-0000-4000-8000-000000000001", source_kind: "legacy_provider_adoption", source_m04_plan_id: null, source_m04_revision_id: null, platform, provider_account_identity: "account", provider_campaign_identity: "campaign", source_revision_hash: null, evidence: {}, verified_at: new Date().toISOString() },
-    baselines: [], resource_mappings: [], attempts: [], provider_execution_locked: true,
+    baselines: [], resource_mappings: [], attempts: [], operation_resources: [], provider_execution_locked: true,
   };
 }
 

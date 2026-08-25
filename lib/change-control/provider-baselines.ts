@@ -6,6 +6,7 @@ import type { M03ChangeItem, M03ChangeItemInput, M03Platform } from "@/lib/chang
 import { getCredentials } from "@/lib/reporting/env";
 import { createTikTokAdsClient, type TikTokAdsClient } from "@/lib/tiktok/ads-client";
 import type { TikTokAdsActionName } from "@/lib/tiktok/ads-actions";
+import { canonicalizeMetaPayload, createMetaM03Adapter } from "@/lib/change-control/meta-provider-adapter";
 
 type BaselineInput = { accountIdentity: string; campaignIdentity: string; items: Array<M03ChangeItem | M03ChangeItemInput> };
 type BaselineDependencies = {
@@ -15,6 +16,9 @@ type BaselineDependencies = {
 };
 
 export function createM03OfficialProviderAdapter(platform: M03Platform, dependencies: BaselineDependencies = {}): M03ProviderAdapter {
+  if (platform === "meta") {
+    return createMetaM03Adapter({ retrieveBaseline: (input) => retrieveOfficialM03Baseline("meta", input, dependencies) });
+  }
   return createM03ProviderAdapter(platform, {
     retrieveBaseline: (input) => retrieveOfficialM03Baseline(platform, input, dependencies),
   });
@@ -90,7 +94,7 @@ async function retrieveMetaBaseline(input: BaselineInput, fetcher: typeof global
     const response = await fetcher(url, { cache: "no-store", signal: AbortSignal.timeout(10_000) });
     const payload = await response.json().catch(() => ({})) as Record<string, unknown>;
     if (!response.ok || payload.error) throw new Error(`Meta did not return the exact ${entityType} baseline.`);
-    rows.set(identity, payload);
+    rows.set(identity, canonicalizeMetaPayload(payload));
   }
   return mapRequestedValues(input.items, (item) => {
     const row = rows.get(item.entity_identity);
@@ -101,21 +105,39 @@ async function retrieveMetaBaseline(input: BaselineInput, fetcher: typeof global
 }
 
 function metaFields(entityType: string) {
-  if (entityType === "campaign") return ["id", "name", "status", "objective", "buying_type", "daily_budget", "lifetime_budget", "start_time", "stop_time", "special_ad_categories"];
-  if (entityType === "ad_group" || entityType === "ad_set") return ["id", "name", "status", "daily_budget", "lifetime_budget", "start_time", "end_time", "bid_amount", "bid_strategy", "billing_event", "optimization_goal", "targeting", "promoted_object"];
-  return ["id", "name", "status", "creative{id,name,title,body,object_story_spec,effective_object_story_id}"];
+  if (entityType === "campaign") return ["id", "name", "status", "effective_status", "objective", "buying_type", "daily_budget", "lifetime_budget", "start_time", "stop_time", "bid_strategy", "special_ad_categories"];
+  if (entityType === "ad_group" || entityType === "ad_set") return ["id", "name", "status", "effective_status", "daily_budget", "lifetime_budget", "start_time", "end_time", "bid_amount", "bid_strategy", "billing_event", "optimization_goal", "attribution_spec", "targeting", "promoted_object"];
+  return ["id", "name", "status", "effective_status", "adset_id", "creative{id,name,title,body,object_story_spec,asset_feed_spec,effective_object_story_id}"];
 }
 
 function metaProviderPath(path: string, entityType: string) {
   const normalized = path.toLowerCase();
-  if (normalized.startsWith("ad.copy.") || normalized.startsWith("ad.creative.")) return `creative.${normalized.split(".").at(-1)}`;
+  if (normalized.startsWith("ad.copy.") || normalized.startsWith("ad.creative.")) return metaCreativeProviderPath(normalized);
   if (normalized.startsWith("campaign.budget.")) return normalized.endsWith("lifetime") || normalized.endsWith("lifetime_budget") ? "lifetime_budget" : "daily_budget";
   if (normalized === "campaign.schedule.start_date") return "start_time";
   if (normalized === "campaign.schedule.end_date") return "stop_time";
   if (normalized.startsWith("campaign.targeting.") || normalized.startsWith("campaign.placements.")) return `targeting.${normalized.split(".").at(-1)}`;
   if (normalized.startsWith("campaign.conversion.")) return `promoted_object.${normalized.split(".").at(-1)}`;
+  if (normalized.startsWith("ad_set.attribution.") || normalized.startsWith("ad_group.attribution.")) return "attribution_spec";
   if (entityType === "ad_group" || entityType === "ad_set") return normalized.replace(/^ad_(?:group|set)\./, "");
   return normalized.replace(/^campaign\./, "").replace(/^ad\./, "");
+}
+
+function metaCreativeProviderPath(path: string) {
+  const aliases: Record<string, string> = {
+    "ad.copy.primary_text": "creative.object_story_spec.link_data.message",
+    "ad.copy.headline": "creative.object_story_spec.link_data.name",
+    "ad.copy.description": "creative.object_story_spec.link_data.description",
+    "ad.creative.destination_url": "creative.object_story_spec.link_data.link",
+    "ad.creative.call_to_action": "creative.object_story_spec.link_data.call_to_action.type",
+    "ad.creative.carousel_cards": "creative.object_story_spec.link_data.child_attachments",
+    "ad.creative.image_reference": "creative.object_story_spec.link_data.image_hash",
+    "ad.creative.video_reference": "creative.object_story_spec.video_data.video_id",
+    "ad.creative.existing_post_reference": "creative.effective_object_story_id",
+    "ad.creative.facebook_page_identity": "creative.object_story_spec.page_id",
+    "ad.creative.instagram_identity": "creative.object_story_spec.instagram_actor_id",
+  };
+  return aliases[path] ?? `creative.${path.split(".").at(-1)}`;
 }
 
 async function retrieveTikTokBaseline(input: BaselineInput, client: TikTokAdsClient) {

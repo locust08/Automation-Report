@@ -5,6 +5,8 @@ import {
   type M03ProviderExecutionResult, type M03ProviderOperation, type M03ProviderReadback,
 } from "@/lib/change-control/provider-contract";
 import { PROVIDER_EXECUTION_LOCKED } from "@/lib/change-control/types";
+import { ProviderExecutionLockedError } from "@/lib/change-control/provider-execution-lock";
+import { createMetaM03Adapter } from "@/lib/change-control/meta-provider-adapter";
 
 type AdapterHooks = {
   retrieveBaseline?: M03ProviderAdapter["retrieveBaseline"];
@@ -73,18 +75,14 @@ class ProviderReadyAdapter implements M03ProviderAdapter {
   }
 }
 
-export class ProviderExecutionLockedError extends Error {
-  readonly code = PROVIDER_EXECUTION_LOCKED.error;
-  readonly status = 423;
-  constructor() { super(PROVIDER_EXECUTION_LOCKED.message); this.name = "ProviderExecutionLockedError"; }
-}
+export { ProviderExecutionLockedError } from "@/lib/change-control/provider-execution-lock";
 
 export function createM03ProviderAdapter(platform: M03Platform, hooks: AdapterHooks = {}): M03ProviderAdapter {
   return new ProviderReadyAdapter(platform, hooks);
 }
 
 export const googleM03Adapter = createM03ProviderAdapter("google");
-export const metaM03Adapter = createM03ProviderAdapter("meta");
+export const metaM03Adapter = createMetaM03Adapter();
 export const tiktokM03Adapter = createM03ProviderAdapter("tiktok");
 
 function operation(item: M03ChangeItem, platform: M03Platform, providerResource: string, mode: "direct_update" | "creative_replacement", action: M03ProviderOperation["action"], key: string, dependsOn: string[], revisionHash: string): M03ProviderOperation {

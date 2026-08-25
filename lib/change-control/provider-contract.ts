@@ -47,9 +47,29 @@ export type M03ProviderOperation = {
   provider_resource: string;
   field_path: string;
   mode: Exclude<M03MutationMode, "unsupported">;
-  action: "update" | "create_inactive_replacement" | "verify_replacement" | "activate_replacement" | "disable_previous";
+  action:
+    | "update"
+    | "create_replacement_creative"
+    | "verify_replacement_creative"
+    | "create_paused_replacement_ad"
+    | "verify_replacement_ad"
+    | "activate_replacement"
+    | "disable_previous"
+    | "verify_final_state"
+    | "create_inactive_replacement"
+    | "verify_replacement";
   resource_identity: string;
   payload: Record<string, unknown>;
+  affected_item_ids?: string[];
+  transport?: {
+    method: "GET" | "POST";
+    endpoint: string;
+    body: Record<string, unknown>;
+    readback_fields: string[];
+    safe_to_retry: boolean;
+  };
+  expected_result?: Record<string, unknown>;
+  compensation_guidance?: string;
   depends_on: string[];
   idempotency_key: string;
 };
@@ -67,7 +87,14 @@ export type M03ProviderExecutionResult = {
   outcome: "succeeded" | "failed" | "ambiguous";
   provider_resource_id?: string;
   provider_response: Record<string, unknown>;
-  error?: { code: string; message: string; retryable: boolean };
+  error?: {
+    code: string;
+    message: string;
+    retryable: boolean;
+    provider_error_subcode?: number;
+    provider_trace_id?: string;
+    user_title?: string;
+  };
 };
 
 export type M03ProviderReadback = {
@@ -85,7 +112,7 @@ export interface M03ProviderAdapter {
   planMutation(input: { requestId: string; revisionHash: string; items: M03ChangeItem[] }): M03MutationPlan;
   executeOperation(operation: M03ProviderOperation): Promise<M03ProviderExecutionResult>;
   readback(operation: M03ProviderOperation, result: M03ProviderExecutionResult): Promise<M03ProviderReadback>;
-  normalizeError(error: unknown): { code: string; message: string; retryable: boolean };
+  normalizeError(error: unknown): NonNullable<M03ProviderExecutionResult["error"]>;
 }
 
 const GOOGLE_RULES: M03CapabilityRule[] = [
