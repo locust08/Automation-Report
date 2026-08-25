@@ -1,12 +1,18 @@
 "use client";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { ReactNode } from "react";
+import type { DateRange } from "react-day-picker";
 import { useRouter, useSearchParams } from "next/navigation";
-import { AlertTriangleIcon, ArrowUpRightIcon, CheckCircle2Icon, ChevronDownIcon, LightbulbIcon, Loader2Icon, PencilIcon, SaveIcon, SearchIcon, XIcon } from "lucide-react";
+import { AlertTriangleIcon, ArrowUpRightIcon, CalendarDaysIcon, CheckCircle2Icon, ChevronDownIcon, LightbulbIcon, Loader2Icon, PencilIcon, SaveIcon, SearchIcon, XIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import { Calendar } from "@/components/ui/calendar";
+import { Calendar02 } from "@/components/shadcn-studio/calendar/calendar-02";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { ChartContainer, ChartTooltip, ChartTooltipContent, type ChartConfig } from "@/components/ui/chart";
 import { CartesianGrid, Line, LineChart, XAxis, YAxis } from "recharts";
 import { AccountHistoryPanel } from "@/components/ads-management/history-page-client";
@@ -14,6 +20,7 @@ import { ChangeRequestPageClient } from "@/components/ads-management/change-requ
 import { ReportShell } from "@/components/reporting/report-shell";
 import { ReportErrorState } from "@/components/reporting/report-state";
 import { canEditAds, type AuthenticatedAdsUser } from "@/lib/auth/permissions";
+import { formatAdsManagementUserError } from "@/lib/ads-management/user-error";
 import type { AdsChangeSetRecord, DraftChangeInput, DraftEditorContext, ManagedAd, ManagedAdTextAsset, ManagedAssetAutomationSetting, ManagedCampaign, ManagedCampaignPerformancePoint, ManagedCustomParameter, ManagedFieldValue, ManagedPerformanceMetrics, ManagedRecommendation, ManagedRecommendationCategory, ManagedRecommendationDetailFamily, ManagedRecommendationDetailSection, ManagedSitelink, ManagedSitelinkAssociation, ManagedSitelinkScope } from "@/lib/ads-management/types";
 
 type SaveState = "idle" | "saving" | "saved" | "failed";
@@ -22,6 +29,132 @@ type ManagementAccountSuggestion = { accountName: string; adAccountId: string };
 const MANAGEMENT_ACCOUNT_CACHE_KEY = "google-management-account-search-cache-v1";
 const MANAGEMENT_RECENT_ACCOUNTS_KEY = "google-management-recent-accounts-v1";
 const MANAGEMENT_ACCOUNT_CACHE_TTL_MS = 15 * 60 * 1000;
+const MANAGEMENT_FILTER_MENU_CLASS = "max-h-[22rem]";
+
+function ManagementEntityName({ text, multiline = false }: { text: string; multiline?: boolean }) {
+  return (
+    <TooltipProvider delayDuration={200}>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <span
+            tabIndex={0}
+            aria-label={text}
+            className={`${multiline ? "line-clamp-2 min-h-10 py-1" : "inline-flex h-6 items-center truncate"} min-w-0 w-full cursor-default rounded-sm font-medium leading-normal text-red-700 outline-none focus-visible:ring-2 focus-visible:ring-red-600 focus-visible:ring-offset-2`}
+          >
+            {text}
+          </span>
+        </TooltipTrigger>
+        <TooltipContent
+          side="top"
+          align="center"
+          sideOffset={8}
+          className="max-w-sm border border-white/15 bg-[#211114] px-3 py-2 text-center text-sm font-medium leading-relaxed text-white shadow-xl"
+        >
+          {text}
+        </TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
+  );
+}
+
+function parseManagementDate(value?: string) {
+  if (!value) return undefined;
+  const [year, month, day] = value.split("-").map(Number);
+  if (!year || !month || !day) return undefined;
+  return new Date(year, month - 1, day);
+}
+
+function serializeManagementDate(date: Date) {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+}
+
+function ManagementDatePicker({
+  id,
+  value,
+  min,
+  max,
+  onChange,
+}: {
+  id: string;
+  value: string;
+  min?: string;
+  max?: string;
+  onChange: (value: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const selected = parseManagementDate(value);
+  const minDate = parseManagementDate(min);
+  const maxDate = parseManagementDate(max);
+
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <Button id={id} type="button" variant="outline" className="w-full justify-start bg-white font-normal">
+          <CalendarDaysIcon className="size-4 text-red-700" />
+          {selected ? selected.toLocaleDateString("en-MY", { day: "2-digit", month: "short", year: "numeric" }) : "Pick a date"}
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent align="start" className="w-auto border-red-100 p-0 shadow-xl">
+        <Calendar
+          mode="single"
+          selected={selected}
+          defaultMonth={selected}
+          disabled={(date) => (minDate ? date < minDate : false) || (maxDate ? date > maxDate : false)}
+          onSelect={(date) => {
+            if (!date) return;
+            onChange(serializeManagementDate(date));
+            setOpen(false);
+          }}
+        />
+      </PopoverContent>
+    </Popover>
+  );
+}
+
+function ManagementDateRangePicker({
+  startDate,
+  endDate,
+  onChange,
+}: {
+  startDate: string;
+  endDate: string;
+  onChange: (dates: { startDate: string; endDate: string }) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const selected: DateRange = {
+    from: parseManagementDate(startDate),
+    to: parseManagementDate(endDate),
+  };
+  const formatDate = (date?: Date) =>
+    date?.toLocaleDateString("en-MY", { day: "2-digit", month: "short", year: "numeric" }) ?? "Select date";
+
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <Button type="button" variant="outline" size="sm" className="h-9 border-red-100 bg-white font-normal text-slate-700 hover:border-red-200 hover:bg-red-50">
+          <CalendarDaysIcon className="size-4 text-red-700" />
+          {formatDate(selected.from)} – {formatDate(selected.to)}
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent align="end" className="w-auto border-red-100 p-0 shadow-xl">
+        <Calendar02
+          mode="range"
+          selected={selected}
+          defaultMonth={selected.from}
+          onSelect={(range) => {
+            if (!range?.from || !range.to) return;
+            onChange({
+              startDate: serializeManagementDate(range.from),
+              endDate: serializeManagementDate(range.to),
+            });
+            setOpen(false);
+          }}
+        />
+      </PopoverContent>
+    </Popover>
+  );
+}
+
 export function GoogleManagementPageClient({ currentUser }: { currentUser: AuthenticatedAdsUser }) {
   const canEdit = canEditAds(currentUser.role);
   const params = useSearchParams();
@@ -108,7 +241,7 @@ export function GoogleManagementPageClient({ currentUser }: { currentUser: Authe
         setSyncedAt(p.synchronizedAt);
         setSelectedId((current) => (current && p.campaigns.some((item: ManagedCampaign) => item.id === current) ? current : p.campaigns[0]?.id || ""));
       })
-      .catch((e) => setError(e.message))
+      .catch((cause) => setError(formatAdsManagementUserError(cause, "Unable to load Google Ads management data. Please try again.")))
       .finally(() => setLoading(false));
   }, [accountId, reportDates.endDate, reportDates.startDate]);
   useEffect(() => {
@@ -183,7 +316,7 @@ export function GoogleManagementPageClient({ currentUser }: { currentUser: Authe
         setAdEditorOpen(resumedView === "ads");
         setSettingsEditorOpen(resumedView !== "ads");
       })
-      .catch((e) => setError(e.message));
+      .catch((cause) => setError(formatAdsManagementUserError(cause, "Unable to load the saved change request. Please try again.")));
   }, [campaigns, openReviewPanel, resumeRequestId]);
   const campaign = campaigns.find((item) => item.id === selectedId) ?? null;
   const selectedAdGroup = campaign?.adGroups.find((item) => item.id === selectedAdGroupId) ?? campaign?.adGroups[0] ?? null;
@@ -283,7 +416,7 @@ export function GoogleManagementPageClient({ currentUser }: { currentUser: Authe
       setSaveState("saved");
     } catch (e) {
       setSaveState("failed");
-      setError(e instanceof Error ? e.message : "Autosave failed.");
+      setError(formatAdsManagementUserError(e, "Unable to save your changes. Please try again."));
     } finally {
       saveInFlight.current = false;
     }
@@ -382,7 +515,7 @@ export function GoogleManagementPageClient({ currentUser }: { currentUser: Authe
       }
       openFreshEditor(context);
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Unable to verify campaign launch eligibility.");
+      setError(formatAdsManagementUserError(cause, "Unable to verify campaign eligibility right now. Please try again later."));
     }
   }
   function resumeDraftInContext(savedRequest: AdsChangeSetRecord, context: DraftEditorContext) {
@@ -522,6 +655,9 @@ export function GoogleManagementPageClient({ currentUser }: { currentUser: Authe
               ) : view === "ad_groups" ? (
                 <AdGroupsPage
                   campaigns={campaigns}
+                  startDate={reportDates.startDate}
+                  endDate={reportDates.endDate}
+                  onDatesChange={setReportDates}
                   onEdit={
                     canEdit
                       ? (campaignId, adGroupId) =>
@@ -536,6 +672,9 @@ export function GoogleManagementPageClient({ currentUser }: { currentUser: Authe
               ) : view === "ads" ? (
                 <AdsTable
                   campaigns={campaigns}
+                  startDate={reportDates.startDate}
+                  endDate={reportDates.endDate}
+                  onDatesChange={setReportDates}
                   onEdit={
                     canEdit
                       ? (campaignId, adGroupId, adId) =>
@@ -578,7 +717,7 @@ export function GoogleManagementPageClient({ currentUser }: { currentUser: Authe
         {draftChoice ? (
           <div className="fixed inset-0 z-[60] grid place-items-center bg-slate-950/45 p-4" role="dialog" aria-modal="true" aria-labelledby="draft-choice-title">
             <div className="w-full max-w-lg rounded-2xl border bg-white p-6 shadow-2xl">
-              <p className="text-xs font-semibold uppercase tracking-wide text-blue-700">Unfinished draft found</p>
+              <p className="text-xs font-semibold uppercase tracking-wide text-red-700">Unfinished draft found</p>
               <h2 id="draft-choice-title" className="mt-1 text-2xl font-semibold">
                 Continue your saved changes?
               </h2>
@@ -758,6 +897,21 @@ function GoogleManagementAccountSearch({ currentAccount, synchronizedAt }: { cur
           autoComplete="off"
         />
         {searching ? <Loader2Icon className="absolute right-3 top-1/2 size-4 -translate-y-1/2 animate-spin text-slate-400" /> : null}
+        {open && !queryMatchesCurrentAccount && (results.length > 0 || (query.trim().length >= 2 && !searching)) ? (
+          <div className="absolute left-0 right-0 top-full z-40 mt-2 max-h-72 overflow-y-auto rounded-xl border bg-white p-1 shadow-xl">
+            {visibleRecent.length ? <p className="px-3 pb-1 pt-2 text-xs font-semibold uppercase tracking-wide text-slate-400">Recent accounts</p> : null}
+            {results.map((account) => (
+              <button key={account.adAccountId} type="button" onClick={() => selectAccount(account)} className="flex w-full items-center justify-between gap-4 rounded-lg px-3 py-3 text-left hover:bg-slate-50">
+                <span className="min-w-0">
+                  <span className="block truncate text-sm font-semibold text-slate-900">{account.accountName}</span>
+                  <span className="block text-xs text-slate-500">CID {account.adAccountId}</span>
+                </span>
+                <ArrowUpRightIcon className="size-4 shrink-0 text-slate-400" />
+              </button>
+            ))}
+            {!results.length ? <p className="px-3 py-4 text-sm text-slate-500">No matching Google Ads accounts found.</p> : null}
+          </div>
+        ) : null}
       </div>
       <p className="mt-2 text-xs text-slate-500">Select an account to retrieve its latest editable Google Ads settings.</p>
       {currentAccount ? (
@@ -771,21 +925,6 @@ function GoogleManagementAccountSearch({ currentAccount, synchronizedAt }: { cur
         </div>
       ) : null}
       {searchError ? <p className="mt-2 text-sm text-red-600">{searchError}</p> : null}
-      {open && !queryMatchesCurrentAccount && (results.length > 0 || (query.trim().length >= 2 && !searching)) ? (
-        <div className="absolute left-5 right-5 top-full z-40 mt-2 max-h-72 overflow-y-auto rounded-xl border bg-white p-1 shadow-xl">
-          {visibleRecent.length ? <p className="px-3 pb-1 pt-2 text-xs font-semibold uppercase tracking-wide text-slate-400">Recent accounts</p> : null}
-          {results.map((account) => (
-            <button key={account.adAccountId} type="button" onClick={() => selectAccount(account)} className="flex w-full items-center justify-between gap-4 rounded-lg px-3 py-3 text-left hover:bg-slate-50">
-              <span className="min-w-0">
-                <span className="block truncate text-sm font-semibold text-slate-900">{account.accountName}</span>
-                <span className="block text-xs text-slate-500">CID {account.adAccountId}</span>
-              </span>
-              <ArrowUpRightIcon className="size-4 shrink-0 text-slate-400" />
-            </button>
-          ))}
-          {!results.length ? <p className="px-3 py-4 text-sm text-slate-500">No matching Google Ads accounts found.</p> : null}
-        </div>
-      ) : null}
     </section>
   );
 }
@@ -838,7 +977,7 @@ function writeRecentManagementAccounts(accounts: ManagementAccountSuggestion[]) 
 }
 function ResourceTab({ active, label, onClick }: { active: boolean; label: string; onClick: () => void }) {
   return (
-    <button type="button" aria-pressed={active} onClick={onClick} className={`min-w-[130px] flex-1 rounded-xl border px-4 py-3 text-center text-sm font-semibold transition-colors ${active ? "border-blue-100 bg-blue-50 text-blue-800" : "border-transparent text-slate-700 hover:bg-slate-50"}`}>
+    <button type="button" aria-pressed={active} onClick={onClick} className={`min-w-[130px] flex-1 rounded-xl border px-4 py-3 text-center text-sm font-semibold transition-colors ${active ? "border-red-200 bg-red-50 text-red-800" : "border-transparent text-slate-700 hover:bg-slate-50"}`}>
       {label}
     </button>
   );
@@ -877,7 +1016,7 @@ function CampaignsPage({ campaigns, startDate, endDate, onDatesChange, onEdit }:
     <div className="space-y-8">
       <section className="rounded-2xl border bg-white p-6 shadow-sm">
         <div>
-          <p className="text-xs font-semibold uppercase tracking-wide text-blue-700">Google Ads</p>
+          <p className="text-xs font-semibold uppercase tracking-wide text-red-700">Google Ads</p>
           <h2 className="mt-1 text-3xl font-semibold">Campaigns</h2>
         </div>
         <div className="mt-6 grid gap-4 md:grid-cols-2 xl:grid-cols-[220px_220px_minmax(280px,1fr)]">
@@ -885,13 +1024,13 @@ function CampaignsPage({ campaigns, startDate, endDate, onDatesChange, onEdit }:
             <Label htmlFor="campaign-start-date" className="text-xs font-semibold uppercase tracking-wide text-slate-500">
               Start date
             </Label>
-            <Input id="campaign-start-date" type="date" value={startDate} max={endDate} onChange={(event) => onDatesChange({ startDate: event.target.value, endDate })} />
+            <ManagementDatePicker id="campaign-start-date" value={startDate} max={endDate} onChange={(nextStartDate) => onDatesChange({ startDate: nextStartDate, endDate })} />
           </div>
           <div className="grid gap-2">
             <Label htmlFor="campaign-end-date" className="text-xs font-semibold uppercase tracking-wide text-slate-500">
               End date
             </Label>
-            <Input id="campaign-end-date" type="date" value={endDate} min={startDate} onChange={(event) => onDatesChange({ startDate, endDate: event.target.value })} />
+            <ManagementDatePicker id="campaign-end-date" value={endDate} min={startDate} onChange={(nextEndDate) => onDatesChange({ startDate, endDate: nextEndDate })} />
           </div>
           <div className="grid gap-2 md:col-span-2 xl:col-span-1">
             <Label htmlFor="campaign-filter" className="text-xs font-semibold uppercase tracking-wide text-slate-500">
@@ -901,7 +1040,7 @@ function CampaignsPage({ campaigns, startDate, endDate, onDatesChange, onEdit }:
               <SelectTrigger id="campaign-filter" className="w-full bg-white">
                 <SelectValue placeholder="Select a campaign" />
               </SelectTrigger>
-              <SelectContent position="popper" align="start">
+              <SelectContent position="popper" align="start" className={MANAGEMENT_FILTER_MENU_CLASS}>
                 <SelectItem value="all">All campaigns</SelectItem>
                 {campaigns.map((campaign) => (
                   <SelectItem key={campaign.id} value={campaign.id}>
@@ -914,7 +1053,12 @@ function CampaignsPage({ campaigns, startDate, endDate, onDatesChange, onEdit }:
         </div>
       </section>
       <div className="py-1">
-        <PerformancePanel performance={performance} title="Campaign performance" subtitle={`${selectedName} · ${startDate} to ${endDate}`} />
+        <PerformancePanel
+          performance={performance}
+          title="Campaign performance"
+          subtitle={`${selectedName} · ${startDate} to ${endDate}`}
+          dateRangeControl={<ManagementDateRangePicker startDate={startDate} endDate={endDate} onChange={onDatesChange} />}
+        />
       </div>
       <CampaignsTable campaigns={filteredCampaigns} onEdit={onEdit} />
     </div>
@@ -923,9 +1067,9 @@ function CampaignsPage({ campaigns, startDate, endDate, onDatesChange, onEdit }:
 function CampaignsTable({ campaigns, onEdit = () => undefined }: { campaigns: ManagedCampaign[]; onEdit?: (campaignId: string) => void }) {
   const number = new Intl.NumberFormat("en-MY", { maximumFractionDigits: 2 });
   const percent = (value: number | null | undefined) => (typeof value === "number" ? `${number.format(value * 100)}%` : "—");
-  return <section className="overflow-hidden rounded-2xl border bg-white shadow-sm"><div className="flex flex-wrap items-center justify-between gap-3 border-b px-5 py-5"><div><h3 className="font-semibold">Campaign report</h3><p className="mt-1 text-xs text-slate-500">Each campaign starts collapsed. Select View metrics to see its performance and delivery details.</p></div><span className="text-xs text-slate-500">{campaigns.length} campaign{campaigns.length === 1 ? "" : "s"}</span></div>{campaigns.length ? <div className="divide-y">{campaigns.map((campaign) => { const fallback = campaignMetricSummary(campaign); const summary = campaign.summaryMetrics; const metrics = summary ? metricSummary(summary) : fallback; const interactions = Number(summary?.interactions ?? (campaign.performance ?? []).reduce((sum, point) => sum + point.interactions, 0)); const costPerConversion = metrics.conversions ? metrics.cost / metrics.conversions : 0; const budgetPeriod = campaign.budgetType === "DAILY" ? "/day" : ` · ${formatStatus(campaign.budgetType)}`; const details = [{ label: "Budget", value: `${campaign.currencyCode}${number.format(Number(campaign.budgetAmountMicros) / 1_000_000)}${budgetPeriod}` }, { label: "Optimization score", value: campaign.optimizationScore == null ? "—" : percent(campaign.optimizationScore) }, { label: "Impressions", value: number.format(metrics.impressions) }, { label: "Clicks", value: number.format(metrics.clicks) }, { label: "Average CPC", value: metrics.clicks ? number.format(metrics.averageCpc) : "—" }, { label: "CTR", value: metrics.impressions ? `${number.format(metrics.ctr)}%` : "—" }, { label: "Cost", value: number.format(metrics.cost) }, { label: "Conversions", value: number.format(metrics.conversions) }, { label: "Cost / conversion", value: metrics.conversions ? number.format(costPerConversion) : "0.00" }, { label: "Conversion rate", value: summary?.conversionRate == null ? interactions ? `${number.format((metrics.conversions / interactions) * 100)}%` : "0.00%" : percent(summary.conversionRate) }, { label: "All conversions", value: number.format(summary?.allConversions ?? metrics.conversions) }, { label: "Interactions", value: number.format(interactions) }, { label: "Lost IS (budget)", value: percent(summary?.searchBudgetLostImpressionShare) }, { label: "Lost IS (rank)", value: percent(summary?.searchRankLostImpressionShare) }]; return <Collapsible key={campaign.id} defaultOpen={false} className="group/campaign"><div className="grid items-center gap-4 py-4 pl-5 pr-7 md:grid-cols-[minmax(0,1fr)_40px_150px_190px_128px]"><div className="min-w-0"><span className="mb-1 block text-[11px] uppercase tracking-wide text-slate-400">Campaign</span><div className="flex min-w-0 items-center gap-3"><StatusDot status={campaign.status} /><span className="truncate font-medium text-blue-700">{campaign.name}</span></div></div><Button type="button" size="icon-sm" variant="ghost" className="ads-edit-action justify-self-center text-blue-700" aria-label={`Edit campaign ${campaign.name}`} onClick={() => onEdit(campaign.id)}><PencilIcon /></Button><div className="text-sm"><span className="block text-[11px] uppercase tracking-wide text-slate-400">Budget</span><span className="font-medium">{campaign.currencyCode}{number.format(Number(campaign.budgetAmountMicros) / 1_000_000)}{budgetPeriod}</span></div><div className="min-w-0 text-sm"><span className="block text-[11px] uppercase tracking-wide text-slate-400">Delivery status</span><ServingStatus status={campaign.primaryStatus || campaign.status} reasons={campaign.primaryStatusReasons} /></div><CollapsibleTrigger asChild><Button type="button" variant="outline" size="sm" className="w-32 justify-center" aria-label={`Toggle details for ${campaign.name}`}><span className="group-data-[state=open]/campaign:hidden">View metrics</span><span className="hidden group-data-[state=open]/campaign:inline">Hide metrics</span><ChevronDownIcon className="transition-transform group-data-[state=open]/campaign:rotate-180" /></Button></CollapsibleTrigger></div><CollapsibleContent className="border-t bg-slate-50/70 px-5 py-5"><div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-5">{details.map((detail) => <div key={detail.label} className="rounded-lg border bg-white p-3 shadow-xs"><span className="block text-[11px] font-medium uppercase tracking-wide text-slate-400">{detail.label}</span><strong className="mt-1 block text-sm font-semibold text-slate-800">{detail.value}</strong></div>)}</div></CollapsibleContent></Collapsible>; })}</div> : <EmptyEditor text="No campaigns match this filter." />}</section>;
+  return <section className="overflow-hidden rounded-2xl border bg-white shadow-sm"><div className="flex flex-wrap items-center justify-between gap-3 border-b px-5 py-5"><div><h3 className="font-semibold">Campaign report</h3><p className="mt-1 text-xs text-slate-500">Each campaign starts collapsed. Select View metrics to see its performance and delivery details.</p></div><span className="text-xs text-slate-500">{campaigns.length} campaign{campaigns.length === 1 ? "" : "s"}</span></div>{campaigns.length ? <div className="divide-y">{campaigns.map((campaign) => { const fallback = campaignMetricSummary(campaign); const summary = campaign.summaryMetrics; const metrics = summary ? metricSummary(summary) : fallback; const interactions = Number(summary?.interactions ?? (campaign.performance ?? []).reduce((sum, point) => sum + point.interactions, 0)); const costPerConversion = metrics.conversions ? metrics.cost / metrics.conversions : 0; const budgetPeriod = campaign.budgetType === "DAILY" ? "/day" : ` · ${formatStatus(campaign.budgetType)}`; const details = [{ label: "Budget", value: `${campaign.currencyCode}${number.format(Number(campaign.budgetAmountMicros) / 1_000_000)}${budgetPeriod}` }, { label: "Optimization score", value: campaign.optimizationScore == null ? "—" : percent(campaign.optimizationScore) }, { label: "Impressions", value: number.format(metrics.impressions) }, { label: "Clicks", value: number.format(metrics.clicks) }, { label: "Average CPC", value: metrics.clicks ? number.format(metrics.averageCpc) : "—" }, { label: "CTR", value: metrics.impressions ? `${number.format(metrics.ctr)}%` : "—" }, { label: "Cost", value: number.format(metrics.cost) }, { label: "Conversions", value: number.format(metrics.conversions) }, { label: "Cost / conversion", value: metrics.conversions ? number.format(costPerConversion) : "0.00" }, { label: "Conversion rate", value: summary?.conversionRate == null ? interactions ? `${number.format((metrics.conversions / interactions) * 100)}%` : "0.00%" : percent(summary.conversionRate) }, { label: "All conversions", value: number.format(summary?.allConversions ?? metrics.conversions) }, { label: "Interactions", value: number.format(interactions) }, { label: "Lost IS (budget)", value: percent(summary?.searchBudgetLostImpressionShare) }, { label: "Lost IS (rank)", value: percent(summary?.searchRankLostImpressionShare) }]; return <Collapsible key={campaign.id} defaultOpen={false} className="group/campaign"><div className="grid items-center gap-4 py-4 pl-5 pr-7 md:grid-cols-[minmax(0,1fr)_40px_150px_190px_128px]"><div className="min-w-0"><span className="mb-1 block text-[11px] uppercase tracking-wide text-slate-400">Campaign</span><div className="flex min-w-0 items-center gap-3"><StatusDot status={campaign.status} /><ManagementEntityName text={campaign.name} /></div></div><Button type="button" size="icon-sm" variant="ghost" className="ads-edit-action justify-self-center text-red-700" aria-label={`Edit campaign ${campaign.name}`} onClick={() => onEdit(campaign.id)}><PencilIcon /></Button><div className="text-sm"><span className="block text-[11px] uppercase tracking-wide text-slate-400">Budget</span><span className="font-medium">{campaign.currencyCode}{number.format(Number(campaign.budgetAmountMicros) / 1_000_000)}{budgetPeriod}</span></div><div className="min-w-0 text-sm"><span className="block text-[11px] uppercase tracking-wide text-slate-400">Delivery status</span><ServingStatus status={campaign.primaryStatus || campaign.status} reasons={campaign.primaryStatusReasons} /></div><CollapsibleTrigger asChild><Button type="button" variant="outline" size="sm" className="w-32 justify-center" aria-label={`Toggle details for ${campaign.name}`}><span className="group-data-[state=open]/campaign:hidden">View metrics</span><span className="hidden group-data-[state=open]/campaign:inline">Hide metrics</span><ChevronDownIcon className="transition-transform group-data-[state=open]/campaign:rotate-180" /></Button></CollapsibleTrigger></div><CollapsibleContent className="border-t bg-slate-50/70 px-5 py-5"><div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-5">{details.map((detail) => <div key={detail.label} className="rounded-lg border bg-white p-3 shadow-xs"><span className="block text-[11px] font-medium uppercase tracking-wide text-slate-400">{detail.label}</span><strong className="mt-1 block text-sm font-semibold text-slate-800">{detail.value}</strong></div>)}</div></CollapsibleContent></Collapsible>; })}</div> : <EmptyEditor text="No campaigns match this filter." />}</section>;
 }
-function AdGroupsPage({ campaigns, onEdit }: { campaigns: ManagedCampaign[]; onEdit?: (campaignId: string, adGroupId: string) => void }) {
+function AdGroupsPage({ campaigns, startDate, endDate, onDatesChange, onEdit }: { campaigns: ManagedCampaign[]; startDate: string; endDate: string; onDatesChange: (dates: { startDate: string; endDate: string }) => void; onEdit?: (campaignId: string, adGroupId: string) => void }) {
   const rows = useMemo(() => campaigns.flatMap((campaign) => campaign.adGroups.map((adGroup) => ({ campaign, adGroup }))), [campaigns]);
   const [adGroupFilter, setAdGroupFilter] = useState("all");
   const filteredRows = useMemo(() => (adGroupFilter === "all" ? rows : rows.filter(({ adGroup }) => adGroup.id === adGroupFilter)), [adGroupFilter, rows]);
@@ -958,13 +1102,13 @@ function AdGroupsPage({ campaigns, onEdit }: { campaigns: ManagedCampaign[]; onE
       <section className="rounded-2xl border bg-white p-6 shadow-sm">
         <div className="grid items-end gap-6 xl:grid-cols-[220px_minmax(320px,1fr)]">
           <div>
-            <p className="text-xs font-semibold uppercase tracking-wide text-blue-700">Google Ads</p>
+            <p className="text-xs font-semibold uppercase tracking-wide text-red-700">Google Ads</p>
             <h2 className="mt-1 text-3xl font-semibold">Ad groups</h2>
           </div>
-          <div className="grid gap-2"><Label htmlFor="ad-group-filter" className="text-xs font-semibold uppercase tracking-wide text-slate-500">Ad group filter</Label><Select value={adGroupFilter} onValueChange={setAdGroupFilter}><SelectTrigger id="ad-group-filter" className="w-full bg-white"><SelectValue placeholder="Select an ad group" /></SelectTrigger><SelectContent position="popper" align="start"><SelectItem value="all">All ad groups</SelectItem>{rows.map(({ campaign, adGroup }) => <SelectItem key={adGroup.id} value={adGroup.id}>{adGroup.name} · {campaign.name}</SelectItem>)}</SelectContent></Select></div>
+          <div className="grid gap-2"><Label htmlFor="ad-group-filter" className="text-xs font-semibold uppercase tracking-wide text-slate-500">Ad group filter</Label><Select value={adGroupFilter} onValueChange={setAdGroupFilter}><SelectTrigger id="ad-group-filter" className="w-full bg-white"><SelectValue placeholder="Select an ad group" /></SelectTrigger><SelectContent position="popper" align="start" className={MANAGEMENT_FILTER_MENU_CLASS}><SelectItem value="all">All ad groups</SelectItem>{rows.map(({ campaign, adGroup }) => <SelectItem key={adGroup.id} value={adGroup.id}>{adGroup.name} · {campaign.name}</SelectItem>)}</SelectContent></Select></div>
         </div>
       </section>
-      <div className="py-1"><PerformancePanel performance={performance} title="Ad group performance" subtitle={`${selectedName} · daily official Google Ads metrics`} /></div>
+      <div className="py-1"><PerformancePanel performance={performance} title="Ad group performance" subtitle={`${selectedName} · daily official Google Ads metrics`} dateRangeControl={<ManagementDateRangePicker startDate={startDate} endDate={endDate} onChange={onDatesChange} />} /></div>
       <AdGroupsTable rows={filteredRows} onEdit={onEdit} />
     </div>
   );
@@ -973,7 +1117,7 @@ function AdGroupsTable({ rows, onEdit = () => undefined }: { rows: Array<{ campa
   const currency = new Intl.NumberFormat("en-MY", { style: "currency", currency: "MYR", minimumFractionDigits: 2 });
   const number = new Intl.NumberFormat("en-MY", { maximumFractionDigits: 2 });
   const cpcBid = (adGroup: ManagedCampaign["adGroups"][number]) => { const field = adGroup.fields.find((item) => item.fieldKey.includes("cpc_bid_micros")); const micros = Number(field?.value); return Number.isFinite(micros) && micros > 0 ? currency.format(micros / 1_000_000) : "—"; };
-  return <section className="overflow-hidden rounded-2xl border bg-white shadow-sm"><div className="flex flex-wrap items-center justify-between gap-3 border-b px-5 py-5"><div><h3 className="font-semibold">Ad group report</h3><p className="mt-1 text-xs text-slate-500">Each ad group starts collapsed. Select View metrics to see its performance details.</p></div><span className="text-xs text-slate-500">{rows.length} ad group{rows.length === 1 ? "" : "s"}</span></div>{rows.length ? <div className="divide-y">{rows.map(({ campaign, adGroup }) => { const metrics = metricSummary(adGroup.performanceMetrics); const interactions = Number(adGroup.performanceMetrics?.interactions || 0); const averageCpm = metrics.impressions ? (metrics.cost / metrics.impressions) * 1000 : 0; const costPerConversion = metrics.conversions ? metrics.cost / metrics.conversions : 0; const interactionRate = metrics.impressions ? (interactions / metrics.impressions) * 100 : 0; const details = [{ label: "Ad group ID", value: adGroup.id }, { label: "Default max. CPC", value: cpcBid(adGroup) }, { label: "Impressions", value: number.format(metrics.impressions) }, { label: "Average CPM", value: metrics.impressions ? currency.format(averageCpm) : "—" }, { label: "Clicks", value: number.format(metrics.clicks) }, { label: "Average CPC", value: metrics.clicks ? currency.format(metrics.averageCpc) : "—" }, { label: "CTR", value: metrics.impressions ? `${number.format(metrics.ctr)}%` : "—" }, { label: "Cost", value: currency.format(metrics.cost) }, { label: "Conversions", value: number.format(metrics.conversions) }, { label: "Cost / conversion", value: metrics.conversions ? currency.format(costPerConversion) : "—" }, { label: "Interactions", value: number.format(interactions) }, { label: "Interaction rate", value: metrics.impressions ? `${number.format(interactionRate)}%` : "—" }, { label: "Ads", value: number.format(adGroup.ads.length) }]; return <Collapsible key={`${campaign.id}-${adGroup.id}`} defaultOpen={false} className="group/ad-group"><div className="grid items-center gap-4 py-4 pl-5 pr-7 md:grid-cols-[minmax(0,1fr)_40px_minmax(180px,260px)_190px_128px]"><div className="min-w-0"><span className="mb-1 block text-[11px] uppercase tracking-wide text-slate-400">Ad group</span><div className="flex min-w-0 items-center gap-3"><StatusDot status={adGroup.status} /><span className="truncate font-medium text-blue-700">{adGroup.name}</span></div></div><Button type="button" size="icon-sm" variant="ghost" className="ads-edit-action justify-self-center text-blue-700" aria-label={`Edit ad group ${adGroup.name}`} onClick={() => onEdit(campaign.id, adGroup.id)}><PencilIcon /></Button><div className="min-w-0 text-sm"><span className="block text-[11px] uppercase tracking-wide text-slate-400">Campaign</span><span className="block truncate font-medium text-blue-700">{campaign.name}</span></div><div className="min-w-0 text-sm"><span className="block text-[11px] uppercase tracking-wide text-slate-400">Delivery status</span><ServingStatus status={adGroup.primaryStatus || adGroup.status} reasons={adGroup.primaryStatusReasons} /></div><CollapsibleTrigger asChild><Button type="button" variant="outline" size="sm" className="w-32 justify-center" aria-label={`Toggle metrics for ${adGroup.name}`}><span className="group-data-[state=open]/ad-group:hidden">View metrics</span><span className="hidden group-data-[state=open]/ad-group:inline">Hide metrics</span><ChevronDownIcon className="transition-transform group-data-[state=open]/ad-group:rotate-180" /></Button></CollapsibleTrigger></div><CollapsibleContent className="border-t bg-slate-50/70 px-5 py-5"><div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-5">{details.map((detail) => <div key={detail.label} className="rounded-lg border bg-white p-3 shadow-xs"><span className="block text-[11px] font-medium uppercase tracking-wide text-slate-400">{detail.label}</span><strong className="mt-1 block break-words text-sm font-semibold text-slate-800">{detail.value}</strong></div>)}</div></CollapsibleContent></Collapsible>; })}</div> : <EmptyEditor text="No ad groups match this filter." />}</section>;
+  return <section className="overflow-hidden rounded-2xl border bg-white shadow-sm"><div className="flex flex-wrap items-center justify-between gap-3 border-b px-5 py-5"><div><h3 className="font-semibold">Ad group report</h3><p className="mt-1 text-xs text-slate-500">Each ad group starts collapsed. Select View metrics to see its performance details.</p></div><span className="text-xs text-slate-500">{rows.length} ad group{rows.length === 1 ? "" : "s"}</span></div>{rows.length ? <div className="divide-y">{rows.map(({ campaign, adGroup }) => { const metrics = metricSummary(adGroup.performanceMetrics); const interactions = Number(adGroup.performanceMetrics?.interactions || 0); const averageCpm = metrics.impressions ? (metrics.cost / metrics.impressions) * 1000 : 0; const costPerConversion = metrics.conversions ? metrics.cost / metrics.conversions : 0; const interactionRate = metrics.impressions ? (interactions / metrics.impressions) * 100 : 0; const details = [{ label: "Ad group ID", value: adGroup.id }, { label: "Default max. CPC", value: cpcBid(adGroup) }, { label: "Impressions", value: number.format(metrics.impressions) }, { label: "Average CPM", value: metrics.impressions ? currency.format(averageCpm) : "—" }, { label: "Clicks", value: number.format(metrics.clicks) }, { label: "Average CPC", value: metrics.clicks ? currency.format(metrics.averageCpc) : "—" }, { label: "CTR", value: metrics.impressions ? `${number.format(metrics.ctr)}%` : "—" }, { label: "Cost", value: currency.format(metrics.cost) }, { label: "Conversions", value: number.format(metrics.conversions) }, { label: "Cost / conversion", value: metrics.conversions ? currency.format(costPerConversion) : "—" }, { label: "Interactions", value: number.format(interactions) }, { label: "Interaction rate", value: metrics.impressions ? `${number.format(interactionRate)}%` : "—" }, { label: "Ads", value: number.format(adGroup.ads.length) }]; return <Collapsible key={`${campaign.id}-${adGroup.id}`} defaultOpen={false} className="group/ad-group"><div className="grid items-center gap-4 py-4 pl-5 pr-7 md:grid-cols-[minmax(0,1fr)_40px_minmax(180px,260px)_190px_128px]"><div className="min-w-0"><span className="mb-1 block text-[11px] uppercase tracking-wide text-slate-400">Ad group</span><div className="flex min-w-0 items-center gap-3"><StatusDot status={adGroup.status} /><ManagementEntityName text={adGroup.name} /></div></div><Button type="button" size="icon-sm" variant="ghost" className="ads-edit-action justify-self-center text-red-700" aria-label={`Edit ad group ${adGroup.name}`} onClick={() => onEdit(campaign.id, adGroup.id)}><PencilIcon /></Button><div className="min-w-0 text-sm"><span className="block text-[11px] uppercase tracking-wide text-slate-400">Campaign</span><ManagementEntityName text={campaign.name} /></div><div className="min-w-0 text-sm"><span className="block text-[11px] uppercase tracking-wide text-slate-400">Delivery status</span><ServingStatus status={adGroup.primaryStatus || adGroup.status} reasons={adGroup.primaryStatusReasons} /></div><CollapsibleTrigger asChild><Button type="button" variant="outline" size="sm" className="w-32 justify-center" aria-label={`Toggle metrics for ${adGroup.name}`}><span className="group-data-[state=open]/ad-group:hidden">View metrics</span><span className="hidden group-data-[state=open]/ad-group:inline">Hide metrics</span><ChevronDownIcon className="transition-transform group-data-[state=open]/ad-group:rotate-180" /></Button></CollapsibleTrigger></div><CollapsibleContent className="border-t bg-slate-50/70 px-5 py-5"><div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-5">{details.map((detail) => <div key={detail.label} className="rounded-lg border bg-white p-3 shadow-xs"><span className="block text-[11px] font-medium uppercase tracking-wide text-slate-400">{detail.label}</span><strong className="mt-1 block break-words text-sm font-semibold text-slate-800">{detail.value}</strong></div>)}</div></CollapsibleContent></Collapsible>; })}</div> : <EmptyEditor text="No ad groups match this filter." />}</section>;
 }
 function ServingStatus({ status, reasons }: { status: string; reasons: string[] }) {
   return (
@@ -1028,10 +1172,10 @@ function SettingsEditorSidePanel({ kind, campaign, adGroup, values, creator, cha
   return (
     <div className="fixed inset-0 z-50 flex justify-end" role="dialog" aria-modal="true" aria-labelledby="settings-editor-title">
       <button type="button" className="absolute inset-0 cursor-default bg-slate-950/45" aria-label="Close settings editor" onClick={onClose} />
-      <aside className="relative z-10 flex h-full w-full max-w-[980px] flex-col bg-[#f8fafd] shadow-2xl">
+      <aside className="relative z-10 flex h-full w-full max-w-[980px] flex-col bg-[#fffafa] shadow-2xl">
         <header className="flex items-start justify-between gap-4 border-b bg-white p-5">
           <div className="min-w-0">
-            <p className="text-xs font-semibold uppercase tracking-wide text-blue-700">Edit {kind === "campaign" ? "campaign" : "ad group"}</p>
+            <p className="text-xs font-semibold uppercase tracking-wide text-red-700">Edit {kind === "campaign" ? "campaign" : "ad group"}</p>
             <h2 id="settings-editor-title" className="mt-1 truncate text-2xl font-semibold">
               {title}
             </h2>
@@ -1104,7 +1248,7 @@ function EditorFooter({ creator, changesCount, saveState, canSubmit, submitting,
     </footer>
   );
 }
-function AdsTable({ campaigns, onEdit = () => undefined }: { campaigns: ManagedCampaign[]; onEdit?: (campaignId: string, adGroupId: string, adId: string) => void }) {
+function AdsTable({ campaigns, startDate, endDate, onDatesChange, onEdit = () => undefined }: { campaigns: ManagedCampaign[]; startDate: string; endDate: string; onDatesChange: (dates: { startDate: string; endDate: string }) => void; onEdit?: (campaignId: string, adGroupId: string, adId: string) => void }) {
   const rows = useMemo(() => campaigns.flatMap((campaign) => campaign.adGroups.flatMap((adGroup) => adGroup.ads.map((ad) => ({ campaign, adGroup, ad })))), [campaigns]);
   const [adFilter, setAdFilter] = useState("all");
   const filteredRows = useMemo(() => adFilter === "all" ? rows : rows.filter(({ ad }) => ad.id === adFilter), [adFilter, rows]);
@@ -1112,7 +1256,7 @@ function AdsTable({ campaigns, onEdit = () => undefined }: { campaigns: ManagedC
   const selectedName = adFilter === "all" ? "All ads" : adTableSummary(rows.find(({ ad }) => ad.id === adFilter)?.ad ?? rows[0]?.ad).headlines;
   const currency = new Intl.NumberFormat("en-MY", { style: "currency", currency: "MYR", minimumFractionDigits: 2 });
   const number = new Intl.NumberFormat("en-MY", { maximumFractionDigits: 2 });
-  return <div className="space-y-8"><section className="rounded-2xl border bg-white p-6 shadow-sm"><div className="grid items-end gap-6 xl:grid-cols-[220px_minmax(320px,1fr)]"><div><p className="text-xs font-semibold uppercase tracking-wide text-blue-700">Google Ads</p><h2 className="mt-1 text-3xl font-semibold">Ads</h2></div><div className="grid gap-2"><Label htmlFor="ad-filter" className="text-xs font-semibold uppercase tracking-wide text-slate-500">Ad filter</Label><Select value={adFilter} onValueChange={setAdFilter}><SelectTrigger id="ad-filter" className="w-full bg-white"><SelectValue placeholder="Select an ad" /></SelectTrigger><SelectContent position="popper" align="start"><SelectItem value="all">All ads</SelectItem>{rows.map(({ ad, adGroup }) => <SelectItem key={ad.id} value={ad.id}>{adTableSummary(ad).headlines} · {adGroup.name}</SelectItem>)}</SelectContent></Select></div></div></section><div className="py-1"><PerformancePanel performance={performance} title="Ad performance" subtitle={`${selectedName} · daily official Google Ads metrics`} /></div>{filteredRows.length ? <section className="overflow-hidden rounded-2xl border bg-white shadow-sm"><div className="flex flex-wrap items-center justify-between gap-3 border-b px-5 py-5"><div><h3 className="font-semibold">Ad report</h3><p className="mt-1 text-xs text-slate-500">Each ad starts collapsed. Select View metrics to see its creative and performance details.</p></div><span className="text-xs text-slate-500">{filteredRows.length} ad{filteredRows.length === 1 ? "" : "s"}</span></div><div className="divide-y">{filteredRows.map(({ campaign, adGroup, ad }) => { const summary = adTableSummary(ad); const metrics = metricSummary(ad.performanceMetrics); const details = [{ label: "Ad ID", value: ad.id }, { label: "Internal name", value: ad.name }, { label: "Ad type", value: formatAdType(ad.adType) }, { label: "Ad strength", value: formatStatus(ad.adStrength) }, { label: "Final URL", value: summary.displayUrl }, { label: "Description", value: summary.descriptions }, { label: "Impressions", value: number.format(metrics.impressions) }, { label: "Clicks", value: number.format(metrics.clicks) }, { label: "CTR", value: metrics.impressions ? `${number.format(metrics.ctr)}%` : "—" }, { label: "Average CPC", value: metrics.clicks ? currency.format(metrics.averageCpc) : "—" }, { label: "Cost", value: currency.format(metrics.cost) }, { label: "Conversions", value: number.format(metrics.conversions) }]; return <Collapsible key={`${campaign.id}-${adGroup.id}-${ad.id}`} defaultOpen={false} className="group/ad"><div className="grid items-center gap-4 py-4 pl-5 pr-7 md:grid-cols-[minmax(0,1fr)_40px_minmax(160px,220px)_minmax(140px,190px)_128px]"><div className="min-w-0"><span className="mb-1 block text-[11px] uppercase tracking-wide text-slate-400">Ad</span><div className="flex min-w-0 items-center gap-3"><StatusDot status={ad.status} /><span className="line-clamp-2 font-medium text-blue-700">{summary.headlines}</span></div></div><Button type="button" size="icon-sm" variant="ghost" className="ads-edit-action justify-self-center text-blue-700" aria-label={`Edit ad ${summary.headlines}`} onClick={() => onEdit(campaign.id, adGroup.id, ad.id)}><PencilIcon /></Button><div className="min-w-0 text-sm"><span className="block text-[11px] uppercase tracking-wide text-slate-400">Campaign</span><span className="block truncate font-medium text-blue-700">{campaign.name}</span></div><div className="min-w-0 text-sm"><span className="block text-[11px] uppercase tracking-wide text-slate-400">Ad group</span><span className="block truncate font-medium text-blue-700">{adGroup.name}</span></div><CollapsibleTrigger asChild><Button type="button" variant="outline" size="sm" className="w-32 justify-center" aria-label={`Toggle metrics for ad ${summary.headlines}`}><span className="group-data-[state=open]/ad:hidden">View metrics</span><span className="hidden group-data-[state=open]/ad:inline">Hide metrics</span><ChevronDownIcon className="transition-transform group-data-[state=open]/ad:rotate-180" /></Button></CollapsibleTrigger></div><CollapsibleContent className="border-t bg-slate-50/70 px-5 py-5"><div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-5">{details.map((detail) => <div key={detail.label} className={`rounded-lg border bg-white p-3 shadow-xs ${detail.label === "Description" ? "sm:col-span-2 lg:col-span-4 xl:col-span-5" : ""}`}><span className="block text-[11px] font-medium uppercase tracking-wide text-slate-400">{detail.label}</span><strong className="mt-1 block break-words text-sm font-semibold text-slate-800">{detail.value}</strong></div>)}</div></CollapsibleContent></Collapsible>; })}</div></section> : <EmptyEditor text="No ads match this filter." />}</div>;
+  return <div className="space-y-8"><section className="rounded-2xl border bg-white p-6 shadow-sm"><div className="grid items-end gap-6 xl:grid-cols-[220px_minmax(320px,1fr)]"><div><p className="text-xs font-semibold uppercase tracking-wide text-red-700">Google Ads</p><h2 className="mt-1 text-3xl font-semibold">Ads</h2></div><div className="grid gap-2"><Label htmlFor="ad-filter" className="text-xs font-semibold uppercase tracking-wide text-slate-500">Ad filter</Label><Select value={adFilter} onValueChange={setAdFilter}><SelectTrigger id="ad-filter" className="w-full bg-white"><SelectValue placeholder="Select an ad" /></SelectTrigger><SelectContent position="popper" align="start" className={MANAGEMENT_FILTER_MENU_CLASS}><SelectItem value="all">All ads</SelectItem>{rows.map(({ ad, adGroup }) => <SelectItem key={ad.id} value={ad.id}>{adTableSummary(ad).headlines} · {adGroup.name}</SelectItem>)}</SelectContent></Select></div></div></section><div className="py-1"><PerformancePanel performance={performance} title="Ad performance" subtitle={`${selectedName} · daily official Google Ads metrics`} dateRangeControl={<ManagementDateRangePicker startDate={startDate} endDate={endDate} onChange={onDatesChange} />} /></div>{filteredRows.length ? <section className="overflow-hidden rounded-2xl border bg-white shadow-sm"><div className="flex flex-wrap items-center justify-between gap-3 border-b px-5 py-5"><div><h3 className="font-semibold">Ad report</h3><p className="mt-1 text-xs text-slate-500">Each ad starts collapsed. Select View metrics to see its creative and performance details.</p></div><span className="text-xs text-slate-500">{filteredRows.length} ad{filteredRows.length === 1 ? "" : "s"}</span></div><div className="divide-y">{filteredRows.map(({ campaign, adGroup, ad }) => { const summary = adTableSummary(ad); const metrics = metricSummary(ad.performanceMetrics); const details = [{ label: "Ad ID", value: ad.id }, { label: "Internal name", value: ad.name }, { label: "Ad type", value: formatAdType(ad.adType) }, { label: "Ad strength", value: formatStatus(ad.adStrength) }, { label: "Final URL", value: summary.displayUrl }, { label: "Description", value: summary.descriptions }, { label: "Impressions", value: number.format(metrics.impressions) }, { label: "Clicks", value: number.format(metrics.clicks) }, { label: "CTR", value: metrics.impressions ? `${number.format(metrics.ctr)}%` : "—" }, { label: "Average CPC", value: metrics.clicks ? currency.format(metrics.averageCpc) : "—" }, { label: "Cost", value: currency.format(metrics.cost) }, { label: "Conversions", value: number.format(metrics.conversions) }]; return <Collapsible key={`${campaign.id}-${adGroup.id}-${ad.id}`} defaultOpen={false} className="group/ad"><div className="grid items-center gap-4 py-4 pl-5 pr-7 md:grid-cols-[minmax(0,1fr)_40px_minmax(160px,220px)_minmax(140px,190px)_128px]"><div className="min-w-0"><span className="mb-1 block text-[11px] uppercase tracking-wide text-slate-400">Ad</span><div className="flex min-w-0 items-center gap-3"><StatusDot status={ad.status} /><ManagementEntityName text={summary.headlines} multiline /></div></div><Button type="button" size="icon-sm" variant="ghost" className="ads-edit-action justify-self-center text-red-700" aria-label={`Edit ad ${summary.headlines}`} onClick={() => onEdit(campaign.id, adGroup.id, ad.id)}><PencilIcon /></Button><div className="min-w-0 text-sm"><span className="block text-[11px] uppercase tracking-wide text-slate-400">Campaign</span><ManagementEntityName text={campaign.name} /></div><div className="min-w-0 text-sm"><span className="block text-[11px] uppercase tracking-wide text-slate-400">Ad group</span><ManagementEntityName text={adGroup.name} /></div><CollapsibleTrigger asChild><Button type="button" variant="outline" size="sm" className="w-32 justify-center" aria-label={`Toggle metrics for ad ${summary.headlines}`}><span className="group-data-[state=open]/ad:hidden">View metrics</span><span className="hidden group-data-[state=open]/ad:inline">Hide metrics</span><ChevronDownIcon className="transition-transform group-data-[state=open]/ad:rotate-180" /></Button></CollapsibleTrigger></div><CollapsibleContent className="border-t bg-slate-50/70 px-5 py-5"><div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-5">{details.map((detail) => <div key={detail.label} className={`rounded-lg border bg-white p-3 shadow-xs ${detail.label === "Description" ? "sm:col-span-2 lg:col-span-4 xl:col-span-5" : ""}`}><span className="block text-[11px] font-medium uppercase tracking-wide text-slate-400">{detail.label}</span><strong className="mt-1 block break-words text-sm font-semibold text-slate-800">{detail.value}</strong></div>)}</div></CollapsibleContent></Collapsible>; })}</div></section> : <EmptyEditor text="No ads match this filter." />}</div>;
 }
 function adTableSummary(ad: ManagedAd) {
   const textField = (ending: string) => ad.fields.find((field) => field.fieldKey.endsWith(ending));
@@ -1152,10 +1296,10 @@ function AdEditorSidePanel({ campaign, adGroupName, ad, values, creator, changes
   return (
     <div className="fixed inset-0 z-50 flex justify-end" role="dialog" aria-modal="true" aria-labelledby="ad-editor-title">
       <button type="button" className="absolute inset-0 cursor-default bg-slate-950/45" aria-label="Close ad editor" onClick={onClose} />
-      <aside className="relative z-10 flex h-full w-full max-w-[980px] flex-col bg-[#f8fafd] shadow-2xl">
+      <aside className="relative z-10 flex h-full w-full max-w-[980px] flex-col bg-[#fffafa] shadow-2xl">
         <header className="flex items-start justify-between gap-4 border-b bg-white p-5">
           <div className="min-w-0">
-            <p className="text-xs font-semibold uppercase tracking-wide text-blue-700">Edit ad</p>
+            <p className="text-xs font-semibold uppercase tracking-wide text-red-700">Edit ad</p>
             <h2 id="ad-editor-title" className="mt-1 truncate text-2xl font-semibold">
               {summary.headlines}
             </h2>
@@ -1182,15 +1326,15 @@ const performanceMetrics: Array<{
   label: string;
   color: string;
 }> = [
-  { key: "cost", label: "Cost", color: "#f59e0b" },
+  { key: "cost", label: "Cost", color: "#b91c1c" },
   { key: "conversions", label: "Conversions", color: "#188038" },
   { key: "clicks", label: "Clicks", color: "#d93025" },
-  { key: "costPerConversion", label: "Cost / conv.", color: "#2563eb" },
+  { key: "costPerConversion", label: "Cost / conv.", color: "#57534e" },
 ];
 function CampaignPerformancePanel({ campaign }: { campaign: ManagedCampaign }) {
   return <PerformancePanel performance={campaign.performance ?? []} title="Campaign performance" subtitle="Daily official Google Ads metrics for the selected campaign" />;
 }
-function PerformancePanel({ performance, title, subtitle }: { performance: ManagedCampaignPerformancePoint[]; title: string; subtitle: string }) {
+function PerformancePanel({ performance, title, subtitle, dateRangeControl }: { performance: ManagedCampaignPerformancePoint[]; title: string; subtitle: string; dateRangeControl?: ReactNode }) {
   const [visibleMetrics, setVisibleMetrics] = useState<PerformanceMetric[]>(["cost", "conversions", "clicks"]);
   const points = useMemo(
     () =>
@@ -1252,7 +1396,11 @@ function PerformancePanel({ performance, title, subtitle }: { performance: Manag
           <h3 className="font-semibold">{title}</h3>
           <p className="text-xs text-slate-500">{subtitle}</p>
         </div>
-        <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-medium text-slate-600">Last 30 days</span>
+        {dateRangeControl ?? (
+          <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-medium text-slate-600">
+            {dateLabel(firstDate)} – {dateLabel(lastDate)}
+          </span>
+        )}
       </div>
       <div className="grid gap-3 border-b bg-slate-50/60 p-4 sm:grid-cols-2 xl:grid-cols-4">
         {performanceMetrics.map((metric) => {
@@ -1369,19 +1517,19 @@ function RecommendationsPage({ accountId, accountName, recommendations, loading,
   return (
     <div className={`space-y-5 ${canEdit ? "" : "[&_.recommendation-apply-action]:hidden"}`}>
       <section className="rounded-2xl border bg-white px-6 py-5 shadow-sm">
-        <p className="text-xs font-semibold uppercase tracking-wide text-blue-700">Google Ads</p>
+        <p className="text-xs font-semibold uppercase tracking-wide text-red-700">Google Ads</p>
         <h2 className="mt-1 text-3xl font-semibold">Recommendations</h2>
       </section>
       <div className="grid items-stretch gap-4 xl:grid-cols-[330px_minmax(0,1fr)]">
         <section className="rounded-2xl border bg-white p-5 shadow-sm">
           <p className="text-sm font-semibold">Your optimization score</p>
           <div className="mt-2 flex items-end justify-between">
-            <strong className="text-4xl font-medium text-blue-600">{optimizationScore == null ? "—" : `${Math.round(optimizationScore * 100)}%`}</strong>
+            <strong className="text-4xl font-medium text-red-600">{optimizationScore == null ? "—" : `${Math.round(optimizationScore * 100)}%`}</strong>
             <span className="text-xs text-slate-500">Current account score</span>
           </div>
           <div className="mt-3 h-2.5 overflow-hidden rounded-full bg-slate-200">
             <div
-              className="h-full rounded-full bg-blue-600 transition-all"
+              className="h-full rounded-full bg-red-600 transition-all"
               style={{
                 width: `${Math.max(0, Math.min(100, (optimizationScore ?? 0) * 100))}%`,
               }}
@@ -1395,16 +1543,16 @@ function RecommendationsPage({ accountId, accountName, recommendations, loading,
                 const categoryRecommendations = item.key === "all" ? recommendations : recommendations.filter((recommendation) => recommendation.category === item.key);
                 const uplift = recommendationCategoryUplift(categoryRecommendations);
                 return (
-                  <button key={item.key} type="button" aria-pressed={filter === item.key} onClick={() => onFilter(item.key)} className={`rounded-full border px-3 py-1.5 text-xs font-medium transition ${filter === item.key ? "border-blue-200 bg-blue-50 text-blue-700" : "bg-white text-slate-600 hover:bg-slate-50"}`}>
+                  <button key={item.key} type="button" aria-pressed={filter === item.key} onClick={() => onFilter(item.key)} className={`rounded-full border px-3 py-1.5 text-xs font-medium transition ${filter === item.key ? "border-red-200 bg-red-50 text-red-700" : "bg-white text-slate-600 hover:bg-slate-50"}`}>
                     {item.label}
-                    {uplift ? <span className="ml-1 text-blue-600">{uplift}</span> : null}
+                    {uplift ? <span className="ml-1 text-red-600">{uplift}</span> : null}
                     <span className="ml-1 text-[10px] opacity-60">({categoryRecommendations.length})</span>
                   </button>
                 );
               })}
             </div>
             {visible.length > 1 ? (
-              <Button type="button" size="sm" className="recommendation-apply-action bg-blue-600 text-white hover:bg-blue-700" onClick={() => prepareApply(visible)}>
+              <Button type="button" size="sm" className="recommendation-apply-action bg-red-600 text-white hover:bg-red-700" onClick={() => prepareApply(visible)}>
                 Apply all ({visible.length})
               </Button>
             ) : null}
@@ -1456,7 +1604,7 @@ function RecommendationsPage({ accountId, accountName, recommendations, loading,
       {selectedForApply.length ? (
         <div className="fixed inset-0 z-50 grid place-items-center bg-slate-950/40 p-4" role="dialog" aria-modal="true" aria-labelledby="apply-recommendation-title">
           <div className="w-full max-w-xl rounded-2xl border bg-white p-6 shadow-2xl">
-            <p className="text-xs font-semibold uppercase tracking-wide text-blue-700">Controlled application</p>
+            <p className="text-xs font-semibold uppercase tracking-wide text-red-700">Controlled application</p>
             <h3 id="apply-recommendation-title" className="mt-1 text-2xl font-semibold">
               Apply Google recommendation
             </h3>
@@ -1559,7 +1707,7 @@ function GoogleAdsViewOnlyCard({ item, googleUrl, onManageAds }: { item: GoogleA
           <span className="grid size-9 place-items-center rounded-full bg-slate-100 text-slate-600">
             <ArrowUpRightIcon className="size-4" />
           </span>
-          <span className={`rounded-full px-3 py-1 text-xs font-semibold ${item.editableInDashboard ? "bg-blue-50 text-blue-700" : "bg-slate-100 text-slate-600"}`}>{item.editableInDashboard ? "Editable here" : "Google Ads setup"}</span>
+          <span className={`rounded-full px-3 py-1 text-xs font-semibold ${item.editableInDashboard ? "bg-red-50 text-red-700" : "bg-slate-100 text-slate-600"}`}>{item.editableInDashboard ? "Editable here" : "Google Ads setup"}</span>
         </div>
         <p className="mt-4 text-xs font-semibold uppercase tracking-wide text-slate-500">{recommendationCategoryLabel(item.category)}</p>
         <h4 className="mt-1 text-lg font-semibold">{item.title}</h4>
@@ -1589,24 +1737,24 @@ function RecommendationCard({ recommendations, featured, onApply }: { recommenda
   return (
     <details className="group overflow-hidden rounded-xl border bg-white shadow-sm" open={featured}>
       <summary className="flex cursor-pointer list-none items-center gap-3 px-4 py-3 marker:hidden">
-        <span className="grid size-8 shrink-0 place-items-center rounded-full bg-blue-50 text-blue-700">
+        <span className="grid size-8 shrink-0 place-items-center rounded-full bg-red-50 text-red-700">
           <LightbulbIcon className="size-4" />
         </span>
         <span className="min-w-0 flex-1">
           <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
             <strong className="text-sm text-slate-900">{recommendation.title}</strong>
-            {featured ? <span className="rounded-full bg-blue-50 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-blue-700">Top recommendation</span> : null}
+            {featured ? <span className="rounded-full bg-red-50 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-red-700">Top recommendation</span> : null}
           </span>
           <span className="mt-0.5 block text-xs text-slate-500">
             {recommendationCategoryLabel(recommendation.category)}
             {recommendations.length > 1 ? ` · ${recommendations.length} recommendations` : ""}
           </span>
         </span>
-        {uplift ? <span className="rounded-full bg-blue-50 px-2.5 py-1 text-xs font-semibold text-blue-700">{uplift}</span> : null}
+        {uplift ? <span className="rounded-full bg-red-50 px-2.5 py-1 text-xs font-semibold text-red-700">{uplift}</span> : null}
         <Button
           type="button"
           size="sm"
-          className="recommendation-apply-action bg-blue-600 text-white hover:bg-blue-700"
+          className="recommendation-apply-action bg-red-600 text-white hover:bg-red-700"
           aria-label={recommendations.length > 1 ? `Apply ${recommendations.length} recommendations` : `Apply ${recommendation.title}`}
           onClick={(event) => {
             event.preventDefault();
@@ -1664,11 +1812,11 @@ function RecommendationInstance({ recommendation, index, total }: { recommendati
   );
 }
 const recommendationDetailPresentation: Record<ManagedRecommendationDetailFamily, { label: string; labelClass: string }> = {
-  keyword: { label: "Keyword opportunity", labelClass: "text-violet-700" },
-  budget: { label: "Budget recommendation", labelClass: "text-blue-700" },
-  bidding: { label: "Bidding recommendation", labelClass: "text-cyan-700" },
-  asset: { label: "Ad and asset recommendation", labelClass: "text-indigo-700" },
-  targeting: { label: "Targeting recommendation", labelClass: "text-fuchsia-700" },
+  keyword: { label: "Keyword opportunity", labelClass: "text-red-700" },
+  budget: { label: "Budget recommendation", labelClass: "text-red-700" },
+  bidding: { label: "Bidding recommendation", labelClass: "text-red-700" },
+  asset: { label: "Ad and asset recommendation", labelClass: "text-red-700" },
+  targeting: { label: "Targeting recommendation", labelClass: "text-red-700" },
   shopping: { label: "Shopping recommendation", labelClass: "text-amber-700" },
   repair: { label: "Issue to resolve", labelClass: "text-red-700" },
   generic: { label: "Recommendation details", labelClass: "text-slate-500" },
@@ -1676,8 +1824,8 @@ const recommendationDetailPresentation: Record<ManagedRecommendationDetailFamily
 function RecommendationDetailSectionView({ section }: { section: ManagedRecommendationDetailSection }) {
   if (section.layout === "comparison") {
     return (
-      <section className="rounded-xl border border-blue-100 bg-blue-50/50 p-3">
-        <p className="text-xs font-semibold uppercase tracking-wide text-blue-700">{section.title}</p>
+      <section className="rounded-xl border border-red-100 bg-red-50/50 p-3">
+        <p className="text-xs font-semibold uppercase tracking-wide text-red-700">{section.title}</p>
         <div className="mt-3 space-y-3">
           {section.items.map((item, index) => (
             <div key={`${item.label}-${index}`}>
@@ -1685,7 +1833,7 @@ function RecommendationDetailSectionView({ section }: { section: ManagedRecommen
               <div className="mt-1 grid grid-cols-[1fr_auto_1fr] items-center gap-2 text-sm">
                 <span className="rounded-lg border bg-white px-3 py-2 text-slate-600">{item.previousValue || "—"}</span>
                 <span className="text-slate-400">→</span>
-                <strong className="rounded-lg border border-blue-200 bg-white px-3 py-2 text-blue-700">{item.recommendedValue || "—"}</strong>
+                <strong className="rounded-lg border border-red-200 bg-white px-3 py-2 text-red-700">{item.recommendedValue || "—"}</strong>
               </div>
             </div>
           ))}
@@ -1927,7 +2075,7 @@ function MoneyMicrosInput({ field, value, onChange }: { field: ManagedFieldValue
       <span className="text-sm font-medium">
         {field.fieldLabel} ({dailyBudget ? "MYR/day" : "MYR"}){!field.editable ? <span className="ml-2 text-xs text-slate-400">Read only</span> : null}
       </span>
-      <div className="flex overflow-hidden rounded-md border bg-white focus-within:ring-2 focus-within:ring-blue-200">
+      <div className="flex overflow-hidden rounded-md border bg-white focus-within:ring-2 focus-within:ring-red-200">
         <span className="flex items-center border-r bg-slate-50 px-3 text-sm font-medium text-slate-600">MYR</span>
         <input
           className="h-10 min-w-0 flex-1 px-3 outline-none disabled:bg-slate-100"

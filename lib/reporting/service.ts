@@ -30,6 +30,7 @@ import {
   mergeCampaignRows,
 } from "@/lib/reporting/metrics";
 import { MemoryCacheEntry, readThroughMemoryCache } from "@/lib/reporting/memory-cache";
+import { resolveOverallPerformanceCompanyName } from "@/lib/reporting/overall-company-name";
 import {
   buildMetaMonthlyOutcomeMetrics,
   normalizeMetaMonthlyCampaignRows,
@@ -935,7 +936,13 @@ async function fetchOverallPerformanceStageData(input: OverallInput): Promise<Ov
     dateRange,
     resolvedAccountIds,
     googleManagerContext,
-    companyName: base.companyName,
+    companyName: resolveOverallPerformanceCompanyName({
+      fallbackCompanyName: base.companyName,
+      metaAccountIds: resolvedAccountIds.metaAccountIds,
+      googleAccountIds: resolvedAccountIds.googleAccountIds,
+      tiktokAccountIds: resolvedAccountIds.tiktokAccountIds,
+      tiktokAccounts: tiktokCurrentResult.accounts,
+    }),
     warnings: dedupeWarnings(warnings),
     diagnostics,
     reportRequestId,

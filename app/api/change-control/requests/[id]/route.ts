@@ -17,7 +17,14 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   const parsed = m03MockChangeRequestEditSchema.safeParse(await request.json().catch(() => null));
   if (!parsed.success) return NextResponse.json({ error: "Invalid draft update.", issues: parsed.error.issues }, { status: 400 });
-  try { return NextResponse.json(await editMockChangeRequest((await params).id, parsed.data, buildTrustedRequestContext(request, session))); }
+  try {
+    const id = (await params).id;
+    const existing = await getMockChangeRequest(id);
+    if ((parsed.data.source_m04_plan_id ?? null) !== existing.request.source_m04_plan_id || (parsed.data.source_m04_revision_id ?? null) !== existing.request.source_m04_revision_id) {
+      throw new M03RepositoryError("The verified M04 or legacy source boundary cannot be changed after request creation.", 409);
+    }
+    return NextResponse.json(await editMockChangeRequest(id, parsed.data, buildTrustedRequestContext(request, session)));
+  }
   catch (error) { return failure(error); }
 }
 function failure(error: unknown) { return NextResponse.json({ error: error instanceof Error ? error.message : "M03 request failed." }, { status: error instanceof M03RepositoryError || error instanceof M03AccessError ? error.status : 500 }); }

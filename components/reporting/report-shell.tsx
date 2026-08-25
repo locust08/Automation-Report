@@ -234,22 +234,23 @@ export function ReportShell({
                   align="start"
                   alignOffset={-96}
                   sideOffset={-1}
-                  className="w-[min(68rem,calc(100vw-2rem))] rounded-xl border border-[#e6d7d9] bg-white p-3 text-[#211114] shadow-2xl"
+                  collisionPadding={{ top: 8, right: 32, bottom: 8, left: 32 }}
+                  className="w-[min(68rem,calc(100vw-4rem))] rounded-xl border border-[#e6d7d9] bg-white p-2 text-[#211114] shadow-2xl xl:p-3"
                 >
-                  <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+                  <div className="grid gap-2 md:grid-cols-2 lg:grid-cols-4 xl:gap-4">
                     {navigationGroups.map((group, groupIndex) => (
                       <div
                         key={group.label}
                         className={
                           groupIndex === 0
                             ? "min-w-0"
-                            : "min-w-0 border-t border-[#eadfe0] pt-2 md:border-l md:border-t-0 md:pl-2 md:pt-0"
+                            : "min-w-0 border-t border-[#eadfe0] pt-2 md:border-l md:border-t-0 md:pl-1 md:pt-0 xl:pl-2"
                         }
                       >
-                        <DropdownMenuLabel className="px-3 pb-1 pt-2 text-xs font-bold uppercase tracking-[0.14em] text-[#8a6268]">
+                        <DropdownMenuLabel className="px-2 pb-1 pt-2 text-[11px] font-bold uppercase tracking-[0.12em] text-[#8a6268] xl:px-3 xl:text-xs xl:tracking-[0.14em]">
                           {group.label}
                         </DropdownMenuLabel>
-                        <DropdownMenuGroup className="space-y-1.5">
+                        <DropdownMenuGroup className="space-y-1 xl:space-y-1.5">
                           {group.items.map((item) => (
                             <ReportMenuItem key={item.href} {...item} />
                           ))}
@@ -307,16 +308,16 @@ function ReportMenuItem({ href, label, active, icon: Icon }: ReportNavigationIte
   return (
     <DropdownMenuItem
       asChild
-      className={`min-h-11 cursor-pointer rounded-lg p-0 focus:bg-[#fff0f1] focus:text-[#8f0712] ${
+      className={`min-h-10 cursor-pointer rounded-lg p-0 focus:bg-[#fff0f1] focus:text-[#8f0712] xl:min-h-11 ${
         active ? "bg-[#fff0f1] text-[#8f0712]" : "text-[#2f2023]"
       }`}
     >
       <Link
         href={href}
         aria-current={active ? "page" : undefined}
-        className="flex min-h-11 w-full items-center gap-3 rounded-lg px-3 py-2 text-sm font-semibold outline-none"
+        className="flex min-h-10 w-full items-center gap-2 rounded-lg px-2 py-1.5 text-xs font-semibold outline-none xl:min-h-11 xl:gap-3 xl:px-3 xl:py-2 xl:text-sm"
       >
-        <Icon className="size-5 text-current" />
+        <Icon className="size-4 text-current xl:size-5" />
         <span className="min-w-0 flex-1 leading-snug">{label}</span>
         {active ? <CheckIcon className="size-4 text-[#d40016]" /> : null}
       </Link>

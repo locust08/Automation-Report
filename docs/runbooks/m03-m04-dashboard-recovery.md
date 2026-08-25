@@ -4,12 +4,12 @@ This runbook covers the dashboard-only M03 change-control and M04 campaign-readi
 
 ## Invalid development actor mapping
 
-1. Read `DEV_AUTH_BYPASS_ACTOR_ID` from the deployment secret manager. Do not place it in source control or logs.
+1. Read `DEV_AUTH_BYPASS_ACTOR_ID` from the local or preview secret manager. Do not place it in source control or logs.
 2. Confirm the UUID identifies an active `admin` row in `ads_reporting_auth`.
-3. Correct the environment value and restart the local or preview runtime.
+3. Correct the environment value and restart the non-production runtime.
 4. Load `/campaigns` and `/change-control`; confirm the server resolves the actor without inserting or updating an authentication record.
 
-If the mapping is absent or inactive, keep mutations unavailable. Never restore the removed hard-coded actor fallback.
+The bypass must remain disabled in production. If the mapping is absent or inactive, keep mutations unavailable.
 
 ## Domain or trusted-network lockout
 
@@ -57,4 +57,20 @@ Use soft activation/deactivation only. Do not delete configuration rows.
 - `POST /api/change-control/provider` must return HTTP 423 with `provider_execution_locked`.
 - The dashboard must not show functioning publish, retry, readback, verification, or rollback controls.
 - M03 provider-dependent statuses remain part of the future contract but cannot be reached by mock RPCs.
-- M04 provider creation, activation, readback, and M05 handoff remain disabled.
+- M04 provider creation, activation, and readback remain disabled.
+
+## Fresh-baseline conflict or stale approval
+
+1. Do not publish or retry a mutation. Keep provider execution locked.
+2. Capture a new official read-only baseline for the exact account, campaign, and child resources.
+3. Compare the canonical hash with both the reviewed item baselines and the newest stored baseline.
+4. If either differs, move the request to conflict review and create a new immutable revision after the operator resolves every changed field.
+5. Approve only the latest revision hash; never reuse an approval from an older revision.
+
+## TikTok partial replacement or uncertain POST result
+
+1. Never automatically repeat a TikTok POST. First read the replacement resource by its stored resource identity or request ID.
+2. Resume from the last persisted replacement stage: created disabled, verified, activated, or previous resource disabled.
+3. If creation succeeded but the switch failed, keep the verified replacement disabled and expose a reviewed retry.
+4. If recovery requires compensation, create a new rollback request. Do not edit prior revisions or erase attempt evidence.
+5. Confirm the audit trail records the provider request ID, normalized error, readback, and resulting replacement stage.

@@ -36,7 +36,6 @@ export type M03MockChangeRequestInput = {
   campaign_identity: string;
   source_m04_plan_id?: number | null;
   source_m04_revision_id?: number | null;
-  source_m05_recommendation_ref?: string | null;
   rollback_of_request_id?: string | null;
   supersedes_request_id?: string | null;
   items: M03ChangeItemInput[];
@@ -62,6 +61,8 @@ export type M03ChangeRequestSummary = {
 export type M03ChangeItem = M03ChangeItemInput & {
   id: string; request_id: string; validation_issues: M03ValidationIssue[];
   provider_result_evidence: Record<string, unknown>; readback_evidence: Record<string, unknown>;
+  capability_registry_version: number | null; mutation_mode: "direct_update" | "creative_replacement" | "unsupported" | null;
+  replacement_stage: string | null;
   created_at: string;
 };
 
@@ -86,9 +87,45 @@ export type M03AuditEvent = {
   actor_name: string | null; trusted_ip: string | null; metadata: Record<string, unknown>; created_at: string;
 };
 
+export type M03ProviderBaselineSnapshot = {
+  id: string; request_id: string; revision_id: string | null; platform: M03Platform;
+  source: "provider" | "legacy_google_compat" | "stored_snapshot"; payload_hash: string;
+  captured_at: string; freshness_expires_at: string; canonical_payload: Record<string, unknown>;
+};
+
+export type M03SourceVerification = {
+  id: string;
+  request_id: string;
+  source_kind: "m04_verified_launch" | "legacy_provider_adoption";
+  source_m04_plan_id: number | null;
+  source_m04_revision_id: number | null;
+  platform: M03Platform;
+  provider_account_identity: string;
+  provider_campaign_identity: string;
+  source_revision_hash: string | null;
+  evidence: Record<string, unknown>;
+  verified_at: string;
+};
+
+export type M03ProviderResourceMapping = {
+  id: number; item_id: string; provider_resource_type: string; previous_resource_identity: string | null;
+  replacement_resource_identity: string | null; replacement_stage: string; capability_registry_version: number;
+  operation_plan: Array<Record<string, unknown>>; rollback_evidence: Record<string, unknown>; updated_at: string;
+};
+
+export type M03ItemAttempt = {
+  id: number; item_id: string; revision_id: string | null; action: "publish" | "readback" | "rollback";
+  attempt_number: number; operation_key: string | null; result: "provider_execution_locked" | "pending" | "succeeded" | "failed";
+  replacement_stage: string | null; provider_result_evidence: Record<string, unknown>;
+  readback_evidence: Record<string, unknown>; normalized_error: Record<string, unknown>; created_at: string;
+};
+
 export type M03ChangeRequestDetail = {
   request: M03ChangeRequestSummary; items: M03ChangeItem[]; revisions: M03Revision[];
   validations: M03ValidationRecord[]; approvals: M03Approval[]; events: M03AuditEvent[];
+  source_verification: M03SourceVerification | null;
+  baselines: M03ProviderBaselineSnapshot[]; resource_mappings: M03ProviderResourceMapping[];
+  attempts: M03ItemAttempt[];
   provider_execution_locked: true;
 };
 
@@ -119,14 +156,7 @@ export type TrustedRequestContext = {
   actor_id: string; actor_name: string; actor_email: string; trusted_ip: string; user_agent: string;
 };
 
-export interface FutureM03ProviderAdapter {
-  readonly platform: M03Platform;
-  readonly enabled: false;
-  publish(): Promise<never>;
-  verify(): Promise<never>;
-}
-
 export const PROVIDER_EXECUTION_LOCKED = {
   error: "provider_execution_locked",
-  message: "Provider execution is outside this dashboard-only phase.",
+  message: "Provider execution is locked until a separately approved test-account pilot.",
 } as const;
