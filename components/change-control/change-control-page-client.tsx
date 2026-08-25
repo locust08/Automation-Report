@@ -9,6 +9,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { ReportShell } from "@/components/reporting/report-shell";
@@ -23,6 +24,25 @@ import type { TikTokSynchronizedResource, TikTokSynchronizedResourceType } from 
 const emptyItem = (): M03ChangeItemInput => ({ entity_type: "campaign", entity_identity: "", field_path: "", value_type: "string", baseline_value: "", proposed_value: "", evidence: {}, platform_resource_mapping: {} });
 const emptyForm = () => ({ platform: "google" as M03Platform, title: "", reason: "", client_id: "", account_identity: "", campaign_identity: "", source_m04_plan_id: "", source_m04_revision_id: "", items: [emptyItem()] });
 type RequestForm = ReturnType<typeof emptyForm>;
+
+const STATUS_LABELS: Record<M03Status, string> = {
+  draft: "Draft",
+  validation_in_progress: "Validation in progress",
+  validation_failed: "Validation failed",
+  awaiting_approval: "Awaiting approval",
+  approved: "Approved",
+  conflict_detected: "Conflict detected",
+  ready_to_publish: "Ready to publish",
+  publishing: "Publishing",
+  published: "Published",
+  verification_in_progress: "Verification in progress",
+  verified: "Verified",
+  partially_completed: "Partially completed",
+  failed: "Failed",
+  reverted: "Reverted",
+  cancelled: "Cancelled",
+  provider_execution_locked: "Provider execution locked",
+};
 
 export function ChangeControlPageClient({ initialRole }: { initialRole: AuthRole }) {
   const workflowPolicies = useWorkflowPolicies();
@@ -94,8 +114,26 @@ export function ChangeControlPageClient({ initialRole }: { initialRole: AuthRole
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div><CardTitle>Change requests</CardTitle><CardDescription>Review cross-platform post-launch changes. Provider execution remains locked.</CardDescription></div>
             <div className="flex flex-wrap gap-2">
-              <select aria-label="Platform filter" value={platform} onChange={(event) => { setPlatform(event.target.value); setPage(1); }} className="h-9 rounded-md border bg-white px-3 text-sm"><option value="all">All platforms</option><option value="google">Google</option><option value="meta">Meta</option><option value="tiktok">TikTok</option></select>
-              <select aria-label="Status filter" value={status} onChange={(event) => { setStatus(event.target.value); setPage(1); }} className="h-9 rounded-md border bg-white px-3 text-sm"><option value="all">All statuses</option>{M03_STATUSES.map((value) => <option key={value}>{value}</option>)}</select>
+              <Select value={platform} onValueChange={(value) => { setPlatform(value); setPage(1); }}>
+                <SelectTrigger aria-label="Platform filter" className="w-40 bg-white">
+                  <SelectValue placeholder="All platforms" />
+                </SelectTrigger>
+                <SelectContent position="popper" align="start">
+                  <SelectItem value="all">All platforms</SelectItem>
+                  <SelectItem value="google">Google</SelectItem>
+                  <SelectItem value="meta">Meta</SelectItem>
+                  <SelectItem value="tiktok">TikTok</SelectItem>
+                </SelectContent>
+              </Select>
+              <Select value={status} onValueChange={(value) => { setStatus(value); setPage(1); }}>
+                <SelectTrigger aria-label="Status filter" className="w-56 bg-white">
+                  <SelectValue placeholder="All statuses" />
+                </SelectTrigger>
+                <SelectContent position="popper" align="start" className="max-h-80">
+                  <SelectItem value="all">All statuses</SelectItem>
+                  {M03_STATUSES.map((value) => <SelectItem key={value} value={value}>{STATUS_LABELS[value]}</SelectItem>)}
+                </SelectContent>
+              </Select>
               <Button variant="outline" onClick={() => void load()}><RefreshCwIcon /> Refresh</Button>
               <Button onClick={openNew}><PlusIcon /> New change request</Button>
             </div>
