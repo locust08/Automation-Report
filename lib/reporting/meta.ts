@@ -67,6 +67,9 @@ interface MetaCampaignRow {
   buying_type?: string;
   start_time?: string;
   stop_time?: string;
+  daily_budget?: string;
+  lifetime_budget?: string;
+  bid_strategy?: string;
 }
 
 interface MetaAdSetRow {
@@ -82,6 +85,8 @@ interface MetaAdSetRow {
   start_time?: string;
   end_time?: string;
   bid_strategy?: string;
+  bid_amount?: string;
+  attribution_spec?: unknown;
   destination_type?: string;
   pacing_type?: string[];
   targeting?: {
@@ -177,6 +182,8 @@ interface MetaCreativeRow {
   instagram_permalink_url?: string;
   effective_instagram_media_id?: string;
   object_story_spec?: {
+    page_id?: string;
+    instagram_actor_id?: string;
     link_data?: {
       link?: string;
       message?: string;
@@ -185,6 +192,7 @@ interface MetaCreativeRow {
       };
       name?: string;
       description?: string;
+      image_hash?: string;
     };
     video_data?: {
       video_id?: string;
@@ -393,6 +401,9 @@ const META_PREVIEW_CAMPAIGN_FIELDS = [
   "buying_type",
   "start_time",
   "stop_time",
+  "daily_budget",
+  "lifetime_budget",
+  "bid_strategy",
 ] as const;
 
 const META_PREVIEW_ADSET_FIELDS = [
@@ -408,6 +419,8 @@ const META_PREVIEW_ADSET_FIELDS = [
   "start_time",
   "end_time",
   "bid_strategy",
+  "bid_amount",
+  "attribution_spec",
   "destination_type",
   "pacing_type",
   "targeting",
@@ -820,9 +833,11 @@ export async function fetchMetaPreviewData({
     adGroupId: null,
     adId: null,
   },
+  includeInactive = false,
 }: MetaFetchInput & {
   previewStage?: MetaPreviewStage;
   previewSelection?: MetaPreviewSelection;
+  includeInactive?: boolean;
 }): Promise<MetaPreviewResponse> {
   const diagnostics: MetaPreviewBlockDiagnostic[] = [];
   const warnings: MetaPreviewBlockIssue[] = [];
@@ -842,6 +857,7 @@ export async function fetchMetaPreviewData({
         accountId,
         accessToken,
         fields: [...META_PREVIEW_CAMPAIGN_FIELDS],
+        includeInactive,
       }),
   });
   diagnostics.push(campaignsBlock.diagnostic);
@@ -878,6 +894,7 @@ export async function fetchMetaPreviewData({
         fields: [...META_PREVIEW_AD_FIELDS],
         campaignId: selectedCampaignId,
         adSetId: selectedAdGroupId,
+        includeInactive,
       }),
   });
   diagnostics.push(adsBlock.diagnostic);
@@ -911,19 +928,22 @@ export async function fetchMetaPreviewData({
     label: "meta-preview-adsets",
     required: false,
     fields: [...META_PREVIEW_ADSET_FIELDS],
-    load: () =>
-      fetchMetaAdSetCollectionByIds({
-        accessToken,
-        adSetIds,
-        fields: [...META_PREVIEW_ADSET_FIELDS],
-      }),
+    load: () => includeInactive
+      ? fetchMetaAdSetCollection({ accountId, accessToken, fields: [...META_PREVIEW_ADSET_FIELDS] })
+      : fetchMetaAdSetCollectionByIds({ accessToken, adSetIds, fields: [...META_PREVIEW_ADSET_FIELDS] }),
   });
   diagnostics.push(adSetsBlock.diagnostic);
   if (adSetsBlock.issue) {
     warnings.push(adSetsBlock.issue);
   }
 
-  const visibleAdSets = buildVisiblePreviewAdSets(campaignAds, adSetsBlock.data ?? []);
+  const visibleAdSets = includeInactive
+    ? (adSetsBlock.data ?? []).filter((adSet) => {
+        const campaignId = adSet.campaign_id?.trim();
+        const adSetId = adSet.id?.trim();
+        return Boolean(campaignId && adSetId && visibleCampaignIds.has(campaignId) && (!selectedAdGroupId || adSetId === selectedAdGroupId));
+      })
+    : buildVisiblePreviewAdSets(campaignAds, adSetsBlock.data ?? []);
   const visibleAdSetIds = new Set(visibleAdSets.map((adSet) => adSet.id?.trim()).filter(Boolean) as string[]);
   const visibleAds = campaignAds.filter((ad) => visibleAdSetIds.has(ad.adset_id?.trim() || ""));
 
@@ -1079,6 +1099,7 @@ export async function fetchMetaPreviewData({
       demographics: adDemographicMap.get(adId) ?? [],
       platformDistribution: adPlatformMap.get(adId) ?? [],
       finalUrl: creative?.linkUrl ?? null,
+      managementFields: {},
     });
     adsByAdSet.set(adSetId, items);
   });
@@ -1137,6 +1158,19 @@ function buildMetaPreviewAdSetsByCampaign(
         adItems.flatMap((ad) => ad.platformDistribution || [])
       ),
       ads: adItems,
+      managementFields: compactManagementFields({
+        "ad_set.budget.daily": optionalNumber(adSet.daily_budget),
+        "ad_set.budget.lifetime": optionalNumber(adSet.lifetime_budget),
+        "ad_set.schedule.start_time": adSet.start_time,
+        "ad_set.schedule.end_time": adSet.end_time,
+        "ad_set.bid.strategy": adSet.bid_strategy,
+        "ad_set.bid.amount": optionalNumber(adSet.bid_amount),
+        "ad_set.billing_event": adSet.billing_event,
+        "ad_set.optimization_goal": adSet.optimization_goal,
+        "ad_set.attribution.spec": adSet.attribution_spec,
+        "ad_set.targeting.geo_locations": adSet.targeting?.geo_locations,
+        "ad_set.placements.publisher_platforms": adSet.targeting?.publisher_platforms,
+      }),
     });
     adSetsByCampaign.set(campaignId, items);
   });
@@ -1177,6 +1211,11 @@ function buildMetaPreviewCampaignNodes(
         children.flatMap((adSet) => adSet.platformDistribution || [])
       ),
       children,
+      managementFields: compactManagementFields({
+        "campaign.budget.daily": optionalNumber(campaign.daily_budget),
+        "campaign.budget.lifetime": optionalNumber(campaign.lifetime_budget),
+        "campaign.bid.strategy": campaign.bid_strategy,
+      }),
     });
   });
 
@@ -1211,13 +1250,16 @@ async function fetchMetaCampaignCollection(input: {
   accountId: string;
   accessToken: string;
   fields: string[];
+  includeInactive?: boolean;
 }): Promise<MetaCampaignRow[]> {
   const params = new URLSearchParams({
     access_token: input.accessToken,
     limit: "200",
     fields: input.fields.join(","),
-    filtering: buildMetaEffectiveStatusFilter(),
   });
+  if (!input.includeInactive) {
+    params.set("filtering", buildMetaEffectiveStatusFilter());
+  }
 
   return fetchMetaCollection<MetaCampaignRow>(
     `${META_GRAPH_API_BASE_URL}/act_${input.accountId}/campaigns?${params.toString()}`
@@ -1280,13 +1322,16 @@ async function fetchMetaAdCollection(input: {
   fields: string[];
   campaignId?: string | null;
   adSetId?: string | null;
+  includeInactive?: boolean;
 }): Promise<MetaAdRow[]> {
   const params = new URLSearchParams({
     access_token: input.accessToken,
     limit: "200",
     fields: input.fields.join(","),
-    filtering: buildMetaEffectiveStatusFilter(),
   });
+  if (!input.includeInactive) {
+    params.set("filtering", buildMetaEffectiveStatusFilter());
+  }
   const parentId = input.adSetId?.trim() || input.campaignId?.trim();
   const endpoint = parentId
     ? `${META_GRAPH_API_BASE_URL}/${parentId}/ads?${params.toString()}`
@@ -2196,7 +2241,35 @@ function mapCreativeAsset(row: MetaCreativeRow): PreviewCreativeAsset {
     instagramPermalinkUrl,
     effectiveInstagramMediaId: row.effective_instagram_media_id?.trim() || null,
     facebookPermalinkUrl,
+    pageId: row.object_story_spec?.page_id?.trim() || null,
+    instagramActorId: row.object_story_spec?.instagram_actor_id?.trim() || null,
+    imageHash: row.object_story_spec?.link_data?.image_hash?.trim() || null,
   };
+}
+
+async function fetchMetaAdSetCollection(input: {
+  accountId: string;
+  accessToken: string;
+  fields: string[];
+}): Promise<MetaAdSetRow[]> {
+  const params = new URLSearchParams({
+    access_token: input.accessToken,
+    limit: "200",
+    fields: input.fields.join(","),
+  });
+  return fetchMetaCollection<MetaAdSetRow>(
+    `${META_GRAPH_API_BASE_URL}/act_${input.accountId}/adsets?${params.toString()}`,
+  );
+}
+
+function optionalNumber(value: string | undefined): number | undefined {
+  if (value == null || value.trim() === "") return undefined;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+function compactManagementFields(value: Record<string, unknown>): Record<string, unknown> {
+  return Object.fromEntries(Object.entries(value).filter(([, entry]) => entry !== undefined));
 }
 
 function isMetaCreativeRow(

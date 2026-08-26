@@ -96,6 +96,7 @@ export interface OverallInput {
   cacheRefreshKey?: string | null;
   previewStage?: PreviewFetchStage;
   previewSelection?: PreviewFetchSelection;
+  metaIncludeInactivePreview?: boolean;
 }
 
 interface CampaignInput extends OverallInput {
@@ -1088,7 +1089,8 @@ export async function getPreviewReport(input: OverallInput): Promise<PreviewRepo
       dateRange.startDate,
       dateRange.endDate,
       previewStage,
-      previewSelection
+      previewSelection,
+      Boolean(input.metaIncludeInactivePreview)
     ),
     tryFetchGooglePreviewSections(
       resolvedAccountIds.googleAccountIds,
@@ -1985,7 +1987,8 @@ async function tryFetchMetaPreview(
   startDate: string,
   endDate: string,
   previewStage: PreviewFetchStage,
-  previewSelection: PreviewFetchSelection
+  previewSelection: PreviewFetchSelection,
+  includeInactive = false
 ): Promise<{
   campaigns: PreviewCampaignNode[];
   warnings: string[];
@@ -2018,6 +2021,7 @@ async function tryFetchMetaPreview(
       campaignId: previewSelection.campaignId,
       adGroupId: previewSelection.adGroupId,
       adId: previewSelection.adId,
+      includeInactive,
       credentials: accessToken.slice(-10),
     });
     const result = await readThroughMemoryCache(
@@ -2034,6 +2038,7 @@ async function tryFetchMetaPreview(
             ...previewSelection,
             platform: previewSelection.platform === "tiktok" ? null : previewSelection.platform,
           },
+          includeInactive,
         }),
       {
         ttlMs: GOOGLE_FETCH_CACHE_TTL_MS,
@@ -2993,7 +2998,8 @@ async function tryFetchMetaPreviewSections(
   startDate: string,
   endDate: string,
   previewStage: PreviewFetchStage,
-  previewSelection: PreviewFetchSelection
+  previewSelection: PreviewFetchSelection,
+  includeInactive = false
 ): Promise<{
   campaigns: PreviewCampaignNode[];
   warnings: string[];
@@ -3021,7 +3027,8 @@ async function tryFetchMetaPreviewSections(
       startDate,
       endDate,
       previewStage,
-      previewSelection
+      previewSelection,
+      includeInactive
     );
     campaigns.push(...result.campaigns);
     warnings.push(

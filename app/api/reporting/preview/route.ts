@@ -11,6 +11,7 @@ export async function GET(request: Request): Promise<NextResponse> {
   const searchParams = new URL(request.url).searchParams;
   const context = parseRequestContext(searchParams);
   const diagnosticsMode = searchParams.get("diagnostics") === "1";
+  const includeInactiveMeta = searchParams.get("includeInactiveMeta") === "1";
 
   try {
     if (context.source === "meta_csv") {
@@ -33,6 +34,7 @@ export async function GET(request: Request): Promise<NextResponse> {
       startDate: context.startDate,
       endDate: context.endDate,
       diagnosticsMode,
+      metaIncludeInactivePreview: includeInactiveMeta,
     });
 
     return NextResponse.json(payload);

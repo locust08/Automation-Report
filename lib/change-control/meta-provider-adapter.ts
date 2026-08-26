@@ -10,6 +10,7 @@ import {
   type M03ProviderOperation,
 } from "@/lib/change-control/provider-contract";
 import { ProviderExecutionLockedError } from "@/lib/change-control/provider-execution-lock";
+import { getM03MetaChangeField, type M03MetaChangeField } from "@/lib/change-control/meta-capability-registry";
 import type { M03ChangeItem, M03ValidationIssue } from "@/lib/change-control/types";
 
 export const M03_META_CAPABILITY_REGISTRY_VERSION = 2 as const;
@@ -22,31 +23,20 @@ export type MetaTransportResponse = { id?: string; payload: Record<string, unkno
 export interface MetaM03Transport { request(input: MetaTransportRequest): Promise<MetaTransportResponse>; }
 
 const META_RULES: MetaRule[] = [
-  direct("campaign.name", "campaign", "name"),
-  direct("campaign.status", "campaign", "status"),
-  direct("campaign.budget.daily", "campaign", "daily_budget"),
   direct("campaign.budget.daily_budget", "campaign", "daily_budget"),
-  direct("campaign.budget.lifetime", "campaign", "lifetime_budget"),
   direct("campaign.budget.lifetime_budget", "campaign", "lifetime_budget"),
-  direct("campaign.bid.strategy", "campaign", "bid_strategy"),
   unsupported("campaign.objective", "Meta does not support changing a campaign objective after creation."),
   unsupported("campaign.buying_type", "Meta does not support changing buying type after creation."),
   unsupported("campaign.special_ad_categories", "Special-ad-category identity is immutable after creation."),
-  direct("ad_set.name", "adset", "name"), direct("ad_group.name", "adset", "name"),
-  direct("ad_set.status", "adset", "status"), direct("ad_group.status", "adset", "status"),
-  direct("ad_set.budget.daily", "adset", "daily_budget"), direct("ad_group.budget.daily", "adset", "daily_budget"),
-  direct("ad_set.budget.lifetime", "adset", "lifetime_budget"), direct("ad_group.budget.lifetime", "adset", "lifetime_budget"),
-  direct("ad_set.schedule.start_time", "adset", "start_time"), direct("ad_group.schedule.start_time", "adset", "start_time"),
-  direct("ad_set.schedule.end_time", "adset", "end_time"), direct("ad_group.schedule.end_time", "adset", "end_time"),
-  direct("ad_set.bid.amount", "adset", "bid_amount"), direct("ad_group.bid.amount", "adset", "bid_amount"),
-  direct("ad_set.bid.strategy", "adset", "bid_strategy"), direct("ad_group.bid.strategy", "adset", "bid_strategy"),
-  direct("ad_set.billing_event", "adset", "billing_event"), direct("ad_group.billing_event", "adset", "billing_event"),
-  direct("ad_set.optimization_goal", "adset", "optimization_goal"), direct("ad_group.optimization_goal", "adset", "optimization_goal"),
+  direct("ad_group.name", "adset", "name"), direct("ad_group.status", "adset", "status"),
+  direct("ad_group.budget.daily", "adset", "daily_budget"), direct("ad_group.budget.lifetime", "adset", "lifetime_budget"),
+  direct("ad_group.schedule.start_time", "adset", "start_time"), direct("ad_group.schedule.end_time", "adset", "end_time"),
+  direct("ad_group.bid.amount", "adset", "bid_amount"), direct("ad_group.bid.strategy", "adset", "bid_strategy"),
+  direct("ad_group.billing_event", "adset", "billing_event"), direct("ad_group.optimization_goal", "adset", "optimization_goal"),
   direct("ad_set.attribution.*", "adset"), direct("ad_group.attribution.*", "adset"),
   direct("ad_set.targeting.*", "adset"), direct("ad_group.targeting.*", "adset"),
   direct("ad_set.placements.*", "adset"), direct("ad_group.placements.*", "adset"),
   direct("ad_set.promoted_object.*", "adset"), direct("ad_group.promoted_object.*", "adset"),
-  direct("ad.name", "ad", "name"), direct("ad.status", "ad", "status"),
   replacement("ad.copy.*"), replacement("ad.creative.*"),
 ];
 
@@ -282,7 +272,13 @@ function buildCreativeSpec(items: M03ChangeItem[], mapping: Record<string, unkno
 }
 
 function mergeMappings(items: M03ChangeItem[]) { return Object.assign({}, ...items.map((item) => item.platform_resource_mapping ?? {})); }
-function resolveMetaRule(path: string) { const normalized = path.trim().toLowerCase(); return META_RULES.find((rule) => rule.pattern.endsWith(".*") ? normalized === rule.pattern.slice(0, -2) || normalized.startsWith(rule.pattern.slice(0, -1)) : normalized === rule.pattern); }
+function resolveMetaRule(path: string) {
+  const definition = getM03MetaChangeField(path);
+  if (definition) return metaRuleFromDefinition(definition);
+  const normalized = path.trim().toLowerCase();
+  return META_RULES.find((rule) => rule.pattern.endsWith(".*") ? normalized === rule.pattern.slice(0, -2) || normalized.startsWith(rule.pattern.slice(0, -1)) : normalized === rule.pattern);
+}
+function metaRuleFromDefinition(definition: M03MetaChangeField): MetaRule { return { pattern: definition.field_path, mode: definition.mutation_mode, providerResource: definition.provider_resource, providerField: definition.provider_field }; }
 function issue(item: M03ChangeItem, providerField: string | undefined, message: string, correction: string): M03ValidationIssue { return { path: `items.${item.id}.${item.field_path}`, entity_type: item.entity_type, entity_identity: item.entity_identity, provider_field: providerField, severity: "error", message, capability_registry_version: M03_META_CAPABILITY_REGISTRY_VERSION, section: item.field_path.startsWith("ad.creative") || item.field_path.startsWith("ad.copy") ? "Creative replacement" : item.entity_type === "campaign" ? "Campaign" : item.entity_type === "ad" ? "Ad" : "Ad set", suggested_correction: correction }; }
 function direct(pattern: string, providerResource: Exclude<MetaRule["providerResource"], null>, providerField?: string): MetaRule { return { pattern, mode: "direct_update", providerResource, providerField }; }
 function replacement(pattern: string): MetaRule { return { pattern, mode: "creative_replacement", providerResource: "adcreative", note: "Meta creative changes use a paused replacement ad and verified provider-native switch." }; }

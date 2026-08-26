@@ -6,6 +6,7 @@ import type { DateRange } from "react-day-picker";
 
 import { Calendar02 } from "@/components/shadcn-studio/calendar/calendar-02";
 import { Button } from "@/components/ui/button";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
 
 type DatePreset =
@@ -23,10 +24,12 @@ export function ReportHeaderMonthPicker({
   startDate,
   endDate,
   onChange,
+  variant = "header",
 }: {
   startDate: string;
   endDate: string;
   onChange: (next: { startDate: string; endDate: string }) => void;
+  variant?: "header" | "compact";
 }) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const [open, setOpen] = useState(false);
@@ -38,6 +41,7 @@ export function ReportHeaderMonthPicker({
   }));
   const [rangeSelectionStart, setRangeSelectionStart] = useState<Date | null>(null);
   const [preset, setPreset] = useState<DatePreset>("custom");
+  const compact = variant === "compact";
 
   const normalizedCurrent = useMemo(
     () => normalizeDateRange(startDate, endDate),
@@ -54,6 +58,9 @@ export function ReportHeaderMonthPicker({
         return;
       }
       const target = event.target as Node | null;
+      if (target instanceof Element && target.closest('[data-slot="select-content"]')) {
+        return;
+      }
       if (containerRef.current && target && !containerRef.current.contains(target)) {
         setOpen(false);
       }
@@ -157,13 +164,18 @@ export function ReportHeaderMonthPicker({
   return (
     <div
       ref={containerRef}
-      className="relative flex h-auto w-full max-w-full items-center gap-1 rounded-2xl bg-[#d9d9d9] p-1.5 text-[#5f5f5f] shadow-sm sm:h-12 sm:min-w-[340px] sm:w-auto"
+      className={cn(
+        "relative flex max-w-full items-center text-[#5f5f5f]",
+        compact
+          ? "h-9 w-auto min-w-[280px] gap-0.5 rounded-lg border border-slate-200 bg-white p-0.5 shadow-none"
+          : "h-auto w-full gap-1 rounded-2xl bg-[#d9d9d9] p-1.5 shadow-sm sm:h-12 sm:min-w-[340px] sm:w-auto"
+      )}
     >
       <Button
         type="button"
         variant="ghost"
         size="icon-sm"
-        className="h-8 w-8 shrink-0 text-[#6f6f6f]"
+        className={cn("shrink-0 text-[#6f6f6f]", compact ? "h-7 w-7" : "h-8 w-8")}
         onClick={() => shiftRange(-1)}
         aria-label="Previous date range"
         data-report-export-exclude="true"
@@ -174,17 +186,18 @@ export function ReportHeaderMonthPicker({
       <button
         type="button"
         className={cn(
-          "flex min-w-0 flex-1 items-center gap-2 rounded-xl px-2 py-1 text-left",
-          open && "bg-white/70"
+          "flex min-w-0 flex-1 items-center text-left",
+          compact ? "gap-1.5 rounded-md px-1.5 py-0.5" : "gap-2 rounded-xl px-2 py-1",
+          open && (compact ? "bg-slate-50" : "bg-white/70")
         )}
         onClick={togglePicker}
         aria-label="Open date range picker"
         aria-expanded={open}
       >
-        <CalendarDaysIcon className="size-4 text-[#7a7a7a]" />
-        <span className="truncate text-sm font-semibold leading-none text-[#5f5f5f] sm:text-base">{dateLabel}</span>
+        <CalendarDaysIcon className={cn("text-[#7a7a7a]", compact ? "size-3.5" : "size-4")} />
+        <span className={cn("truncate font-semibold leading-none text-[#5f5f5f]", compact ? "text-xs" : "text-sm sm:text-base")}>{dateLabel}</span>
         <ChevronDownIcon
-          className="ml-auto size-4 text-[#7a7a7a]"
+          className={cn("ml-auto text-[#7a7a7a]", compact ? "size-3.5" : "size-4")}
           data-report-export-exclude="true"
         />
       </button>
@@ -193,7 +206,7 @@ export function ReportHeaderMonthPicker({
         type="button"
         variant="ghost"
         size="icon-sm"
-        className="h-8 w-8 shrink-0 text-[#6f6f6f]"
+        className={cn("shrink-0 text-[#6f6f6f]", compact ? "h-7 w-7" : "h-8 w-8")}
         onClick={() => shiftRange(1)}
         aria-label="Next date range"
         data-report-export-exclude="true"
@@ -202,7 +215,13 @@ export function ReportHeaderMonthPicker({
       </Button>
 
       {open ? (
-        <div className="absolute left-0 top-[calc(100%+8px)] z-50 max-h-[min(680px,calc(100vh-6rem))] w-[600px] max-w-[calc(100vw-2rem)] overflow-auto rounded-2xl border bg-white shadow-[0_12px_32px_rgba(0,0,0,0.18)] sm:left-auto sm:right-0">
+        <div
+          className={cn(
+            "absolute top-[calc(100%+8px)] z-50 max-h-[min(680px,calc(100vh-6rem))] max-w-[calc(100vw-2rem)] overflow-auto rounded-2xl border bg-white shadow-[0_12px_32px_rgba(0,0,0,0.18)]",
+            compact ? "w-[520px]" : "w-[600px]",
+            compact ? "-left-[18px]" : "left-0 sm:left-auto sm:right-0"
+          )}
+        >
           <div className="flex items-center justify-between gap-3 border-b p-3">
             <div>
               <p className="text-sm font-semibold text-foreground">Select date range</p>
@@ -210,34 +229,23 @@ export function ReportHeaderMonthPicker({
             </div>
             <label className="flex shrink-0 items-center justify-end">
               <span className="sr-only">Quick date range</span>
-              <select
+              <Select
                 value={preset}
-                onChange={(event) => handlePresetChange(event.target.value as DatePreset)}
-                className="h-9 rounded-md border bg-background px-3 text-sm font-medium text-foreground outline-none ring-offset-background focus:ring-2 focus:ring-ring"
-                aria-label="Quick date range"
+                onValueChange={(value) => handlePresetChange(value as DatePreset)}
               >
-                <option value="custom">
-                  Custom
-                </option>
-                <option value="today">
-                  Today
-                </option>
-                <option value="yesterday">
-                  Yesterday
-                </option>
-                <option value="last7Days">
-                  Last 7 days
-                </option>
-                <option value="last30Days">
-                  Last 30 days
-                </option>
-                <option value="thisMonth">
-                  This month
-                </option>
-                <option value="lastMonth">
-                  Last month
-                </option>
-              </select>
+                <SelectTrigger aria-label="Quick date range" className="w-36 bg-white">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent position="popper" align="end">
+                  <SelectItem value="custom">Custom</SelectItem>
+                  <SelectItem value="today">Today</SelectItem>
+                  <SelectItem value="yesterday">Yesterday</SelectItem>
+                  <SelectItem value="last7Days">Last 7 days</SelectItem>
+                  <SelectItem value="last30Days">Last 30 days</SelectItem>
+                  <SelectItem value="thisMonth">This month</SelectItem>
+                  <SelectItem value="lastMonth">Last month</SelectItem>
+                </SelectContent>
+              </Select>
             </label>
           </div>
 
@@ -247,42 +255,44 @@ export function ReportHeaderMonthPicker({
               defaultMonth={parseIsoDate(draftStartDate)}
               selected={draftRange}
               onDayClick={handleCalendarDayClick}
-              className="mx-auto w-fit"
+              className={cn("mx-auto w-fit", compact && "border-0 shadow-none [&_.rdp-months]:gap-1")}
             />
 
-            <div className="flex items-center justify-center gap-2 text-sm text-muted-foreground">
-              <span>{formatLabelDate(draftStartDate)}</span>
-              <span aria-hidden="true">→</span>
-              <span>{formatLabelDate(draftEndDate)}</span>
-            </div>
+            <div className={cn("gap-3", compact ? "flex items-center justify-between" : "space-y-3")}>
+              <div className={cn("flex items-center gap-2 text-sm text-muted-foreground", !compact && "justify-center")}>
+                <span>{formatLabelDate(draftStartDate)}</span>
+                <span aria-hidden="true">→</span>
+                <span>{formatLabelDate(draftEndDate)}</span>
+              </div>
 
-            <div className="flex flex-col-reverse gap-2 sm:flex-row sm:items-center sm:justify-end">
-              <Button
-                type="button"
-                variant="ghost"
-                className="h-9 w-full px-4 text-[#6f6f6f] sm:w-auto"
-                onClick={() => {
-                  setDraftStartDate(normalizedCurrent.startDate);
-                  setDraftEndDate(normalizedCurrent.endDate);
-                  setDraftRange({
-                    from: parseIsoDate(normalizedCurrent.startDate),
-                    to: parseIsoDate(normalizedCurrent.endDate),
-                  });
-                  setRangeSelectionStart(null);
-                  setPreset("custom");
-                  setOpen(false);
-                }}
-              >
-                Cancel
-              </Button>
-              <Button
-                type="button"
-                className="h-9 w-full px-4 sm:w-auto"
-                onClick={applyDraftRange}
-                disabled={!draftRange.from || !draftRange.to}
-              >
-                Apply
-              </Button>
+              <div className={cn("gap-2", compact ? "flex shrink-0 items-center" : "flex flex-col-reverse sm:flex-row sm:items-center sm:justify-end")}>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  className={cn("h-9 px-4 text-[#6f6f6f]", !compact && "w-full sm:w-auto")}
+                  onClick={() => {
+                    setDraftStartDate(normalizedCurrent.startDate);
+                    setDraftEndDate(normalizedCurrent.endDate);
+                    setDraftRange({
+                      from: parseIsoDate(normalizedCurrent.startDate),
+                      to: parseIsoDate(normalizedCurrent.endDate),
+                    });
+                    setRangeSelectionStart(null);
+                    setPreset("custom");
+                    setOpen(false);
+                  }}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  type="button"
+                  className={cn("h-9 px-4", !compact && "w-full sm:w-auto")}
+                  onClick={applyDraftRange}
+                  disabled={!draftRange.from || !draftRange.to}
+                >
+                  Apply
+                </Button>
+              </div>
             </div>
           </div>
         </div>

@@ -41,11 +41,13 @@ interface ReportShellProps {
   title: string;
   dateLabel: string;
   headerDateControl?: React.ReactNode;
+  hideHeaderDateControl?: boolean;
   headerControlLayout?: "default" | "wide";
   headerBottomControl?: React.ReactNode;
   activeQuery?: string;
   reportReady?: boolean;
   suppressExportHeader?: boolean;
+  compactResponsive?: boolean;
   initialRole?: AuthRole;
   children: React.ReactNode;
 }
@@ -58,11 +60,13 @@ export function ReportShell({
   title,
   dateLabel,
   headerDateControl,
+  hideHeaderDateControl = false,
   headerControlLayout = "default",
   headerBottomControl,
   activeQuery = "",
   reportReady = false,
   suppressExportHeader = false,
+  compactResponsive = false,
   initialRole,
   children,
 }: ReportShellProps) {
@@ -89,6 +93,7 @@ export function ReportShell({
     billing: "/billing",
     googleOptimization: "/google-optimization",
     googleManagement: "/manage/google",
+    metaManagement: "/manage/meta",
     userManagement: "/user-management",
     optimizationScheduling: "/optimization-scheduling",
     campaigns: "/campaigns",
@@ -114,8 +119,9 @@ export function ReportShell({
       ],
     },
     {
-      label: "Google",
+      label: "Ad Management",
       items: [
+        { href: hrefs.metaManagement, label: "Meta Ads Management", active: pathname.startsWith("/manage/meta"), icon: MegaphoneIcon },
         { href: hrefs.googleManagement, label: "Google Ads Management", active: pathname.startsWith("/manage/google"), icon: SlidersHorizontalIcon },
         ...(isAdmin
           ? [
@@ -157,16 +163,18 @@ export function ReportShell({
         ) : null}
 
         <section
-          className={`${screenshotMode ? "hidden " : ""}relative overflow-visible rounded-[2rem] bg-[url('/headerbackground.png')] bg-cover bg-center bg-no-repeat shadow-sm md:bg-[length:100%_100%]`}
+          className={`${screenshotMode ? "hidden " : ""}relative overflow-visible ${compactResponsive ? "rounded-3xl" : "rounded-[2rem]"} bg-[url('/headerbackground.png')] bg-cover bg-center bg-no-repeat shadow-sm md:bg-[length:100%_100%]`}
           data-report-export-header-panel="true"
         >
           <div
-            className={`${REPORT_INNER_CONTAINER_CLASS} py-5 sm:py-6`}
+            className={`${REPORT_INNER_CONTAINER_CLASS} ${compactResponsive ? "py-4 sm:py-5" : "py-5 sm:py-6"}`}
             data-report-export-header-inner="true"
           >
             <div
               className={
-                headerControlLayout === "wide"
+                compactResponsive
+                  ? "grid gap-3 text-white lg:grid-cols-[minmax(0,1fr)_auto] lg:items-start lg:gap-x-6"
+                  : headerControlLayout === "wide"
                   ? "grid gap-5 text-white lg:grid-cols-[minmax(430px,0.8fr)_minmax(0,1.2fr)] lg:items-start lg:gap-x-8"
                   : "grid gap-4 text-white md:grid-cols-[minmax(0,1fr)_auto] md:items-start md:gap-x-8"
               }
@@ -174,16 +182,22 @@ export function ReportShell({
             >
               <div className="min-w-0 space-y-3">
                 <h1
-                  className={`${headerControlLayout === "wide" ? "lg:text-4xl lg:[overflow-wrap:normal]" : "md:text-6xl"} break-words text-3xl font-semibold leading-tight tracking-tight [overflow-wrap:anywhere] sm:text-4xl`}
+                  className={
+                    compactResponsive
+                      ? "break-words text-[clamp(1.9rem,5vw,3.25rem)] font-semibold leading-[1.08] tracking-tight [overflow-wrap:normal]"
+                      : `${headerControlLayout === "wide" ? "lg:text-4xl lg:[overflow-wrap:normal]" : "md:text-6xl"} break-words text-3xl font-semibold leading-tight tracking-tight [overflow-wrap:anywhere] sm:text-4xl`
+                  }
                   data-report-export-title="true"
                 >
                   {title}
                 </h1>
               </div>
-              {headerDateControl ? (
+              {hideHeaderDateControl ? null : headerDateControl ? (
                 <div
                   className={
-                    headerControlLayout === "wide"
+                    compactResponsive
+                      ? "flex w-full max-w-[420px] items-start lg:w-auto lg:justify-self-end"
+                      : headerControlLayout === "wide"
                       ? "flex w-full items-start lg:w-full lg:max-w-[920px] lg:justify-self-end"
                       : "flex w-full items-start md:w-auto md:max-w-[420px] md:justify-self-end"
                   }
@@ -201,32 +215,32 @@ export function ReportShell({
               )}
             </div>
             <nav
-              className="mt-4 flex w-full flex-wrap items-center justify-start gap-2"
+              className={`${compactResponsive ? "mt-3 gap-1.5" : "mt-4 gap-2"} flex w-full flex-wrap items-center justify-start`}
               data-report-export-exclude="true"
               aria-label="Report navigation"
             >
               <Link
                 href={hrefs.home}
                 aria-current={pathname === "/" ? "page" : undefined}
-                className={`inline-flex min-h-11 items-center gap-2 rounded-lg px-4 text-sm font-semibold outline-none transition focus-visible:ring-2 focus-visible:ring-white/90 focus-visible:ring-offset-2 focus-visible:ring-offset-red-900 ${
+                className={`inline-flex items-center rounded-lg font-semibold outline-none transition focus-visible:ring-2 focus-visible:ring-white/90 focus-visible:ring-offset-2 focus-visible:ring-offset-red-900 ${compactResponsive ? "min-h-9 gap-1.5 px-3 text-xs sm:min-h-10 sm:text-sm" : "min-h-11 gap-2 px-4 text-sm"} ${
                   pathname === "/"
                     ? "bg-white text-[#9f0712] shadow-md"
                     : "bg-white/10 text-white hover:bg-white/20"
                 }`}
               >
-                <HouseIcon className="size-5" />
+                <HouseIcon className={compactResponsive ? "size-4" : "size-5"} />
                 <span>Home</span>
               </Link>
 
               <DropdownMenu>
                 <DropdownMenuTrigger
-                  className={`group relative inline-flex min-h-11 items-center gap-2 rounded-lg px-4 text-sm font-semibold outline-none transition focus-visible:ring-2 focus-visible:ring-white/90 focus-visible:ring-offset-2 focus-visible:ring-offset-red-900 data-[state=open]:z-[60] data-[state=open]:rounded-b-none data-[state=open]:border data-[state=open]:border-b-0 data-[state=open]:border-[#e6d7d9] data-[state=open]:bg-white data-[state=open]:text-[#9f0712] data-[state=open]:shadow-none ${
+                  className={`group relative inline-flex items-center rounded-lg font-semibold outline-none transition focus-visible:ring-2 focus-visible:ring-white/90 focus-visible:ring-offset-2 focus-visible:ring-offset-red-900 data-[state=open]:z-[60] data-[state=open]:rounded-b-none data-[state=open]:border data-[state=open]:border-b-0 data-[state=open]:border-[#e6d7d9] data-[state=open]:bg-white data-[state=open]:text-[#9f0712] data-[state=open]:shadow-none ${compactResponsive ? "min-h-9 gap-1.5 px-3 text-xs sm:min-h-10 sm:text-sm" : "min-h-11 gap-2 px-4 text-sm"} ${
                     navigationIsActive
                       ? "bg-white text-[#9f0712] shadow-md"
                       : "bg-white/10 text-white hover:bg-white/20"
                   }`}
                 >
-                  <MenuIcon className="size-5" />
+                  <MenuIcon className={compactResponsive ? "size-4" : "size-5"} />
                   <span>Navigation</span>
                   <ChevronDownIcon className="size-4 opacity-75 transition-transform group-data-[state=open]:rotate-180" />
                 </DropdownMenuTrigger>
@@ -261,7 +275,7 @@ export function ReportShell({
                 </DropdownMenuContent>
               </DropdownMenu>
 
-              <ReportLogoutButton />
+              <ReportLogoutButton compact={compactResponsive} />
             </nav>
             {headerBottomControl ? (
               <div className="mt-4" data-report-export-exclude="true">
@@ -271,7 +285,7 @@ export function ReportShell({
           </div>
         </section>
 
-        <section className={screenshotMode ? "py-5 sm:py-6 lg:py-8" : "flex-1 py-5 sm:py-6 lg:py-8"}>
+        <section className={screenshotMode ? "py-5 sm:py-6 lg:py-8" : `flex-1 ${compactResponsive ? "py-3 sm:py-4 lg:py-6" : "py-5 sm:py-6 lg:py-8"}`}>
           <div className={REPORT_INNER_CONTAINER_CLASS}>{children}</div>
         </section>
 
@@ -325,14 +339,14 @@ function ReportMenuItem({ href, label, active, icon: Icon }: ReportNavigationIte
   );
 }
 
-function ReportLogoutButton() {
+function ReportLogoutButton({ compact = false }: { compact?: boolean }) {
   return (
     <form action="/api/auth/logout" method="post">
       <button
         type="submit"
-        className="inline-flex min-h-11 items-center gap-2 rounded-lg bg-white/10 px-4 text-sm font-semibold text-white outline-none transition hover:bg-white/20 focus-visible:ring-2 focus-visible:ring-white/90 focus-visible:ring-offset-2 focus-visible:ring-offset-red-900"
+        className={`inline-flex items-center rounded-lg bg-white/10 font-semibold text-white outline-none transition hover:bg-white/20 focus-visible:ring-2 focus-visible:ring-white/90 focus-visible:ring-offset-2 focus-visible:ring-offset-red-900 ${compact ? "min-h-9 gap-1.5 px-3 text-xs sm:min-h-10 sm:text-sm" : "min-h-11 gap-2 px-4 text-sm"}`}
       >
-        <LogOutIcon className="size-5" />
+        <LogOutIcon className={compact ? "size-4" : "size-5"} />
         <span>Logout</span>
       </button>
     </form>

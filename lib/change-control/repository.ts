@@ -1,6 +1,6 @@
 import type {
   M03Approval, M03AuditEvent, M03ChangeItem, M03ChangeRequestDetail, M03ChangeRequestSummary,
-  M03MockChangeRequestEditInput, M03MockChangeRequestInput, M03Platform, M03RequestListPayload,
+  M03MockChangeRequestEditInput, M03MockChangeRequestInput, M03Platform, M03RequestListFilters, M03RequestListPayload,
   M03Revision, M03Status, M03ValidationRecord, M03ProviderBaselineSnapshot, M03ProviderResourceMapping,
   M03ItemAttempt, M03SourceVerification, TrustedRequestContext, WorkflowSetting,
   M03ProviderOperationResource, M03ProviderOperationResourceRole, M03ProviderOperationResourceState,
@@ -14,15 +14,32 @@ export class M03RepositoryError extends Error {
   constructor(message: string, public readonly status = 400) { super(message); this.name = "M03RepositoryError"; }
 }
 
-export async function listMockChangeRequests(filters: { platform?: M03Platform; status?: M03Status; page: number }): Promise<M03RequestListPayload> {
-  const rows = await request<JsonObject[]>("m03_ads_change_requests?select=*&order=updated_at.desc", { method: "GET" });
-  const mapped = rows.map(mapSummary);
-  const filtered = mapped.filter((row) => (!filters.platform || row.platform === filters.platform) && (!filters.status || row.status === filters.status));
-  const totalPages = Math.max(1, Math.ceil(filtered.length / 10));
-  const page = Math.min(filters.page, totalPages);
-  const summary = Object.fromEntries(["all", ...M03_STATUS_VALUES].map((status) => [status, status === "all" ? mapped.length : mapped.filter((row) => row.status === status).length])) as M03RequestListPayload["summary"];
-  return { requests: filtered.slice((page - 1) * 10, page * 10), summary, pagination: { page, page_size: 10, total: filtered.length, total_pages: totalPages }, provider_execution_locked: true };
+export async function listMockChangeRequests(filters: M03RequestListFilters): Promise<M03RequestListPayload> {
+  const scope = m03RequestListScope(filters);
+  const selectedStatus = filters.status ? `&status=eq.${encodeM03RestValue(filters.status)}` : "";
+  const pageSize = filters.page_size;
+  const offset = (filters.page - 1) * pageSize;
+  const [summaryRows, matchingRows, pageRows] = await Promise.all([
+    request<JsonObject[]>(`m03_ads_change_requests?select=status${scope}`, { method: "GET" }),
+    request<JsonObject[]>(`m03_ads_change_requests?select=id${scope}${selectedStatus}`, { method: "GET" }),
+    request<JsonObject[]>(`m03_ads_change_requests?select=*${scope}${selectedStatus}&order=updated_at.desc&limit=${pageSize}&offset=${offset}`, { method: "GET" }),
+  ]);
+  const total = matchingRows.length;
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
+  const summary = Object.fromEntries(["all", ...M03_STATUS_VALUES].map((status) => [status, status === "all" ? summaryRows.length : summaryRows.filter((row) => stringValue(row, "status") === status).length])) as M03RequestListPayload["summary"];
+  return { requests: pageRows.map(mapSummary), summary, pagination: { page: filters.page, page_size: pageSize, total, total_pages: totalPages }, provider_execution_locked: true };
 }
+
+function m03RequestListScope(filters: M03RequestListFilters) {
+  const values = [
+    ["platform", filters.platform],
+    ["account_identity", filters.account_identity],
+    ["campaign_identity", filters.campaign_identity],
+  ] as const;
+  return values.flatMap(([key, value]) => value ? [`${key}=eq.${encodeM03RestValue(value)}`] : []).join("&").replace(/^/, "&");
+}
+
+function encodeM03RestValue(value: string) { return encodeURIComponent(value); }
 
 export async function getMockChangeRequest(id: string): Promise<M03ChangeRequestDetail> {
   const encoded = encodeURIComponent(id);
@@ -92,21 +109,22 @@ export async function cancelMockChangeRequest(id: string, key: string, comment: 
 }
 
 export async function getWorkflowSettings(): Promise<WorkflowSettingsPayload> {
-  const [m03Domains, m03Networks, m04Domains, m04Networks] = await Promise.all([
+  const [m03Domains, m04Domains, m04Networks] = await Promise.all([
     request<JsonObject[]>("m03_ads_approved_domains?select=*&order=domain.asc", { method: "GET" }),
-    request<JsonObject[]>("m03_ads_trusted_networks?select=*&order=network.asc", { method: "GET" }),
     request<JsonObject[]>("m04_ads_approved_domains?select=*&order=client_id.asc,domain.asc", { method: "GET" }),
     request<JsonObject[]>("m04_ads_trusted_networks?select=*&order=network.asc", { method: "GET" }),
   ]);
   return {
     m03_operator_domains: m03Domains.map((row) => mapSetting("m03", "operator_domain", row)),
-    m03_trusted_networks: m03Networks.map((row) => mapSetting("m03", "trusted_network", row)),
     m04_destination_domains: m04Domains.map((row) => mapSetting("m04", "destination_domain", row)),
     m04_trusted_networks: m04Networks.map((row) => mapSetting("m04", "trusted_network", row)),
   };
 }
 
 export async function updateWorkflowSetting(input: WorkflowSettingMutation, context: TrustedRequestContext): Promise<JsonObject> {
+  if (input.module === "m03" && input.kind === "trusted_network") {
+    throw new M03RepositoryError("M03 trusted-network controls are reserved for a future provider-publishing phase.", 400);
+  }
   return rpc(`${input.module}_ads_set_workflow_setting_v1`, {
     p_kind: input.kind, p_value: input.kind === "trusted_network" ? input.value : input.value.toLowerCase(),
     p_label: input.label ?? null, p_client_id: input.client_id ?? null, p_is_active: input.is_active,

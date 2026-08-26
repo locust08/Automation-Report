@@ -3,12 +3,13 @@ import { getServerAuthSession } from "@/lib/auth/server-session";
 import { assertM03Operator, editMockChangeRequest, getMockChangeRequest, M03RepositoryError } from "@/lib/change-control/repository";
 import { m03MockChangeRequestEditSchema } from "@/lib/change-control/schema";
 import { buildTrustedRequestContext, M03AccessError } from "@/lib/change-control/request-context";
+import { sanitizeM03ChangeRequestDetailForBrowser } from "@/lib/change-control/detail-response";
 
 export const dynamic = "force-dynamic";
 export async function GET(request: Request, { params }: { params: Promise<{ id: string }> }) {
   const session = await getServerAuthSession();
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  try { const context = buildTrustedRequestContext(request, session); await assertM03Operator(context); return NextResponse.json(await getMockChangeRequest((await params).id)); }
+  try { const context = buildTrustedRequestContext(request, session); await assertM03Operator(context); return NextResponse.json(sanitizeM03ChangeRequestDetailForBrowser(await getMockChangeRequest((await params).id))); }
   catch (error) { return failure(error); }
 }
 

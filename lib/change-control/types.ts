@@ -163,8 +163,17 @@ export type M03ChangeRequestDetail = {
 export type M03RequestListPayload = {
   requests: M03ChangeRequestSummary[];
   summary: Record<M03Status | "all", number>;
-  pagination: { page: number; page_size: 10; total: number; total_pages: number };
+  pagination: { page: number; page_size: 10 | 25 | 50; total: number; total_pages: number };
   provider_execution_locked: true;
+};
+
+export type M03RequestListFilters = {
+  platform?: M03Platform;
+  status?: M03Status;
+  account_identity?: string;
+  campaign_identity?: string;
+  page: number;
+  page_size: 10 | 25 | 50;
 };
 
 export type WorkflowSettingModule = "m03" | "m04";
@@ -175,7 +184,7 @@ export type WorkflowSetting = {
   updated_at: string | null;
 };
 export type WorkflowSettingsPayload = {
-  m03_operator_domains: WorkflowSetting[]; m03_trusted_networks: WorkflowSetting[];
+  m03_operator_domains: WorkflowSetting[];
   m04_destination_domains: WorkflowSetting[]; m04_trusted_networks: WorkflowSetting[];
 };
 export type WorkflowSettingMutation = {

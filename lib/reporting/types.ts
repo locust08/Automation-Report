@@ -453,6 +453,9 @@ export interface PreviewCreativeAsset {
   instagramPermalinkUrl?: string | null;
   effectiveInstagramMediaId?: string | null;
   facebookPermalinkUrl?: string | null;
+  pageId?: string | null;
+  instagramActorId?: string | null;
+  imageHash?: string | null;
 }
 
 export interface PreviewLinkAsset {
@@ -501,6 +504,7 @@ export interface PreviewAdNode {
   businessLogoUrl?: string | null;
   sitelinks?: PreviewSitelinkAsset[];
   tiktokDetail?: TikTokSelectedAdDetail | null;
+  managementFields?: Record<string, unknown>;
 }
 
 export interface PreviewAdGroupNode {
@@ -512,6 +516,7 @@ export interface PreviewAdGroupNode {
   demographics?: PreviewDemographicRow[];
   platformDistribution?: PreviewPlatformDistributionRow[];
   ads: PreviewAdNode[];
+  managementFields?: Record<string, unknown>;
 }
 
 export interface PreviewCampaignNode {
@@ -525,6 +530,7 @@ export interface PreviewCampaignNode {
   demographics?: PreviewDemographicRow[];
   platformDistribution?: PreviewPlatformDistributionRow[];
   children: PreviewAdGroupNode[];
+  managementFields?: Record<string, unknown>;
 }
 
 export interface PreviewPlatformSection {

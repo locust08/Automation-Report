@@ -41,7 +41,10 @@ export const m03ProviderActionSchema = z.object({
 });
 export const m03ListQuerySchema = z.object({
   platform: z.enum(M03_PLATFORMS).optional(), status: z.enum(M03_STATUSES).optional(),
-  page: z.coerce.number().int().positive().default(1),
+  account_identity: z.string().trim().min(1).max(500).optional(),
+  campaign_identity: z.string().trim().min(1).max(500).optional(),
+  page: z.coerce.number().int().positive(),
+  page_size: z.coerce.number().pipe(z.union([z.literal(10), z.literal(25), z.literal(50)])).default(10),
 });
 
 const domainPattern = /^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/;
@@ -54,6 +57,7 @@ export const workflowSettingMutationSchema = z.object({
 }).superRefine((value, context) => {
   if (value.kind === "operator_domain" && value.module !== "m03") context.addIssue({ code: "custom", path: ["kind"], message: "Operator domains belong to M03." });
   if (value.kind === "destination_domain" && (value.module !== "m04" || !value.client_id)) context.addIssue({ code: "custom", path: ["client_id"], message: "M04 destination domains require a client." });
+  if (value.kind === "trusted_network" && value.module === "m03") context.addIssue({ code: "custom", path: ["kind"], message: "M03 trusted-network controls are planned, not active." });
   if (value.kind !== "trusted_network" && !domainPattern.test(value.value.toLowerCase())) context.addIssue({ code: "custom", path: ["value"], message: "Enter a valid domain." });
   if (value.kind === "trusted_network" && !cidrPattern.test(value.value)) context.addIssue({ code: "custom", path: ["value"], message: "Enter a valid IPv4 or IPv6 CIDR network." });
 });
