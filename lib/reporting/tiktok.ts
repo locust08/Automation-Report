@@ -9,8 +9,9 @@ import {
   type TikTokInsightsPayload,
   type TikTokPublicPostMedia,
 } from "@/lib/reporting/tiktok-insights";
-import type { PreviewAdNode, PreviewCampaignNode, PreviewPerformanceSummary } from "@/lib/reporting/types";
+import type { PreviewAdNode, PreviewCampaignNode, PreviewManagementPerformancePoint, PreviewPerformanceSummary } from "@/lib/reporting/types";
 import { normalizeTikTokSelectedAdReport } from "@/lib/reporting/tiktok-selected-ad";
+import { getTikTokManagementStagePlan, type TikTokManagementStage } from "@/lib/reporting/tiktok-management-stage";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -25,6 +26,7 @@ export interface NormalizedTikTokReportRow {
   name: string;
   impressions: number;
   clicks: number;
+  engagements: number;
   spend: number;
   reach: number;
   conversions: number;
@@ -72,6 +74,14 @@ function finiteMetric(row: JsonRecord, name: string): number {
   return value;
 }
 
+function optionalFiniteMetric(row: JsonRecord, name: string): number | null {
+  const raw = record(row.metrics)[name] ?? row[name];
+  if (raw === undefined || raw === null || raw === "") return null;
+  const value = Number(raw);
+  if (!Number.isFinite(value)) throw new Error(`TikTok report metric is invalid: ${name}`);
+  return value;
+}
+
 function dimension(row: JsonRecord, name: string): string {
   return String(record(row.dimensions)[name] ?? row[name] ?? "").trim();
 }
@@ -94,12 +104,15 @@ export function normalizeTikTokReportRows(
       name: names.get(id) ?? id,
       impressions: 0,
       clicks: 0,
+      engagements: 0,
       spend: 0,
       reach: 0,
       conversions: 0,
     };
+    const clicks = finiteMetric(row, "clicks");
     current.impressions += finiteMetric(row, "impressions");
-    current.clicks += finiteMetric(row, "clicks");
+    current.clicks += clicks;
+    current.engagements += optionalFiniteMetric(row, "engagements") ?? clicks;
     current.spend += finiteMetric(row, "spend");
     current.reach += finiteMetric(row, "reach");
     current.conversions += finiteMetric(row, "result");
@@ -136,7 +149,7 @@ export async function fetchTikTokReportLevel(
         report_type: "BASIC",
         data_level: config.dataLevel,
         dimensions: input.dimensions ?? [config.dimension],
-        metrics: input.metrics ?? ["spend", "impressions", "clicks", "result", "reach"],
+        metrics: input.metrics ?? ["spend", "impressions", "clicks", "engagements", "result", "reach"],
         filtering: input.filtering,
         start_date: window.startDate,
         end_date: window.endDate,
@@ -197,6 +210,74 @@ function objectiveResultLabel(value: unknown): string {
   return "Results";
 }
 
+export type TikTokPreviewStage = TikTokManagementStage | "full";
+
+export function normalizeTikTokDailyPerformance(
+  rows: JsonRecord[],
+  idDimension: string,
+  objectiveByResource: ReadonlyMap<string, string> = new Map(),
+): Map<string, PreviewManagementPerformancePoint[]> {
+  const totals = new Map<string, Map<string, PreviewManagementPerformancePoint>>();
+  for (const row of rows) {
+    const id = dimension(row, idDimension);
+    const date = dimension(row, "stat_time_day").slice(0, 10);
+    if (!id || !/^\d{4}-\d{2}-\d{2}$/.test(date)) continue;
+    const resultLabel = objectiveResultLabel(objectiveByResource.get(id));
+    const resultMetric = resultLabel === "Reach" ? "reach" : "result";
+    const byDate = totals.get(id) ?? new Map<string, PreviewManagementPerformancePoint>();
+    const current = byDate.get(date) ?? { date, spend: 0, results: 0, clicks: 0, engagements: 0, resultLabel };
+    const clicks = finiteMetric(row, "clicks");
+    current.spend += finiteMetric(row, "spend");
+    current.results += finiteMetric(row, resultMetric);
+    current.clicks += clicks;
+    current.engagements = (current.engagements ?? 0) + (optionalFiniteMetric(row, "engagements") ?? clicks);
+    byDate.set(date, current);
+    totals.set(id, byDate);
+  }
+  return new Map(Array.from(totals, ([id, byDate]) => [id, Array.from(byDate.values()).sort((a, b) => a.date.localeCompare(b.date))]));
+}
+
+export function rollupTikTokDailyPerformance(
+  childPoints: ReadonlyMap<string, PreviewManagementPerformancePoint[]>,
+  parentByChild: ReadonlyMap<string, string>,
+): Map<string, PreviewManagementPerformancePoint[]> {
+  const totals = new Map<string, Map<string, PreviewManagementPerformancePoint>>();
+  for (const [childId, points] of childPoints) {
+    const parentId = parentByChild.get(childId);
+    if (!parentId) continue;
+    const byDate = totals.get(parentId) ?? new Map<string, PreviewManagementPerformancePoint>();
+    for (const point of points) {
+      const current = byDate.get(point.date) ?? { ...point, spend: 0, results: 0, clicks: 0, engagements: 0 };
+      current.spend += point.spend;
+      current.results += point.results;
+      current.clicks += point.clicks;
+      current.engagements = (current.engagements ?? 0) + (point.engagements ?? point.clicks);
+      if (current.resultLabel !== point.resultLabel) current.resultLabel = "Results";
+      byDate.set(point.date, current);
+    }
+    totals.set(parentId, byDate);
+  }
+  return new Map(Array.from(totals, ([id, byDate]) => [id, Array.from(byDate.values()).sort((a, b) => a.date.localeCompare(b.date))]));
+}
+
+export function reconcileTikTokManagementMetrics(
+  baseMetrics: ReadonlyMap<string, NormalizedTikTokReportRow>,
+  dailyPerformance: ReadonlyMap<string, PreviewManagementPerformancePoint[]>,
+): Map<string, NormalizedTikTokReportRow> {
+  return new Map(Array.from(baseMetrics, ([id, metrics]) => {
+    const points = dailyPerformance.get(id) ?? [];
+    const results = points.reduce((sum, point) => sum + point.results, 0);
+    if (results <= 0) return [id, metrics];
+    const labels = new Set(points.map((point) => point.resultLabel));
+    return [id, {
+      ...metrics,
+      conversions: results,
+      costPerResult: divide(metrics.spend, results),
+      resultLabel: labels.size === 1 ? points[0]?.resultLabel ?? "Results" : "Results",
+    }];
+  }));
+}
+
 export function resolveTikTokCampaignResultRows(input: {
   campaignRows: NormalizedTikTokReportRow[];
   campaignObjects: JsonRecord[];
@@ -253,6 +334,7 @@ function previewPerformance(row: NormalizedTikTokReportRow | undefined): Preview
     spend: row.spend,
     impressions: row.impressions,
     clicks: row.clicks,
+    engagements: row.engagements,
     ctr: row.ctr,
     cpc: row.clicks > 0 ? row.cpc : null,
     cpm: row.impressions > 0 ? row.cpm : null,
@@ -267,8 +349,14 @@ export async function fetchTikTokPreviewHierarchy(input: {
   startDate: string;
   endDate: string;
   selectedAdId?: string | null;
+  stage?: TikTokPreviewStage;
+  campaignId?: string | null;
+  adGroupId?: string | null;
 }): Promise<{ account: TikTokAccountMetadata; campaigns: PreviewCampaignNode[] }> {
   const { client, advertiser } = await validateTikTokAdvertiser(input.advertiserId);
+  if (input.stage && input.stage !== "full") {
+    return fetchTikTokStagedPreviewHierarchy(client, advertiser, input);
+  }
   const campaigns = await fetchAllObjects(client, input.advertiserId, "campaign.list");
   const adGroups = await fetchAllObjects(client, input.advertiserId, "adgroup.list");
   const ads = await fetchAllObjects(client, input.advertiserId, "ad.list");
@@ -408,6 +496,152 @@ export async function fetchTikTokPreviewHierarchy(input: {
       requestProvenance: "tiktok_api_v1.3",
     },
   };
+}
+
+async function fetchTikTokStagedPreviewHierarchy(
+  client: TikTokReportingClient,
+  advertiser: TikTokLiveAdvertiserInfo,
+  input: {
+    advertiserId: string;
+    startDate: string;
+    endDate: string;
+    selectedAdId?: string | null;
+    stage?: TikTokPreviewStage;
+    campaignId?: string | null;
+    adGroupId?: string | null;
+  },
+): Promise<{ account: TikTokAccountMetadata; campaigns: PreviewCampaignNode[] }> {
+  const stage = input.stage ?? "campaigns";
+  const plan = getTikTokManagementStagePlan(stage as TikTokManagementStage);
+  const needsAdGroups = plan.objectActions.includes("adgroup.list" as never);
+  const needsAds = plan.objectActions.includes("ad.list" as never);
+  const campaigns = await fetchAllObjects(client, input.advertiserId, "campaign.list");
+  const adGroups = needsAdGroups ? await fetchAllObjects(client, input.advertiserId, "adgroup.list") : [];
+  const ads = needsAds ? await fetchAllObjects(client, input.advertiserId, "ad.list") : [];
+  const level: TikTokReportLevel = plan.reportLevel;
+  const idDimension = LEVEL_CONFIG[level].dimension;
+  const report = await fetchTikTokReportLevel(client, {
+    ...input,
+    level,
+    dimensions: [idDimension, "stat_time_day"],
+  });
+  const objects = level === "campaign" ? campaigns : level === "adgroup" ? adGroups : ads;
+  const objectiveByResource = new Map(objects.map((item) => [
+    String(item[idDimension] ?? "").trim(),
+    String(level === "campaign" ? item.objective_type ?? "" : level === "adgroup" ? item.optimization_goal ?? "" : ""),
+  ]));
+  const ownDaily = normalizeTikTokDailyPerformance(report.rows, idDimension, objectiveByResource);
+  const adGroupParent = new Map(adGroups.map((item) => [String(item.adgroup_id ?? ""), String(item.campaign_id ?? "")]));
+  const adParent = new Map(ads.map((item) => [String(item.ad_id ?? ""), String(item.adgroup_id ?? "")]));
+  const adGroupDaily = level === "ad" ? rollupTikTokDailyPerformance(ownDaily, adParent) : level === "adgroup" ? ownDaily : new Map();
+  const campaignDaily = level === "campaign" ? ownDaily : rollupTikTokDailyPerformance(adGroupDaily, adGroupParent);
+  const ownMetrics = new Map(normalizeTikTokReportRows(report.rows, idDimension).map((row) => [row.id, row]));
+  const reconciledOwnMetrics = reconcileTikTokManagementMetrics(ownMetrics, ownDaily);
+  const adGroupMetrics = level === "adgroup" ? reconciledOwnMetrics : summarizeTikTokDaily(adGroupDaily);
+  const campaignMetrics = level === "campaign" ? reconciledOwnMetrics : summarizeTikTokDaily(campaignDaily);
+  const adMetrics = level === "ad" ? reconciledOwnMetrics : new Map<string, NormalizedTikTokReportRow>();
+  const selectedAd = stage === "assets" && input.selectedAdId
+    ? ads.find((item) => String(item.ad_id ?? "") === input.selectedAdId) ?? null
+    : null;
+  const selectedItemId = String(selectedAd?.tiktok_item_id ?? "").trim();
+  const selectedMedia = selectedItemId ? await fetchPublicTikTokPostMedia(selectedItemId) : null;
+
+  const nodes = campaigns.flatMap((campaign): PreviewCampaignNode[] => {
+    const campaignId = String(campaign.campaign_id ?? "").trim();
+    if (!campaignId || (input.campaignId && input.campaignId !== campaignId)) return [];
+    return [{
+      id: campaignId,
+      name: String(campaign.campaign_name ?? campaignId),
+      status: String(campaign.operation_status ?? campaign.secondary_status ?? "UNKNOWN"),
+      type: "TikTok Auction",
+      objective: String(campaign.objective_type ?? ""),
+      details: tikTokDetails(campaign, ["objective_type", "budget_mode", "budget", "secondary_status"]),
+      performance: previewPerformance(campaignMetrics.get(campaignId)),
+      dailyPerformance: campaignDaily.get(campaignId) ?? [],
+      managementFields: tikTokCampaignManagementFields(campaign),
+      children: adGroups.flatMap((adGroup) => {
+        if (String(adGroup.campaign_id ?? "") !== campaignId) return [];
+        const adGroupId = String(adGroup.adgroup_id ?? "").trim();
+        if (!adGroupId || (input.adGroupId && input.adGroupId !== adGroupId)) return [];
+        return [{
+          id: adGroupId,
+          name: String(adGroup.adgroup_name ?? adGroupId),
+          status: String(adGroup.operation_status ?? adGroup.secondary_status ?? "UNKNOWN"),
+          details: tikTokDetails(adGroup, ["optimization_goal", "budget", "bid_type", "bid_price", "schedule_start_time", "schedule_end_time", "placement_type", "secondary_status"]),
+          performance: previewPerformance(adGroupMetrics.get(adGroupId)),
+          dailyPerformance: adGroupDaily.get(adGroupId) ?? [],
+          managementFields: tikTokAdGroupManagementFields(adGroup),
+          ads: ads.flatMap((ad) => {
+            if (String(ad.adgroup_id ?? "") !== adGroupId) return [];
+            const adId = String(ad.ad_id ?? "").trim();
+            if (!adId || (stage === "assets" && input.selectedAdId && input.selectedAdId !== adId)) return [];
+            return [{
+              id: adId,
+              name: String(ad.ad_name ?? adId),
+              status: String(ad.operation_status ?? ad.secondary_status ?? "UNKNOWN"),
+              details: tikTokDetails(ad, ["creative_type", "ad_format", "ad_text", "call_to_action", "landing_page_url", "secondary_status"]),
+              performance: previewPerformance(adMetrics.get(adId)),
+              dailyPerformance: ownDaily.get(adId) ?? [],
+              managementFields: tikTokAdManagementFields(ad),
+              ...buildTikTokPreviewMediaFields(ad, adId === input.selectedAdId ? selectedMedia : null),
+            }];
+          }),
+        }];
+      }),
+    }];
+  });
+
+  return {
+    campaigns: nodes,
+    account: {
+      advertiserId: advertiser.advertiser_id,
+      advertiserName: advertiser.advertiser_name,
+      currency: advertiser.currency,
+      timezone: advertiser.timezone,
+      connectionState: "connected",
+      apiVersion: TIKTOK_ADS_API_VERSION,
+      providerRequestIds: report.requestIds,
+      requestProvenance: "tiktok_api_v1.3",
+    },
+  };
+}
+
+function summarizeTikTokDaily(points: ReadonlyMap<string, PreviewManagementPerformancePoint[]>) {
+  return new Map(Array.from(points, ([id, rows]) => {
+    const total = rows.reduce((sum, row) => ({ spend: sum.spend + row.spend, clicks: sum.clicks + row.clicks, engagements: sum.engagements + (row.engagements ?? row.clicks), results: sum.results + row.results }), { spend: 0, clicks: 0, engagements: 0, results: 0 });
+    return [id, { id, name: id, impressions: 0, clicks: total.clicks, engagements: total.engagements, spend: total.spend, reach: 0, conversions: total.results, ctr: 0, cpc: divide(total.spend, total.clicks), cpm: 0, costPerResult: divide(total.spend, total.results), resultLabel: rows[0]?.resultLabel ?? "Results" } satisfies NormalizedTikTokReportRow];
+  }));
+}
+
+function tikTokDetails(source: JsonRecord, keys: string[]) {
+  return keys.filter((key) => source[key] !== undefined && source[key] !== null && source[key] !== "").map((key) => ({ label: key.replaceAll("_", " ").replace(/^./, (value) => value.toUpperCase()), value: String(source[key]) }));
+}
+
+function tikTokCampaignManagementFields(source: JsonRecord): Record<string, unknown> {
+  return cleanTikTokFields({ "campaign.name": source.campaign_name, "campaign.status": source.operation_status, "campaign.budget.amount": source.budget, "campaign.budget.daily": source.budget });
+}
+
+function tikTokAdGroupManagementFields(source: JsonRecord): Record<string, unknown> {
+  return cleanTikTokFields({
+    "ad_group.name": source.adgroup_name, "ad_group.status": source.operation_status, "ad_group.budget.amount": source.budget, "ad_group.budget.daily": source.budget,
+    "ad_group.schedule.start_time": source.schedule_start_time, "ad_group.schedule.end_time": source.schedule_end_time, "ad_group.bid.type": source.bid_type,
+    "ad_group.bid.amount": source.bid_price, "ad_group.optimization_goal": source.optimization_goal, "ad_group.billing_event": source.billing_event,
+    "ad_group.targeting.locations": source.location_ids, "ad_group.targeting.age_groups": source.age_groups, "ad_group.placements.type": source.placement_type,
+    "ad_group.conversion.pixel_code": source.pixel_id ?? source.pixel_code, "ad_group.conversion.event": source.optimization_event,
+  });
+}
+
+function tikTokAdManagementFields(source: JsonRecord): Record<string, unknown> {
+  return cleanTikTokFields({
+    "ad.name": source.ad_name, "ad.status": source.operation_status, "ad.copy.primary_text": source.ad_text,
+    "ad.creative.call_to_action": source.call_to_action, "ad.creative.destination_url": source.landing_page_url,
+    "ad.creative.tracking_url": source.tracking_url, "ad.creative.video_reference": source.video_id ?? source.tiktok_item_id,
+    "ad.creative.identity_reference": source.identity_id, "ad.creative.format": source.creative_type ?? source.ad_format,
+  });
+}
+
+function cleanTikTokFields(fields: Record<string, unknown>) {
+  return Object.fromEntries(Object.entries(fields).filter(([, value]) => value !== undefined && value !== null && value !== ""));
 }
 
 export function buildTikTokPreviewMediaFields(

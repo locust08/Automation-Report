@@ -8,6 +8,20 @@ import {
 } from "@/lib/reporting/audience-breakdown";
 import { emptyCampaignRow, hasReportableCampaignSpend } from "@/lib/reporting/metrics";
 import {
+  groupMetaDailyPerformance,
+  mergeMetaDailyPerformanceSeries,
+} from "@/lib/ads-management/meta-management-performance";
+import {
+  getMetaManagementEntityId,
+  getMetaManagementInsightLevel,
+  type MetaManagementStage,
+} from "@/lib/reporting/meta-management-stage";
+import {
+  MetaAccountCircuitOpenError,
+  metaAccountProtection,
+  parseMetaUsage,
+} from "@/lib/reporting/meta-account-protection";
+import {
   CampaignRow,
   MetaCreativePerformanceRow,
   MetaPreviewBlockDiagnostic,
@@ -224,6 +238,7 @@ interface MetaVideoRow {
 }
 
 interface MetaInsightRow {
+  date_start?: string;
   campaign_id?: string;
   campaign_name?: string;
   adset_id?: string;
@@ -481,6 +496,7 @@ const META_ADVANCED_CREATIVE_INSIGHT_FIELDS = [
 ] as const;
 
 const META_PREVIEW_INSIGHT_FIELDS = [
+  "date_start",
   "campaign_id",
   "campaign_name",
   "adset_id",
@@ -834,10 +850,12 @@ export async function fetchMetaPreviewData({
     adId: null,
   },
   includeInactive = false,
+  managementStage,
 }: MetaFetchInput & {
   previewStage?: MetaPreviewStage;
   previewSelection?: MetaPreviewSelection;
   includeInactive?: boolean;
+  managementStage?: MetaManagementStage;
 }): Promise<MetaPreviewResponse> {
   const diagnostics: MetaPreviewBlockDiagnostic[] = [];
   const warnings: MetaPreviewBlockIssue[] = [];
@@ -873,6 +891,45 @@ export async function fetchMetaPreviewData({
     ? campaignsBlock.data.filter((campaign) => campaign.id?.trim() === selectedCampaignId)
     : campaignsBlock.data;
 
+  if (managementStage === "campaigns") {
+    const insightsBlock = await runMetaPreviewBlock({
+      accountId,
+      label: "meta-preview-insights",
+      required: false,
+      fields: [...META_PREVIEW_INSIGHT_FIELDS],
+      load: () => fetchMetaInsightsCollection({
+        accountId,
+        accessToken,
+        startDate,
+        endDate,
+        breakdowns: [],
+        fields: [...META_PREVIEW_INSIGHT_FIELDS],
+        timeIncrement: 1,
+        level: getMetaManagementInsightLevel(managementStage),
+      }),
+    });
+    diagnostics.push(insightsBlock.diagnostic);
+    if (insightsBlock.issue) warnings.push(insightsBlock.issue);
+    const performance = buildPerformanceMap(
+      insightsBlock.data ?? [],
+      (row) => getMetaManagementEntityId(managementStage, row),
+    );
+    const daily = buildDailyPerformanceMap(
+      insightsBlock.data ?? [],
+      (row) => getMetaManagementEntityId(managementStage, row),
+    );
+    return {
+      data: buildMetaPreviewCampaignNodes(campaigns, new Map()).map((campaign) => ({
+        ...campaign,
+        performance: performance.get(campaign.id) ?? null,
+        dailyPerformance: daily.get(campaign.id) ?? [],
+      })),
+      diagnostics,
+      warnings,
+      fatalErrors,
+    };
+  }
+
   if (previewStage === "campaigns") {
     return {
       data: buildMetaPreviewCampaignNodes(campaigns, new Map()),
@@ -880,6 +937,54 @@ export async function fetchMetaPreviewData({
       warnings,
       fatalErrors,
     };
+  }
+
+  if (managementStage === "ad-groups") {
+    const visibleCampaignIds = new Set(campaigns.map((campaign) => campaign.id).filter(Boolean) as string[]);
+    const adSetsBlock = await runMetaPreviewBlock({
+      accountId,
+      label: "meta-preview-adsets",
+      required: true,
+      fields: [...META_PREVIEW_ADSET_FIELDS],
+      load: () => fetchMetaAdSetCollection({ accountId, accessToken, fields: [...META_PREVIEW_ADSET_FIELDS] }),
+    });
+    diagnostics.push(adSetsBlock.diagnostic);
+    if (adSetsBlock.issue) fatalErrors.push(adSetsBlock.issue);
+    if (!adSetsBlock.data) return { data: [], diagnostics, warnings, fatalErrors };
+    const visibleAdSets = adSetsBlock.data.filter((adSet) => {
+      const campaignId = adSet.campaign_id?.trim();
+      const adSetId = adSet.id?.trim();
+      return Boolean(campaignId && adSetId && visibleCampaignIds.has(campaignId) && (!selectedAdGroupId || adSetId === selectedAdGroupId));
+    });
+    const insightsBlock = await runMetaPreviewBlock({
+      accountId,
+      label: "meta-preview-insights",
+      required: false,
+      fields: [...META_PREVIEW_INSIGHT_FIELDS],
+      load: () => fetchMetaInsightsCollection({
+        accountId,
+        accessToken,
+        startDate,
+        endDate,
+        breakdowns: [],
+        fields: [...META_PREVIEW_INSIGHT_FIELDS],
+        timeIncrement: 1,
+        level: getMetaManagementInsightLevel(managementStage),
+      }),
+    });
+    diagnostics.push(insightsBlock.diagnostic);
+    if (insightsBlock.issue) warnings.push(insightsBlock.issue);
+    const performance = buildPerformanceMap(insightsBlock.data ?? [], (row) => getMetaManagementEntityId(managementStage, row));
+    const daily = buildDailyPerformanceMap(insightsBlock.data ?? [], (row) => getMetaManagementEntityId(managementStage, row));
+    const adSetsByCampaign = buildMetaPreviewAdSetsByCampaign(visibleAdSets, new Map());
+    adSetsByCampaign.forEach((items, campaignId) => {
+      adSetsByCampaign.set(campaignId, items.map((adSet) => ({
+        ...adSet,
+        performance: performance.get(adSet.id) ?? null,
+        dailyPerformance: daily.get(adSet.id) ?? [],
+      })));
+    });
+    return { data: buildMetaPreviewCampaignNodes(campaigns, adSetsByCampaign), diagnostics, warnings, fatalErrors };
   }
 
   const adsBlock = await runMetaPreviewBlock({
@@ -957,9 +1062,9 @@ export async function fetchMetaPreviewData({
     };
   }
 
-  const includeCreativeDetails = previewStage === "preview" || previewStage === "assets" || previewStage === "full";
-  const includePreviewLinks = previewStage === "assets" || previewStage === "full";
-  const includePerformance = previewStage === "preview" || previewStage === "assets" || previewStage === "full";
+  const includeCreativeDetails = !managementStage && (previewStage === "preview" || previewStage === "assets" || previewStage === "full");
+  const includePreviewLinks = !managementStage && (previewStage === "assets" || previewStage === "full");
+  const includePerformance = managementStage === "ads" || previewStage === "preview" || previewStage === "assets" || previewStage === "full";
   const creativeIds = Array.from(
     new Set(visibleAds.map((ad) => ad.creative?.id?.trim()).filter(Boolean) as string[])
   );
@@ -1011,6 +1116,8 @@ export async function fetchMetaPreviewData({
             endDate,
             breakdowns: [],
             fields: [...META_PREVIEW_INSIGHT_FIELDS],
+            timeIncrement: 1,
+            level: managementStage ? getMetaManagementInsightLevel(managementStage) : "ad",
           })
         : Promise.resolve([]),
   });
@@ -1025,7 +1132,7 @@ export async function fetchMetaPreviewData({
     required: false,
     fields: [...META_PREVIEW_DEMOGRAPHIC_FIELDS],
     load: () =>
-      includePerformance
+      includePerformance && !managementStage
         ? fetchMetaInsightsCollection({
             accountId,
             accessToken,
@@ -1047,7 +1154,7 @@ export async function fetchMetaPreviewData({
     required: false,
     fields: [...META_PREVIEW_DEMOGRAPHIC_FIELDS],
     load: () =>
-      includePerformance
+      includePerformance && !managementStage
         ? fetchMetaInsightsCollection({
             accountId,
             accessToken,
@@ -1066,6 +1173,7 @@ export async function fetchMetaPreviewData({
   const creativeMap = creativesBlock.data ?? new Map<string, PreviewCreativeAsset>();
   const previewLinkMap = previewLinksBlock.data ?? new Map<string, PreviewLinkAsset[]>();
   const adPerformanceMap = buildPerformanceMap(insightsBlock.data ?? []);
+  const adDailyPerformanceMap = buildDailyPerformanceMap(insightsBlock.data ?? []);
   const adDemographicMap = buildDemographicMap(demographicsBlock.data ?? []);
   const adPlatformMap = buildPlatformDistributionMap(platformsBlock.data ?? []);
 
@@ -1096,6 +1204,7 @@ export async function fetchMetaPreviewData({
       creative: creative ?? null,
       previewLinks,
       performance: adPerformanceMap.get(adId) ?? null,
+      dailyPerformance: adDailyPerformanceMap.get(adId) ?? [],
       demographics: adDemographicMap.get(adId) ?? [],
       platformDistribution: adPlatformMap.get(adId) ?? [],
       finalUrl: creative?.linkUrl ?? null,
@@ -1153,6 +1262,7 @@ function buildMetaPreviewAdSetsByCampaign(
         detailField("Billing event", humanizeMetaValue(adSet.billing_event)),
       ]),
       performance: mergePerformanceSummaries(adItems.map((ad) => ad.performance).filter(Boolean)),
+      dailyPerformance: mergeMetaDailyPerformanceSeries(adItems.map((ad) => ad.dailyPerformance)),
       demographics: mergeDemographicRows(adItems.flatMap((ad) => ad.demographics || [])),
       platformDistribution: mergePlatformDistributionRows(
         adItems.flatMap((ad) => ad.platformDistribution || [])
@@ -1206,6 +1316,7 @@ function buildMetaPreviewCampaignNodes(
         detailField("Stop Time", formatMetaDate(campaign.stop_time)),
       ]),
       performance: mergePerformanceSummaries(children.map((adSet) => adSet.performance)),
+      dailyPerformance: mergeMetaDailyPerformanceSeries(children.map((adSet) => adSet.dailyPerformance)),
       demographics: mergeDemographicRows(children.flatMap((adSet) => adSet.demographics || [])),
       platformDistribution: mergePlatformDistributionRows(
         children.flatMap((adSet) => adSet.platformDistribution || [])
@@ -1627,15 +1738,21 @@ async function fetchMetaInsightsCollection(input: {
   endDate: string;
   breakdowns: string[];
   fields: string[];
+  timeIncrement?: number;
+  level?: "campaign" | "adset" | "ad";
 }): Promise<MetaInsightRow[]> {
   const params = new URLSearchParams({
     access_token: input.accessToken,
-    level: "ad",
+    level: input.level ?? "ad",
     limit: "200",
     fields: input.fields.join(","),
     time_range: JSON.stringify({ since: input.startDate, until: input.endDate }),
   });
   applyMetaAdsManagerInsightParams(params);
+
+  if (input.timeIncrement) {
+    params.set("time_increment", String(input.timeIncrement));
+  }
 
   if (input.breakdowns.length > 0) {
     params.set("breakdowns", input.breakdowns.join(","));
@@ -1744,9 +1861,19 @@ async function fetchMetaCollection<TItem>(initialUrl: string): Promise<TItem[]> 
 
 async function fetchMetaGraphPage<TItem>(url: string): Promise<MetaGraphResponse<TItem>> {
   let attempt = 0;
+  const accountId = extractMetaAccountId(url);
 
   while (true) {
+    if (accountId) {
+      const status = metaAccountProtection.getStatus(accountId);
+      if (status.circuitOpen) throw new MetaAccountCircuitOpenError(status);
+    }
     const response = await fetch(url, { cache: "no-store" });
+    const usage = parseMetaUsage(
+      response.headers.get("x-app-usage"),
+      response.headers.get("x-ad-account-usage"),
+    );
+    if (accountId) metaAccountProtection.recordUsage(accountId, usage);
     const parsed = await parseMetaResponse<MetaGraphResponse<TItem>>(response);
 
     if (parsed.parseError) {
@@ -1763,6 +1890,10 @@ async function fetchMetaGraphPage<TItem>(url: string): Promise<MetaGraphResponse
         json.error?.code,
         json.error?.error_subcode
       );
+
+      if (accountId && (error.code === 80004 || error.subcode === 2446079)) {
+        metaAccountProtection.recordRateLimit(accountId, error.message, usage.recoverySeconds);
+      }
 
       if (isRetryableMetaError(error) && attempt < 3) {
         await sleepMetaRetry(attempt);
@@ -1890,9 +2021,12 @@ function isRetryableMetaError(error: MetaApiError): boolean {
     error.code === 4 ||
     error.code === 17 ||
     error.code === 32 ||
-    error.code === 613 ||
-    error.subcode === 2446079
+    error.code === 613
   );
+}
+
+function extractMetaAccountId(url: string): string | null {
+  return url.match(/\/act_(\d+)/)?.[1] ?? null;
 }
 
 function isUnsupportedMetaInsightFieldError(error: unknown): error is Error {
@@ -1934,7 +2068,10 @@ async function sleepMetaRetry(attempt: number) {
   await new Promise((resolve) => setTimeout(resolve, delayMs));
 }
 
-function buildPerformanceMap(rows: MetaInsightRow[]): Map<string, PreviewPerformanceSummary> {
+function buildPerformanceMap(
+  rows: MetaInsightRow[],
+  getEntityId: (row: MetaInsightRow) => string | null = (row) => row.ad_id?.trim() || null,
+): Map<string, PreviewPerformanceSummary> {
   const performanceByAdId = new Map<
     string,
     {
@@ -1951,8 +2088,8 @@ function buildPerformanceMap(rows: MetaInsightRow[]): Map<string, PreviewPerform
   >();
 
   rows.forEach((row) => {
-    const adId = row.ad_id?.trim();
-    if (!adId) {
+    const entityId = getEntityId(row);
+    if (!entityId) {
       return;
     }
 
@@ -1971,7 +2108,7 @@ function buildPerformanceMap(rows: MetaInsightRow[]): Map<string, PreviewPerform
       objective: row.objective,
       optimizationGoal: row.optimization_goal,
     });
-    const current = performanceByAdId.get(adId) ?? {
+    const current = performanceByAdId.get(entityId) ?? {
       resultLabel: resultMetric.label,
       results: 0,
       spend: 0,
@@ -1995,7 +2132,7 @@ function buildPerformanceMap(rows: MetaInsightRow[]): Map<string, PreviewPerform
     current.clicks += toNumber(row.clicks);
     current.landingPageViews += pickActionValue(row.actions, "landing_page_view");
     current.linkClicks += pickActionValue(row.actions, "link_click");
-    performanceByAdId.set(adId, current);
+    performanceByAdId.set(entityId, current);
   });
 
   return new Map(
@@ -2245,6 +2382,42 @@ function mapCreativeAsset(row: MetaCreativeRow): PreviewCreativeAsset {
     instagramActorId: row.object_story_spec?.instagram_actor_id?.trim() || null,
     imageHash: row.object_story_spec?.link_data?.image_hash?.trim() || null,
   };
+}
+
+function buildDailyPerformanceMap(
+  rows: MetaInsightRow[],
+  getEntityId: (row: MetaInsightRow) => string | null = (row) => row.ad_id?.trim() || null,
+) {
+  return groupMetaDailyPerformance(
+    rows.flatMap((row) => {
+      const entityId = getEntityId(row);
+      const date = row.date_start?.trim();
+      if (!entityId || !date) return [];
+      const resultMetric = pickResultMetric({
+        objectiveResults: row.objective_results,
+        costPerResult: row.cost_per_result,
+        costPerObjectiveResult: row.cost_per_objective_result,
+        reach: row.reach,
+        cpp: row.cpp,
+        estimatedAdRecallers: row.estimated_ad_recallers,
+        costPerEstimatedAdRecallers: row.cost_per_estimated_ad_recallers,
+        videoThruPlayWatchedActions: row.video_thruplay_watched_actions,
+        costPerThruPlay: row.cost_per_thruplay,
+        actions: row.actions,
+        costs: row.cost_per_action_type,
+        objective: row.objective,
+        optimizationGoal: row.optimization_goal,
+      });
+      return [{
+        entityId,
+        date,
+        spend: toNumber(row.spend),
+        results: resultMetric.value,
+        clicks: toNumber(row.clicks),
+        resultLabel: resultMetric.label,
+      }];
+    }),
+  );
 }
 
 async function fetchMetaAdSetCollection(input: {

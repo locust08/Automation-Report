@@ -7,7 +7,7 @@ flowchart LR
     Browser[Authenticated browser]
     GoogleUI[Google Ads Management]
     MetaUI[Meta Ads Management]
-    TikTokUI[TikTok Ads Management - planned]
+    TikTokUI[TikTok Ads Management]
     M03UI[M03 Change Control]
 
     NextAPI[Next.js server API routes]
@@ -1030,10 +1030,10 @@ erDiagram
 | `GET /api/ads-management/google/recommendations` | Google recommendations. |
 | `GET /api/ads-management/google/launch-eligibility` | Google launch/adoption evidence read. |
 | `GET /api/reporting` | Meta management overview/performance data. |
-| `GET /api/reporting/preview` | Meta hierarchy and creative data. |
-| `GET /api/reports/:accountId/tiktok-insights` | TikTok reporting/cache read used by the planned explorer. |
+| `GET /api/reporting/preview` | Meta hierarchy/creative data and staged TikTok management reads (`campaigns`, `ad-groups`, `ads`, or one-ad `assets`). |
+| `GET /api/reports/:accountId/tiktok-insights` | Existing TikTok reporting/cache read outside the staged management explorer. |
 
-- Planned TikTok management routes:
+- Earlier planned TikTok management routes (not introduced; the implemented explorer uses the staged preview contract above):
   - `GET /api/ads-management/tiktok/overview`
   - `GET /api/ads-management/tiktok/campaigns`
   - `GET /api/ads-management/tiktok/ad-groups`
@@ -1090,43 +1090,42 @@ erDiagram
   - The page does not own an approval or mutation table.
   - M03 owns every durable draft, revision, approval, attempt, verification, and audit record.
 
-### 5.2 TikTok Ads Management — planned
+### 5.2 TikTok Ads Management — implemented
 
-- TikTok page direction:
-  - Mirror the Google and Meta explorer pattern.
-  - Do not duplicate Change Control.
+- Route: `/manage/tiktok`.
+- The page mirrors the shared Google and Meta explorer pattern and embeds the shared M03 workspace rather than duplicating Change Control storage or lifecycle logic.
 
 ### Page sections
 
 1. TikTok-only searchable account picker.
 2. Date range and explicit refresh.
-3. Overview metrics.
+3. Campaign performance metrics and daily chart.
 4. Campaigns.
 5. Ad groups.
-6. Ads and regular-video creative references.
-7. Audience and placements supported by the synchronized/read API.
-8. Opportunities/recommendations only when a deterministic source exists.
-9. **Request change** actions that deep-link or create an M03 draft.
+6. Ads and lazy-loaded regular-video creative references for one expanded ad.
+7. Deterministic recommendations derived from already loaded campaign performance.
+8. Account-scoped Change requests using the shared M03 workspace.
 
 ### Read and change flow
 
 - Read flow:
   - Select a TikTok advertiser.
-  - Load normalized data from the server-side read API and optional cache.
+  - Load normalized campaign data from the server-side staged preview API and optional five-minute cache.
+  - Load ad-group, ad, and one-ad asset stages only when the operator opens the corresponding view or expands an ad.
   - Use official TikTok GET requests on a cache miss or explicit refresh.
 - Change flow:
-  - **Request change** creates a prefilled M03 draft.
+  - A resource-row pencil action creates a prefilled M03 draft; Recommendations and Change requests retain explicit workflow wording.
   - M03 stores the request, items, revision, validation, approval, attempts, and audit evidence.
   - Publishing remains blocked with `423 provider_execution_locked` while the execution gates are disabled.
 - See the TikTok storage ERD in section 2.3 and the planned combined workspace ERD in section 2.4.
 
-### 5.3 Merge Change Control into each platform management page — Meta implemented, Google and TikTok planned
+### 5.3 Merge Change Control into each platform management page — implemented
 
 - Goal:
   - Place the matching M03 workflow inside each platform explorer:
     - Google Change Control inside `/manage/google`.
     - Meta Change Control inside `/manage/meta`.
-    - TikTok Change Control inside the planned `/manage/tiktok`.
+    - TikTok Change Control inside `/manage/tiktok`.
   - Let users inspect an entity and request its change without moving to a separate page.
 - Page behavior:
   - **Request change** opens an inline M03 request builder prefilled with the selected account, campaign, entity, field, and current value.
@@ -1138,9 +1137,9 @@ erDiagram
   - No platform-specific duplicate Change Control tables are created.
 - Migration path:
   1. Extract the existing M03 request builder and request-detail views into reusable components. **Complete.**
-  2. Add the Google components to `/manage/google`.
+  2. Add the Google components to `/manage/google`. **Complete.**
   3. Add the Meta components to `/manage/meta`. **Complete.** The account-scoped workspace supports draft creation and editing, validation, policy-aware approval, cancellation, provider-plan preview, conflicts, operation evidence, and audit history.
-  4. Add the TikTok components after `/manage/tiktok` is implemented.
+  4. Add the TikTok components after `/manage/tiktok` is implemented. **Complete.** The account-scoped workspace uses the authoritative TikTok capability registry and official read-only baselines.
   5. Keep `/change-control` as the global request list, administration, and recovery page.
 
 - Meta acceptance status (2026-08-26):
@@ -1148,6 +1147,11 @@ erDiagram
   - TypeScript and ESLint verification pass; the authenticated `/manage/meta` shell was rendered locally and retains account search and read-only provider messaging.
   - Credentialed Meta connectivity was not marked as passed because the local Doppler token could not access the configured project. The remaining live acceptance check is limited to connectivity and response correctness; it must not issue a provider mutation.
   - Provider publishing, retry, verification, conflict resolution, and rollback execution remain disabled by `provider_execution_locked`. The Meta management and M03 provider-planning paths contain no authorized Meta write operation.
+
+- TikTok acceptance status (2026-08-27):
+  - The authenticated `/manage/tiktok` page, staged navigation, daily normalization/rollups, five-minute cache, request deduplication, capability registry, and M03 prefill builders have focused automated coverage.
+  - One approved advertiser passed the campaign connectivity/data check and one ad-group stage check, including advertiser-scoped identities, parent mappings, status, budget, and daily metrics.
+  - Live verification stopped after those two successful read-only checks. No TikTok mutation request was issued, and provider execution remains disabled by `provider_execution_locked`.
 
 ### 5.4 Merge all Ads Management pages into one workspace — planned
 
@@ -1172,8 +1176,8 @@ erDiagram
   - Keep provider capability registries, validators, serializers, and adapters separate.
   - Reuse the same M03 APIs and tables.
 - Migration path:
-  1. Finish the TikTok read-only explorer.
-  2. Finish the platform-specific Change Control embedding described in section 5.3.
+  1. Finish the TikTok read-only explorer. **Complete.**
+  2. Finish the platform-specific Change Control embedding described in section 5.3. **Complete.**
   3. Extract shared account, date, tabs, metrics, loading, and error components.
   4. Add `/manage/ads` and render the correct platform workspace from the selected account.
   5. Redirect the three platform-specific management routes only after feature parity and acceptance testing.

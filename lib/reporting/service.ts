@@ -30,6 +30,7 @@ import {
   mergeCampaignRows,
 } from "@/lib/reporting/metrics";
 import { MemoryCacheEntry, readThroughMemoryCache } from "@/lib/reporting/memory-cache";
+import type { MetaManagementStage } from "@/lib/reporting/meta-management-stage";
 import { resolveOverallPerformanceCompanyName } from "@/lib/reporting/overall-company-name";
 import {
   buildMetaMonthlyOutcomeMetrics,
@@ -97,6 +98,7 @@ export interface OverallInput {
   previewStage?: PreviewFetchStage;
   previewSelection?: PreviewFetchSelection;
   metaIncludeInactivePreview?: boolean;
+  metaManagementStage?: MetaManagementStage;
 }
 
 interface CampaignInput extends OverallInput {
@@ -1073,12 +1075,24 @@ export async function getPreviewReport(input: OverallInput): Promise<PreviewRepo
   );
   warnings.push(...googleManagerContext.messages);
 
-  const previewNames = await resolvePreviewNames({
-    credentials,
-    accountId: input.accountId,
-    resolvedAccountIds,
-    googleLoginCustomerIdByAccount: googleManagerContext.loginCustomerIdByAccount,
-  });
+  const previewNames = input.metaManagementStage
+    ? {
+        companyName: resolveCompanyNameFromAccountId({
+          companyName: credentials.companyName,
+          companyNameMap: credentials.companyNameMap,
+          accountId: input.accountId,
+          metaAccountId: resolvedAccountIds.metaAccountIds,
+          googleAccountId: resolvedAccountIds.googleAccountIds,
+        }) ?? credentials.companyName,
+        metaAccountName: null,
+        googleAccountName: null,
+      }
+    : await resolvePreviewNames({
+        credentials,
+        accountId: input.accountId,
+        resolvedAccountIds,
+        googleLoginCustomerIdByAccount: googleManagerContext.loginCustomerIdByAccount,
+      });
   const companyName = previewNames.companyName;
   const fetchedAt = new Date().toISOString();
 
@@ -1090,7 +1104,8 @@ export async function getPreviewReport(input: OverallInput): Promise<PreviewRepo
       dateRange.endDate,
       previewStage,
       previewSelection,
-      Boolean(input.metaIncludeInactivePreview)
+      Boolean(input.metaIncludeInactivePreview),
+      input.metaManagementStage,
     ),
     tryFetchGooglePreviewSections(
       resolvedAccountIds.googleAccountIds,
@@ -1864,6 +1879,9 @@ async function tryFetchTikTokPreviewSections(
         advertiserId: accountId,
         startDate,
         endDate,
+        stage: previewStage === "preview" ? "assets" : previewStage,
+        campaignId: previewSelection.platform === "tiktok" ? previewSelection.campaignId : null,
+        adGroupId: previewSelection.platform === "tiktok" ? previewSelection.adGroupId : null,
         selectedAdId:
           (previewStage === "preview" || previewStage === "assets" || previewStage === "full") &&
           previewSelection.platform === "tiktok"
@@ -1988,7 +2006,8 @@ async function tryFetchMetaPreview(
   endDate: string,
   previewStage: PreviewFetchStage,
   previewSelection: PreviewFetchSelection,
-  includeInactive = false
+  includeInactive = false,
+  managementStage?: MetaManagementStage,
 ): Promise<{
   campaigns: PreviewCampaignNode[];
   warnings: string[];
@@ -2022,6 +2041,7 @@ async function tryFetchMetaPreview(
       adGroupId: previewSelection.adGroupId,
       adId: previewSelection.adId,
       includeInactive,
+      managementStage,
       credentials: accessToken.slice(-10),
     });
     const result = await readThroughMemoryCache(
@@ -2039,12 +2059,19 @@ async function tryFetchMetaPreview(
             platform: previewSelection.platform === "tiktok" ? null : previewSelection.platform,
           },
           includeInactive,
+          managementStage,
         }),
       {
         ttlMs: GOOGLE_FETCH_CACHE_TTL_MS,
         maxEntries: GOOGLE_FETCH_CACHE_MAX_ENTRIES,
       }
     );
+    // A required Meta block failure is not an empty dataset. Do not preserve the
+    // failed response in the read-through cache, so a later refresh can recover
+    // as soon as the provider rate limit or transient error clears.
+    if (result.fatalErrors.length > 0) {
+      metaPreviewCache.delete(cacheKey);
+    }
     return {
       campaigns: result.data,
       warnings: [
@@ -2999,7 +3026,8 @@ async function tryFetchMetaPreviewSections(
   endDate: string,
   previewStage: PreviewFetchStage,
   previewSelection: PreviewFetchSelection,
-  includeInactive = false
+  includeInactive = false,
+  managementStage?: MetaManagementStage,
 ): Promise<{
   campaigns: PreviewCampaignNode[];
   warnings: string[];
@@ -3028,7 +3056,8 @@ async function tryFetchMetaPreviewSections(
       endDate,
       previewStage,
       previewSelection,
-      includeInactive
+      includeInactive,
+      managementStage,
     );
     campaigns.push(...result.campaigns);
     warnings.push(

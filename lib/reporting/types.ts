@@ -373,6 +373,7 @@ export interface PreviewPerformanceSummary {
   spend: number;
   impressions: number;
   clicks: number;
+  engagements?: number;
   ctr: number;
   cpc: number | null;
   cpm: number | null;
@@ -458,6 +459,15 @@ export interface PreviewCreativeAsset {
   imageHash?: string | null;
 }
 
+export interface PreviewManagementPerformancePoint {
+  date: string;
+  spend: number;
+  results: number;
+  clicks: number;
+  engagements?: number;
+  resultLabel: string;
+}
+
 export interface PreviewLinkAsset {
   label: string;
   url: string;
@@ -492,6 +502,7 @@ export interface PreviewAdNode {
   creative?: PreviewCreativeAsset | null;
   previewLinks?: PreviewLinkAsset[];
   performance?: PreviewPerformanceSummary | null;
+  dailyPerformance?: PreviewManagementPerformancePoint[];
   demographics?: PreviewDemographicRow[];
   platformDistribution?: PreviewPlatformDistributionRow[];
   finalUrl?: string | null;
@@ -513,6 +524,7 @@ export interface PreviewAdGroupNode {
   status: string;
   details: PreviewDetailField[];
   performance?: PreviewPerformanceSummary | null;
+  dailyPerformance?: PreviewManagementPerformancePoint[];
   demographics?: PreviewDemographicRow[];
   platformDistribution?: PreviewPlatformDistributionRow[];
   ads: PreviewAdNode[];
@@ -527,6 +539,7 @@ export interface PreviewCampaignNode {
   objective?: string | null;
   details: PreviewDetailField[];
   performance?: PreviewPerformanceSummary | null;
+  dailyPerformance?: PreviewManagementPerformancePoint[];
   demographics?: PreviewDemographicRow[];
   platformDistribution?: PreviewPlatformDistributionRow[];
   children: PreviewAdGroupNode[];
@@ -671,6 +684,12 @@ export interface PreviewReportPayload {
   warnings: string[];
   metaWarnings?: MetaPreviewBlockIssue[];
   metaFatalErrors?: MetaPreviewBlockIssue[];
+  metaProtection?: {
+    source: "live" | "fresh-cache" | "stale-cache";
+    circuitOpen: boolean;
+    blockedUntil: string | null;
+    reason: string | null;
+  };
   googleWarnings?: GooglePreviewWarning[];
   googleFatalErrors?: GooglePreviewFatalError[];
   diagnostics?: {

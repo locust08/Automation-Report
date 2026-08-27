@@ -94,6 +94,7 @@ export function ReportShell({
     googleOptimization: "/google-optimization",
     googleManagement: "/manage/google",
     metaManagement: "/manage/meta",
+    tiktokManagement: "/manage/tiktok",
     userManagement: "/user-management",
     optimizationScheduling: "/optimization-scheduling",
     campaigns: "/campaigns",
@@ -123,6 +124,7 @@ export function ReportShell({
       items: [
         { href: hrefs.metaManagement, label: "Meta Ads Management", active: pathname.startsWith("/manage/meta"), icon: MegaphoneIcon },
         { href: hrefs.googleManagement, label: "Google Ads Management", active: pathname.startsWith("/manage/google"), icon: SlidersHorizontalIcon },
+        { href: hrefs.tiktokManagement, label: "TikTok Ads Management", active: pathname.startsWith("/manage/tiktok"), icon: SparklesIcon },
         ...(isAdmin
           ? [
               {

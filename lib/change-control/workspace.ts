@@ -136,14 +136,14 @@ export function planM03SaveFailureTransition(state: M03EditorSession, error: unk
   refreshDetailRequestId: string | null;
   refreshProviderPreview: boolean;
 } {
-  if (!state.editing && state.form.platform === "meta" && error instanceof M03ApiError && error.status === 409 && /baseline/i.test(error.message)) {
+  if (!state.editing && ["meta", "google"].includes(state.form.platform) && error instanceof M03ApiError && error.status === 409 && /baseline/i.test(error.message)) {
     return {
       disposition: {
         kind: "request_failed",
         closeEditor: false,
         resetForm: false,
         refreshCurrentRequest: false,
-        message: "Official Meta data changed before this request was saved. Refresh official data, review every baseline, and save again.",
+        message: `Official ${state.form.platform === "meta" ? "Meta" : "Google Ads"} data changed before this request was saved. Refresh official data, review every baseline, and save again.`,
       },
       editorEvent: null,
       refreshList: false,

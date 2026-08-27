@@ -7,6 +7,7 @@ import type { DateRange } from "react-day-picker";
 import { Calendar02 } from "@/components/shadcn-studio/calendar/calendar-02";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { selectDateRangeDay } from "@/lib/reporting/date-range-selection";
 import { cn } from "@/lib/utils";
 
 type DatePreset =
@@ -34,7 +35,7 @@ export function ReportHeaderMonthPicker({
   const containerRef = useRef<HTMLDivElement | null>(null);
   const [open, setOpen] = useState(false);
   const [draftStartDate, setDraftStartDate] = useState(normalizeIsoDate(startDate));
-  const [draftEndDate, setDraftEndDate] = useState(normalizeIsoDate(endDate));
+  const [draftEndDate, setDraftEndDate] = useState<string | null>(normalizeIsoDate(endDate));
   const [draftRange, setDraftRange] = useState<DateRange>(() => ({
     from: parseIsoDate(startDate),
     to: parseIsoDate(endDate),
@@ -102,25 +103,30 @@ export function ReportHeaderMonthPicker({
   }
 
   function applyDraftRange() {
+    if (!draftEndDate) {
+      return;
+    }
     applyRange(draftStartDate, draftEndDate);
     setOpen(false);
   }
 
   function handleCalendarDayClick(day: Date) {
     setPreset("custom");
-    if (!rangeSelectionStart) {
-      setRangeSelectionStart(day);
-      setDraftRange({ from: day, to: undefined });
-      setDraftStartDate(toCalendarIsoDate(day));
-      return;
-    }
-
-    const from = day < rangeSelectionStart ? day : rangeSelectionStart;
-    const to = day < rangeSelectionStart ? rangeSelectionStart : day;
-    setDraftRange({ from, to });
-    setDraftStartDate(toCalendarIsoDate(from));
-    setDraftEndDate(toCalendarIsoDate(to));
-    setRangeSelectionStart(null);
+    const next = selectDateRangeDay(
+      {
+        startDate: draftStartDate,
+        endDate: draftEndDate,
+        selectionStart: rangeSelectionStart ? toCalendarIsoDate(rangeSelectionStart) : null,
+      },
+      toCalendarIsoDate(day),
+    );
+    setDraftStartDate(next.startDate);
+    setDraftEndDate(next.endDate);
+    setRangeSelectionStart(next.selectionStart ? parseIsoDate(next.selectionStart) : null);
+    setDraftRange({
+      from: parseIsoDate(next.startDate),
+      to: next.endDate ? parseIsoDate(next.endDate) : undefined,
+    });
   }
 
   function togglePicker() {
@@ -253,6 +259,7 @@ export function ReportHeaderMonthPicker({
             <Calendar02
               mode="range"
               defaultMonth={parseIsoDate(draftStartDate)}
+              pagedNavigation
               selected={draftRange}
               onDayClick={handleCalendarDayClick}
               className={cn("mx-auto w-fit", compact && "border-0 shadow-none [&_.rdp-months]:gap-1")}
@@ -262,7 +269,7 @@ export function ReportHeaderMonthPicker({
               <div className={cn("flex items-center gap-2 text-sm text-muted-foreground", !compact && "justify-center")}>
                 <span>{formatLabelDate(draftStartDate)}</span>
                 <span aria-hidden="true">→</span>
-                <span>{formatLabelDate(draftEndDate)}</span>
+                <span>{draftEndDate ? formatLabelDate(draftEndDate) : "Select end date"}</span>
               </div>
 
               <div className={cn("gap-2", compact ? "flex shrink-0 items-center" : "flex flex-col-reverse sm:flex-row sm:items-center sm:justify-end")}>
@@ -288,7 +295,7 @@ export function ReportHeaderMonthPicker({
                   type="button"
                   className={cn("h-9 px-4", !compact && "w-full sm:w-auto")}
                   onClick={applyDraftRange}
-                  disabled={!draftRange.from || !draftRange.to}
+                  disabled={!draftRange.from || !draftRange.to || !draftEndDate}
                 >
                   Apply
                 </Button>

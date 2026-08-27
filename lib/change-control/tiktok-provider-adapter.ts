@@ -13,11 +13,12 @@ import type { TikTokAdsActionName } from "@/lib/tiktok/ads-actions";
 import { TikTokAdsApiError, createTikTokAdsClient, type TikTokAdsClient } from "@/lib/tiktok/ads-client";
 import { prepareTikTokMutationPayload } from "@/lib/tiktok/ads-operations";
 import { redactTikTokSecrets } from "@/lib/tiktok/ads-schemas";
+import { getM03TikTokChangeField, type M03TikTokProviderResource } from "@/lib/change-control/tiktok-capability-registry";
 
 export const M03_TIKTOK_CAPABILITY_REGISTRY_VERSION = 2 as const;
 
 type TikTokMode = "direct_update" | "creative_replacement" | "unsupported";
-type TikTokResource = "campaign" | "adgroup" | "ad";
+type TikTokResource = M03TikTokProviderResource;
 type TikTokRule = {
   pattern: string;
   mode: TikTokMode;
@@ -31,36 +32,10 @@ export interface TikTokM03Transport {
   request(action: TikTokAdsActionName, advertiserId: string, input: Record<string, unknown>): Promise<TikTokM03TransportResponse>;
 }
 
-const TIKTOK_RULES: TikTokRule[] = [
-  direct("campaign.name", "campaign", "campaign_name"),
-  direct("campaign.status", "campaign", "operation_status"),
-  direct("campaign.budget.amount", "campaign", "budget"),
-  direct("campaign.budget.daily", "campaign", "budget"),
+const IMMUTABLE_TIKTOK_RULES: TikTokRule[] = [
   unsupported("campaign.budget.mode", "TikTok does not allow a live campaign budget type to be changed."),
   unsupported("campaign.objective", "TikTok campaign objectives cannot be changed after creation."),
-  direct("ad_group.name", "adgroup", "adgroup_name"),
-  direct("ad_group.status", "adgroup", "operation_status"),
-  direct("ad_group.budget.amount", "adgroup", "budget"),
-  direct("ad_group.budget.daily", "adgroup", "budget"),
   unsupported("ad_group.budget.mode", "TikTok does not allow a live ad-group budget type to be changed."),
-  direct("ad_group.schedule.start_time", "adgroup", "schedule_start_time"),
-  direct("ad_group.schedule.end_time", "adgroup", "schedule_end_time"),
-  direct("ad_group.bid.type", "adgroup", "bid_type"),
-  direct("ad_group.bid.amount", "adgroup", "bid_price"),
-  direct("ad_group.optimization_goal", "adgroup", "optimization_goal"),
-  direct("ad_group.billing_event", "adgroup", "billing_event"),
-  direct("ad_group.targeting.*", "adgroup"),
-  direct("ad_group.placements.*", "adgroup"),
-  direct("ad_group.conversion.*", "adgroup"),
-  direct("ad.name", "ad", "ad_name"),
-  direct("ad.status", "ad", "operation_status"),
-  direct("ad.copy.primary_text", "ad", "ad_text"),
-  direct("ad.creative.call_to_action", "ad", "call_to_action"),
-  direct("ad.creative.destination_url", "ad", "landing_page_url"),
-  direct("ad.creative.tracking_url", "ad", "tracking_url"),
-  replacement("ad.creative.video_reference"),
-  replacement("ad.creative.identity_reference"),
-  replacement("ad.creative.format"),
 ];
 
 export type TikTokM03AdapterOptions = {
@@ -306,10 +281,20 @@ function readAction(resource: TikTokResource): TikTokAdsActionName { return reso
 function filterKey(resource: TikTokResource) { return resource === "campaign" ? "campaign_ids" : resource === "adgroup" ? "adgroup_ids" : "ad_ids"; }
 function idKey(resource: TikTokResource) { return resource === "campaign" ? "campaign_id" : resource === "adgroup" ? "adgroup_id" : "ad_id"; }
 function replacementIdentity(operation: M03ProviderOperation) { return typeof operation.payload.replacement_ad_id === "string" ? operation.payload.replacement_ad_id : undefined; }
-function resolveTikTokRule(path: string) { const normalized = path.trim().toLowerCase(); return TIKTOK_RULES.find((rule) => rule.pattern.endsWith(".*") ? normalized === rule.pattern.slice(0, -2) || normalized.startsWith(rule.pattern.slice(0, -1)) : normalized === rule.pattern); }
+export function resolveTikTokM03Capability(path: string): TikTokRule | undefined {
+  const field = getM03TikTokChangeField(path);
+  if (field) return {
+    pattern: field.field_path,
+    mode: field.mutation_mode,
+    providerResource: field.provider_resource,
+    providerField: field.provider_field,
+    ...(field.mutation_mode === "creative_replacement" ? { note: "TikTok creative changes that cannot be edited safely use a disabled regular-video replacement ad." } : {}),
+  };
+  const normalized = path.trim().toLowerCase();
+  return IMMUTABLE_TIKTOK_RULES.find((rule) => rule.pattern === normalized);
+}
+function resolveTikTokRule(path: string) { return resolveTikTokM03Capability(path); }
 function issue(item: M03ChangeItem, providerField: string | undefined, message: string, correction: string): M03ValidationIssue { return { path: `items.${item.id}.${item.field_path}`, entity_type: item.entity_type, entity_identity: item.entity_identity, provider_field: providerField, severity: "error", message, capability_registry_version: M03_TIKTOK_CAPABILITY_REGISTRY_VERSION, section: item.entity_type === "campaign" ? "Campaign" : item.entity_type === "ad" ? "Ad" : "Ad group", suggested_correction: correction }; }
-function direct(pattern: string, providerResource: TikTokResource, providerField?: string): TikTokRule { return { pattern, mode: "direct_update", providerResource, providerField }; }
-function replacement(pattern: string): TikTokRule { return { pattern, mode: "creative_replacement", providerResource: "ad", note: "TikTok creative changes that cannot be edited safely use a disabled regular-video replacement ad." }; }
 function unsupported(pattern: string, note: string): TikTokRule { return { pattern, mode: "unsupported", providerResource: null, note }; }
 function suffix(path: string) { return path.split(".").at(-1) ?? path; }
 function normalizeTikTokMutationValue(field: string, value: unknown) { if (["budget", "bid_price"].includes(field)) return Number(value); if (field === "operation_status") return String(value).toUpperCase(); return value; }

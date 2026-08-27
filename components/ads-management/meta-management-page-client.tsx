@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertTriangleIcon,
   BarChart3Icon,
@@ -14,13 +14,24 @@ import {
   LightbulbIcon,
   LoaderCircleIcon,
   MegaphoneIcon,
+  PencilIcon,
   RefreshCwIcon,
   SearchIcon,
-  UsersIcon,
 } from "lucide-react";
 
 import { ReportHeaderMonthPicker } from "@/components/reporting/report-header-month-picker";
 import { ReportShell } from "@/components/reporting/report-shell";
+import {
+  ManagementDetailGrid,
+  ManagementEntityName,
+  ManagementEntityReportSkeleton,
+  ManagementPaginationFooter,
+  ManagementStatusDot,
+} from "@/components/ads-management/management-entity-report";
+import {
+  ManagementPerformancePanel,
+  ManagementPerformanceSkeleton,
+} from "@/components/ads-management/management-performance-panel";
 import { M03RequestWorkspace } from "@/components/change-control/m03-request-workspace";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -31,11 +42,17 @@ import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectSepa
 import { Skeleton } from "@/components/ui/skeleton";
 import type { AuthRole } from "@/lib/auth/roles";
 import {
+  META_MANAGEMENT_PRIMARY_TABS,
   selectMetaChangeRequestNavigation,
   selectMetaPrimaryNavigation,
   type MetaManagementTab,
 } from "@/lib/ads-management/meta-management-navigation";
 import { META_PAGE_SIZE_OPTIONS, paginateRows, type MetaPageSize } from "@/lib/ads-management/pagination";
+import {
+  mergeMetaDailyPerformanceSeries,
+  resolveMetaManagementCostPerResult,
+} from "@/lib/ads-management/meta-management-performance";
+import { getMetaPreviewFailureMessage } from "@/lib/ads-management/meta-preview-failure";
 import {
   buildMetaManagementRecommendations,
   getMetaManagementActivityState,
@@ -64,6 +81,8 @@ import type {
   PreviewReportPayload,
   SummarySection,
 } from "@/lib/reporting/types";
+import type { MetaManagementStage } from "@/lib/reporting/meta-management-stage";
+import { isMetaCircuitBlocked, metaStageForTab } from "@/lib/ads-management/meta-management-client-state";
 
 type AccountSuggestion = {
   accountName: string;
@@ -77,15 +96,13 @@ const META_ACCOUNT_CACHE_KEY = "meta-management-account-search-cache-v1";
 const META_RECENT_ACCOUNTS_KEY = "meta-management-recent-accounts-v1";
 const META_ACCOUNT_CACHE_TTL_MS = 15 * 60 * 1000;
 
-const PRIMARY_TABS: Array<{ value: Exclude<MetaManagementTab, "change_requests">; label: string; icon: typeof BarChart3Icon }> = [
-  { value: "overview", label: "Overview", icon: BarChart3Icon },
-  { value: "campaigns", label: "Campaigns", icon: MegaphoneIcon },
-  { value: "ad_sets", label: "Ad sets", icon: LayoutGridIcon },
-  { value: "ads", label: "Ads", icon: FilePenLineIcon },
-  { value: "creatives", label: "Creatives", icon: ImageIcon },
-  { value: "audience", label: "Audience & placements", icon: UsersIcon },
-  { value: "opportunities", label: "Recommendations", icon: LightbulbIcon },
-];
+const PRIMARY_TAB_DETAILS: Record<(typeof META_MANAGEMENT_PRIMARY_TABS)[number], { label: string; icon: typeof BarChart3Icon }> = {
+  campaigns: { label: "Campaigns", icon: MegaphoneIcon },
+  ad_sets: { label: "Ad sets", icon: LayoutGridIcon },
+  ads: { label: "Ads", icon: FilePenLineIcon },
+  opportunities: { label: "Recommendations", icon: LightbulbIcon },
+};
+const PRIMARY_TABS = META_MANAGEMENT_PRIMARY_TABS.map((value) => ({ value, ...PRIMARY_TAB_DETAILS[value] }));
 
 export function MetaManagementPageClient({ initialRole }: { initialRole: AuthRole }) {
   const [accountQuery, setAccountQuery] = useState("");
@@ -98,12 +115,16 @@ export function MetaManagementPageClient({ initialRole }: { initialRole: AuthRol
   const [accountId, setAccountId] = useState("");
   const [accountName, setAccountName] = useState("");
   const [dates, setDates] = useState(defaultDateRange);
-  const [tab, setTab] = useState<MetaManagementTab>("overview");
+  const [tab, setTab] = useState<MetaManagementTab>("campaigns");
   const [changeRequestFilter, setChangeRequestFilter] = useState<MetaChangeRequestNavigationFilter>("requests");
   const [changeRequestsOpen, setChangeRequestsOpen] = useState(false);
   const [overall, setOverall] = useState<OverallReportPayload | null>(null);
   const [preview, setPreview] = useState<PreviewReportPayload | null>(null);
+  const [stagePayloads, setStagePayloads] = useState<Partial<Record<MetaManagementStage, PreviewReportPayload>>>({});
+  const [metaProtection, setMetaProtection] = useState<PreviewReportPayload["metaProtection"]>(undefined);
+  const [clock, setClock] = useState(() => Date.now());
   const [loading, setLoading] = useState(false);
+  const [overallLoading, setOverallLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [requestPrefill, setRequestPrefill] = useState<M03RequestPrefill | null>(null);
 
@@ -112,34 +133,71 @@ export function MetaManagementPageClient({ initialRole }: { initialRole: AuthRol
     setCachedAccounts(readAllCachedMetaAccounts());
   }, []);
 
-  const load = useCallback(async (id: string, nextDates = dates) => {
+  const load = useCallback(async (id: string, nextDates = dates, stage: MetaManagementStage = "campaigns") => {
     const normalized = id.replace(/^act_/, "").replace(/\D/g, "");
     if (!normalized) return;
     if (accountId && accountId !== normalized) {
       setRequestPrefill(null);
       setOverall(null);
       setPreview(null);
+      setStagePayloads({});
     }
     setAccountId(normalized);
+    setOverall(null);
     setLoading(true);
     setError(null);
     try {
       const query = new URLSearchParams({ metaAccountId: normalized, startDate: nextDates.startDate, endDate: nextDates.endDate });
-      const [overallPayload, previewPayload] = await Promise.all([
-        api<OverallReportPayload>(`/api/reporting?${query}`),
-        api<PreviewReportPayload>(`/api/reporting/preview?${query}&includeInactiveMeta=1`),
-      ]);
-      setOverall(overallPayload);
+      query.set("stage", stage);
+      const previewPayload = await api<PreviewReportPayload>(`/api/reporting/preview?${query}&includeInactiveMeta=1`);
+      const previewFailure = getMetaPreviewFailureMessage(previewPayload);
+      if (previewFailure) throw new Error(previewFailure);
       setPreview(previewPayload);
-      setAccountName(previewPayload.sections.find((section) => section.platform === "meta")?.accountName || overallPayload.companyName || accountName || normalized);
+      setStagePayloads((current) => ({ ...current, [stage]: previewPayload }));
+      setMetaProtection(previewPayload.metaProtection);
+      if (previewPayload.metaProtection?.circuitOpen) {
+        setError(previewPayload.metaProtection.reason || "Meta requests are temporarily paused for this ad account.");
+      }
+      setAccountName(previewPayload.sections.find((section) => section.platform === "meta")?.accountName || previewPayload.companyName || accountName || normalized);
       return previewPayload;
     } catch (caught) {
+      if (caught instanceof ApiRequestError && caught.payload.code === "meta_circuit_open") {
+        setMetaProtection({
+          source: "stale-cache",
+          circuitOpen: true,
+          blockedUntil: typeof caught.payload.blockedUntil === "string" ? caught.payload.blockedUntil : null,
+          reason: typeof caught.payload.reason === "string" ? caught.payload.reason : caught.message,
+        });
+      }
       setError(message(caught, "Unable to load this Meta Ads account. Please verify access and try again."));
       return null;
     } finally {
       setLoading(false);
     }
   }, [accountId, accountName, dates]);
+
+  useEffect(() => {
+    if (!metaProtection?.circuitOpen || !metaProtection.blockedUntil) return;
+    const timer = window.setInterval(() => setClock(Date.now()), 30_000);
+    return () => window.clearInterval(timer);
+  }, [metaProtection]);
+
+  const loadOverall = useCallback(async (id: string, nextDates = dates) => {
+    const normalized = id.replace(/^act_/, "").replace(/\D/g, "");
+    if (!normalized) return null;
+    setOverallLoading(true);
+    try {
+      const query = new URLSearchParams({ metaAccountId: normalized, startDate: nextDates.startDate, endDate: nextDates.endDate });
+      const payload = await api<OverallReportPayload>(`/api/reporting?${query}`);
+      setOverall(payload);
+      return payload;
+    } catch (caught) {
+      setError(message(caught, "Unable to load Meta recommendations."));
+      return null;
+    } finally {
+      setOverallLoading(false);
+    }
+  }, [dates]);
 
   useEffect(() => {
     if (!accountResultsOpen || accountQuery.trim().length < 2 || accountQuery === accountName) {
@@ -182,6 +240,12 @@ export function MetaManagementPageClient({ initialRole }: { initialRole: AuthRol
     return () => document.removeEventListener("pointerdown", closeAccountResults);
   }, []);
 
+  useEffect(() => {
+    if (tab === "opportunities" && accountId && preview && !overall && !loading && !overallLoading) {
+      void loadOverall(accountId);
+    }
+  }, [accountId, loadOverall, loading, overall, overallLoading, preview, tab]);
+
   const metaSection = preview?.sections.find((section) => section.platform === "meta") ?? null;
   const campaigns = metaSection?.campaigns ?? [];
   const adSets = campaigns.flatMap((campaign) => campaign.children.map((adSet) => ({ campaign, adSet })));
@@ -200,7 +264,9 @@ export function MetaManagementPageClient({ initialRole }: { initialRole: AuthRol
     setAccountName(account.accountName);
     setAccountResults([]);
     setRequestPrefill(null);
-    void load(account.adAccountId);
+    setStagePayloads({});
+    setMetaProtection(undefined);
+    void load(account.adAccountId, dates, "campaigns");
   }
 
   const knownAccounts = uniqueMetaAccounts([...recentAccounts, ...cachedAccounts]).slice(0, 10);
@@ -209,7 +275,16 @@ export function MetaManagementPageClient({ initialRole }: { initialRole: AuthRol
 
   function changeDates(next: { startDate: string; endDate: string }) {
     setDates(next);
-    if (accountId) void load(accountId, next);
+    setStagePayloads({});
+    setMetaProtection(undefined);
+    const stage = metaStageForTab(tab) ?? "campaigns";
+    if (accountId) void load(accountId, next, stage);
+  }
+
+  function refreshOfficialData() {
+    if (!accountId) return;
+    const stage = metaStageForTab(tab);
+    if (stage) void load(accountId, dates, stage);
   }
 
   function openRequest(resource: M03MetaManagementResource, fieldPath?: string) {
@@ -224,6 +299,17 @@ export function MetaManagementPageClient({ initialRole }: { initialRole: AuthRol
     const selection = selectMetaPrimaryNavigation(nextTab);
     setTab(selection.tab);
     setChangeRequestsOpen(selection.changeRequestsOpen);
+    const stage = metaStageForTab(selection.tab);
+    if (stage && accountId) {
+      const cached = stagePayloads[stage];
+      if (cached) {
+        setPreview(cached);
+        setMetaProtection(cached.metaProtection);
+        setError(cached.metaProtection?.circuitOpen ? cached.metaProtection.reason : null);
+      } else if (!loading) {
+        void load(accountId, dates, stage);
+      }
+    }
   }
 
   function selectChangeRequestFilter(filter: MetaChangeRequestNavigationFilter) {
@@ -236,7 +322,8 @@ export function MetaManagementPageClient({ initialRole }: { initialRole: AuthRol
 
   async function refreshManagementResources() {
     if (!accountId) return null;
-    const payload = await load(accountId);
+    const stage = metaStageForTab(tab) ?? "campaigns";
+    const payload = await load(accountId, dates, stage);
     const section = payload?.sections.find((candidate) => candidate.platform === "meta");
     return section ? collectMetaManagementResources(section.campaigns) : null;
   }
@@ -299,9 +386,9 @@ export function MetaManagementPageClient({ initialRole }: { initialRole: AuthRol
           {accountId ? <div className="mt-4 border-t border-slate-200 pt-5"><p className="text-xl font-semibold sm:text-2xl">{accountName || accountId}</p><p className="text-xs text-muted-foreground sm:text-sm">Meta ad account {accountId}</p></div> : null}
         </section>
 
-        {accountId ? <section className="relative z-20 flex flex-col gap-2 rounded-xl border bg-white px-4 py-3 shadow-sm sm:flex-row sm:items-center sm:justify-between"><ReportHeaderMonthPicker startDate={dates.startDate} endDate={dates.endDate} onChange={changeDates} variant="compact" /><Button size="sm" variant="outline" disabled={loading} onClick={() => void load(accountId)}><RefreshCwIcon className={loading ? "animate-spin" : ""} /> Refresh official data</Button></section> : null}
+        {accountId ? <section className="relative z-20 flex flex-col gap-2 rounded-xl border bg-white px-4 py-3 shadow-sm sm:flex-row sm:items-center sm:justify-between"><ReportHeaderMonthPicker startDate={dates.startDate} endDate={dates.endDate} onChange={changeDates} variant="compact" /><Button size="sm" variant="outline" disabled={loading || isMetaCircuitBlocked(metaProtection, clock)} onClick={refreshOfficialData}><RefreshCwIcon className={loading ? "animate-spin" : ""} /> Refresh official data</Button></section> : null}
 
-        {error ? <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-red-800"><p className="font-semibold">Meta Ads Management is unavailable</p><p className="mt-1 text-sm">{error}</p></div> : null}
+        {error ? <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-red-800"><p className="font-semibold">Meta Ads Management is unavailable</p><p className="mt-1 text-sm">{error}</p>{isMetaCircuitBlocked(metaProtection, clock) && metaProtection?.blockedUntil ? <p className="mt-2 text-xs font-medium">Manual refresh becomes available {new Date(metaProtection.blockedUntil).toLocaleString()}.</p> : null}</div> : null}
         {accountId ? (
           <div className="grid gap-4 lg:grid-cols-[220px_minmax(0,1fr)] lg:items-start">
             <MetaManagementNavigation
@@ -315,13 +402,13 @@ export function MetaManagementPageClient({ initialRole }: { initialRole: AuthRol
             <div className="min-w-0 space-y-5">
             {loading ? (tab === "overview" ? <MetaOverviewSkeleton /> : <MetaResourceSkeleton />) : null}
             {!loading && preview && tab === "overview" ? <Overview summary={summary} campaignGroups={campaignGroups} campaigns={campaigns} warnings={overall?.warnings ?? []} /> : null}
-            {!loading && preview && tab === "campaigns" ? <CampaignList campaigns={campaigns} onSelect={(campaign) => openRequest(toMetaCampaignManagementResource(campaign))} /> : null}
-            {!loading && preview && tab === "ad_sets" ? <AdSetList rows={adSets} onSelect={(campaign, adSet) => openRequest(toMetaAdSetManagementResource(campaign, adSet))} /> : null}
-            {!loading && preview && tab === "ads" ? <AdList rows={ads} onSelect={(campaign, adSet, ad) => openRequest(toMetaAdManagementResource(campaign, adSet, ad))} /> : null}
+            {!loading && preview && tab === "campaigns" ? <MetaCampaignsPage campaigns={campaigns} onEdit={(campaign) => openRequest(toMetaCampaignManagementResource(campaign))} /> : null}
+            {!loading && preview && tab === "ad_sets" ? <MetaAdSetsPage rows={adSets} onEdit={(campaign, adSet) => openRequest(toMetaAdSetManagementResource(campaign, adSet))} /> : null}
+            {!loading && preview && tab === "ads" ? <MetaAdsPage rows={ads} onEdit={(campaign, adSet, ad) => openRequest(toMetaAdManagementResource(campaign, adSet, ad))} /> : null}
             {!loading && preview && tab === "creatives" ? <CreativeList rows={ads} onSelect={(campaign, adSet, ad) => openRequest(toMetaAdManagementResource(campaign, adSet, ad), "ad.copy.primary_text")} /> : null}
             {!loading && preview && tab === "audience" ? overall ? <AudiencePanel overall={overall} section={metaSection} /> : <EmptyPanel title="Audience data unavailable" text="Reload the selected account to retrieve its audience and placement data." /> : null}
             {!loading && preview && tab === "opportunities" ? (
-              <MetaRecommendations
+              overallLoading ? <MetaResourceSkeleton /> : <MetaRecommendations
                 campaigns={campaigns}
                 campaignGroups={campaignGroups}
                 warnings={overall?.warnings ?? []}
@@ -442,7 +529,6 @@ function MetaChangeRequestsPanel({ accountId, accountName, filter, requestPrefil
           key={accountId}
           scope={{ platform: "meta", accountIdentity: accountId }}
           prefill={requestPrefill}
-          showStatusSummary={false}
           showNewRequestAction={false}
           focusEditorWhenOpen
           metaManagement={{
@@ -511,14 +597,7 @@ function MetaOverviewSkeleton() {
 }
 
 function MetaResourceSkeleton() {
-  return (
-    <Card role="status" aria-label="Loading Meta resources">
-      <CardHeader><Skeleton className="h-6 w-40" /><Skeleton className="h-4 w-64 max-w-full" /></CardHeader>
-      <CardContent className="space-y-3">
-        {[0, 1, 2].map((row) => <div key={row} className="flex items-center justify-between gap-4 border-b py-4 last:border-0"><div className="space-y-2"><Skeleton className="h-5 w-56 max-w-full" /><Skeleton className="h-3 w-36 max-w-full" /></div><Skeleton className="h-9 w-32 shrink-0" /></div>)}
-      </CardContent>
-    </Card>
-  );
+  return <div className="space-y-8"><ManagementPerformanceSkeleton /><div><ManagementEntityReportSkeleton /><div className="border-x border-b bg-white px-4 py-3"><Skeleton className="h-8 w-full" /></div></div></div>;
 }
 
 function Overview({ summary, campaignGroups, campaigns, warnings }: { summary: SummarySection | null; campaignGroups: CampaignGroup[]; campaigns: PreviewCampaignNode[]; warnings: string[] }) {
@@ -578,7 +657,155 @@ function MetaRecommendations({ campaigns, campaignGroups, warnings, onRequestCha
 }
 
 function NoMetaActivityPanel({ title, description, campaignCount }: { title: string; description: string; campaignCount: number }) {
-  return <Card className="border-amber-200 bg-amber-50/70"><CardContent className="flex gap-4 p-5 sm:p-6"><span className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-white text-amber-700 ring-1 ring-amber-200"><AlertTriangleIcon className="size-5" /></span><div><h2 className="font-semibold text-slate-900">{title}</h2><p className="mt-1 max-w-3xl text-sm leading-6 text-slate-600">{description}</p>{campaignCount > 0 ? <p className="mt-3 text-sm font-medium text-slate-800">The synchronized account structure is still available in Campaigns, Ad sets, Ads, and Creatives.</p> : null}</div></CardContent></Card>;
+  return <Card className="border-amber-200 bg-amber-50/70"><CardContent className="flex gap-4 p-5 sm:p-6"><span className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-white text-amber-700 ring-1 ring-amber-200"><AlertTriangleIcon className="size-5" /></span><div><h2 className="font-semibold text-slate-900">{title}</h2><p className="mt-1 max-w-3xl text-sm leading-6 text-slate-600">{description}</p>{campaignCount > 0 ? <p className="mt-3 text-sm font-medium text-slate-800">The synchronized account structure is still available in Campaigns, Ad sets, and Ads.</p> : null}</div></CardContent></Card>;
+}
+
+type MetaReportRow = {
+  id: string;
+  name: string;
+  status: string;
+  dailyPerformance?: PreviewCampaignNode["dailyPerformance"];
+  performance?: PreviewCampaignNode["performance"];
+  details: Array<{ label: string; value: string }>;
+  managementFields?: Record<string, unknown>;
+};
+
+function MetaCampaignsPage({ campaigns, onEdit }: { campaigns: PreviewCampaignNode[]; onEdit: (campaign: PreviewCampaignNode) => void }) {
+  return <MetaEntityReport
+    title="Campaign performance"
+    reportTitle="Campaign report"
+    reportDescription="Each campaign starts collapsed. Select View metrics to see its performance and delivery details."
+    entityLabel="campaign"
+    filterLabel="Campaign filter"
+    allLabel="All campaigns"
+    rows={campaigns}
+    getRow={(campaign) => campaign}
+    getSummary={(campaign) => [
+      { label: "Budget", value: formatMetaBudget(campaign.managementFields, "campaign") },
+      { label: "Delivery status", value: formatMetaStatus(campaign.status) },
+    ]}
+    onEdit={onEdit}
+  />;
+}
+
+function MetaAdSetsPage({ rows, onEdit }: { rows: Array<{ campaign: PreviewCampaignNode; adSet: PreviewAdGroupNode }>; onEdit: (campaign: PreviewCampaignNode, adSet: PreviewAdGroupNode) => void }) {
+  return <MetaEntityReport
+    title="Ad set performance"
+    reportTitle="Ad set report"
+    reportDescription="Each ad set starts collapsed. Select View metrics to see its settings and performance details."
+    entityLabel="ad set"
+    filterLabel="Ad set filter"
+    allLabel="All ad sets"
+    rows={rows}
+    getRow={({ adSet }) => adSet}
+    getSummary={({ campaign, adSet }) => [
+      { label: "Campaign", value: campaign.name },
+      { label: "Delivery status", value: formatMetaStatus(adSet.status) },
+    ]}
+    onEdit={({ campaign, adSet }) => onEdit(campaign, adSet)}
+  />;
+}
+
+function MetaAdsPage({ rows, onEdit }: { rows: Array<{ campaign: PreviewCampaignNode; adSet: PreviewAdGroupNode; ad: PreviewAdNode }>; onEdit: (campaign: PreviewCampaignNode, adSet: PreviewAdGroupNode, ad: PreviewAdNode) => void }) {
+  return <MetaEntityReport
+    title="Ad performance"
+    reportTitle="Ad report"
+    reportDescription="Each ad starts collapsed. Select View metrics to see its creative and performance details."
+    entityLabel="ad"
+    filterLabel="Ad filter"
+    allLabel="All ads"
+    rows={rows}
+    getRow={({ ad }) => ad}
+    getSummary={({ campaign, adSet }) => [
+      { label: "Campaign", value: campaign.name },
+      { label: "Ad set", value: adSet.name },
+    ]}
+    getAdditionalDetails={({ ad }) => [
+      { label: "Headline", value: ad.creative?.title || "—" },
+      { label: "Primary text", value: ad.creative?.body || "—", wide: true },
+      { label: "Destination URL", value: ad.finalUrl || "—", wide: true },
+      { label: "Facebook Page ID", value: ad.creative?.pageId || "—" },
+      { label: "Instagram actor ID", value: ad.creative?.instagramActorId || "—" },
+    ]}
+    onEdit={({ campaign, adSet, ad }) => onEdit(campaign, adSet, ad)}
+  />;
+}
+
+function MetaEntityReport<T>({
+  title,
+  reportTitle,
+  reportDescription,
+  entityLabel,
+  filterLabel,
+  allLabel,
+  rows,
+  getRow,
+  getSummary,
+  getAdditionalDetails = () => [],
+  onEdit,
+}: {
+  title: string;
+  reportTitle: string;
+  reportDescription: string;
+  entityLabel: string;
+  filterLabel: string;
+  allLabel: string;
+  rows: readonly T[];
+  getRow: (row: T) => MetaReportRow;
+  getSummary: (row: T) => Array<{ label: string; value: string }>;
+  getAdditionalDetails?: (row: T) => Array<{ label: string; value: string; wide?: boolean }>;
+  onEdit: (row: T) => void;
+}) {
+  const [filter, setFilter] = useState("all");
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState<MetaPageSize>(10);
+  const filteredRows = useMemo(() => filter === "all" ? rows : rows.filter((row) => getRow(row).id === filter), [filter, getRow, rows]);
+  const pagination = useMemo(() => paginateRows(filteredRows, page, pageSize), [filteredRows, page, pageSize]);
+  const daily = useMemo(() => mergeMetaDailyPerformanceSeries(filteredRows.map((row) => getRow(row).dailyPerformance)), [filteredRows, getRow]);
+  const resultLabel = daily.find((point) => point.resultLabel !== "Results")?.resultLabel || daily[0]?.resultLabel || "Results";
+  const performancePoints = daily.map((point) => ({ date: point.date, cost: point.spend, results: point.results, clicks: point.clicks }));
+  const authoritativeCostPerResult = resolveMetaManagementCostPerResult(
+    filteredRows.map((row) => getRow(row).performance),
+  );
+  const performanceDetails = (row: MetaReportRow) => [
+    ...row.details,
+    { label: "Spend", value: currency(row.performance?.spend) },
+    { label: row.performance?.resultLabel || "Results", value: number(row.performance?.results) },
+    { label: "Impressions", value: number(row.performance?.impressions) },
+    { label: "Clicks", value: number(row.performance?.clicks) },
+    { label: "CTR", value: row.performance ? `${number(row.performance.ctr)}%` : "—" },
+    { label: "CPC", value: currency(row.performance?.cpc) },
+    { label: "CPM", value: currency(row.performance?.cpm) },
+    { label: "Cost / result", value: currency(row.performance?.costPerResult) },
+    { label: "Landing-page views", value: number(row.performance?.landingPageViews) },
+    { label: "Link clicks", value: number(row.performance?.linkClicks) },
+  ];
+
+  return <div className="space-y-8">
+    <div className="py-1"><ManagementPerformancePanel points={performancePoints} authoritativeCostPerResult={authoritativeCostPerResult} title={title} subtitle={`${filter === "all" ? allLabel : filteredRows[0] ? getRow(filteredRows[0]).name : `Selected ${entityLabel}`} · daily official Meta Ads metrics`} headerControl={<Select value={filter} onValueChange={(value) => { setFilter(value); setPage(1); }}><SelectTrigger aria-label={filterLabel} className="w-full bg-white sm:w-72"><SelectValue placeholder={`Select ${entityLabel}`} /></SelectTrigger><SelectContent position="popper" align="end" className="max-h-[22rem]"><SelectItem value="all">{allLabel}</SelectItem>{rows.map((row) => { const entity = getRow(row); return <SelectItem key={entity.id} value={entity.id}>{entity.name}</SelectItem>; })}</SelectContent></Select>} labels={{ cost: "Spend", results: resultLabel, clicks: "Clicks", costPerResult: "Cost / result" }} emptyTitle="No performance activity in this date range" emptyDescription={`Meta returned no daily spend, result, or click rows for the selected ${entityLabel}.`} chartAriaLabel={`Meta ${entityLabel} performance line chart`} /></div>
+    <div>
+      <section className="overflow-hidden rounded-t-2xl border border-b-0 bg-white shadow-sm">
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b px-5 py-5"><div><h3 className="font-semibold">{reportTitle}</h3><p className="mt-1 text-xs text-slate-500">{reportDescription}</p></div><span className="text-xs text-slate-500">{filteredRows.length} {entityLabel}{filteredRows.length === 1 ? "" : "s"}</span></div>
+        {pagination.items.length ? <div className="divide-y">{pagination.items.map((item) => {
+          const row = getRow(item);
+          return <Collapsible key={row.id} defaultOpen={false} className="group"><div className="grid items-center gap-4 py-4 pl-5 pr-7 md:grid-cols-[minmax(0,1fr)_40px_minmax(150px,220px)_minmax(150px,200px)_128px]"><div className="min-w-0"><span className="mb-1 block text-[11px] uppercase tracking-wide text-slate-400">{entityLabel}</span><div className="flex min-w-0 items-center gap-3"><ManagementStatusDot status={row.status} /><ManagementEntityName text={row.name} multiline={entityLabel === "ad"} /></div></div><Button type="button" size="icon-sm" variant="ghost" className="ads-edit-action justify-self-center text-red-700" aria-label={`Edit ${entityLabel} ${row.name}`} onClick={() => onEdit(item)}><PencilIcon /></Button>{getSummary(item).map((summary) => <div key={summary.label} className="min-w-0 text-sm"><span className="block text-[11px] uppercase tracking-wide text-slate-400">{summary.label}</span><span className="block truncate font-medium" title={summary.value}>{summary.value}</span></div>)}<CollapsibleTrigger asChild><Button type="button" variant="outline" size="sm" className="w-32 justify-center"><span className="group-data-[state=open]:hidden">View metrics</span><span className="hidden group-data-[state=open]:inline">Hide metrics</span><ChevronDownIcon className="transition-transform group-data-[state=open]:rotate-180" /></Button></CollapsibleTrigger></div><CollapsibleContent className="border-t bg-slate-50/70 px-5 py-5"><ManagementDetailGrid details={[...performanceDetails(row), ...getAdditionalDetails(item)]} /></CollapsibleContent></Collapsible>;
+        })}</div> : <div className="p-8 text-center text-sm text-slate-500">No {entityLabel}s match this filter.</div>}
+      </section>
+      <ManagementPaginationFooter model={{ ...pagination, setPage, setPageSize: (value) => { setPageSize(value); setPage(1); } }} />
+    </div>
+  </div>;
+}
+
+function formatMetaBudget(fields: Record<string, unknown> | undefined, entity: "campaign" | "ad_set") {
+  const daily = Number(fields?.[`${entity}.budget.daily`]);
+  const lifetime = Number(fields?.[`${entity}.budget.lifetime`]);
+  if (Number.isFinite(daily) && daily > 0) return `${currency(daily / 100)}/day`;
+  if (Number.isFinite(lifetime) && lifetime > 0) return `${currency(lifetime / 100)} lifetime`;
+  return "—";
+}
+
+function formatMetaStatus(status: string) {
+  return status ? status.toLowerCase().replaceAll("_", " ").replace(/\b\w/g, (letter) => letter.toUpperCase()) : "Unknown";
 }
 
 function CampaignList({ campaigns, onSelect }: { campaigns: PreviewCampaignNode[]; onSelect: (campaign: PreviewCampaignNode) => void }) {
@@ -684,4 +911,19 @@ function currency(value: number | null | undefined) { return value == null ? "�
 function defaultDateRange() { const end = new Date(); const start = new Date(end); start.setDate(start.getDate() - 29); return { startDate: localIso(start), endDate: localIso(end) }; }
 function localIso(value: Date) { return `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, "0")}-${String(value.getDate()).padStart(2, "0")}`; }
 function message(error: unknown, fallback: string) { return error instanceof Error && error.message ? error.message : fallback; }
-async function api<T = Record<string, unknown>>(url: string, init?: RequestInit): Promise<T> { const response = await fetch(url, { ...init, cache: "no-store", headers: { "content-type": "application/json", ...init?.headers } }); const payload = await response.json().catch(() => ({})) as Record<string, unknown>; if (!response.ok) throw new Error(typeof payload.error === "string" ? payload.error : "Request failed."); return payload as T; }
+class ApiRequestError extends Error {
+  payload: Record<string, unknown>;
+
+  constructor(message: string, payload: Record<string, unknown>) {
+    super(message);
+    this.name = "ApiRequestError";
+    this.payload = payload;
+  }
+}
+
+async function api<T = Record<string, unknown>>(url: string, init?: RequestInit): Promise<T> {
+  const response = await fetch(url, { ...init, cache: "no-store", headers: { "content-type": "application/json", ...init?.headers } });
+  const payload = await response.json().catch(() => ({})) as Record<string, unknown>;
+  if (!response.ok) throw new ApiRequestError(typeof payload.error === "string" ? payload.error : "Request failed.", payload);
+  return payload as T;
+}

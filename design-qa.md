@@ -1,20 +1,36 @@
-# Meta Management Side Navigation Design QA
+# Meta Ads Management Design QA
 
-- Source reference: annotated `/manage/meta` browser region showing the former top navigation and Change Control rail.
-- Implemented surface: `/manage/meta`, consolidated management navigation.
-- Compared state: desktop account view with Change requests expanded and responsive compact navigation below the desktop breakpoint.
+- Source visual truth: the supplied Google Campaign performance and Campaign report screenshots.
+- Implementation evidence: authenticated in-app Browser verification of `/manage/meta` for Meta account `132472815649146`, plus `artifacts/meta-standardized-desktop.png` and `artifacts/meta-standardized-responsive.png`.
+- States checked: loading skeletons, Campaigns loaded, expanded campaign metrics, governed pencil edit, Ad sets, Ads, and mobile section navigation.
+
+## Full-view comparison
+
+Meta now follows the Google management information structure: a focused performance panel appears before a collapsible resource report. The existing account search, date controls, refresh action, desktop sidebar, and mobile section dropdown remain intact.
+
+## Focused comparison
+
+- Performance panel: entity filter, four metric cards, daily chart/empty state, and chart-series toggles use the shared Google-derived component.
+- Resource report: rows start collapsed and use a status dot, entity name, pencil edit action, summary fields, and View metrics/Hide metrics control.
+- Pagination: defaults to 10 rows, supports selectable page sizes, and retains straight footer edges.
+- Responsive layout: the desktop sidebar collapses to the existing mobile section dropdown without horizontal overflow.
+
+## Required fidelity surfaces
+
+- Typography, spacing, borders, card radii, shadows, and red/green status accents reuse the same application tokens as Google management.
+- Campaigns show budget and delivery status; ad sets and ads use the same shared report shell with their Meta parent mappings.
+- Empty daily ranges keep the metric cards and report visible instead of replacing the view with an alert.
+- Loading uses view-shaped metric, chart, and report-row skeletons.
+
+## Interaction and safety checks
+
+- View metrics expands official Meta details and changes to Hide metrics.
+- The pencil opens the existing M03 draft editor with an official read-only baseline.
+- The resource views do not expose a Request change button; that wording remains in Recommendations and Change requests.
+- Provider execution stays locked. No Meta mutation or provider-action route was added.
 
 ## Findings
 
-- P0: none.
-- P1: none.
-- P2: none.
-- The former horizontal management tabs have moved into one left navigation rail.
-- A divider separates reporting sections from Change requests.
-- Change requests is the rail's only expandable group and contains All requests, Campaign, Ad sets, Ads, and Creative.
-- Selecting a normal section collapses the Change requests group; selecting a request subtype expands it and activates the focused request view.
-- Below the desktop breakpoint, the rail is replaced by one compact section dropdown.
-- The layout retains the existing Meta page typography, spacing, borders, colors, icons, and responsive breakpoints.
-- Browser console showed no application errors during tab, filter, and editor interactions.
+No actionable P0, P1, or P2 visual differences remain in the requested scope. The selected live account returned campaigns but no ad/ad-set rows for the active range, so empty report states were also verified.
 
-Final result: passed
+final result: passed
