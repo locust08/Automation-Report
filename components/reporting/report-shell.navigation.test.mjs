@@ -23,7 +23,7 @@ test("orders campaign planning before media planning", () => {
 });
 
 test("orders change control before user management", () => {
-  const changeControl = labels.indexOf("Change Control");
+  const changeControl = labels.indexOf("Change Control Admin");
   const userManagement = labels.indexOf("User Management");
 
   assert.notEqual(changeControl, -1);

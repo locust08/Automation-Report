@@ -12,6 +12,8 @@ import {
   ManagementStatusDot as StatusDot,
 } from "@/components/ads-management/management-entity-report";
 import { ManagementPerformancePanel } from "@/components/ads-management/management-performance-panel";
+import { UnifiedManagementAccountSearch } from "@/components/ads-management/unified-management-account-search";
+import { ManagementSectionNavigation } from "@/components/ads-management/management-section-navigation";
 import { ReportShell } from "@/components/reporting/report-shell";
 import { ReportHeaderMonthPicker } from "@/components/reporting/report-header-month-picker";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -24,6 +26,7 @@ import { buildGoogleManagementRequestPrefill, toGoogleAdGroupManagementResource,
 import { googleChangeFieldsForEntity } from "@/lib/change-control/google-capability-registry";
 import { paginateRows, type MetaPageSize } from "@/lib/ads-management/pagination";
 import { toGoogleManagementPerformancePoints } from "@/lib/ads-management/management-performance";
+import { buildCanonicalManagementQuery, isAdsManagementView } from "@/lib/ads-management/unified-management";
 
 type SaveState = "idle" | "saving" | "saved" | "failed";
 type ManagementView = GoogleManagementView;
@@ -36,6 +39,7 @@ const MANAGEMENT_FILTER_MENU_CLASS = "max-h-[22rem]";
 export function GoogleManagementPageClient({ currentUser }: { currentUser: AuthenticatedAdsUser }) {
   const canRequestChanges = canEditAds(currentUser.role);
   const canEdit = false;
+  const router = useRouter();
   const params = useSearchParams();
   const accountId = params.get("accountId")?.trim() || "";
   const accountName = params.get("accountName")?.trim() || `Account ${accountId}`;
@@ -105,7 +109,8 @@ export function GoogleManagementPageClient({ currentUser }: { currentUser: Authe
     setReviewRequestId(requestId);
     setReviewPanelOpen(true);
   }, []);
-  const [view, setView] = useState<ManagementView>("campaigns");
+  const requestedView = isAdsManagementView(params.get("view")) ? params.get("view") as ManagementView : "campaigns";
+  const [view, setView] = useState<ManagementView>(requestedView);
   const googleManagementResources = useMemo<M03GoogleManagementResource[]>(() => campaigns.flatMap((campaign) => [
     toGoogleCampaignManagementResource(campaign),
     ...campaign.adGroups.flatMap((adGroup) => [
@@ -113,6 +118,22 @@ export function GoogleManagementPageClient({ currentUser }: { currentUser: Authe
       ...adGroup.ads.map((ad) => toGoogleAdManagementResource(campaign, adGroup, ad)),
     ]),
   ]), [campaigns]);
+  useEffect(() => {
+    setView(requestedView);
+    setReportDates(defaultManagementDateRange(params.get("startDate"), params.get("endDate")));
+  }, [accountId, params, requestedView]);
+  useEffect(() => {
+    if (!accountId) return;
+    const query = buildCanonicalManagementQuery({
+      platform: "google",
+      accountId,
+      accountName: params.get("accountName")?.trim() || accountName,
+      startDate: reportDates.startDate,
+      endDate: reportDates.endDate,
+      view,
+    });
+    if (params.toString() !== query) router.replace(`/manage?${query}`, { scroll: false });
+  }, [accountId, accountName, params, reportDates.endDate, reportDates.startDate, router, view]);
   const refreshOfficialGoogleResources = useCallback(async () => {
     const response = await fetch(`/api/ads-management/google/campaigns?accountId=${encodeURIComponent(accountId)}&startDate=${encodeURIComponent(reportDates.startDate)}&endDate=${encodeURIComponent(reportDates.endDate)}`, { cache: "no-store" });
     const payload = await response.json();
@@ -491,9 +512,9 @@ export function GoogleManagementPageClient({ currentUser }: { currentUser: Authe
   }
   if (!accountId)
     return (
-      <ReportShell title="Google Ads Management" dateLabel="Search for an account to begin" activeQuery="" reportReady>
+      <ReportShell title="Ads Management" dateLabel="Search for an account to begin" activeQuery="" reportReady>
         <div className="mx-auto max-w-3xl space-y-5 text-slate-900">
-          <GoogleManagementAccountSearch />
+          <UnifiedManagementAccountSearch />
           <section className="rounded-2xl border border-dashed bg-white p-10 text-center shadow-sm">
             <SearchIcon className="mx-auto size-8 text-slate-400" />
             <h2 className="mt-3 text-lg font-semibold">Find a Google Ads account</h2>
@@ -503,9 +524,9 @@ export function GoogleManagementPageClient({ currentUser }: { currentUser: Authe
       </ReportShell>
     );
   return (
-    <ReportShell title={`${managementAccountLabel(accountName)} Google Ads Management`} dateLabel={syncedAt ? `Synchronized ${new Date(syncedAt).toLocaleString()}` : "Latest Google Ads values"} activeQuery={activeQuery} reportReady>
+    <ReportShell title="Ads Management" dateLabel={syncedAt ? `Synchronized ${new Date(syncedAt).toLocaleString()}` : "Latest Google Ads values"} activeQuery={activeQuery} reportReady>
       <div className="mx-auto max-w-[1600px] space-y-5 text-slate-900">
-        <GoogleManagementAccountSearch currentAccount={{ accountName, adAccountId: accountId }} synchronizedAt={syncedAt} />
+        <UnifiedManagementAccountSearch selection={{ platform: "google", accountId, accountName }} synchronizedAt={syncedAt} />
         <section className="flex flex-wrap items-center justify-between gap-3 rounded-xl border bg-white px-4 py-3 shadow-sm">
           <ReportHeaderMonthPicker startDate={reportDates.startDate} endDate={reportDates.endDate} onChange={setReportDates} variant="compact" />
           <Button variant="outline" size="sm" disabled={loading} onClick={() => setRefreshNonce((value) => value + 1)}>
@@ -519,22 +540,16 @@ export function GoogleManagementPageClient({ currentUser }: { currentUser: Authe
             {error}
           </div>
         ) : null}
-        <div className="md:hidden">
-          <Select value={view === "change_requests" ? `change:${changeRequestFilter}` : view} onValueChange={(value) => {
-            if (value.startsWith("change:")) {
-              const selected = selectGoogleChangeRequestNavigation(value.slice(7) as GoogleChangeRequestFilter);
+        <div className="grid items-start gap-4 lg:grid-cols-[220px_minmax(0,1fr)]">
+          <ManagementSectionNavigation value={view} onChange={(next) => {
+            if (next === "change_requests") {
+              const selected = selectGoogleChangeRequestNavigation("requests");
               setView(selected.view); setChangeRequestFilter(selected.changeRequestFilter); setChangeRequestsOpen(selected.changeRequestsOpen);
             } else {
-              const selected = selectGooglePrimaryNavigation(value as Exclude<ManagementView, "change_requests">);
+              const selected = selectGooglePrimaryNavigation(next);
               setView(selected.view); setChangeRequestsOpen(selected.changeRequestsOpen);
             }
-          }}><SelectTrigger className="w-full bg-white"><SelectValue placeholder="Choose a section" /></SelectTrigger><SelectContent>
-            <SelectItem value="recommendations">Recommendations</SelectItem><SelectItem value="campaigns">Campaigns</SelectItem><SelectItem value="ad_groups">Ad groups</SelectItem><SelectItem value="ads">Ads</SelectItem>
-            <SelectItem value="change:requests">Change requests · All</SelectItem><SelectItem value="change:campaign">Change requests · Campaign</SelectItem><SelectItem value="change:ad_group">Change requests · Ad groups</SelectItem><SelectItem value="change:ad">Change requests · Ads</SelectItem>
-          </SelectContent></Select>
-        </div>
-        <div className="grid items-start gap-4 md:grid-cols-[220px_minmax(0,1fr)]">
-          <GoogleManagementSidebar view={view} changeRequestFilter={changeRequestFilter} changeRequestsOpen={changeRequestsOpen} onPrimary={(next) => { const selected = selectGooglePrimaryNavigation(next); setView(selected.view); setChangeRequestsOpen(selected.changeRequestsOpen); }} onChangeRequest={(filter) => { const selected = selectGoogleChangeRequestNavigation(filter); setView(selected.view); setChangeRequestFilter(selected.changeRequestFilter); setChangeRequestsOpen(selected.changeRequestsOpen); }} onToggleChangeRequests={setChangeRequestsOpen} />
+          }} />
           <section className="min-w-0 space-y-4">
             {loading || draftsLoading ? <GoogleManagementViewSkeleton view={view} /> : view === "recommendations" ? (
                 <RecommendationsPage accountId={accountId} accountName={accountName} recommendations={recommendations} loading={recommendationsLoading} error={recommendationsError} optimizationScore={optimizationScore} optimizationScoreUrl={optimizationScoreUrl} filter={recommendationFilter} onFilter={setRecommendationFilter} canEdit={canRequestChanges} onRequestChange={(recommendation) => requestChange({ campaignId: recommendation.campaignResourceName?.split("/").pop(), title: recommendation.title, reason: recommendation.description, fieldPath: recommendation.category === "bidding_budgets" ? "campaign.budget.amount_micros" : recommendation.category === "repairs" ? "campaign.status" : "campaign.name" })} />
@@ -1161,7 +1176,7 @@ function CampaignPerformancePanel({ campaign }: { campaign: ManagedCampaign }) {
   return <PerformancePanel performance={campaign.performance ?? []} title="Campaign performance" subtitle="Daily official Google Ads metrics for the selected campaign" />;
 }
 function PerformancePanel({ performance, title, subtitle, headerControl }: { performance: ManagedCampaignPerformancePoint[]; title: string; subtitle?: string; headerControl?: React.ReactNode }) {
-  return <ManagementPerformancePanel points={toGoogleManagementPerformancePoints(performance)} title={title} subtitle={subtitle} headerControl={headerControl} labels={{ cost: "Cost", results: "Conversions", clicks: "Clicks", costPerResult: "Cost / conv." }} emptyTitle="No performance activity in the last 30 days" emptyDescription="Google returned no daily cost, conversion, or click rows for this campaign." chartAriaLabel="Google Ads performance line chart" />;
+  return <ManagementPerformancePanel points={toGoogleManagementPerformancePoints(performance)} title={title} subtitle={subtitle} headerControl={headerControl} labels={{ cost: "Spend", results: "Results", clicks: "Clicks", costPerResult: "Cost / result" }} emptyTitle="No performance activity in this date range" emptyDescription="Google returned no daily spend, result, or click rows for this selection." chartAriaLabel="Google Ads performance line chart" />;
 }
 function RecommendationsPage({ recommendations, loading, error, optimizationScore, optimizationScoreUrl, filter, onFilter, canEdit, onRequestChange }: { accountId: string; accountName: string; recommendations: ManagedRecommendation[]; loading: boolean; error: string | null; optimizationScore: number | null; optimizationScoreUrl: string | null; filter: "all" | ManagedRecommendationCategory; onFilter: (filter: "all" | ManagedRecommendationCategory) => void; canEdit: boolean; onRequestChange: (recommendation: Pick<ManagedRecommendation, "title" | "description"> & Partial<Pick<ManagedRecommendation, "campaignResourceName" | "category">>) => void }) {
   const filters: Array<{

@@ -35,7 +35,7 @@ export function ChangeControlPageClient({ initialRole }: { initialRole: AuthRole
     router.replace("/change-control", { scroll: false });
   }, [prefill, router]);
 
-  return <ReportShell title="Change Control" dateLabel="M03 Provider-Ready Workflow" reportReady initialRole={initialRole}>
+  return <ReportShell title="Change Control Admin" dateLabel="Global M03 Administration & Recovery" reportReady initialRole={initialRole}>
     <div className="space-y-5">
       <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-950">
         <span className="flex items-center gap-2"><CircleSlash2Icon className="size-4" /> Provider publishing, retry, verification, and rollback remain locked.</span>

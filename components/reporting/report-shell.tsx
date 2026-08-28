@@ -92,9 +92,7 @@ export function ReportShell({
     metaImport: "/meta-import",
     billing: "/billing",
     googleOptimization: "/google-optimization",
-    googleManagement: "/manage/google",
-    metaManagement: "/manage/meta",
-    tiktokManagement: "/manage/tiktok",
+    adsManagement: "/manage",
     userManagement: "/user-management",
     optimizationScheduling: "/optimization-scheduling",
     campaigns: "/campaigns",
@@ -122,9 +120,7 @@ export function ReportShell({
     {
       label: "Ad Management",
       items: [
-        { href: hrefs.metaManagement, label: "Meta Ads Management", active: pathname.startsWith("/manage/meta"), icon: MegaphoneIcon },
-        { href: hrefs.googleManagement, label: "Google Ads Management", active: pathname.startsWith("/manage/google"), icon: SlidersHorizontalIcon },
-        { href: hrefs.tiktokManagement, label: "TikTok Ads Management", active: pathname.startsWith("/manage/tiktok"), icon: SparklesIcon },
+        { href: hrefs.adsManagement, label: "Ads Management", active: pathname === "/manage" || pathname.startsWith("/manage/"), icon: SlidersHorizontalIcon },
         ...(isAdmin
           ? [
               {
@@ -143,7 +139,7 @@ export function ReportShell({
           {
             label: "Admin",
             items: [
-              { href: hrefs.changeControl, label: "Change Control", active: pathname === "/change-control", icon: GitCompareArrowsIcon },
+              { href: hrefs.changeControl, label: "Change Control Admin", active: pathname === "/change-control", icon: GitCompareArrowsIcon },
               { href: hrefs.userManagement, label: "User Management", active: pathname === "/user-management", icon: UsersRoundIcon },
               { href: hrefs.settings, label: "Workflow Settings", active: pathname === "/settings", icon: SettingsIcon },
             ],

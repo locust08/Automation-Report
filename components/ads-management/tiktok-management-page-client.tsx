@@ -1,10 +1,13 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ChevronDownIcon, ClipboardListIcon, FilePenLineIcon, LightbulbIcon, LoaderCircleIcon, MegaphoneIcon, PencilIcon, RefreshCwIcon, SearchIcon } from "lucide-react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { ChevronDownIcon, LoaderCircleIcon, PencilIcon, RefreshCwIcon, SearchIcon } from "lucide-react";
 
 import { ManagementDetailGrid, ManagementEntityName, ManagementEntityReportSkeleton, ManagementPaginationFooter, ManagementStatusDot } from "./management-entity-report";
 import { ManagementPerformancePanel, ManagementPerformanceSkeleton } from "./management-performance-panel";
+import { UnifiedManagementAccountSearch } from "./unified-management-account-search";
+import { ManagementSectionNavigation } from "./management-section-navigation";
 import { M03RequestWorkspace } from "@/components/change-control/m03-request-workspace";
 import { ReportHeaderMonthPicker } from "@/components/reporting/report-header-month-picker";
 import { ReportShell } from "@/components/reporting/report-shell";
@@ -20,30 +23,31 @@ import { buildTikTokManagementRequestPrefill, toTikTokAdGroupManagementResource,
 import type { M03RequestPrefill } from "@/lib/change-control/workspace";
 import type { PreviewAdGroupNode, PreviewAdNode, PreviewCampaignNode, PreviewManagementPerformancePoint, PreviewReportPayload } from "@/lib/reporting/types";
 import type { TikTokManagementStage } from "@/lib/reporting/tiktok-management-stage";
+import { buildCanonicalManagementQuery, isAdsManagementView } from "@/lib/ads-management/unified-management";
 
 type AccountSuggestion = { accountName: string; adAccountId: string; notionPageId?: string; platform: "meta" | "google" | "tiktok" | null; country: string | null };
 type ResourceKind = "campaign" | "ad_group" | "ad";
 type TikTokResourceRow = { campaign: PreviewCampaignNode; adGroup?: PreviewAdGroupNode; ad?: PreviewAdNode };
 
 const RECENT_KEY = "tiktok-management-recent-accounts-v1";
-const TAB_ITEMS: Array<{ value: TikTokManagementTab; label: string; icon: typeof MegaphoneIcon }> = [
-  { value: "campaigns", label: "Campaigns", icon: MegaphoneIcon },
-  { value: "ad_groups", label: "Ad groups", icon: ClipboardListIcon },
-  { value: "ads", label: "Ads", icon: FilePenLineIcon },
-  { value: "recommendations", label: "Recommendations", icon: LightbulbIcon },
-];
-
 export function TikTokManagementPageClient({ initialRole }: { initialRole: AuthRole }) {
+  const router = useRouter();
+  const params = useSearchParams();
+  const queryAccountId = params.get("accountId")?.trim() || "";
+  const queryAccountName = params.get("accountName")?.trim() || queryAccountId;
+  const queryDates = dateRangeFromParams(params.get("startDate"), params.get("endDate"));
+  const queryTab = isAdsManagementView(params.get("view")) ? params.get("view") as TikTokManagementTab : "campaigns";
+  const canonicalLoadKey = useRef("");
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<AccountSuggestion[]>([]);
   const [recents, setRecents] = useState<AccountSuggestion[]>([]);
   const [searchOpen, setSearchOpen] = useState(false);
   const [searching, setSearching] = useState(false);
   const searchRef = useRef<HTMLDivElement>(null);
-  const [accountId, setAccountId] = useState("");
-  const [accountName, setAccountName] = useState("");
-  const [dates, setDates] = useState(defaultDateRange);
-  const [tab, setTab] = useState<TikTokManagementTab>("campaigns");
+  const [accountId, setAccountId] = useState(queryAccountId);
+  const [accountName, setAccountName] = useState(queryAccountName);
+  const [dates, setDates] = useState(queryDates);
+  const [tab, setTab] = useState<TikTokManagementTab>(queryTab);
   const [stagePayloads, setStagePayloads] = useState<Partial<Record<TikTokManagementStage, PreviewReportPayload>>>({});
   const [preview, setPreview] = useState<PreviewReportPayload | null>(null);
   const [loading, setLoading] = useState(false);
@@ -99,6 +103,29 @@ export function TikTokManagementPageClient({ initialRole }: { initialRole: AuthR
     } finally { setLoading(false); }
   }, [accountName, dates]);
 
+  useEffect(() => {
+    if (!queryAccountId) return;
+    const key = `${queryAccountId}:${queryDates.startDate}:${queryDates.endDate}`;
+    if (canonicalLoadKey.current === key) return;
+    canonicalLoadKey.current = key;
+    setAccountId(queryAccountId);
+    setAccountName(queryAccountName);
+    setQuery(queryAccountName);
+    setDates(queryDates);
+    setTab(queryTab);
+    setPreview(null);
+    setStagePayloads({});
+    setAssetPayloads({});
+    setPrefill(null);
+    void loadStage(queryAccountId, tiktokStageForTab(queryTab) ?? "campaigns", queryDates);
+  }, [loadStage, queryAccountId, queryAccountName, queryDates, queryTab]);
+
+  useEffect(() => {
+    if (!accountId) return;
+    const queryString = buildCanonicalManagementQuery({ platform: "tiktok", accountId, accountName: params.get("accountName")?.trim() || accountName, ...dates, view: tab });
+    if (params.toString() !== queryString) router.replace(`/manage?${queryString}`, { scroll: false });
+  }, [accountId, accountName, dates, params, router, tab]);
+
   function chooseAccount(account: AccountSuggestion) {
     const next = [account, ...recents.filter((item) => item.adAccountId !== account.adAccountId)].slice(0, 5);
     setRecents(next); writeAccounts(RECENT_KEY, next);
@@ -149,20 +176,20 @@ export function TikTokManagementPageClient({ initialRole }: { initialRole: AuthR
     return payload ? collectResources([payload, ...Object.values(stagePayloads).filter(Boolean) as PreviewReportPayload[]]) : null;
   }
 
-  return <ReportShell title="TikTok Ads Management" dateLabel={`${dates.startDate} – ${dates.endDate}`} hideHeaderDateControl compactResponsive initialRole={initialRole} activeQuery={accountId ? new URLSearchParams({ tiktokAccountId: accountId, platform: "tiktok", startDate: dates.startDate, endDate: dates.endDate }).toString() : ""}>
+  return <ReportShell title="Ads Management" dateLabel={`${dates.startDate} – ${dates.endDate}`} hideHeaderDateControl compactResponsive initialRole={initialRole} activeQuery={accountId ? new URLSearchParams({ tiktokAccountId: accountId, platform: "tiktok", startDate: dates.startDate, endDate: dates.endDate }).toString() : ""}>
     <div className={`mx-auto space-y-5 ${accountId ? "max-w-7xl" : "max-w-3xl"}`}>
-      <section className="relative z-30 rounded-2xl border bg-white p-5 shadow-sm">
+      <UnifiedManagementAccountSearch selection={accountId ? { platform: "tiktok", accountId, accountName } : null} />
+      {false ? <section className="relative z-30 rounded-2xl border bg-white p-5 shadow-sm">
         <label htmlFor="tiktok-account-search" className="text-sm font-semibold">TikTok Ads account search</label>
         <div ref={searchRef} className="relative mt-2"><SearchIcon className="pointer-events-none absolute left-3 top-1/2 z-10 size-4 -translate-y-1/2 text-slate-400" /><Input id="tiktok-account-search" value={query} onFocus={() => setSearchOpen(true)} onChange={(event) => { setQuery(event.target.value); setSearchOpen(true); }} onKeyDown={(event) => { if (event.key === "Escape") setSearchOpen(false); if (event.key === "Enter" && /^\d{1,32}$/.test(query.trim())) { setSearchOpen(false); setAccountId(query.trim()); setAccountName(query.trim()); setStagePayloads({}); void loadStage(query.trim(), "campaigns"); } }} className="bg-white pl-9" placeholder="Search company or enter a TikTok advertiser ID" />
           {searchOpen ? <div className="absolute left-0 right-0 top-[calc(100%+0.5rem)] z-[80] max-h-80 overflow-y-auto rounded-xl border bg-white p-2 shadow-2xl"><p className="px-2 py-1 text-xs font-semibold uppercase text-slate-500">Results</p>{searching ? <p className="flex items-center gap-2 px-3 py-3 text-sm text-slate-500"><LoaderCircleIcon className="size-4 animate-spin" />Searching accounts…</p> : results.length ? results.map((item) => <AccountOption key={`result:${item.adAccountId}`} account={item} onSelect={chooseAccount} />) : <p className="px-3 py-2 text-sm text-slate-500">{query.trim().length < 2 ? "Type at least 2 characters to search accounts." : "No matching TikTok advertisers found."}</p>}<div className="mt-1 border-t pt-1"><p className="px-2 py-1 text-xs font-semibold uppercase text-slate-500">Recent</p>{recents.length ? recents.map((item) => <AccountOption key={`recent:${item.adAccountId}`} account={item} onSelect={chooseAccount} />) : <p className="px-3 py-2 text-sm text-slate-500">No recent TikTok advertisers.</p>}</div></div> : null}
         </div><p className="mt-2 text-xs text-slate-500">Select an advertiser to retrieve official TikTok Ads data and its governed change-control workspace.</p>
-        {accountId ? <div className="mt-4 border-t pt-5"><h2 className="text-2xl font-semibold">{accountName || accountId}</h2><p className="text-sm text-slate-500">TikTok advertiser {accountId}{account?.timezone ? ` · ${account.timezone}` : ""}</p></div> : null}
-      </section>
+        {accountId ? <div className="mt-4 border-t pt-5"><h2 className="text-2xl font-semibold">{accountName || accountId}</h2><p className="text-sm text-slate-500">TikTok advertiser {accountId}{account?.timezone ? ` · ${account?.timezone}` : ""}</p></div> : null}
+      </section> : null}
       {accountId ? <section className="relative z-20 flex flex-col gap-2 rounded-xl border bg-white px-4 py-3 shadow-sm sm:flex-row sm:items-center sm:justify-between"><ReportHeaderMonthPicker startDate={dates.startDate} endDate={dates.endDate} onChange={changeDates} variant="compact" /><Button size="sm" variant="outline" disabled={loading} onClick={refresh}><RefreshCwIcon className={loading ? "animate-spin" : ""} />Refresh official data</Button></section> : null}
       {error ? <div role="alert" className="rounded-xl border border-amber-300 bg-amber-50 p-4 text-sm text-amber-950"><p className="font-semibold">This TikTok section could not refresh</p><p className="mt-1">{error}</p></div> : null}
       {!accountId ? <div className="rounded-xl border border-dashed bg-white p-12 text-center"><h2 className="font-semibold">Choose a TikTok advertiser</h2><p className="mt-1 text-sm text-slate-500">Campaigns load first. Other resources load only when opened.</p></div> : <>
-        <div className="lg:hidden"><Select value={tab} onValueChange={(value) => selectTab(value as TikTokManagementTab)}><SelectTrigger className="bg-white"><SelectValue /></SelectTrigger><SelectContent>{TAB_ITEMS.map((item) => <SelectItem key={item.value} value={item.value}>{item.label}</SelectItem>)}<SelectItem value="change_requests">Change requests</SelectItem></SelectContent></Select></div>
-        <div className="grid items-start gap-4 lg:grid-cols-[220px_minmax(0,1fr)]"><aside className="sticky top-4 hidden rounded-xl border bg-white p-2 shadow-sm lg:block"><nav aria-label="TikTok management navigation">{TAB_ITEMS.map(({ value, label, icon: Icon }) => <button key={value} type="button" onClick={() => selectTab(value)} className={`flex w-full items-center gap-3 rounded-lg px-3 py-3 text-left text-sm ${tab === value ? "bg-red-50 text-red-700 ring-1 ring-red-200" : "hover:bg-slate-50"}`}><Icon className="size-4" />{label}</button>)}<div className="my-2 border-t" /><button type="button" onClick={() => selectTab("change_requests")} className={`flex w-full items-center gap-3 rounded-lg px-3 py-3 text-left text-sm ${tab === "change_requests" ? "bg-red-50 text-red-700 ring-1 ring-red-200" : "hover:bg-slate-50"}`}><ClipboardListIcon className="size-4" />Change requests</button><div className="mt-2 border-t px-2 pt-3 text-xs text-slate-500">Provider execution remains locked.</div></nav></aside>
+        <div className="grid items-start gap-4 lg:grid-cols-[220px_minmax(0,1fr)]"><ManagementSectionNavigation value={tab} onChange={(next) => selectTab(next)} />
           <main className="min-w-0">{loading && !preview ? <div className="space-y-8"><ManagementPerformanceSkeleton /><ManagementEntityReportSkeleton /></div> : tab === "campaigns" ? <ResourceView kind="campaign" rows={campaignRows} currencyCode={currencyCode} onEdit={(row) => openEditor(toTikTokCampaignManagementResource(row.campaign))} /> : tab === "ad_groups" ? <ResourceView kind="ad_group" rows={adGroupRows} currencyCode={currencyCode} onEdit={(row) => openEditor(toTikTokAdGroupManagementResource(row.campaign, row.adGroup!))} /> : tab === "ads" ? <ResourceView kind="ad" rows={adRows} currencyCode={currencyCode} assetPayloads={assetPayloads} onExpand={(row) => { if (row.ad && !assetPayloads[row.ad.id]) void loadStage(accountId, "assets", dates, { campaignId: row.campaign.id, adGroupId: row.adGroup?.id, adId: row.ad.id }); }} onEdit={(row) => openEditor(toTikTokAdManagementResource(row.campaign, row.adGroup!, row.ad!))} /> : tab === "recommendations" ? <Recommendations campaigns={(stagePayloads.campaigns ?? preview)?.sections.find((item) => item.platform === "tiktok")?.campaigns ?? []} currencyCode={currencyCode} onRequest={(campaign) => openEditor(toTikTokCampaignManagementResource(campaign))} /> : <M03RequestWorkspace scope={{ platform: "tiktok", accountIdentity: accountId }} prefill={prefill} prefillReason="Opened from TikTok Ads Management." showNewRequestAction={false} focusEditorWhenOpen tiktokManagement={{ accountIdentity: accountId, accountName, resources, onRefreshOfficialData: refreshResources }} />}</main>
         </div></>}
     </div>
@@ -222,6 +249,7 @@ function isTikTokAccount(account: AccountSuggestion) { return account.platform =
 function readAccounts(key: string) { try { return (JSON.parse(localStorage.getItem(key) ?? "[]") as AccountSuggestion[]).filter(isTikTokAccount).slice(0, 5); } catch { return []; } }
 function writeAccounts(key: string, accounts: AccountSuggestion[]) { try { localStorage.setItem(key, JSON.stringify(accounts)); } catch { /* optional */ } }
 function defaultDateRange() { const end = new Date(); const start = new Date(end); start.setDate(start.getDate() - 29); return { startDate: iso(start), endDate: iso(end) }; }
+function dateRangeFromParams(startDate: string | null, endDate: string | null) { return /^\d{4}-\d{2}-\d{2}$/.test(startDate ?? "") && /^\d{4}-\d{2}-\d{2}$/.test(endDate ?? "") ? { startDate: startDate!, endDate: endDate! } : defaultDateRange(); }
 function iso(value: Date) { return `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, "0")}-${String(value.getDate()).padStart(2, "0")}`; }
 function status(value: string) { return value ? value.toLowerCase().replaceAll("_", " ").replace(/\b\w/g, (letter) => letter.toUpperCase()) : "Unknown"; }
 function number(value: number | null | undefined) { return value == null ? "—" : new Intl.NumberFormat("en-MY", { maximumFractionDigits: 2 }).format(value); }

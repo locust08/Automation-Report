@@ -5,9 +5,7 @@
 ```mermaid
 flowchart LR
     Browser[Authenticated browser]
-    GoogleUI[Google Ads Management]
-    MetaUI[Meta Ads Management]
-    TikTokUI[TikTok Ads Management]
+    ManagementUI[Unified Ads Management]
     M03UI[M03 Change Control]
 
     NextAPI[Next.js server API routes]
@@ -18,14 +16,10 @@ flowchart LR
     Supabase[(Supabase public schema)]
     M04[(M04 launch records - read only)]
 
-    Browser --> GoogleUI
-    Browser --> MetaUI
-    Browser --> TikTokUI
+    Browser --> ManagementUI
     Browser --> M03UI
 
-    GoogleUI --> NextAPI
-    MetaUI --> NextAPI
-    TikTokUI --> NextAPI
+    ManagementUI --> NextAPI
     M03UI --> NextAPI
 
     NextAPI --> AccountSearch
@@ -1068,124 +1062,61 @@ erDiagram
 
 ### 4.4 Current result
 
-- Google, Meta, and TikTok management pages remain read-only account explorers.
+- The unified Google, Meta, and TikTok management workspace remains a read-only account explorer.
 - M03 can store drafts, revisions, approvals, conflicts, and provider-operation plans in Supabase.
 - Provider publishing remains locked and no advertising-platform mutation is sent.
 - Adding provider credentials alone must not unlock publishing.
 
-## 5. Ad Management page contracts and consolidation plan
+## 5. Unified Ads Management page contract — implemented
 
-### 5.1 Meta Ads Management — implemented
+### 5.1 Canonical route and account resolution
 
-- Route: `/manage/meta`.
-- Current responsibilities:
-  - Meta-only account search.
-  - Recent account choices and cached/read-through data where available.
-  - Date range selection and explicit refresh.
-  - Overview performance metrics.
-  - Campaigns, ad sets, ads, creatives, audience/placements, and opportunities views.
-  - Read-only provider exploration.
-  - **Request change** handoff to M03 rather than direct provider mutation.
-- Storage boundary:
-  - The page does not own an approval or mutation table.
-  - M03 owns every durable draft, revision, approval, attempt, verification, and audit record.
+- Canonical route: `/manage`.
+- Canonical query state uses `platform`, `accountId`, `accountName`, `startDate`, `endDate`, and `view`.
+- The shared account picker resolves the provider from directory metadata first, then a recognized account-name prefix, then an explicit `meta:`, `google:`, or `tiktok:` direct-entry prefix.
+- Only unambiguous direct formats can omit a prefix: `act_` for Meta and a hyphenated 10-digit CID for Google. Ambiguous numeric identifiers require an explicit provider prefix.
+- `/manage/meta`, `/manage/google`, and `/manage/tiktok` temporarily redirect to `/manage` while preserving compatible account, date, and view state.
+- Google nested history and recovery routes remain available, and their account links return to the canonical workspace.
 
-### 5.2 TikTok Ads Management — implemented
+### 5.2 Shared workspace composition
 
-- Route: `/manage/tiktok`.
-- The page mirrors the shared Google and Meta explorer pattern and embeds the shared M03 workspace rather than duplicating Change Control storage or lifecycle logic.
+The canonical page renders one account at a time with the same composition for all providers:
 
-### Page sections
+1. Cross-platform account search, versioned recent-account cache, provider badge, and official account identity.
+2. Shared date-range picker and explicit active-section Refresh action.
+3. Sticky 220px desktop navigation and one mobile section selector.
+4. Campaigns, Ad groups, Ads, Recommendations, and account-scoped Change requests in that order.
+5. Four performance cards, daily chart, collapsible resource rows, pencil edit action, View metrics, and 10-row default pagination.
+6. Spend, Results, Clicks, and Cost/result vocabulary for Google and Meta; TikTok substitutes Engagements for Clicks.
+7. View-shaped skeletons and empty states that preserve the active workspace structure.
 
-1. TikTok-only searchable account picker.
-2. Date range and explicit refresh.
-3. Campaign performance metrics and daily chart.
-4. Campaigns.
-5. Ad groups.
-6. Ads and lazy-loaded regular-video creative references for one expanded ad.
-7. Deterministic recommendations derived from already loaded campaign performance.
-8. Account-scoped Change requests using the shared M03 workspace.
+Provider orchestration remains isolated behind the shared shell:
 
-### Read and change flow
+- Meta keeps progressive stage GETs, request deduplication, stale fallback, usage-header monitoring, the account circuit breaker, and manual recovery.
+- Google keeps its existing official campaigns endpoint, Notion access-path resolution, and recommendation behavior.
+- TikTok keeps progressive stages, its cache and rate limiter, and one-ad lazy creative/post reads.
+- An account/platform switch remounts the provider workspace so a late response cannot update the new account.
 
-- Read flow:
-  - Select a TikTok advertiser.
-  - Load normalized campaign data from the server-side staged preview API and optional five-minute cache.
-  - Load ad-group, ad, and one-ad asset stages only when the operator opens the corresponding view or expands an ad.
-  - Use official TikTok GET requests on a cache miss or explicit refresh.
-- Change flow:
-  - A resource-row pencil action creates a prefilled M03 draft; Recommendations and Change requests retain explicit workflow wording.
-  - M03 stores the request, items, revision, validation, approval, attempts, and audit evidence.
-  - Publishing remains blocked with `423 provider_execution_locked` while the execution gates are disabled.
-- See the TikTok storage ERD in section 2.3 and the planned combined workspace ERD in section 2.4.
+### 5.3 M03 Change Control composition and safety
 
-### 5.3 Merge Change Control into each platform management page — implemented
+- Resource-row pencil actions open the matching provider's governed M03 editor with an official read-only baseline; they do not write to an advertising provider.
+- Recommendations and Change requests retain explicit workflow wording.
+- Drafting, immutable revisions, validation, policy-aware approval, cancellation, conflicts, provider-plan preview, attempts, and audit history continue through the shared M03 APIs and `m03_ads_*` tables.
+- Provider capability registries, baseline builders, validators, serializers, credentials, and adapters remain provider-specific and server-only.
+- `/change-control` remains the global administration and recovery workspace.
+- Publishing, retry, verification, conflict resolution, and rollback execution remain disabled by `provider_execution_locked`.
+- No Meta, Google, or TikTok mutation request is authorized by the management UI.
 
-- Goal:
-  - Place the matching M03 workflow inside each platform explorer:
-    - Google Change Control inside `/manage/google`.
-    - Meta Change Control inside `/manage/meta`.
-    - TikTok Change Control inside `/manage/tiktok`.
-  - Let users inspect an entity and request its change without moving to a separate page.
-- Page behavior:
-  - **Request change** opens an inline M03 request builder prefilled with the selected account, campaign, entity, field, and current value.
-  - The page shows drafts, validation, approval, conflicts, operation plans, attempts, verification, and audit history for the selected account.
-  - Platform-specific controls remain separate so unsupported fields cannot be submitted accidentally.
-- Data boundary:
-  - All durable writes continue through the shared M03 APIs and `m03_ads_*` tables.
-  - Management-page components do not write directly to Google, Meta, or TikTok.
-  - No platform-specific duplicate Change Control tables are created.
-- Migration path:
-  1. Extract the existing M03 request builder and request-detail views into reusable components. **Complete.**
-  2. Add the Google components to `/manage/google`. **Complete.**
-  3. Add the Meta components to `/manage/meta`. **Complete.** The account-scoped workspace supports draft creation and editing, validation, policy-aware approval, cancellation, provider-plan preview, conflicts, operation evidence, and audit history.
-  4. Add the TikTok components after `/manage/tiktok` is implemented. **Complete.** The account-scoped workspace uses the authoritative TikTok capability registry and official read-only baselines.
-  5. Keep `/change-control` as the global request list, administration, and recovery page.
+### 5.4 Acceptance status (2026-08-27)
 
-- Meta acceptance status (2026-08-26):
-  - Pure capability, query-filtering, request-builder, value-parsing, resource-mapping, conflict-state, response-sanitization, and inactive-resource tests pass.
-  - TypeScript and ESLint verification pass; the authenticated `/manage/meta` shell was rendered locally and retains account search and read-only provider messaging.
-  - Credentialed Meta connectivity was not marked as passed because the local Doppler token could not access the configured project. The remaining live acceptance check is limited to connectivity and response correctness; it must not issue a provider mutation.
-  - Provider publishing, retry, verification, conflict resolution, and rollback execution remain disabled by `provider_execution_locked`. The Meta management and M03 provider-planning paths contain no authorized Meta write operation.
-
-- TikTok acceptance status (2026-08-27):
-  - The authenticated `/manage/tiktok` page, staged navigation, daily normalization/rollups, five-minute cache, request deduplication, capability registry, and M03 prefill builders have focused automated coverage.
-  - One approved advertiser passed the campaign connectivity/data check and one ad-group stage check, including advertiser-scoped identities, parent mappings, status, budget, and daily metrics.
-  - Live verification stopped after those two successful read-only checks. No TikTok mutation request was issued, and provider execution remains disabled by `provider_execution_locked`.
-
-### 5.4 Merge all Ads Management pages into one workspace — planned
-
-- Goal:
-  - Merge Google, Meta, and TikTok management into one `/manage/ads` page.
-  - Preserve one shared interface while rendering the correct platform-specific explorer and Change Control components.
-- Navigation model:
-  - Select an account using the shared account picker.
-  - Derive the platform from the selected account.
-  - Show an explicit Google, Meta, or TikTok switch when multiple provider identities are available.
-- Shared layout:
-  - Account and date controls.
-  - Overview and performance.
-  - Campaigns.
-  - Ad groups or ad sets.
-  - Ads and creatives.
-  - Audience and placements.
-  - Opportunities or recommendations.
-  - Embedded M03 Change Control for the selected platform and account.
-- Component boundary:
-  - Keep Google, Meta, and TikTok explorer components separate behind one shared shell.
-  - Keep provider capability registries, validators, serializers, and adapters separate.
-  - Reuse the same M03 APIs and tables.
-- Migration path:
-  1. Finish the TikTok read-only explorer. **Complete.**
-  2. Finish the platform-specific Change Control embedding described in section 5.3. **Complete.**
-  3. Extract shared account, date, tabs, metrics, loading, and error components.
-  4. Add `/manage/ads` and render the correct platform workspace from the selected account.
-  5. Redirect the three platform-specific management routes only after feature parity and acceptance testing.
-  6. Keep `/change-control` available until the unified page fully covers global administration and recovery workflows.
-- Safety:
-  - Management reads remain read-only outside the M03 request workflow.
-  - All durable writes continue through M03.
-  - Provider execution remains locked unless every M03 gate passes.
+- Unified account resolution, canonical query serialization, legacy route translation, shared navigation order, provider vocabulary, stale-response selection keys, and recent-cache migration have focused automated coverage.
+- The complete Ads Management test set passed, along with TypeScript and ESLint verification.
+- Authenticated browser acceptance passed for the canonical `/manage` route and its responsive section selector.
+- Live read-only checks were limited to two per provider and stopped after success:
+  - Meta Veton Office Campaigns returned 16 identities and non-zero January–June 2026 performance; Ad groups returned 19 identities with correct campaign parents and metrics.
+  - Google Alfa Pinjaman Campaigns returned 10 identities and non-zero performance; Ad groups returned 17 identities with correct campaign parents and metrics.
+  - TikTok Bellamy's Organic Malaysia Campaigns returned 19 identities and non-zero performance with Engagements; Ad groups returned 63 identities with correct campaign parents and metrics.
+- No provider mutation request was issued during acceptance testing, and provider execution remains locked.
 
 ## 6. Change-safety rule
 

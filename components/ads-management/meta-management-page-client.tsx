@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import {
   AlertTriangleIcon,
   BarChart3Icon,
@@ -21,6 +22,8 @@ import {
 
 import { ReportHeaderMonthPicker } from "@/components/reporting/report-header-month-picker";
 import { ReportShell } from "@/components/reporting/report-shell";
+import { UnifiedManagementAccountSearch } from "@/components/ads-management/unified-management-account-search";
+import { ManagementSectionNavigation } from "@/components/ads-management/management-section-navigation";
 import {
   ManagementDetailGrid,
   ManagementEntityName,
@@ -83,6 +86,11 @@ import type {
 } from "@/lib/reporting/types";
 import type { MetaManagementStage } from "@/lib/reporting/meta-management-stage";
 import { isMetaCircuitBlocked, metaStageForTab } from "@/lib/ads-management/meta-management-client-state";
+import {
+  buildCanonicalManagementQuery,
+  isAdsManagementView,
+  resolveManagementDisplayName,
+} from "@/lib/ads-management/unified-management";
 
 type AccountSuggestion = {
   accountName: string;
@@ -105,6 +113,13 @@ const PRIMARY_TAB_DETAILS: Record<(typeof META_MANAGEMENT_PRIMARY_TABS)[number],
 const PRIMARY_TABS = META_MANAGEMENT_PRIMARY_TABS.map((value) => ({ value, ...PRIMARY_TAB_DETAILS[value] }));
 
 export function MetaManagementPageClient({ initialRole }: { initialRole: AuthRole }) {
+  const router = useRouter();
+  const params = useSearchParams();
+  const queryAccountId = normalizeMetaAccountId(params.get("accountId") ?? "");
+  const queryAccountName = params.get("accountName")?.trim() || queryAccountId;
+  const queryDates = dateRangeFromParams(params.get("startDate"), params.get("endDate"));
+  const queryTab = metaTabFromCanonicalView(params.get("view"));
+  const canonicalLoadKey = useRef("");
   const [accountQuery, setAccountQuery] = useState("");
   const [accountResults, setAccountResults] = useState<AccountSuggestion[]>([]);
   const [recentAccounts, setRecentAccounts] = useState<AccountSuggestion[]>([]);
@@ -112,12 +127,12 @@ export function MetaManagementPageClient({ initialRole }: { initialRole: AuthRol
   const [accountResultsOpen, setAccountResultsOpen] = useState(false);
   const [accountSearching, setAccountSearching] = useState(false);
   const accountSearchRef = useRef<HTMLDivElement>(null);
-  const [accountId, setAccountId] = useState("");
-  const [accountName, setAccountName] = useState("");
-  const [dates, setDates] = useState(defaultDateRange);
-  const [tab, setTab] = useState<MetaManagementTab>("campaigns");
+  const [accountId, setAccountId] = useState(queryAccountId);
+  const [accountName, setAccountName] = useState(queryAccountName);
+  const [dates, setDates] = useState(queryDates);
+  const [tab, setTab] = useState<MetaManagementTab>(queryTab);
   const [changeRequestFilter, setChangeRequestFilter] = useState<MetaChangeRequestNavigationFilter>("requests");
-  const [changeRequestsOpen, setChangeRequestsOpen] = useState(false);
+  const [, setChangeRequestsOpen] = useState(false);
   const [overall, setOverall] = useState<OverallReportPayload | null>(null);
   const [preview, setPreview] = useState<PreviewReportPayload | null>(null);
   const [stagePayloads, setStagePayloads] = useState<Partial<Record<MetaManagementStage, PreviewReportPayload>>>({});
@@ -158,7 +173,12 @@ export function MetaManagementPageClient({ initialRole }: { initialRole: AuthRol
       if (previewPayload.metaProtection?.circuitOpen) {
         setError(previewPayload.metaProtection.reason || "Meta requests are temporarily paused for this ad account.");
       }
-      setAccountName(previewPayload.sections.find((section) => section.platform === "meta")?.accountName || previewPayload.companyName || accountName || normalized);
+      setAccountName(resolveManagementDisplayName({
+        platform: "meta",
+        accountId: normalized,
+        canonicalName: accountName,
+        providerName: previewPayload.sections.find((section) => section.platform === "meta")?.accountName || previewPayload.companyName,
+      }));
       return previewPayload;
     } catch (caught) {
       if (caught instanceof ApiRequestError && caught.payload.code === "meta_circuit_open") {
@@ -175,6 +195,29 @@ export function MetaManagementPageClient({ initialRole }: { initialRole: AuthRol
       setLoading(false);
     }
   }, [accountId, accountName, dates]);
+
+  useEffect(() => {
+    if (!queryAccountId) return;
+    const key = `${queryAccountId}:${queryDates.startDate}:${queryDates.endDate}`;
+    if (canonicalLoadKey.current === key) return;
+    canonicalLoadKey.current = key;
+    setAccountId(queryAccountId);
+    setAccountName(queryAccountName);
+    setAccountQuery(queryAccountName);
+    setDates(queryDates);
+    setTab(queryTab);
+    setRequestPrefill(null);
+    setStagePayloads({});
+    setMetaProtection(undefined);
+    void load(queryAccountId, queryDates, metaStageForTab(queryTab) ?? "campaigns");
+  }, [load, queryAccountId, queryAccountName, queryDates, queryTab]);
+
+  useEffect(() => {
+    if (!accountId) return;
+    const view = canonicalViewFromMetaTab(tab);
+    const query = buildCanonicalManagementQuery({ platform: "meta", accountId, accountName: params.get("accountName")?.trim() || accountName, ...dates, view });
+    if (params.toString() !== query) router.replace(`/manage?${query}`, { scroll: false });
+  }, [accountId, accountName, dates, params, router, tab]);
 
   useEffect(() => {
     if (!metaProtection?.circuitOpen || !metaProtection.blockedUntil) return;
@@ -330,7 +373,7 @@ export function MetaManagementPageClient({ initialRole }: { initialRole: AuthRol
 
   return (
     <ReportShell
-      title="Meta Ads Management"
+      title="Ads Management"
       dateLabel={`${dates.startDate} – ${dates.endDate}`}
       hideHeaderDateControl
       compactResponsive
@@ -338,7 +381,8 @@ export function MetaManagementPageClient({ initialRole }: { initialRole: AuthRol
       activeQuery={accountId ? new URLSearchParams({ metaAccountId: accountId, startDate: dates.startDate, endDate: dates.endDate }).toString() : ""}
     >
       <div className={`mx-auto space-y-5 ${accountId ? "max-w-7xl" : "max-w-3xl"}`}>
-        <section className="relative z-30 rounded-2xl border bg-white p-5 shadow-sm">
+        <UnifiedManagementAccountSearch selection={accountId ? { platform: "meta", accountId, accountName } : null} />
+        {false ? <section className="relative z-30 rounded-2xl border bg-white p-5 shadow-sm">
           <label className="block text-sm font-semibold text-slate-800" htmlFor="meta-management-account-search">
             Meta Ads account search
           </label>
@@ -384,21 +428,17 @@ export function MetaManagementPageClient({ initialRole }: { initialRole: AuthRol
           </div>
           <p className="mt-2 text-xs text-slate-500">Select an account to retrieve its latest Meta Ads data and governed change-control workspace.</p>
           {accountId ? <div className="mt-4 border-t border-slate-200 pt-5"><p className="text-xl font-semibold sm:text-2xl">{accountName || accountId}</p><p className="text-xs text-muted-foreground sm:text-sm">Meta ad account {accountId}</p></div> : null}
-        </section>
+        </section> : null}
 
         {accountId ? <section className="relative z-20 flex flex-col gap-2 rounded-xl border bg-white px-4 py-3 shadow-sm sm:flex-row sm:items-center sm:justify-between"><ReportHeaderMonthPicker startDate={dates.startDate} endDate={dates.endDate} onChange={changeDates} variant="compact" /><Button size="sm" variant="outline" disabled={loading || isMetaCircuitBlocked(metaProtection, clock)} onClick={refreshOfficialData}><RefreshCwIcon className={loading ? "animate-spin" : ""} /> Refresh official data</Button></section> : null}
 
         {error ? <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-red-800"><p className="font-semibold">Meta Ads Management is unavailable</p><p className="mt-1 text-sm">{error}</p>{isMetaCircuitBlocked(metaProtection, clock) && metaProtection?.blockedUntil ? <p className="mt-2 text-xs font-medium">Manual refresh becomes available {new Date(metaProtection.blockedUntil).toLocaleString()}.</p> : null}</div> : null}
         {accountId ? (
           <div className="grid gap-4 lg:grid-cols-[220px_minmax(0,1fr)] lg:items-start">
-            <MetaManagementNavigation
-              tab={tab}
-              changeRequestFilter={changeRequestFilter}
-              changeRequestsOpen={changeRequestsOpen}
-              onPrimarySelect={selectPrimaryTab}
-              onChangeRequestSelect={selectChangeRequestFilter}
-              onChangeRequestsOpenChange={setChangeRequestsOpen}
-            />
+            <ManagementSectionNavigation value={canonicalViewFromMetaTab(tab)} onChange={(next) => {
+              if (next === "change_requests") selectChangeRequestFilter("requests");
+              else selectPrimaryTab(metaPrimaryTabFromCanonicalView(next));
+            }} />
             <div className="min-w-0 space-y-5">
             {loading ? (tab === "overview" ? <MetaOverviewSkeleton /> : <MetaResourceSkeleton />) : null}
             {!loading && preview && tab === "overview" ? <Overview summary={summary} campaignGroups={campaignGroups} campaigns={campaigns} warnings={overall?.warnings ?? []} /> : null}
@@ -910,6 +950,11 @@ function number(value: number | null | undefined) { return value == null ? "—"
 function currency(value: number | null | undefined) { return value == null ? "—" : new Intl.NumberFormat("en-MY", { style: "currency", currency: "MYR" }).format(value); }
 function defaultDateRange() { const end = new Date(); const start = new Date(end); start.setDate(start.getDate() - 29); return { startDate: localIso(start), endDate: localIso(end) }; }
 function localIso(value: Date) { return `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, "0")}-${String(value.getDate()).padStart(2, "0")}`; }
+function dateRangeFromParams(startDate: string | null, endDate: string | null) { return /^\d{4}-\d{2}-\d{2}$/.test(startDate ?? "") && /^\d{4}-\d{2}-\d{2}$/.test(endDate ?? "") ? { startDate: startDate!, endDate: endDate! } : defaultDateRange(); }
+function normalizeMetaAccountId(value: string) { return value.trim().replace(/^act_/i, "").replace(/\D/g, ""); }
+function metaTabFromCanonicalView(value: string | null): MetaManagementTab { if (!isAdsManagementView(value)) return "campaigns"; if (value === "ad_groups") return "ad_sets"; if (value === "recommendations") return "opportunities"; return value; }
+function metaPrimaryTabFromCanonicalView(value: Exclude<import("@/lib/ads-management/unified-management").AdsManagementView, "change_requests">): Exclude<MetaManagementTab, "change_requests"> { return value === "ad_groups" ? "ad_sets" : value === "recommendations" ? "opportunities" : value; }
+function canonicalViewFromMetaTab(tab: MetaManagementTab) { if (tab === "ad_sets") return "ad_groups" as const; if (tab === "opportunities") return "recommendations" as const; if (tab === "change_requests") return "change_requests" as const; if (tab === "ads") return "ads" as const; return "campaigns" as const; }
 function message(error: unknown, fallback: string) { return error instanceof Error && error.message ? error.message : fallback; }
 class ApiRequestError extends Error {
   payload: Record<string, unknown>;

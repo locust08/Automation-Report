@@ -366,7 +366,7 @@ export function HomePageClient({ displayName, role }: HomePageClientProps) {
           <h2 id="google-tools-heading" className="mb-3 text-sm font-semibold uppercase tracking-[0.18em] text-white/70">Google</h2>
           <div className={`grid gap-3 ${role === "admin" ? "md:grid-cols-3" : "md:grid-cols-1"}`}>
             <Link
-              href="/manage/google"
+              href="/manage"
               className="flex items-center rounded-2xl border border-white/25 bg-white/10 p-4 text-white transition hover:bg-white/15"
             >
               <span className="flex items-center gap-2 text-base font-semibold">
