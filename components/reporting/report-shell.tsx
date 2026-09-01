@@ -41,11 +41,13 @@ interface ReportShellProps {
   title: string;
   dateLabel: string;
   headerDateControl?: React.ReactNode;
+  hideHeaderDateControl?: boolean;
   headerControlLayout?: "default" | "wide";
   headerBottomControl?: React.ReactNode;
   activeQuery?: string;
   reportReady?: boolean;
   suppressExportHeader?: boolean;
+  compactResponsive?: boolean;
   initialRole?: AuthRole;
   children: React.ReactNode;
 }
@@ -58,11 +60,13 @@ export function ReportShell({
   title,
   dateLabel,
   headerDateControl,
+  hideHeaderDateControl = false,
   headerControlLayout = "default",
   headerBottomControl,
   activeQuery = "",
   reportReady = false,
   suppressExportHeader = false,
+  compactResponsive = false,
   initialRole,
   children,
 }: ReportShellProps) {
@@ -88,7 +92,7 @@ export function ReportShell({
     metaImport: "/meta-import",
     billing: "/billing",
     googleOptimization: "/google-optimization",
-    googleManagement: "/manage/google",
+    adsManagement: "/manage",
     userManagement: "/user-management",
     optimizationScheduling: "/optimization-scheduling",
     campaigns: "/campaigns",
@@ -114,9 +118,9 @@ export function ReportShell({
       ],
     },
     {
-      label: "Google",
+      label: "Ad Management",
       items: [
-        { href: hrefs.googleManagement, label: "Google Ads Management", active: pathname.startsWith("/manage/google"), icon: SlidersHorizontalIcon },
+        { href: hrefs.adsManagement, label: "Ads Management", active: pathname === "/manage" || pathname.startsWith("/manage/"), icon: SlidersHorizontalIcon },
         ...(isAdmin
           ? [
               {
@@ -135,7 +139,7 @@ export function ReportShell({
           {
             label: "Admin",
             items: [
-              { href: hrefs.changeControl, label: "Change Control", active: pathname === "/change-control", icon: GitCompareArrowsIcon },
+              { href: hrefs.changeControl, label: "Change Control Admin", active: pathname === "/change-control", icon: GitCompareArrowsIcon },
               { href: hrefs.userManagement, label: "User Management", active: pathname === "/user-management", icon: UsersRoundIcon },
               { href: hrefs.settings, label: "Workflow Settings", active: pathname === "/settings", icon: SettingsIcon },
             ],
@@ -157,16 +161,18 @@ export function ReportShell({
         ) : null}
 
         <section
-          className={`${screenshotMode ? "hidden " : ""}relative overflow-visible rounded-[2rem] bg-[url('/headerbackground.png')] bg-cover bg-center bg-no-repeat shadow-sm md:bg-[length:100%_100%]`}
+          className={`${screenshotMode ? "hidden " : ""}relative overflow-visible ${compactResponsive ? "rounded-3xl" : "rounded-[2rem]"} bg-[url('/headerbackground.png')] bg-cover bg-center bg-no-repeat shadow-sm md:bg-[length:100%_100%]`}
           data-report-export-header-panel="true"
         >
           <div
-            className={`${REPORT_INNER_CONTAINER_CLASS} py-5 sm:py-6`}
+            className={`${REPORT_INNER_CONTAINER_CLASS} ${compactResponsive ? "py-4 sm:py-5" : "py-5 sm:py-6"}`}
             data-report-export-header-inner="true"
           >
             <div
               className={
-                headerControlLayout === "wide"
+                compactResponsive
+                  ? "grid gap-3 text-white lg:grid-cols-[minmax(0,1fr)_auto] lg:items-start lg:gap-x-6"
+                  : headerControlLayout === "wide"
                   ? "grid gap-5 text-white lg:grid-cols-[minmax(430px,0.8fr)_minmax(0,1.2fr)] lg:items-start lg:gap-x-8"
                   : "grid gap-4 text-white md:grid-cols-[minmax(0,1fr)_auto] md:items-start md:gap-x-8"
               }
@@ -174,16 +180,22 @@ export function ReportShell({
             >
               <div className="min-w-0 space-y-3">
                 <h1
-                  className={`${headerControlLayout === "wide" ? "lg:text-4xl lg:[overflow-wrap:normal]" : "md:text-6xl"} break-words text-3xl font-semibold leading-tight tracking-tight [overflow-wrap:anywhere] sm:text-4xl`}
+                  className={
+                    compactResponsive
+                      ? "break-words text-[clamp(1.9rem,5vw,3.25rem)] font-semibold leading-[1.08] tracking-tight [overflow-wrap:normal]"
+                      : `${headerControlLayout === "wide" ? "lg:text-4xl lg:[overflow-wrap:normal]" : "md:text-6xl"} break-words text-3xl font-semibold leading-tight tracking-tight [overflow-wrap:anywhere] sm:text-4xl`
+                  }
                   data-report-export-title="true"
                 >
                   {title}
                 </h1>
               </div>
-              {headerDateControl ? (
+              {hideHeaderDateControl ? null : headerDateControl ? (
                 <div
                   className={
-                    headerControlLayout === "wide"
+                    compactResponsive
+                      ? "flex w-full max-w-[420px] items-start lg:w-auto lg:justify-self-end"
+                      : headerControlLayout === "wide"
                       ? "flex w-full items-start lg:w-full lg:max-w-[920px] lg:justify-self-end"
                       : "flex w-full items-start md:w-auto md:max-w-[420px] md:justify-self-end"
                   }
@@ -201,32 +213,32 @@ export function ReportShell({
               )}
             </div>
             <nav
-              className="mt-4 flex w-full flex-wrap items-center justify-start gap-2"
+              className={`${compactResponsive ? "mt-3 gap-1.5" : "mt-4 gap-2"} flex w-full flex-wrap items-center justify-start`}
               data-report-export-exclude="true"
               aria-label="Report navigation"
             >
               <Link
                 href={hrefs.home}
                 aria-current={pathname === "/" ? "page" : undefined}
-                className={`inline-flex min-h-11 items-center gap-2 rounded-lg px-4 text-sm font-semibold outline-none transition focus-visible:ring-2 focus-visible:ring-white/90 focus-visible:ring-offset-2 focus-visible:ring-offset-red-900 ${
+                className={`inline-flex items-center rounded-lg font-semibold outline-none transition focus-visible:ring-2 focus-visible:ring-white/90 focus-visible:ring-offset-2 focus-visible:ring-offset-red-900 ${compactResponsive ? "min-h-9 gap-1.5 px-3 text-xs sm:min-h-10 sm:text-sm" : "min-h-11 gap-2 px-4 text-sm"} ${
                   pathname === "/"
                     ? "bg-white text-[#9f0712] shadow-md"
                     : "bg-white/10 text-white hover:bg-white/20"
                 }`}
               >
-                <HouseIcon className="size-5" />
+                <HouseIcon className={compactResponsive ? "size-4" : "size-5"} />
                 <span>Home</span>
               </Link>
 
               <DropdownMenu>
                 <DropdownMenuTrigger
-                  className={`group relative inline-flex min-h-11 items-center gap-2 rounded-lg px-4 text-sm font-semibold outline-none transition focus-visible:ring-2 focus-visible:ring-white/90 focus-visible:ring-offset-2 focus-visible:ring-offset-red-900 data-[state=open]:z-[60] data-[state=open]:rounded-b-none data-[state=open]:border data-[state=open]:border-b-0 data-[state=open]:border-[#e6d7d9] data-[state=open]:bg-white data-[state=open]:text-[#9f0712] data-[state=open]:shadow-none ${
+                  className={`group relative inline-flex items-center rounded-lg font-semibold outline-none transition focus-visible:ring-2 focus-visible:ring-white/90 focus-visible:ring-offset-2 focus-visible:ring-offset-red-900 data-[state=open]:z-[60] data-[state=open]:rounded-b-none data-[state=open]:border data-[state=open]:border-b-0 data-[state=open]:border-[#e6d7d9] data-[state=open]:bg-white data-[state=open]:text-[#9f0712] data-[state=open]:shadow-none ${compactResponsive ? "min-h-9 gap-1.5 px-3 text-xs sm:min-h-10 sm:text-sm" : "min-h-11 gap-2 px-4 text-sm"} ${
                     navigationIsActive
                       ? "bg-white text-[#9f0712] shadow-md"
                       : "bg-white/10 text-white hover:bg-white/20"
                   }`}
                 >
-                  <MenuIcon className="size-5" />
+                  <MenuIcon className={compactResponsive ? "size-4" : "size-5"} />
                   <span>Navigation</span>
                   <ChevronDownIcon className="size-4 opacity-75 transition-transform group-data-[state=open]:rotate-180" />
                 </DropdownMenuTrigger>
@@ -234,22 +246,23 @@ export function ReportShell({
                   align="start"
                   alignOffset={-96}
                   sideOffset={-1}
-                  className="w-[min(68rem,calc(100vw-2rem))] rounded-xl border border-[#e6d7d9] bg-white p-3 text-[#211114] shadow-2xl"
+                  collisionPadding={{ top: 8, right: 32, bottom: 8, left: 32 }}
+                  className="w-[min(68rem,calc(100vw-4rem))] rounded-xl border border-[#e6d7d9] bg-white p-2 text-[#211114] shadow-2xl xl:p-3"
                 >
-                  <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+                  <div className="grid gap-2 md:grid-cols-2 lg:grid-cols-4 xl:gap-4">
                     {navigationGroups.map((group, groupIndex) => (
                       <div
                         key={group.label}
                         className={
                           groupIndex === 0
                             ? "min-w-0"
-                            : "min-w-0 border-t border-[#eadfe0] pt-2 md:border-l md:border-t-0 md:pl-2 md:pt-0"
+                            : "min-w-0 border-t border-[#eadfe0] pt-2 md:border-l md:border-t-0 md:pl-1 md:pt-0 xl:pl-2"
                         }
                       >
-                        <DropdownMenuLabel className="px-3 pb-1 pt-2 text-xs font-bold uppercase tracking-[0.14em] text-[#8a6268]">
+                        <DropdownMenuLabel className="px-2 pb-1 pt-2 text-[11px] font-bold uppercase tracking-[0.12em] text-[#8a6268] xl:px-3 xl:text-xs xl:tracking-[0.14em]">
                           {group.label}
                         </DropdownMenuLabel>
-                        <DropdownMenuGroup className="space-y-1.5">
+                        <DropdownMenuGroup className="space-y-1 xl:space-y-1.5">
                           {group.items.map((item) => (
                             <ReportMenuItem key={item.href} {...item} />
                           ))}
@@ -260,7 +273,7 @@ export function ReportShell({
                 </DropdownMenuContent>
               </DropdownMenu>
 
-              <ReportLogoutButton />
+              <ReportLogoutButton compact={compactResponsive} />
             </nav>
             {headerBottomControl ? (
               <div className="mt-4" data-report-export-exclude="true">
@@ -270,7 +283,7 @@ export function ReportShell({
           </div>
         </section>
 
-        <section className={screenshotMode ? "py-5 sm:py-6 lg:py-8" : "flex-1 py-5 sm:py-6 lg:py-8"}>
+        <section className={screenshotMode ? "py-5 sm:py-6 lg:py-8" : `flex-1 ${compactResponsive ? "py-3 sm:py-4 lg:py-6" : "py-5 sm:py-6 lg:py-8"}`}>
           <div className={REPORT_INNER_CONTAINER_CLASS}>{children}</div>
         </section>
 
@@ -307,16 +320,16 @@ function ReportMenuItem({ href, label, active, icon: Icon }: ReportNavigationIte
   return (
     <DropdownMenuItem
       asChild
-      className={`min-h-11 cursor-pointer rounded-lg p-0 focus:bg-[#fff0f1] focus:text-[#8f0712] ${
+      className={`min-h-10 cursor-pointer rounded-lg p-0 focus:bg-[#fff0f1] focus:text-[#8f0712] xl:min-h-11 ${
         active ? "bg-[#fff0f1] text-[#8f0712]" : "text-[#2f2023]"
       }`}
     >
       <Link
         href={href}
         aria-current={active ? "page" : undefined}
-        className="flex min-h-11 w-full items-center gap-3 rounded-lg px-3 py-2 text-sm font-semibold outline-none"
+        className="flex min-h-10 w-full items-center gap-2 rounded-lg px-2 py-1.5 text-xs font-semibold outline-none xl:min-h-11 xl:gap-3 xl:px-3 xl:py-2 xl:text-sm"
       >
-        <Icon className="size-5 text-current" />
+        <Icon className="size-4 text-current xl:size-5" />
         <span className="min-w-0 flex-1 leading-snug">{label}</span>
         {active ? <CheckIcon className="size-4 text-[#d40016]" /> : null}
       </Link>
@@ -324,14 +337,14 @@ function ReportMenuItem({ href, label, active, icon: Icon }: ReportNavigationIte
   );
 }
 
-function ReportLogoutButton() {
+function ReportLogoutButton({ compact = false }: { compact?: boolean }) {
   return (
     <form action="/api/auth/logout" method="post">
       <button
         type="submit"
-        className="inline-flex min-h-11 items-center gap-2 rounded-lg bg-white/10 px-4 text-sm font-semibold text-white outline-none transition hover:bg-white/20 focus-visible:ring-2 focus-visible:ring-white/90 focus-visible:ring-offset-2 focus-visible:ring-offset-red-900"
+        className={`inline-flex items-center rounded-lg bg-white/10 font-semibold text-white outline-none transition hover:bg-white/20 focus-visible:ring-2 focus-visible:ring-white/90 focus-visible:ring-offset-2 focus-visible:ring-offset-red-900 ${compact ? "min-h-9 gap-1.5 px-3 text-xs sm:min-h-10 sm:text-sm" : "min-h-11 gap-2 px-4 text-sm"}`}
       >
-        <LogOutIcon className="size-5" />
+        <LogOutIcon className={compact ? "size-4" : "size-5"} />
         <span>Logout</span>
       </button>
     </form>

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { m03MockChangeRequestEditSchema, m03MockChangeRequestSchema, workflowSettingMutationSchema } from "./schema";
+import { m03ListQuerySchema, m03MockChangeRequestEditSchema, m03MockChangeRequestSchema, workflowSettingMutationSchema } from "./schema";
 import { M03_MOCK_REACHABLE_STATUSES, M03_STATUSES, PROVIDER_EXECUTION_LOCKED } from "./types";
 
 test("M03 accepts only mock cross-platform request contracts", () => {
@@ -38,9 +38,35 @@ test("M03 draft edits require optimistic locking and keep identity out of the ed
 test("workflow settings distinguish operator domains, destination domains, and CIDR networks", () => {
   assert.equal(workflowSettingMutationSchema.safeParse({ module: "m03", kind: "operator_domain", value: "locus-t.com.my", is_active: true, idempotency_key: "setting-12345" }).success, true);
   assert.equal(workflowSettingMutationSchema.safeParse({ module: "m04", kind: "destination_domain", value: "example.com", is_active: true, idempotency_key: "setting-12345" }).success, false);
-  assert.equal(workflowSettingMutationSchema.safeParse({ module: "m03", kind: "trusted_network", value: "127.0.0.1/32", is_active: true, idempotency_key: "setting-12345" }).success, true);
+  assert.equal(workflowSettingMutationSchema.safeParse({ module: "m03", kind: "trusted_network", value: "127.0.0.1/32", is_active: true, idempotency_key: "setting-12345" }).success, false);
+  assert.equal(workflowSettingMutationSchema.safeParse({ module: "m04", kind: "trusted_network", value: "127.0.0.1/32", is_active: true, idempotency_key: "setting-12345" }).success, true);
 });
 
 test("M03 provider contract remains hard locked", () => {
   assert.equal(PROVIDER_EXECUTION_LOCKED.error, "provider_execution_locked");
+});
+
+test("M03 list filters accept scoped account and campaign identities with a positive page", () => {
+  const result = m03ListQuerySchema.safeParse({
+    platform: "meta",
+    status: "awaiting_approval",
+    account_identity: "act_123",
+    campaign_identity: "campaign_456",
+    page: "2",
+  });
+
+  assert.equal(result.success, true);
+  if (!result.success) return;
+  assert.deepEqual(result.data, {
+    platform: "meta",
+    status: "awaiting_approval",
+    account_identity: "act_123",
+    campaign_identity: "campaign_456",
+    page: 2,
+    page_size: 10,
+  });
+  assert.equal(m03ListQuerySchema.safeParse({ account_identity: "", page: 1 }).success, false);
+  assert.equal(m03ListQuerySchema.safeParse({ campaign_identity: "campaign", page: 0 }).success, false);
+  assert.equal(m03ListQuerySchema.safeParse({ platform: "meta" }).success, false);
+  assert.equal(m03ListQuerySchema.safeParse({ page: 1, page_size: 100 }).success, false);
 });

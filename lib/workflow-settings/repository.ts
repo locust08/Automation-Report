@@ -57,6 +57,9 @@ export async function setWorkflowPolicy(input: {
   idempotencyKey: string;
   actor: WorkflowPolicyActor;
 }): Promise<WorkflowPolicy> {
+  if (input.key === "m03_change_control_approval" && !input.approvalRequired) {
+    throw new Error("M03 change control always requires a separate approval.");
+  }
   const row = await supabaseRest<PolicyRow>("rpc/ads_set_dashboard_workflow_policy_v1", {
     method: "POST",
     body: jsonBody({
@@ -78,7 +81,7 @@ function mapPolicy(row: PolicyRow): WorkflowPolicy {
   if (!WORKFLOW_POLICY_KEYS.includes(row.policy_key)) throw new Error("Unknown workflow policy returned by Supabase.");
   return {
     key: row.policy_key,
-    approvalRequired: row.approval_required,
+    approvalRequired: row.policy_key === "m03_change_control_approval" ? true : row.approval_required,
     lockVersion: row.lock_version,
     updatedAt: row.updated_at,
     updatedByName: row.updated_by_name,

@@ -373,6 +373,7 @@ export interface PreviewPerformanceSummary {
   spend: number;
   impressions: number;
   clicks: number;
+  engagements?: number;
   ctr: number;
   cpc: number | null;
   cpm: number | null;
@@ -453,6 +454,18 @@ export interface PreviewCreativeAsset {
   instagramPermalinkUrl?: string | null;
   effectiveInstagramMediaId?: string | null;
   facebookPermalinkUrl?: string | null;
+  pageId?: string | null;
+  instagramActorId?: string | null;
+  imageHash?: string | null;
+}
+
+export interface PreviewManagementPerformancePoint {
+  date: string;
+  spend: number;
+  results: number;
+  clicks: number;
+  engagements?: number;
+  resultLabel: string;
 }
 
 export interface PreviewLinkAsset {
@@ -489,6 +502,7 @@ export interface PreviewAdNode {
   creative?: PreviewCreativeAsset | null;
   previewLinks?: PreviewLinkAsset[];
   performance?: PreviewPerformanceSummary | null;
+  dailyPerformance?: PreviewManagementPerformancePoint[];
   demographics?: PreviewDemographicRow[];
   platformDistribution?: PreviewPlatformDistributionRow[];
   finalUrl?: string | null;
@@ -501,6 +515,7 @@ export interface PreviewAdNode {
   businessLogoUrl?: string | null;
   sitelinks?: PreviewSitelinkAsset[];
   tiktokDetail?: TikTokSelectedAdDetail | null;
+  managementFields?: Record<string, unknown>;
 }
 
 export interface PreviewAdGroupNode {
@@ -509,9 +524,11 @@ export interface PreviewAdGroupNode {
   status: string;
   details: PreviewDetailField[];
   performance?: PreviewPerformanceSummary | null;
+  dailyPerformance?: PreviewManagementPerformancePoint[];
   demographics?: PreviewDemographicRow[];
   platformDistribution?: PreviewPlatformDistributionRow[];
   ads: PreviewAdNode[];
+  managementFields?: Record<string, unknown>;
 }
 
 export interface PreviewCampaignNode {
@@ -522,9 +539,11 @@ export interface PreviewCampaignNode {
   objective?: string | null;
   details: PreviewDetailField[];
   performance?: PreviewPerformanceSummary | null;
+  dailyPerformance?: PreviewManagementPerformancePoint[];
   demographics?: PreviewDemographicRow[];
   platformDistribution?: PreviewPlatformDistributionRow[];
   children: PreviewAdGroupNode[];
+  managementFields?: Record<string, unknown>;
 }
 
 export interface PreviewPlatformSection {
@@ -665,6 +684,12 @@ export interface PreviewReportPayload {
   warnings: string[];
   metaWarnings?: MetaPreviewBlockIssue[];
   metaFatalErrors?: MetaPreviewBlockIssue[];
+  metaProtection?: {
+    source: "live" | "fresh-cache" | "stale-cache";
+    circuitOpen: boolean;
+    blockedUntil: string | null;
+    reason: string | null;
+  };
   googleWarnings?: GooglePreviewWarning[];
   googleFatalErrors?: GooglePreviewFatalError[];
   diagnostics?: {

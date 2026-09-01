@@ -23,6 +23,7 @@ import { flattenCampaignDetail } from "@/lib/campaign-planning/campaign-detail-t
 import { CAMPAIGN_EDITING_SECTION_ORDER, EDIT_DRAFT_RESET_LABEL, closeCampaignDetail, selectCampaignDetail, toggleCampaignCreator, toggleCampaignEditor } from "@/lib/campaign-planning/campaign-workspace-view";
 import { hydrateCampaignWizardFromRevision } from "@/lib/campaign-planning/campaign-wizard-payload";
 import { evaluateCampaignProviderReadiness } from "@/lib/campaign-planning/campaign-provider-readiness";
+import { CAMPAIGN_STATUS_PRESENTATIONS } from "@/lib/campaign-planning/campaign-status-presentation";
 import { mapCampaignIssueToWizardField, validateCampaignSubmission, type CampaignApiValidationIssue, type CampaignWizardIssue } from "@/lib/campaign-planning/campaign-submission-validation";
 import {
   createCampaignWizardForm,
@@ -41,6 +42,7 @@ import {
 import type { CampaignPlanDraftInput } from "@/lib/campaign-planning/domain";
 import type {
   CampaignPlanDetail,
+  CampaignPlanStatus,
   CampaignPlanningListPayload,
   CampaignPlatform,
 } from "@/lib/campaign-planning/types";
@@ -328,8 +330,8 @@ export function CampaignsPageClient({ initialRole }: { initialRole: AuthRole }) 
         </div>}
 
         <Card>
-          <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-4">
-            <div><CardTitle>Campaign drafts</CardTitle><CardDescription>Validated shared revisions with one platform-specific detail row.</CardDescription></div>
+          <CardHeader className="flex flex-row flex-wrap items-start justify-between gap-4">
+            <div><CardTitle className="text-xl">Campaign drafts</CardTitle><CardDescription className="mt-1">Validated shared revisions with one platform-specific detail row.</CardDescription></div>
             <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
               <FilterChoice ariaLabel="Filter by platform" value={platformFilter} options={PLATFORM_FILTER_OPTIONS} onChange={(value) => setPlatformFilter(value as CampaignPlatformFilter)} />
               <FilterChoice ariaLabel="Filter by status" value={statusFilter} options={STATUS_FILTER_OPTIONS} onChange={(value) => setStatusFilter(value as CampaignStatusFilter)} />
@@ -338,6 +340,7 @@ export function CampaignsPageClient({ initialRole }: { initialRole: AuthRole }) 
             </div>
           </CardHeader>
           <CardContent className="space-y-4">
+            <CampaignStatusLegend />
             {listLoading && !data ? <CampaignListSkeleton /> : campaignRows.map((row) => (
               <div key={row.map((campaign) => campaign.id).join("-")} className="space-y-3">
                 <div className="grid gap-3 lg:grid-cols-2">
@@ -595,7 +598,7 @@ function KeywordList({ keywords, matchTypes, onChange }: { keywords: string; mat
 function MultiToggle({ value, options, onChange }: { value: string; options: string[]; onChange: (value: string) => void }) { const selected = new Set(split(value)); return <div className="flex flex-wrap gap-2">{options.map((option) => <Button key={option} type="button" size="sm" variant={selected.has(option) ? "default" : "outline"} onClick={() => { const next = new Set(selected); if (next.has(option)) next.delete(option); else next.add(option); onChange(options.filter((item) => next.has(item)).join(", ")); }}>{option}</Button>)}</div>; }
 
 function CampaignDetail({ detail, busy, isAdmin, approvalRequired, editing, onToggleEdit, onClose, runReadinessAction }: { detail: CampaignPlanDetail; busy: boolean; isAdmin: boolean; approvalRequired: boolean; editing: boolean; onToggleEdit: () => void; onClose: () => void; runReadinessAction: (detail: CampaignPlanDetail, action: "validate_readiness" | "approve_readiness") => void }) {
-  return <Card className="border-red-200 bg-white shadow-sm"><CardHeader><div className="flex items-start justify-between gap-3"><div><CardTitle>{detail.plan.campaignName}</CardTitle><CardDescription>{detail.plan.platform.toUpperCase()} · Revision {detail.currentRevision.revisionNo} · immutable revision</CardDescription></div><div className="flex items-center gap-2">{isAdmin && detail.plan.status === "draft" ? <Button type="button" variant="outline" size="sm" onClick={onToggleEdit}>{editing ? <XIcon /> : <PencilIcon />}{editing ? "Cancel edit" : "Edit details"}</Button> : null}<Badge>{humanize(detail.plan.status)}</Badge><Button type="button" variant="ghost" size="icon-sm" aria-label="Close campaign details" onClick={onClose}><XIcon /></Button></div></div></CardHeader><CardContent className="space-y-5">
+  return <Card className="border-red-200 bg-white shadow-sm"><CardHeader><div className="flex items-start justify-between gap-3"><div><CardTitle>{detail.plan.campaignName}</CardTitle><CardDescription>{detail.plan.platform.toUpperCase()} · Revision {detail.currentRevision.revisionNo} · immutable revision</CardDescription></div><div className="flex items-center gap-2">{isAdmin && detail.plan.status === "draft" ? <Button type="button" variant="outline" size="sm" onClick={onToggleEdit}>{editing ? <XIcon /> : <PencilIcon />}{editing ? "Cancel edit" : "Edit details"}</Button> : null}<CampaignStatusBadge status={detail.plan.status} /><Button type="button" variant="ghost" size="icon-sm" aria-label="Close campaign details" onClick={onClose}><XIcon /></Button></div></div></CardHeader><CardContent className="space-y-5">
     <CampaignDetailTable detail={detail} />
     <CampaignReadiness detail={detail} busy={busy} isAdmin={isAdmin} approvalRequired={approvalRequired} onAction={(action) => runReadinessAction(detail, action)} />
   </CardContent></Card>;
@@ -789,9 +792,26 @@ function CampaignEditWizard({ detail, accounts, packages, busy, onCancel, onSave
 
 function CampaignCard({ campaign, selected, onClick }: { campaign: CampaignPlanningListPayload["campaigns"][number]; selected: boolean; onClick: () => void }) {
   return <button type="button" aria-pressed={selected} onClick={onClick} className={`rounded-xl border bg-white p-4 text-left transition hover:border-red-300 hover:shadow-sm ${selected ? "border-red-400 ring-2 ring-red-100" : ""}`}>
-    <div className="flex items-start justify-between gap-4"><div><p className="font-semibold">{campaign.campaignName}</p><p className="mt-1 text-sm text-muted-foreground">{campaign.clientName} · {campaign.accountName}</p></div><Badge variant="outline">{humanize(campaign.status)}</Badge></div>
+    <div className="flex items-start justify-between gap-4"><div><p className="font-semibold">{campaign.campaignName}</p><p className="mt-1 text-sm text-muted-foreground">{campaign.clientName} · {campaign.accountName}</p></div><CampaignStatusBadge status={campaign.status} /></div>
     <div className="mt-4 flex items-center justify-between text-sm"><span className="uppercase tracking-wide text-muted-foreground">{campaign.platform}</span><span>{money(campaign.allocatedBudget, campaign.currency)}</span></div>
   </button>;
+}
+
+function CampaignStatusBadge({ status }: { status: CampaignPlanStatus }) {
+  const presentation = CAMPAIGN_STATUS_PRESENTATIONS[status];
+  return <Badge variant="outline" className={presentation.badgeClassName}>{presentation.label}</Badge>;
+}
+
+function CampaignStatusLegend() {
+  const visibleStatuses: CampaignPlanStatus[] = ["draft", "launched"];
+
+  return <div aria-label="Campaign status legend" className="flex flex-wrap items-center gap-x-6 gap-y-3 rounded-lg border bg-muted/20 px-4 py-3.5 text-sm text-muted-foreground">
+    <span className="font-semibold text-foreground">Status legend</span>
+    {visibleStatuses.map((status) => {
+      const presentation = CAMPAIGN_STATUS_PRESENTATIONS[status];
+      return <span key={status} className="inline-flex items-center gap-2 whitespace-nowrap"><span aria-hidden="true" className={`shrink-0 rounded-full ${presentation.dotClassName}`} />{presentation.label}</span>;
+    })}
+  </div>;
 }
 
 function FilterChoice({ ariaLabel, value, options, onChange }: { ariaLabel: string; value: string; options: { value: string; label: string }[]; onChange: (value: string) => void }) {

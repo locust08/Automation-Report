@@ -8,11 +8,11 @@ import {
   type WorkflowPolicyMap,
 } from "@/lib/workflow-settings/policy";
 
-test("single-user defaults skip all four approval gates", () => {
+test("M03 always requires separate approval while other defaults remain unchanged", () => {
   assert.deepEqual(DEFAULT_WORKFLOW_POLICIES, {
     search_term_approval: false,
     placement_exclusion_approval: false,
-    m03_change_control_approval: false,
+    m03_change_control_approval: true,
     m04_campaign_readiness_approval: false,
   });
 });
@@ -20,6 +20,10 @@ test("single-user defaults skip all four approval gates", () => {
 test("missing or unavailable policy data fails closed", () => {
   assert.equal(approvalRequired(undefined, "search_term_approval"), true);
   assert.equal(approvalRequired({} as WorkflowPolicyMap, "m03_change_control_approval"), true);
+});
+
+test("M03 cannot be disabled by a stored workflow policy", () => {
+  assert.equal(approvalRequired({ m03_change_control_approval: false } as WorkflowPolicyMap, "m03_change_control_approval"), true);
 });
 
 test("disabled approval advances locally while enabled approval waits", () => {

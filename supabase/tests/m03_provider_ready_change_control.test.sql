@@ -1,0 +1,36 @@
+begin;
+select plan(30);
+
+select has_table('public','m03_ads_request_source_verifications','M03 source verifications exist');
+select has_table('public','m03_ads_provider_baseline_snapshots','M03 baseline snapshots exist');
+select has_table('public','m03_ads_provider_resource_mappings','M03 provider resource mappings exist');
+select hasnt_table('public','m03_ads_verified_change_handoffs','M03 does not create an M05 handoff table');
+select has_column('public','m03_ads_change_items','mutation_mode','items record mutation mode');
+select has_column('public','m03_ads_change_items','replacement_stage','items record replacement stage');
+select has_column('public','m03_ads_change_item_attempts','operation_key','attempts have stable operation keys');
+select has_column('public','m03_ads_change_item_attempts','normalized_error','attempts retain normalized errors');
+select has_function('public','m03_ads_record_source_verification_v1','source verification RPC exists');
+select has_function('public','m03_ads_record_provider_baseline_v1','baseline RPC exists');
+select has_function('public','m03_ads_create_post_launch_change_request_v1','atomic post-launch create RPC exists');
+select has_function('public','m03_ads_record_resource_mapping_v1','resource mapping RPC exists');
+select has_function('public','m03_ads_record_item_attempt_v1','item attempt RPC exists');
+select row_security_active('public','m03_ads_request_source_verifications','source verification RLS enabled');
+select row_security_active('public','m03_ads_provider_baseline_snapshots','baseline RLS enabled');
+select row_security_active('public','m03_ads_provider_resource_mappings','resource mapping RLS enabled');
+select ok(not has_table_privilege('anon','public.m03_ads_request_source_verifications','SELECT'),'anon cannot read source verification');
+select ok(not has_table_privilege('authenticated','public.m03_ads_provider_baseline_snapshots','SELECT'),'authenticated cannot read baselines');
+select ok(not has_table_privilege('authenticated','public.m03_ads_provider_resource_mappings','SELECT'),'authenticated cannot read mappings');
+select ok(has_table_privilege('service_role','public.m03_ads_request_source_verifications','SELECT'),'service role reads source verification');
+select ok(has_table_privilege('service_role','public.m03_ads_provider_baseline_snapshots','INSERT'),'service role writes baselines');
+select ok(has_table_privilege('service_role','public.m03_ads_provider_resource_mappings','INSERT'),'service role writes mappings');
+select ok(not has_function_privilege('anon','public.m03_ads_record_source_verification_v1(uuid,text,bigint,bigint,text,text,text,text,jsonb,uuid,inet,text,text)','EXECUTE'),'anon cannot verify sources');
+select ok(not has_function_privilege('authenticated','public.m03_ads_record_provider_baseline_v1(uuid,uuid,text,text,text,text,jsonb,text,timestamptz,uuid,inet,text,text)','EXECUTE'),'authenticated cannot record baselines');
+select ok(not has_function_privilege('authenticated','public.m03_ads_record_resource_mapping_v1(uuid,uuid,text,text,text,text,text,integer,jsonb,jsonb,uuid,inet,text,text)','EXECUTE'),'authenticated cannot record mappings');
+select ok(has_function_privilege('service_role','public.m03_ads_record_source_verification_v1(uuid,text,bigint,bigint,text,text,text,text,jsonb,uuid,inet,text,text)','EXECUTE'),'service role verifies sources');
+select ok(has_function_privilege('service_role','public.m03_ads_record_provider_baseline_v1(uuid,uuid,text,text,text,text,jsonb,text,timestamptz,uuid,inet,text,text)','EXECUTE'),'service role records baselines');
+select ok(has_function_privilege('service_role','public.m03_ads_create_post_launch_change_request_v1(text,text,text,uuid,text,text,bigint,bigint,uuid,uuid,jsonb,text,text,jsonb,jsonb,text,timestamptz,uuid,inet,text,text)','EXECUTE'),'service role atomically creates post-launch requests');
+select ok(has_function_privilege('service_role','public.m03_ads_record_resource_mapping_v1(uuid,uuid,text,text,text,text,text,integer,jsonb,jsonb,uuid,inet,text,text)','EXECUTE'),'service role records mappings');
+select ok(has_function_privilege('service_role','public.m03_ads_record_item_attempt_v1(uuid,uuid,uuid,text,integer,text,text,text,text,jsonb,jsonb,jsonb,jsonb,uuid,inet,text)','EXECUTE'),'service role records attempts');
+
+select * from finish();
+rollback;

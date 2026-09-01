@@ -18,7 +18,7 @@ test("renders the dashboard as a launcher without an account gate", () => {
 
 test("places account-independent actions inside the dashboard-tools section", () => {
   const dashboardTools = source.indexOf('aria-labelledby="dashboard-tools-heading"');
-  const sendReport = source.indexOf("Send Report\n", dashboardTools);
+  const sendReport = source.indexOf("Send Report", dashboardTools);
   const mediaPlan = source.indexOf("Create Media Plan", dashboardTools);
   const campaignPlanning = source.indexOf("Campaign Planning &amp; Launch", dashboardTools);
 

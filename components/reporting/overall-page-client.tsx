@@ -451,6 +451,7 @@ function SplitAccountOverallReport({
           data={data}
           queryString={forwardQuery}
           screenshotMode={screenshotMode}
+          showTikTokAccountContext={false}
           campaignNameFilter={campaignNameFilter}
           onCampaignNameFilterChange={onCampaignNameFilterChange}
         />
@@ -465,19 +466,21 @@ export function AccountReportContent({
   campaignNameFilter = null,
   onCampaignNameFilterChange,
   screenshotMode = false,
+  showTikTokAccountContext = true,
 }: {
   data: OverallReportPayload;
   queryString: string;
   campaignNameFilter?: CampaignNameFilter | null;
   onCampaignNameFilterChange?: (filter: CampaignNameFilter | null) => void;
   screenshotMode?: boolean;
+  showTikTokAccountContext?: boolean;
 }) {
   return (
     <>
       <ReportWarnings warnings={data.warnings} />
-      {data.tiktokAccounts?.map((account) => (
+      {showTikTokAccountContext ? data.tiktokAccounts?.map((account) => (
         <TikTokAccountContext key={account.advertiserId} account={account} />
-      ))}
+      )) : null}
       {data.summaries.map((section) => (
         <MetricSection key={section.platform} section={section} dateRange={data.dateRange} />
       ))}

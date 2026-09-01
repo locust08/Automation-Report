@@ -9,8 +9,8 @@ import {
 
 test("normalizes additive TikTok campaign totals and derives rate metrics", () => {
   const rows = normalizeTikTokReportRows([
-    { dimensions: { campaign_id: "10" }, metrics: { impressions: "100", clicks: "10", spend: "20", result: "40", reach: "80", conversion: "2" } },
-    { dimensions: { campaign_id: "10" }, metrics: { impressions: "300", clicks: "15", spend: "30", result: "60", reach: "200", conversion: "1" } },
+    { dimensions: { campaign_id: "10" }, metrics: { impressions: "100", clicks: "10", engagements: "14", spend: "20", result: "40", reach: "80", conversion: "2" } },
+    { dimensions: { campaign_id: "10" }, metrics: { impressions: "300", clicks: "15", engagements: "20", spend: "30", result: "60", reach: "200", conversion: "1" } },
   ], "campaign_id", new Map([["10", "Launch"]]));
 
   assert.equal(rows.length, 1);
@@ -19,6 +19,7 @@ test("normalizes additive TikTok campaign totals and derives rate metrics", () =
     name: "Launch",
     impressions: 400,
     clicks: 25,
+    engagements: 34,
     spend: 50,
     reach: 280,
     conversions: 100,
@@ -34,6 +35,7 @@ test("resolves reach and engagement results from the provider level that reports
     name: "Campaign",
     impressions: 1000,
     clicks: 0,
+    engagements: 0,
     spend: 100,
     conversions: 0,
     reach: 800,
@@ -108,7 +110,7 @@ test("splits report requests into inclusive 30-day windows and paginates sequent
   assert.deepEqual(result.requestIds, ["request-1", "request-2", "request-3", "request-4"]);
   assert.equal(calls.every((call) => {
     const metrics = call.metrics as string[];
-    return metrics.includes("result") && metrics.includes("reach");
+    return metrics.includes("result") && metrics.includes("reach") && metrics.includes("engagements");
   }), true);
 });
 

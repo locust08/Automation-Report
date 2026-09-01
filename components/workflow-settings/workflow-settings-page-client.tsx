@@ -22,8 +22,8 @@ const POLICY_COPY: Record<WorkflowPolicyKey, { title: string; description: strin
   },
   m03_change_control_approval: {
     title: "M03 change control",
-    description: "Require an explicit approval after a change request passes validation.",
-    skipped: "A valid request is approved locally by the same authenticated administrator.",
+    description: "A validated change request always requires a separate approval transition.",
+    skipped: "Separate approval is mandatory.",
   },
   m04_campaign_readiness_approval: {
     title: "M04 campaign readiness",
@@ -94,16 +94,17 @@ export function WorkflowSettingsPageClient({ initialRole }: { initialRole: AuthR
             {loading ? <LoadingRows /> : policies.map((policy) => {
               const copy = POLICY_COPY[policy.key];
               const busy = saving === policy.key;
+              const mandatory = policy.key === "m03_change_control_approval";
               return <div key={policy.key} className="flex flex-col gap-4 p-5 sm:flex-row sm:items-center sm:justify-between">
                 <div className="max-w-2xl">
                   <div className="flex items-center gap-2"><h2 className="font-semibold">{copy.title}</h2>{busy ? <LoaderCircleIcon className="size-4 animate-spin text-muted-foreground" /> : <CheckCircle2Icon className="size-4 text-emerald-600" />}</div>
                   <p className="mt-1 text-sm text-muted-foreground">{copy.description}</p>
-                  <p className="mt-2 text-xs text-slate-600">{policy.approvalRequired ? "A separate approval is required." : copy.skipped}</p>
+                  <p className="mt-2 text-xs text-slate-600">{mandatory ? "Mandatory role-based approval cannot be disabled." : policy.approvalRequired ? "A separate approval is required." : copy.skipped}</p>
                   {policy.updatedAt ? <p className="mt-1 text-xs text-muted-foreground">Updated {new Date(policy.updatedAt).toLocaleString()}{policy.updatedByName ? ` by ${policy.updatedByName}` : ""}</p> : null}
                 </div>
                 <label className="flex shrink-0 items-center gap-3 rounded-lg border bg-slate-50 px-4 py-3 text-sm font-medium">
                   Require approval
-                  <Switch checked={policy.approvalRequired} disabled={busy} onCheckedChange={(checked) => void update(policy, checked)} aria-label={`Require approval for ${copy.title}`} />
+                  <Switch checked={mandatory || policy.approvalRequired} disabled={busy || mandatory} onCheckedChange={(checked) => void update(policy, checked)} aria-label={`Require approval for ${copy.title}`} />
                 </label>
               </div>;
             })}

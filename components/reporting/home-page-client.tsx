@@ -13,7 +13,10 @@ import {
   MegaphoneIcon,
   SearchIcon,
   SendIcon,
+  SettingsIcon,
   SlidersHorizontalIcon,
+  UploadCloudIcon,
+  UsersRoundIcon,
   XIcon,
 } from "lucide-react";
 
@@ -243,7 +246,7 @@ export function HomePageClient({ displayName, role }: HomePageClientProps) {
 
   return (
     <main className="flex min-h-screen items-center justify-center bg-[url('/background.png')] bg-cover bg-center bg-no-repeat px-4 py-8">
-      <div className="w-full max-w-4xl space-y-3">
+      <div className="w-full max-w-6xl space-y-3">
         {displayName && (
           <div className="flex items-center justify-between gap-4 rounded-2xl border border-white/25 bg-black/40 px-5 py-3 text-white backdrop-blur-sm">
             <p className="min-w-0 truncate text-sm font-medium sm:text-base">
@@ -316,7 +319,8 @@ export function HomePageClient({ displayName, role }: HomePageClientProps) {
             </span>
           </div>
 
-        <div className="mt-5 grid gap-3 sm:grid-cols-3">
+        <section className="mt-5" aria-labelledby="report-tools-heading">
+          <h2 id="report-tools-heading" className="mb-3 text-sm font-semibold uppercase tracking-[0.18em] text-white/70">Reports</h2>
           <Button
             type="button"
             onClick={() => {
@@ -329,49 +333,36 @@ export function HomePageClient({ displayName, role }: HomePageClientProps) {
             Send Report
             <SendIcon data-icon="inline-end" />
           </Button>
-          <a
-            href={mediaPlanHref}
-            className="flex items-center rounded-2xl border border-white/25 bg-white/10 p-4 text-white transition hover:bg-white/15"
-          >
-            <span className="flex items-center gap-2 text-base font-semibold">
-              <ClipboardListIcon className="size-5" />
-              Create Media Plan
-            </span>
-          </a>
-          <a
-            href={billingHref}
-            className="flex items-center rounded-2xl border border-white/25 bg-white/10 p-4 text-white transition hover:bg-white/15"
-          >
-            <span className="flex items-center gap-2 text-base font-semibold">
-              <ListChecksIcon className="size-5" />
-              Daily Billing
-            </span>
-          </a>
-        </div>
-
-        <section className="mt-5" aria-labelledby="campaigns-heading">
-          <h2 id="campaigns-heading" className="mb-3 text-sm font-semibold uppercase tracking-[0.18em] text-white/70">Campaigns</h2>
-          <Link
-            href="/campaigns"
-            className="flex items-center rounded-2xl border border-white/25 bg-white/10 p-4 text-white transition hover:bg-white/15"
-          >
-            <span className="flex items-center gap-2 text-base font-semibold">
-              <MegaphoneIcon className="size-5" />
-              Campaign Planning &amp; Launch
-            </span>
-          </Link>
         </section>
 
-        <section className="mt-5" aria-labelledby="google-tools-heading">
-          <h2 id="google-tools-heading" className="mb-3 text-sm font-semibold uppercase tracking-[0.18em] text-white/70">Google</h2>
+        <section className="mt-5" aria-labelledby="planning-operations-heading">
+          <h2 id="planning-operations-heading" className="mb-3 text-sm font-semibold uppercase tracking-[0.18em] text-white/70">Planning &amp; Operations</h2>
+          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+            <Link href="/campaigns" className="flex items-center rounded-2xl border border-white/25 bg-white/10 p-4 text-white transition hover:bg-white/15">
+              <span className="flex items-center gap-2 text-base font-semibold"><MegaphoneIcon className="size-5" />Campaign Planning &amp; Launch</span>
+            </Link>
+            <a href={mediaPlanHref} className="flex items-center rounded-2xl border border-white/25 bg-white/10 p-4 text-white transition hover:bg-white/15">
+              <span className="flex items-center gap-2 text-base font-semibold"><ClipboardListIcon className="size-5" />Create Media Plan</span>
+            </a>
+            <Link href="/meta-import" className="flex items-center rounded-2xl border border-white/25 bg-white/10 p-4 text-white transition hover:bg-white/15">
+              <span className="flex items-center gap-2 text-base font-semibold"><UploadCloudIcon className="size-5" />Import Meta CSV</span>
+            </Link>
+            <a href={billingHref} className="flex items-center rounded-2xl border border-white/25 bg-white/10 p-4 text-white transition hover:bg-white/15">
+              <span className="flex items-center gap-2 text-base font-semibold"><ListChecksIcon className="size-5" />Billing Operations</span>
+            </a>
+          </div>
+        </section>
+
+        <section className="mt-5" aria-labelledby="ads-management-tools-heading">
+          <h2 id="ads-management-tools-heading" className="mb-3 text-sm font-semibold uppercase tracking-[0.18em] text-white/70">Ad Management</h2>
           <div className={`grid gap-3 ${role === "admin" ? "md:grid-cols-3" : "md:grid-cols-1"}`}>
             <Link
-              href="/manage/google"
+              href="/manage"
               className="flex items-center rounded-2xl border border-white/25 bg-white/10 p-4 text-white transition hover:bg-white/15"
             >
               <span className="flex items-center gap-2 text-base font-semibold">
                 <SlidersHorizontalIcon className="size-5" />
-                Edit Google Ads
+                Ads Management
               </span>
             </Link>
             {role === "admin" ? <a
@@ -394,6 +385,21 @@ export function HomePageClient({ displayName, role }: HomePageClientProps) {
             </a> : null}
           </div>
         </section>
+
+        {role === "admin" ? <section className="mt-5" aria-labelledby="admin-tools-heading">
+          <h2 id="admin-tools-heading" className="mb-3 text-sm font-semibold uppercase tracking-[0.18em] text-white/70">Admin</h2>
+          <div className="grid gap-3 md:grid-cols-3">
+            <Link href="/change-control" className="flex items-center rounded-2xl border border-white/25 bg-white/10 p-4 text-white transition hover:bg-white/15">
+              <span className="flex items-center gap-2 text-base font-semibold"><ClipboardListIcon className="size-5" />Change Control Admin</span>
+            </Link>
+            <Link href="/user-management" className="flex items-center rounded-2xl border border-white/25 bg-white/10 p-4 text-white transition hover:bg-white/15">
+              <span className="flex items-center gap-2 text-base font-semibold"><UsersRoundIcon className="size-5" />User Management</span>
+            </Link>
+            <Link href="/settings" className="flex items-center rounded-2xl border border-white/25 bg-white/10 p-4 text-white transition hover:bg-white/15">
+              <span className="flex items-center gap-2 text-base font-semibold"><SettingsIcon className="size-5" />Workflow Settings</span>
+            </Link>
+          </div>
+        </section> : null}
 
         </section> : null}
         </div>

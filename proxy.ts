@@ -12,10 +12,10 @@ export async function proxy(request: NextRequest) {
   const isBilling = request.nextUrl.pathname.startsWith("/billing");
   const isSearchTermOptimization = request.nextUrl.pathname.startsWith("/search-term-optimization");
   const isUserManagement = request.nextUrl.pathname.startsWith("/user-management");
-  const isGoogleManagement = request.nextUrl.pathname.startsWith("/manage/google");
+  const isAdsManagement = request.nextUrl.pathname === "/manage" || request.nextUrl.pathname.startsWith("/manage/");
   const isCampaigns = request.nextUrl.pathname.startsWith("/campaigns") || request.nextUrl.pathname.startsWith("/api/campaign-planning");
 
-  if (!session && (isDashboard || isBilling || isSearchTermOptimization || isUserManagement || isGoogleManagement || isCampaigns)) {
+  if (!session && (isDashboard || isBilling || isSearchTermOptimization || isUserManagement || isAdsManagement || isCampaigns)) {
     return NextResponse.redirect(new URL("/", request.url));
   }
 

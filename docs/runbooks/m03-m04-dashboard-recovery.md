@@ -4,12 +4,12 @@ This runbook covers the dashboard-only M03 change-control and M04 campaign-readi
 
 ## Invalid development actor mapping
 
-1. Read `DEV_AUTH_BYPASS_ACTOR_ID` from the deployment secret manager. Do not place it in source control or logs.
+1. Read `DEV_AUTH_BYPASS_ACTOR_ID` from the local or preview secret manager. Do not place it in source control or logs.
 2. Confirm the UUID identifies an active `admin` row in `ads_reporting_auth`.
-3. Correct the environment value and restart the local or preview runtime.
+3. Correct the environment value and restart the non-production runtime.
 4. Load `/campaigns` and `/change-control`; confirm the server resolves the actor without inserting or updating an authentication record.
 
-If the mapping is absent or inactive, keep mutations unavailable. Never restore the removed hard-coded actor fallback.
+The bypass must remain disabled in production. If the mapping is absent or inactive, keep mutations unavailable.
 
 ## Domain or trusted-network lockout
 
@@ -57,4 +57,96 @@ Use soft activation/deactivation only. Do not delete configuration rows.
 - `POST /api/change-control/provider` must return HTTP 423 with `provider_execution_locked`.
 - The dashboard must not show functioning publish, retry, readback, verification, or rollback controls.
 - M03 provider-dependent statuses remain part of the future contract but cannot be reached by mock RPCs.
-- M04 provider creation, activation, readback, and M05 handoff remain disabled.
+- M04 provider creation, activation, and readback remain disabled.
+
+## Fresh-baseline conflict or stale approval
+
+1. Do not publish or retry a mutation. Keep provider execution locked.
+2. Capture a new official read-only baseline for the exact account, campaign, and child resources.
+3. Compare the canonical hash with both the reviewed item baselines and the newest stored baseline.
+4. If either differs, move the request to conflict review and create a new immutable revision after the operator resolves every changed field.
+5. Approve only the latest revision hash; never reuse an approval from an older revision.
+
+## TikTok partial replacement or uncertain POST result
+
+1. Never automatically repeat a TikTok POST. First read the replacement resource by its stored resource identity or request ID.
+2. Resume from the last persisted replacement stage: created disabled, verified, activated, or previous resource disabled.
+3. If creation succeeded but the switch failed, keep the verified replacement disabled and expose a reviewed retry.
+4. If recovery requires compensation, create a new rollback request. Do not edit prior revisions or erase attempt evidence.
+5. Confirm the audit trail records the provider request ID, normalized error, readback, and resulting replacement stage.
+
+## TikTok token, permission, or API-version failure
+
+1. Keep provider execution locked and do not retry a mutation.
+2. Confirm the server-side Doppler authorization is current and that the exact advertiser is readable. Never copy tokens into the browser, Supabase, or audit evidence.
+3. Confirm the pinned TikTok Business API v1.3 action is still available and re-run capability validation if the provider changes an editable field.
+4. Use the synchronized-resource endpoint to read one campaign, ad group, ad, identity, video, or pixel required by the request.
+5. Preserve the draft and show a safe permission or capability error when access remains unavailable.
+
+## TikTok baseline conflict or readback mismatch
+
+1. Stop before mutation planning if the official canonical baseline differs from the reviewed values or the stored baseline is older than 15 minutes.
+2. Present the reviewed, latest official, and proposed values without overwriting any of them.
+3. Resolve the change in a new immutable revision and approve only its exact hash.
+4. Treat an accepted TikTok response as unverified until an exact GET readback matches the approved value.
+5. Keep mismatches in `partially_completed` or `failed` state with normalized evidence; never silently coerce provider values.
+
+## TikTok idempotency or Supabase persistence failure
+
+1. Resolve the existing M03 operation resource, stable operation key, and attempt before issuing a new idempotency key.
+2. A repeated key must return the original logical result without creating another replacement ad or duplicate attempt.
+3. If Supabase cannot durably record the next stage, stop before calling TikTok.
+4. Repair schema failures only with an additive migration that references `public.m03_ads_*`; do not modify or use another module's tables.
+
+## TikTok provider-lock confirmation
+
+- Publish, retry, verify, conflict-resolution, and rollback mutation routes return HTTP 423 before a TikTok mutation client is created.
+- Read-only synchronized-resource discovery and baseline retrieval may use TikTok GET endpoints.
+- No POST or DELETE is permitted during this implementation phase.
+- A future pilot still requires the deployment flag, `tiktok` platform allowlist, exact advertiser allowlist, fresh baseline, trusted operator/network, and exact approved revision.
+
+## Meta token, permission, or API-version failure
+
+1. Keep provider execution locked and do not retry a mutation.
+2. Confirm the server-side Meta token is current and has the reviewed `ads_management` access for the exact ad account. Never copy the token into the browser, Supabase, or an audit event.
+3. Confirm `META_GRAPH_API_VERSION` is the pinned, reviewed version. Re-run capability validation when Meta removes or changes a field.
+4. Use the read-only synchronized-resource endpoint to verify access to one campaign, ad set, ad, and creative.
+5. If access remains unavailable, preserve the draft and show a readable permission error. Do not fall back to caller-provided credentials.
+
+## Meta baseline conflict
+
+1. Stop before mutation planning when the fresh official baseline hash differs from the reviewed baseline.
+2. Show the latest official value beside the reviewed and proposed values.
+3. Resolve each item by keeping the official value, reapplying the proposal in a new revision, entering another value, cancelling the item, or escalating the request.
+4. Validate and approve the new immutable revision. Never reuse the superseded approval.
+
+## Meta direct-update partial failure
+
+1. Record the normalized Meta code, subcode, transient flag, user-facing message, and trace ID without storing credentials.
+2. Do not repeat successful items. Refresh the official baseline for failed items and check their stable operation keys and attempts.
+3. Retry only through an explicit reviewed action after the prior result is known. A failed or ambiguous POST is never retried automatically.
+4. Derive the request status from all item outcomes; use `partially_completed` when only some items succeeded.
+
+## Meta creative replacement recovery
+
+The durable order is replacement creative created and verified, replacement ad created paused and verified, replacement activated, previous ad paused, then final readback.
+
+- If creative creation succeeds but ad creation fails, preserve the verified creative ID and resume without recreating it.
+- If the replacement ad exists but remains paused, preserve it and require an explicit retry after readback.
+- If the replacement activates but pausing the previous ad fails, mark `compensation_required`; do not silently leave both ads active.
+- A readback mismatch must remain unverified and include the exact expected and actual canonical values.
+- Rollback always starts a new immutable M03 request from the latest official state. Never delete provider evidence or prior revisions.
+
+## Meta idempotency or Supabase persistence failure
+
+1. Resolve the prior M03 idempotency key, operation resource, and item attempt before issuing a new key.
+2. A repeated key must return the original logical row and must not create another Meta creative or ad.
+3. If Supabase becomes unavailable, stop before provider execution. Never mutate Meta unless the durable operation stage can be recorded first.
+4. Repair schema failures only with an additive M03-only forward migration and re-run the failed isolation assertions.
+
+## Meta provider-lock confirmation
+
+- Publish, retry, verify, conflict-resolution, and rollback mutation routes return HTTP 423 before baseline or mutation transport is invoked.
+- The response identifies `provider_execution_locked` and states that Meta execution is disabled for the deployment.
+- Read-only baseline and synchronized-resource discovery may use Meta; no POST or DELETE is permitted during this phase.
+- Enabling a future pilot still requires the deployment flag, the `meta` platform allowlist, the exact account allowlist, and the exact approved revision.

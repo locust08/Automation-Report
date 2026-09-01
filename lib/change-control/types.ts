@@ -36,7 +36,6 @@ export type M03MockChangeRequestInput = {
   campaign_identity: string;
   source_m04_plan_id?: number | null;
   source_m04_revision_id?: number | null;
-  source_m05_recommendation_ref?: string | null;
   rollback_of_request_id?: string | null;
   supersedes_request_id?: string | null;
   items: M03ChangeItemInput[];
@@ -48,20 +47,32 @@ export type M03MockChangeRequestEditInput = Omit<
   "platform" | "workflow_mode" | "account_identity" | "campaign_identity" | "client_id" | "idempotency_key"
 > & { expected_lock_version: number; idempotency_key: string };
 
-export type M03ValidationIssue = { path: string; message: string; severity?: "error" | "warning" };
+export type M03ValidationIssue = {
+  path: string;
+  message: string;
+  severity?: "error" | "warning";
+  entity_type?: string;
+  entity_identity?: string;
+  provider_field?: string;
+  capability_registry_version?: number;
+  section?: string;
+  suggested_correction?: string;
+};
 
 export type M03ChangeRequestSummary = {
   id: string; platform: M03Platform; status: M03Status; title: string; reason: string;
   client_id: string | null; account_identity: string; campaign_identity: string;
   source_m04_plan_id: number | null; source_m04_revision_id: number | null;
   source_m05_recommendation_ref: string | null; rollback_of_request_id: string | null;
-  supersedes_request_id: string | null; created_by_name: string; created_at: string;
+  supersedes_request_id: string | null; created_by_id: string; created_by_name: string; created_at: string;
   updated_at: string; lock_version: number; provider_execution_locked: true;
 };
 
 export type M03ChangeItem = M03ChangeItemInput & {
   id: string; request_id: string; validation_issues: M03ValidationIssue[];
   provider_result_evidence: Record<string, unknown>; readback_evidence: Record<string, unknown>;
+  capability_registry_version: number | null; mutation_mode: "direct_update" | "creative_replacement" | "unsupported" | null;
+  replacement_stage: string | null;
   created_at: string;
 };
 
@@ -83,20 +94,88 @@ export type M03Approval = {
 
 export type M03AuditEvent = {
   id: number; event_type: string; from_status: M03Status | null; to_status: M03Status | null;
-  actor_name: string | null; trusted_ip: string | null; metadata: Record<string, unknown>; created_at: string;
+  revision_id?: string | null;
+  actor_name: string | null; actor_email: string | null; actor_role: import("@/lib/auth/roles").AuthRole | null;
+  trusted_ip: string | null; metadata: Record<string, unknown>; created_at: string;
+};
+
+export type M03ProviderBaselineSnapshot = {
+  id: string; request_id: string; revision_id: string | null; platform: M03Platform;
+  source: "provider" | "legacy_google_compat" | "stored_snapshot"; payload_hash: string;
+  captured_at: string; freshness_expires_at: string; canonical_payload: Record<string, unknown>;
+};
+
+export type M03SourceVerification = {
+  id: string;
+  request_id: string;
+  source_kind: "m04_verified_launch" | "legacy_provider_adoption";
+  source_m04_plan_id: number | null;
+  source_m04_revision_id: number | null;
+  platform: M03Platform;
+  provider_account_identity: string;
+  provider_campaign_identity: string;
+  source_revision_hash: string | null;
+  evidence: Record<string, unknown>;
+  verified_at: string;
+};
+
+export type M03ProviderResourceMapping = {
+  id: number; item_id: string; provider_resource_type: string; previous_resource_identity: string | null;
+  replacement_resource_identity: string | null; replacement_stage: string; capability_registry_version: number;
+  operation_plan: Array<Record<string, unknown>>; rollback_evidence: Record<string, unknown>; updated_at: string;
+};
+
+export type M03ProviderOperationResourceRole = "previous_ad" | "replacement_creative" | "replacement_ad";
+export type M03ProviderOperationResourceState =
+  | "planned" | "created" | "verified" | "activated" | "disabled" | "failed" | "compensation_required";
+export type M03ProviderOperationResource = {
+  id: number;
+  request_id: string;
+  revision_id: string;
+  item_id: string;
+  resource_mapping_id: number | null;
+  platform: "meta" | "tiktok";
+  resource_role: M03ProviderOperationResourceRole;
+  provider_resource_identity: string | null;
+  lifecycle_state: M03ProviderOperationResourceState;
+  creation_evidence: Record<string, unknown>;
+  readback_evidence: Record<string, unknown>;
+  normalized_error: Record<string, unknown>;
+  idempotency_key: string;
+  created_at: string;
+  updated_at: string;
+};
+
+export type M03ItemAttempt = {
+  id: number; item_id: string; revision_id: string | null; action: "publish" | "readback" | "rollback";
+  attempt_number: number; operation_key: string | null; result: "provider_execution_locked" | "pending" | "succeeded" | "failed" | "verified" | "mismatch" | "compensation_required";
+  replacement_stage: string | null; provider_result_evidence: Record<string, unknown>;
+  readback_evidence: Record<string, unknown>; normalized_error: Record<string, unknown>; created_at: string;
 };
 
 export type M03ChangeRequestDetail = {
   request: M03ChangeRequestSummary; items: M03ChangeItem[]; revisions: M03Revision[];
   validations: M03ValidationRecord[]; approvals: M03Approval[]; events: M03AuditEvent[];
+  source_verification: M03SourceVerification | null;
+  baselines: M03ProviderBaselineSnapshot[]; resource_mappings: M03ProviderResourceMapping[];
+  attempts: M03ItemAttempt[]; operation_resources: M03ProviderOperationResource[];
   provider_execution_locked: true;
 };
 
 export type M03RequestListPayload = {
   requests: M03ChangeRequestSummary[];
   summary: Record<M03Status | "all", number>;
-  pagination: { page: number; page_size: 10; total: number; total_pages: number };
+  pagination: { page: number; page_size: 10 | 25 | 50; total: number; total_pages: number };
   provider_execution_locked: true;
+};
+
+export type M03RequestListFilters = {
+  platform?: M03Platform;
+  status?: M03Status;
+  account_identity?: string;
+  campaign_identity?: string;
+  page: number;
+  page_size: 10 | 25 | 50;
 };
 
 export type WorkflowSettingModule = "m03" | "m04";
@@ -107,7 +186,7 @@ export type WorkflowSetting = {
   updated_at: string | null;
 };
 export type WorkflowSettingsPayload = {
-  m03_operator_domains: WorkflowSetting[]; m03_trusted_networks: WorkflowSetting[];
+  m03_operator_domains: WorkflowSetting[];
   m04_destination_domains: WorkflowSetting[]; m04_trusted_networks: WorkflowSetting[];
 };
 export type WorkflowSettingMutation = {
@@ -116,17 +195,10 @@ export type WorkflowSettingMutation = {
 };
 
 export type TrustedRequestContext = {
-  actor_id: string; actor_name: string; actor_email: string; trusted_ip: string; user_agent: string;
+  actor_id: string; actor_name: string; actor_email: string; actor_role: import("@/lib/auth/roles").AuthRole; trusted_ip: string; user_agent: string;
 };
-
-export interface FutureM03ProviderAdapter {
-  readonly platform: M03Platform;
-  readonly enabled: false;
-  publish(): Promise<never>;
-  verify(): Promise<never>;
-}
 
 export const PROVIDER_EXECUTION_LOCKED = {
   error: "provider_execution_locked",
-  message: "Provider execution is outside this dashboard-only phase.",
+  message: "Provider execution is locked until a separately approved test-account pilot.",
 } as const;
