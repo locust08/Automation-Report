@@ -27,7 +27,7 @@ if (projectToken && host) {
     autocapture: false,
     capture_pageview: false,
     capture_pageleave: false,
-    disable_session_recording: true,
+    disable_session_recording: false,
     person_profiles: "identified_only",
     capture_exceptions: false,
     mask_all_text: true,
