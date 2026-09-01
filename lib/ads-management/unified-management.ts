@@ -58,6 +58,11 @@ type RefreshedManagementAccountNameInput = {
   providerName?: string | null;
 };
 
+type ManagementLoadingSkeletonInput = {
+  loading: boolean;
+  hasExistingData: boolean;
+};
+
 const PLATFORM_LABELS: Record<AdsManagementPlatform, string> = {
   meta: "Meta",
   google: "Google",
@@ -73,6 +78,12 @@ const LEGACY_VIEW_ALIASES: Record<string, AdsManagementView> = {
   recommendations: "recommendations",
   change_requests: "change_requests",
 };
+
+export function shouldShowManagementLoadingSkeleton({
+  loading,
+}: ManagementLoadingSkeletonInput) {
+  return loading;
+}
 
 export function resolveManagementAccount(input: AccountResolutionInput): ManagementAccountSelection | null {
   if (input.directInput?.trim()) return resolveDirectManagementAccount(input.directInput);

@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import * as unifiedManagement from "@/lib/ads-management/unified-management";
 
 import {
   MANAGEMENT_VIEWS,
@@ -12,6 +13,27 @@ import {
   resolveManagementAccount,
   translateLegacyManagementQuery,
 } from "@/lib/ads-management/unified-management";
+
+test("management refresh replaces stale view content with a loading skeleton", () => {
+  const shouldShowManagementLoadingSkeleton = (
+    unifiedManagement as typeof unifiedManagement & {
+      shouldShowManagementLoadingSkeleton?: (input: {
+        loading: boolean;
+        hasExistingData: boolean;
+      }) => boolean;
+    }
+  ).shouldShowManagementLoadingSkeleton;
+
+  assert.equal(typeof shouldShowManagementLoadingSkeleton, "function");
+  assert.equal(
+    shouldShowManagementLoadingSkeleton?.({ loading: true, hasExistingData: true }),
+    true,
+  );
+  assert.equal(
+    shouldShowManagementLoadingSkeleton?.({ loading: false, hasExistingData: true }),
+    false,
+  );
+});
 
 test("provider refresh preserves a selected TikTok directory account name", () => {
   assert.equal(
