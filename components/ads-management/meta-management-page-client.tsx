@@ -53,6 +53,7 @@ import {
 } from "@/lib/ads-management/meta-management-navigation";
 import { META_PAGE_SIZE_OPTIONS, paginateRows, type MetaPageSize } from "@/lib/ads-management/pagination";
 import {
+  getMetaManagementPerformanceLabels,
   mergeMetaDailyPerformanceSeries,
   resolveMetaManagementCostPerResult,
 } from "@/lib/ads-management/meta-management-performance";
@@ -807,7 +808,7 @@ function MetaEntityReport<T>({
   const filteredRows = useMemo(() => filter === "all" ? rows : rows.filter((row) => getRow(row).id === filter), [filter, getRow, rows]);
   const pagination = useMemo(() => paginateRows(filteredRows, page, pageSize), [filteredRows, page, pageSize]);
   const daily = useMemo(() => mergeMetaDailyPerformanceSeries(filteredRows.map((row) => getRow(row).dailyPerformance)), [filteredRows, getRow]);
-  const resultLabel = daily.find((point) => point.resultLabel !== "Results")?.resultLabel || daily[0]?.resultLabel || "Results";
+  const performanceLabels = getMetaManagementPerformanceLabels();
   const performancePoints = daily.map((point) => ({ date: point.date, cost: point.spend, results: point.results, clicks: point.clicks }));
   const authoritativeCostPerResult = resolveMetaManagementCostPerResult(
     filteredRows.map((row) => getRow(row).performance),
@@ -829,7 +830,7 @@ function MetaEntityReport<T>({
   onEdit = onEdit ?? (() => undefined);
 
   return <div className="space-y-8" data-can-edit={canEdit}>
-    <div className="py-1"><ManagementPerformancePanel points={performancePoints} authoritativeCostPerResult={authoritativeCostPerResult} title={title} subtitle={`${filter === "all" ? allLabel : filteredRows[0] ? getRow(filteredRows[0]).name : `Selected ${entityLabel}`} · daily official Meta Ads metrics`} headerControl={<Select value={filter} onValueChange={(value) => { setFilter(value); setPage(1); }}><SelectTrigger aria-label={filterLabel} className="w-full bg-white sm:w-72"><SelectValue placeholder={`Select ${entityLabel}`} /></SelectTrigger><SelectContent position="popper" align="end" className="max-h-[22rem]"><SelectItem value="all">{allLabel}</SelectItem>{rows.map((row) => { const entity = getRow(row); return <SelectItem key={entity.id} value={entity.id}>{entity.name}</SelectItem>; })}</SelectContent></Select>} labels={{ cost: "Spend", results: resultLabel, clicks: "Clicks", costPerResult: "Cost / result" }} emptyTitle="No performance activity in this date range" emptyDescription={`Meta returned no daily spend, result, or click rows for the selected ${entityLabel}.`} chartAriaLabel={`Meta ${entityLabel} performance line chart`} /></div>
+    <div className="py-1"><ManagementPerformancePanel points={performancePoints} authoritativeCostPerResult={authoritativeCostPerResult} title={title} subtitle={`${filter === "all" ? allLabel : filteredRows[0] ? getRow(filteredRows[0]).name : `Selected ${entityLabel}`} · daily official Meta Ads metrics`} headerControl={<Select value={filter} onValueChange={(value) => { setFilter(value); setPage(1); }}><SelectTrigger aria-label={filterLabel} className="w-full bg-white sm:w-72"><SelectValue placeholder={`Select ${entityLabel}`} /></SelectTrigger><SelectContent position="popper" align="end" className="max-h-[22rem]"><SelectItem value="all">{allLabel}</SelectItem>{rows.map((row) => { const entity = getRow(row); return <SelectItem key={entity.id} value={entity.id}>{entity.name}</SelectItem>; })}</SelectContent></Select>} labels={performanceLabels} emptyTitle="No performance activity in this date range" emptyDescription={`Meta returned no daily spend, result, or click rows for the selected ${entityLabel}.`} chartAriaLabel={`Meta ${entityLabel} performance line chart`} /></div>
     <div>
       <section className="overflow-hidden rounded-t-2xl border border-b-0 bg-white shadow-sm">
         <div className="flex flex-wrap items-center justify-between gap-3 border-b px-5 py-5"><div><h3 className="font-semibold">{reportTitle}</h3><p className="mt-1 text-xs text-slate-500">{reportDescription}</p></div><span className="text-xs text-slate-500">{filteredRows.length} {entityLabel}{filteredRows.length === 1 ? "" : "s"}</span></div>

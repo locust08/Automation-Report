@@ -1,8 +1,19 @@
 import type { PreviewManagementPerformancePoint } from "@/lib/reporting/types";
+import { getManagementMetricVocabulary } from "@/lib/ads-management/unified-management";
 
 export type MetaDailyPerformanceInput = PreviewManagementPerformancePoint & {
   entityId: string;
 };
+
+export function getMetaManagementPerformanceLabels() {
+  const vocabulary = getManagementMetricVocabulary("meta");
+  return {
+    cost: vocabulary.spend,
+    results: vocabulary.results,
+    clicks: vocabulary.activity,
+    costPerResult: vocabulary.costPerResult,
+  };
+}
 
 export function groupMetaDailyPerformance(
   rows: readonly MetaDailyPerformanceInput[],

@@ -1,11 +1,33 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import * as metaPerformance from "./meta-management-performance";
 
 import {
   groupMetaDailyPerformance,
   mergeMetaDailyPerformanceSeries,
   resolveMetaManagementCostPerResult,
 } from "./meta-management-performance";
+
+test("Meta management keeps a fixed performance-card vocabulary", () => {
+  const getMetaManagementPerformanceLabels = (
+    metaPerformance as typeof metaPerformance & {
+      getMetaManagementPerformanceLabels?: () => {
+        cost: string;
+        results: string;
+        clicks: string;
+        costPerResult: string;
+      };
+    }
+  ).getMetaManagementPerformanceLabels;
+
+  assert.equal(typeof getMetaManagementPerformanceLabels, "function");
+  assert.deepEqual(getMetaManagementPerformanceLabels?.(), {
+    cost: "Spend",
+    results: "Results",
+    clicks: "Clicks",
+    costPerResult: "Cost / result",
+  });
+});
 
 test("Meta daily performance groups duplicate entity dates without double-counting other dates", () => {
   const grouped = groupMetaDailyPerformance([
