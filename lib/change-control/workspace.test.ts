@@ -18,6 +18,7 @@ import {
   shouldShowM03NewRequestAction,
   validateM03RequestFormValues,
   validateM03SourceEvidencePair,
+  createM03LatestRequestGuard,
   type M03RequestPrefill,
   type M03EditorSession,
   type M03WorkspaceScope,
@@ -63,6 +64,15 @@ test("M03 workspace list queries include every fixed scope, active filter, and s
     "page=1&page_size=10&platform=meta",
     "campaign filtering is only valid within an account scope",
   );
+});
+
+test("M03 list request guard rejects an older response after a newer refresh starts", () => {
+  const guard = createM03LatestRequestGuard();
+  const initialLoad = guard.begin();
+  const postCreateRefresh = guard.begin();
+
+  assert.equal(guard.isCurrent(initialLoad), false);
+  assert.equal(guard.isCurrent(postCreateRefresh), true);
 });
 
 test("M03 exact request links use only the encoded request identity", () => {
@@ -346,6 +356,7 @@ function requestSummary(lockVersion: number, title: string): M03ChangeRequestSum
     source_m05_recommendation_ref: null,
     rollback_of_request_id: null,
     supersedes_request_id: null,
+    created_by_id: "actor",
     created_by_name: "Operator",
     created_at: "2026-08-26T00:00:00.000Z",
     updated_at: "2026-08-26T00:01:00.000Z",

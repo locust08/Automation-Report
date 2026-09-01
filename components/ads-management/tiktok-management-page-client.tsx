@@ -16,6 +16,7 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/component
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import type { AuthRole } from "@/lib/auth/roles";
+import { m03CapabilitiesForRole } from "@/lib/change-control/permissions";
 import { paginateRows, type MetaPageSize } from "@/lib/ads-management/pagination";
 import { tiktokStageForTab, type TikTokManagementTab } from "@/lib/ads-management/tiktok-management-navigation";
 import { toTikTokManagementPerformancePoints } from "@/lib/ads-management/tiktok-management-performance";
@@ -23,7 +24,7 @@ import { buildTikTokManagementRequestPrefill, toTikTokAdGroupManagementResource,
 import type { M03RequestPrefill } from "@/lib/change-control/workspace";
 import type { PreviewAdGroupNode, PreviewAdNode, PreviewCampaignNode, PreviewManagementPerformancePoint, PreviewReportPayload } from "@/lib/reporting/types";
 import type { TikTokManagementStage } from "@/lib/reporting/tiktok-management-stage";
-import { buildCanonicalManagementQuery, isAdsManagementView } from "@/lib/ads-management/unified-management";
+import { buildCanonicalManagementQuery, isAdsManagementView, resolveRefreshedManagementAccountName } from "@/lib/ads-management/unified-management";
 
 type AccountSuggestion = { accountName: string; adAccountId: string; notionPageId?: string; platform: "meta" | "google" | "tiktok" | null; country: string | null };
 type ResourceKind = "campaign" | "ad_group" | "ad";
@@ -31,6 +32,7 @@ type TikTokResourceRow = { campaign: PreviewCampaignNode; adGroup?: PreviewAdGro
 
 const RECENT_KEY = "tiktok-management-recent-accounts-v1";
 export function TikTokManagementPageClient({ initialRole }: { initialRole: AuthRole }) {
+  const canDraftChanges = m03CapabilitiesForRole(initialRole).create;
   const router = useRouter();
   const params = useSearchParams();
   const queryAccountId = params.get("accountId")?.trim() || "";
@@ -95,13 +97,19 @@ export function TikTokManagementPageClient({ initialRole }: { initialRole: AuthR
         setPreview(payload);
       }
       const account = payload.tiktokAccounts?.[0];
-      setAccountName(account?.advertiserName || payload.sections.find((section) => section.platform === "tiktok")?.accountName || accountName || normalized);
+      const providerName = account?.advertiserName || payload.sections.find((section) => section.platform === "tiktok")?.accountName;
+      setAccountName((selectedName) => resolveRefreshedManagementAccountName({
+        platform: "tiktok",
+        accountId: normalized,
+        selectedName,
+        providerName,
+      }));
       return payload;
     } catch (caught) {
       setError(message(caught, "Unable to load this TikTok Ads section. The last successful data remains visible."));
       return null;
     } finally { setLoading(false); }
-  }, [accountName, dates]);
+  }, [dates]);
 
   useEffect(() => {
     if (!queryAccountId) return;
@@ -177,7 +185,7 @@ export function TikTokManagementPageClient({ initialRole }: { initialRole: AuthR
   }
 
   return <ReportShell title="Ads Management" dateLabel={`${dates.startDate} – ${dates.endDate}`} hideHeaderDateControl compactResponsive initialRole={initialRole} activeQuery={accountId ? new URLSearchParams({ tiktokAccountId: accountId, platform: "tiktok", startDate: dates.startDate, endDate: dates.endDate }).toString() : ""}>
-    <div className={`mx-auto space-y-5 ${accountId ? "max-w-7xl" : "max-w-3xl"}`}>
+    <div data-can-edit={canDraftChanges} className={`mx-auto space-y-5 ${accountId ? "max-w-7xl" : "max-w-3xl"}`}>
       <UnifiedManagementAccountSearch selection={accountId ? { platform: "tiktok", accountId, accountName } : null} />
       {false ? <section className="relative z-30 rounded-2xl border bg-white p-5 shadow-sm">
         <label htmlFor="tiktok-account-search" className="text-sm font-semibold">TikTok Ads account search</label>
@@ -189,8 +197,8 @@ export function TikTokManagementPageClient({ initialRole }: { initialRole: AuthR
       {accountId ? <section className="relative z-20 flex flex-col gap-2 rounded-xl border bg-white px-4 py-3 shadow-sm sm:flex-row sm:items-center sm:justify-between"><ReportHeaderMonthPicker startDate={dates.startDate} endDate={dates.endDate} onChange={changeDates} variant="compact" /><Button size="sm" variant="outline" disabled={loading} onClick={refresh}><RefreshCwIcon className={loading ? "animate-spin" : ""} />Refresh official data</Button></section> : null}
       {error ? <div role="alert" className="rounded-xl border border-amber-300 bg-amber-50 p-4 text-sm text-amber-950"><p className="font-semibold">This TikTok section could not refresh</p><p className="mt-1">{error}</p></div> : null}
       {!accountId ? <div className="rounded-xl border border-dashed bg-white p-12 text-center"><h2 className="font-semibold">Choose a TikTok advertiser</h2><p className="mt-1 text-sm text-slate-500">Campaigns load first. Other resources load only when opened.</p></div> : <>
-        <div className="grid items-start gap-4 lg:grid-cols-[220px_minmax(0,1fr)]"><ManagementSectionNavigation value={tab} onChange={(next) => selectTab(next)} />
-          <main className="min-w-0">{loading && !preview ? <div className="space-y-8"><ManagementPerformanceSkeleton /><ManagementEntityReportSkeleton /></div> : tab === "campaigns" ? <ResourceView kind="campaign" rows={campaignRows} currencyCode={currencyCode} onEdit={(row) => openEditor(toTikTokCampaignManagementResource(row.campaign))} /> : tab === "ad_groups" ? <ResourceView kind="ad_group" rows={adGroupRows} currencyCode={currencyCode} onEdit={(row) => openEditor(toTikTokAdGroupManagementResource(row.campaign, row.adGroup!))} /> : tab === "ads" ? <ResourceView kind="ad" rows={adRows} currencyCode={currencyCode} assetPayloads={assetPayloads} onExpand={(row) => { if (row.ad && !assetPayloads[row.ad.id]) void loadStage(accountId, "assets", dates, { campaignId: row.campaign.id, adGroupId: row.adGroup?.id, adId: row.ad.id }); }} onEdit={(row) => openEditor(toTikTokAdManagementResource(row.campaign, row.adGroup!, row.ad!))} /> : tab === "recommendations" ? <Recommendations campaigns={(stagePayloads.campaigns ?? preview)?.sections.find((item) => item.platform === "tiktok")?.campaigns ?? []} currencyCode={currencyCode} onRequest={(campaign) => openEditor(toTikTokCampaignManagementResource(campaign))} /> : <M03RequestWorkspace scope={{ platform: "tiktok", accountIdentity: accountId }} prefill={prefill} prefillReason="Opened from TikTok Ads Management." showNewRequestAction={false} focusEditorWhenOpen tiktokManagement={{ accountIdentity: accountId, accountName, resources, onRefreshOfficialData: refreshResources }} />}</main>
+        <div className="grid items-start gap-4 lg:grid-cols-[220px_minmax(0,1fr)]"><ManagementSectionNavigation role={initialRole} value={tab} onChange={(next) => selectTab(next)} />
+          <main className="min-w-0">{loading && !preview ? <div className="space-y-8"><ManagementPerformanceSkeleton /><ManagementEntityReportSkeleton /></div> : tab === "campaigns" ? <ResourceView kind="campaign" rows={campaignRows} currencyCode={currencyCode} onEdit={(row) => openEditor(toTikTokCampaignManagementResource(row.campaign))} /> : tab === "ad_groups" ? <ResourceView kind="ad_group" rows={adGroupRows} currencyCode={currencyCode} onEdit={(row) => openEditor(toTikTokAdGroupManagementResource(row.campaign, row.adGroup!))} /> : tab === "ads" ? <ResourceView kind="ad" rows={adRows} currencyCode={currencyCode} assetPayloads={assetPayloads} onExpand={(row) => { if (row.ad && !assetPayloads[row.ad.id]) void loadStage(accountId, "assets", dates, { campaignId: row.campaign.id, adGroupId: row.adGroup?.id, adId: row.ad.id }); }} onEdit={(row) => openEditor(toTikTokAdManagementResource(row.campaign, row.adGroup!, row.ad!))} /> : tab === "recommendations" ? <Recommendations campaigns={(stagePayloads.campaigns ?? preview)?.sections.find((item) => item.platform === "tiktok")?.campaigns ?? []} currencyCode={currencyCode} onRequest={(campaign) => openEditor(toTikTokCampaignManagementResource(campaign))} /> : <M03RequestWorkspace role={initialRole} scope={{ platform: "tiktok", accountIdentity: accountId }} prefill={prefill} prefillReason="Opened from TikTok Ads Management." showNewRequestAction={false} focusEditorWhenOpen tiktokManagement={{ accountIdentity: accountId, accountName, resources, onRefreshOfficialData: refreshResources }} />}</main>
         </div></>}
     </div>
   </ReportShell>;

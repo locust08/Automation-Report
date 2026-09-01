@@ -38,6 +38,19 @@ export function shouldShowM03NewRequestAction(value: boolean | undefined): boole
   return value !== false;
 }
 
+export function createM03LatestRequestGuard() {
+  let latestRequest = 0;
+  return {
+    begin() {
+      latestRequest += 1;
+      return latestRequest;
+    },
+    isCurrent(request: number) {
+      return request === latestRequest;
+    },
+  };
+}
+
 export type M03SerializedRequestForm = {
   platform: M03Platform;
   title: string;

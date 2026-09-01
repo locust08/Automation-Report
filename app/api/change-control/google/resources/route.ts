@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { getServerAuthSession } from "@/lib/auth/server-session";
 import { assertM03Operator, M03RepositoryError } from "@/lib/change-control/repository";
-import { buildTrustedRequestContext, M03AccessError } from "@/lib/change-control/request-context";
+import { assertM03ActionAllowed, buildTrustedRequestContext, M03AccessError } from "@/lib/change-control/request-context";
 import { discoverGoogleSynchronizedResources } from "@/lib/change-control/google-resource-discovery";
 
 export const dynamic = "force-dynamic";
@@ -14,6 +14,7 @@ export async function GET(request: Request) {
   const parsed = querySchema.safeParse(Object.fromEntries(new URL(request.url).searchParams));
   if (!parsed.success) return NextResponse.json({ error: "Invalid Google resource query.", issues: parsed.error.issues }, { status: 400 });
   try {
+    assertM03ActionAllowed(session, "view");
     await assertM03Operator(buildTrustedRequestContext(request, session));
     return NextResponse.json(await discoverGoogleSynchronizedResources({ accountIdentity: parsed.data.account_identity, type: parsed.data.type, parentIdentity: parsed.data.parent_identity, search: parsed.data.search }));
   } catch (error) {

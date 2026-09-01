@@ -520,3 +520,13 @@
     width: 65%;
   }
 }
+/* M03 resource edit actions are absent for roles without draft permission. */
+[data-can-edit="false"] .ads-edit-action {
+  display: none;
+}
+[data-can-edit="false"] button[aria-label^="Edit "] {
+  display: none;
+}
+[data-can-edit="false"] button.mt-5 {
+  display: none;
+}

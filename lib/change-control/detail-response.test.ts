@@ -30,7 +30,7 @@ function fixture(): M03ChangeRequestDetail {
     id: "request-1", platform: "meta" as const, status: "draft" as const, title: "Review", reason: "Reason",
     client_id: null, account_identity: "123", campaign_identity: "campaign-1", source_m04_plan_id: null,
     source_m04_revision_id: null, source_m05_recommendation_ref: null, rollback_of_request_id: null,
-    supersedes_request_id: null, created_by_name: "Operator", created_at: "2026-08-01T00:00:00Z",
+    supersedes_request_id: null, created_by_id: "actor", created_by_name: "Operator", created_at: "2026-08-01T00:00:00Z",
     updated_at: "2026-08-01T00:00:00Z", lock_version: 1, provider_execution_locked: true as const,
   };
   const item = {

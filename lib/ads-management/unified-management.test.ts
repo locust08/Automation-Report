@@ -7,10 +7,23 @@ import {
   getManagementMetricVocabulary,
   mergeManagementRecentAccounts,
   managementSelectionKey,
+  resolveRefreshedManagementAccountName,
   resolveManagementDisplayName,
   resolveManagementAccount,
   translateLegacyManagementQuery,
 } from "@/lib/ads-management/unified-management";
+
+test("provider refresh preserves a selected TikTok directory account name", () => {
+  assert.equal(
+    resolveRefreshedManagementAccountName({
+      platform: "tiktok",
+      accountId: "7512267932496560146",
+      selectedName: "Tiktok - BELLAMY'S ORGANIC (Malaysia)",
+      providerName: "Bellamy's Organic Malaysia",
+    }),
+    "Tiktok - BELLAMY'S ORGANIC (Malaysia)",
+  );
+});
 
 test("canonical directory names are not replaced by generic provider fallbacks", () => {
   assert.equal(

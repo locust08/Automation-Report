@@ -44,6 +44,7 @@ import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectSeparator, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import type { AuthRole } from "@/lib/auth/roles";
+import { m03CapabilitiesForRole } from "@/lib/change-control/permissions";
 import {
   META_MANAGEMENT_PRIMARY_TABS,
   selectMetaChangeRequestNavigation,
@@ -113,6 +114,7 @@ const PRIMARY_TAB_DETAILS: Record<(typeof META_MANAGEMENT_PRIMARY_TABS)[number],
 const PRIMARY_TABS = META_MANAGEMENT_PRIMARY_TABS.map((value) => ({ value, ...PRIMARY_TAB_DETAILS[value] }));
 
 export function MetaManagementPageClient({ initialRole }: { initialRole: AuthRole }) {
+  const canDraftChanges = m03CapabilitiesForRole(initialRole).create;
   const router = useRouter();
   const params = useSearchParams();
   const queryAccountId = normalizeMetaAccountId(params.get("accountId") ?? "");
@@ -435,16 +437,16 @@ export function MetaManagementPageClient({ initialRole }: { initialRole: AuthRol
         {error ? <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-red-800"><p className="font-semibold">Meta Ads Management is unavailable</p><p className="mt-1 text-sm">{error}</p>{isMetaCircuitBlocked(metaProtection, clock) && metaProtection?.blockedUntil ? <p className="mt-2 text-xs font-medium">Manual refresh becomes available {new Date(metaProtection.blockedUntil).toLocaleString()}.</p> : null}</div> : null}
         {accountId ? (
           <div className="grid gap-4 lg:grid-cols-[220px_minmax(0,1fr)] lg:items-start">
-            <ManagementSectionNavigation value={canonicalViewFromMetaTab(tab)} onChange={(next) => {
+            <ManagementSectionNavigation role={initialRole} value={canonicalViewFromMetaTab(tab)} onChange={(next) => {
               if (next === "change_requests") selectChangeRequestFilter("requests");
               else selectPrimaryTab(metaPrimaryTabFromCanonicalView(next));
             }} />
             <div className="min-w-0 space-y-5">
             {loading ? (tab === "overview" ? <MetaOverviewSkeleton /> : <MetaResourceSkeleton />) : null}
             {!loading && preview && tab === "overview" ? <Overview summary={summary} campaignGroups={campaignGroups} campaigns={campaigns} warnings={overall?.warnings ?? []} /> : null}
-            {!loading && preview && tab === "campaigns" ? <MetaCampaignsPage campaigns={campaigns} onEdit={(campaign) => openRequest(toMetaCampaignManagementResource(campaign))} /> : null}
-            {!loading && preview && tab === "ad_sets" ? <MetaAdSetsPage rows={adSets} onEdit={(campaign, adSet) => openRequest(toMetaAdSetManagementResource(campaign, adSet))} /> : null}
-            {!loading && preview && tab === "ads" ? <MetaAdsPage rows={ads} onEdit={(campaign, adSet, ad) => openRequest(toMetaAdManagementResource(campaign, adSet, ad))} /> : null}
+            {!loading && preview && tab === "campaigns" ? <MetaCampaignsPage campaigns={campaigns} onEdit={canDraftChanges ? (campaign) => openRequest(toMetaCampaignManagementResource(campaign)) : undefined} /> : null}
+            {!loading && preview && tab === "ad_sets" ? <MetaAdSetsPage rows={adSets} onEdit={canDraftChanges ? (campaign, adSet) => openRequest(toMetaAdSetManagementResource(campaign, adSet)) : undefined} /> : null}
+            {!loading && preview && tab === "ads" ? <MetaAdsPage rows={ads} onEdit={canDraftChanges ? (campaign, adSet, ad) => openRequest(toMetaAdManagementResource(campaign, adSet, ad)) : undefined} /> : null}
             {!loading && preview && tab === "creatives" ? <CreativeList rows={ads} onSelect={(campaign, adSet, ad) => openRequest(toMetaAdManagementResource(campaign, adSet, ad), "ad.copy.primary_text")} /> : null}
             {!loading && preview && tab === "audience" ? overall ? <AudiencePanel overall={overall} section={metaSection} /> : <EmptyPanel title="Audience data unavailable" text="Reload the selected account to retrieve its audience and placement data." /> : null}
             {!loading && preview && tab === "opportunities" ? (
@@ -452,13 +454,14 @@ export function MetaManagementPageClient({ initialRole }: { initialRole: AuthRol
                 campaigns={campaigns}
                 campaignGroups={campaignGroups}
                 warnings={overall?.warnings ?? []}
-                onRequestChange={(recommendation) => {
+                onRequestChange={canDraftChanges ? (recommendation) => {
                   const campaign = campaigns.find((candidate) => candidate.id === recommendation.campaignId);
                   if (campaign) openRequest(toMetaCampaignManagementResource(campaign), recommendation.fieldPath);
-                }}
+                } : undefined}
               />
             ) : null}
             {!loading && preview && tab === "change_requests" ? <MetaChangeRequestsPanel
+              role={initialRole}
               accountId={accountId}
               accountName={accountName}
               filter={changeRequestFilter}
@@ -549,7 +552,8 @@ const META_CHANGE_REQUEST_NAVIGATION: Array<{ value: MetaChangeRequestNavigation
   { value: "creative", label: "Creative", icon: ImageIcon },
 ];
 
-function MetaChangeRequestsPanel({ accountId, accountName, filter, requestPrefill, campaigns, adSets, ads, onRequest, onRefreshOfficialData }: {
+function MetaChangeRequestsPanel({ role, accountId, accountName, filter, requestPrefill, campaigns, adSets, ads, onRequest, onRefreshOfficialData }: {
+  role: AuthRole;
   accountId: string;
   accountName: string;
   filter: MetaChangeRequestNavigationFilter;
@@ -566,6 +570,7 @@ function MetaChangeRequestsPanel({ accountId, accountName, filter, requestPrefil
   return (
       <div className="min-w-0">
         {showWorkspace ? <M03RequestWorkspace
+          role={role}
           key={accountId}
           scope={{ platform: "meta", accountIdentity: accountId }}
           prefill={requestPrefill}
@@ -656,7 +661,7 @@ function CampaignPerformanceTable({ rows, campaignCount }: { rows: CampaignGroup
   return <Card><CardHeader><CardTitle>Campaign performance</CardTitle><CardDescription>{campaignCount} synchronized campaigns · {rows.length} performance rows</CardDescription></CardHeader><CardContent><div className="overflow-x-auto"><table className="w-full min-w-[720px] text-sm"><thead><tr className="border-b text-left text-xs uppercase text-muted-foreground"><th className="p-3">Campaign</th><th className="p-3">Impressions</th><th className="p-3">Clicks</th><th className="p-3">CTR</th><th className="p-3">Results</th><th className="p-3">Spend</th></tr></thead><tbody>{pagination.items.map((row) => <tr key={row.id} className="border-b last:border-0"><td className="p-3 font-medium">{row.campaignName}</td><td className="p-3">{number(row.impressions)}</td><td className="p-3">{number(row.clicks)}</td><td className="p-3">{row.ctr.toFixed(2)}%</td><td className="p-3">{number(row.results)}</td><td className="p-3">{currency(row.spend)}</td></tr>)}</tbody></table></div>{rows.length ? <PaginationControls pagination={pagination} onPageChange={setPage} onPageSizeChange={(value) => { setPageSize(value); setPage(1); }} /> : null}</CardContent></Card>;
 }
 
-function MetaRecommendations({ campaigns, campaignGroups, warnings, onRequestChange }: { campaigns: PreviewCampaignNode[]; campaignGroups: CampaignGroup[]; warnings: string[]; onRequestChange: (recommendation: MetaManagementRecommendation) => void }) {
+function MetaRecommendations({ campaigns, campaignGroups, warnings, onRequestChange }: { campaigns: PreviewCampaignNode[]; campaignGroups: CampaignGroup[]; warnings: string[]; onRequestChange?: (recommendation: MetaManagementRecommendation) => void }) {
   const rows = campaignGroups.flatMap((group) => group.rows);
   const recommendations = buildMetaManagementRecommendations(rows);
   const activity = getMetaManagementActivityState({ surface: "recommendations", campaignCount: campaigns.length, performanceRowCount: rows.length, warnings });
@@ -687,7 +692,7 @@ function MetaRecommendations({ campaigns, campaignGroups, warnings, onRequestCha
               <CardTitle className="mt-3">{recommendation.title}</CardTitle>
               <CardDescription className="mt-2 max-w-3xl">{recommendation.description}</CardDescription>
             </div>
-            <Button className="shrink-0 bg-red-600 text-white hover:bg-red-700" onClick={() => onRequestChange(recommendation)}>Request change</Button>
+            {onRequestChange ? <Button className="shrink-0 bg-red-600 text-white hover:bg-red-700" onClick={() => onRequestChange(recommendation)}>Request change</Button> : null}
           </CardHeader>
           <CardContent><div className="rounded-lg border bg-slate-50 px-4 py-3 text-sm"><span className="font-semibold text-slate-900">Performance evidence</span><span className="ml-2 text-slate-600">{recommendation.evidence}</span></div></CardContent>
         </Card>
@@ -710,7 +715,7 @@ type MetaReportRow = {
   managementFields?: Record<string, unknown>;
 };
 
-function MetaCampaignsPage({ campaigns, onEdit }: { campaigns: PreviewCampaignNode[]; onEdit: (campaign: PreviewCampaignNode) => void }) {
+function MetaCampaignsPage({ campaigns, onEdit }: { campaigns: PreviewCampaignNode[]; onEdit?: (campaign: PreviewCampaignNode) => void }) {
   return <MetaEntityReport
     title="Campaign performance"
     reportTitle="Campaign report"
@@ -728,7 +733,7 @@ function MetaCampaignsPage({ campaigns, onEdit }: { campaigns: PreviewCampaignNo
   />;
 }
 
-function MetaAdSetsPage({ rows, onEdit }: { rows: Array<{ campaign: PreviewCampaignNode; adSet: PreviewAdGroupNode }>; onEdit: (campaign: PreviewCampaignNode, adSet: PreviewAdGroupNode) => void }) {
+function MetaAdSetsPage({ rows, onEdit }: { rows: Array<{ campaign: PreviewCampaignNode; adSet: PreviewAdGroupNode }>; onEdit?: (campaign: PreviewCampaignNode, adSet: PreviewAdGroupNode) => void }) {
   return <MetaEntityReport
     title="Ad set performance"
     reportTitle="Ad set report"
@@ -742,11 +747,11 @@ function MetaAdSetsPage({ rows, onEdit }: { rows: Array<{ campaign: PreviewCampa
       { label: "Campaign", value: campaign.name },
       { label: "Delivery status", value: formatMetaStatus(adSet.status) },
     ]}
-    onEdit={({ campaign, adSet }) => onEdit(campaign, adSet)}
+    onEdit={onEdit ? ({ campaign, adSet }) => onEdit(campaign, adSet) : undefined}
   />;
 }
 
-function MetaAdsPage({ rows, onEdit }: { rows: Array<{ campaign: PreviewCampaignNode; adSet: PreviewAdGroupNode; ad: PreviewAdNode }>; onEdit: (campaign: PreviewCampaignNode, adSet: PreviewAdGroupNode, ad: PreviewAdNode) => void }) {
+function MetaAdsPage({ rows, onEdit }: { rows: Array<{ campaign: PreviewCampaignNode; adSet: PreviewAdGroupNode; ad: PreviewAdNode }>; onEdit?: (campaign: PreviewCampaignNode, adSet: PreviewAdGroupNode, ad: PreviewAdNode) => void }) {
   return <MetaEntityReport
     title="Ad performance"
     reportTitle="Ad report"
@@ -767,7 +772,7 @@ function MetaAdsPage({ rows, onEdit }: { rows: Array<{ campaign: PreviewCampaign
       { label: "Facebook Page ID", value: ad.creative?.pageId || "—" },
       { label: "Instagram actor ID", value: ad.creative?.instagramActorId || "—" },
     ]}
-    onEdit={({ campaign, adSet, ad }) => onEdit(campaign, adSet, ad)}
+    onEdit={onEdit ? ({ campaign, adSet, ad }) => onEdit(campaign, adSet, ad) : undefined}
   />;
 }
 
@@ -794,7 +799,7 @@ function MetaEntityReport<T>({
   getRow: (row: T) => MetaReportRow;
   getSummary: (row: T) => Array<{ label: string; value: string }>;
   getAdditionalDetails?: (row: T) => Array<{ label: string; value: string; wide?: boolean }>;
-  onEdit: (row: T) => void;
+  onEdit?: (row: T) => void;
 }) {
   const [filter, setFilter] = useState("all");
   const [page, setPage] = useState(1);
@@ -820,8 +825,10 @@ function MetaEntityReport<T>({
     { label: "Landing-page views", value: number(row.performance?.landingPageViews) },
     { label: "Link clicks", value: number(row.performance?.linkClicks) },
   ];
+  const canEdit = Boolean(onEdit);
+  onEdit = onEdit ?? (() => undefined);
 
-  return <div className="space-y-8">
+  return <div className="space-y-8" data-can-edit={canEdit}>
     <div className="py-1"><ManagementPerformancePanel points={performancePoints} authoritativeCostPerResult={authoritativeCostPerResult} title={title} subtitle={`${filter === "all" ? allLabel : filteredRows[0] ? getRow(filteredRows[0]).name : `Selected ${entityLabel}`} · daily official Meta Ads metrics`} headerControl={<Select value={filter} onValueChange={(value) => { setFilter(value); setPage(1); }}><SelectTrigger aria-label={filterLabel} className="w-full bg-white sm:w-72"><SelectValue placeholder={`Select ${entityLabel}`} /></SelectTrigger><SelectContent position="popper" align="end" className="max-h-[22rem]"><SelectItem value="all">{allLabel}</SelectItem>{rows.map((row) => { const entity = getRow(row); return <SelectItem key={entity.id} value={entity.id}>{entity.name}</SelectItem>; })}</SelectContent></Select>} labels={{ cost: "Spend", results: resultLabel, clicks: "Clicks", costPerResult: "Cost / result" }} emptyTitle="No performance activity in this date range" emptyDescription={`Meta returned no daily spend, result, or click rows for the selected ${entityLabel}.`} chartAriaLabel={`Meta ${entityLabel} performance line chart`} /></div>
     <div>
       <section className="overflow-hidden rounded-t-2xl border border-b-0 bg-white shadow-sm">

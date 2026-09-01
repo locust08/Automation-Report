@@ -5,9 +5,9 @@ import { M03RequestEditor, type M03GoogleManagementEditorContext, type M03MetaMa
 import { M03RequestList } from "@/components/change-control/m03-request-list";
 import { M03StatusSummary } from "@/components/change-control/m03-status-summary";
 import { useM03WorkspaceController } from "@/components/change-control/m03-workspace-controller";
-import { useWorkflowPolicies } from "@/components/workflow-settings/use-workflow-policies";
-import { approvalRequired } from "@/lib/workflow-settings/policy";
 import type { M03RequestPrefill, M03WorkspaceScope } from "@/lib/change-control/workspace";
+import { m03CapabilitiesForRole } from "@/lib/change-control/permissions";
+import type { AuthRole } from "@/lib/auth/roles";
 import {
   resolveMetaManagementResourceForForm,
   validateMetaManagementRequestForm,
@@ -38,6 +38,7 @@ export type M03TikTokManagementWorkspaceContext = {
 };
 
 export type M03RequestWorkspaceProps = {
+  role: AuthRole;
   scope?: M03WorkspaceScope;
   prefill?: M03RequestPrefill | null;
   prefillReason?: string;
@@ -50,10 +51,9 @@ export type M03RequestWorkspaceProps = {
   focusEditorWhenOpen?: boolean;
 };
 
-export function M03RequestWorkspace({ scope = {}, prefill, prefillReason, className, exactRequestId, metaManagement, googleManagement, tiktokManagement, showNewRequestAction, focusEditorWhenOpen = false }: M03RequestWorkspaceProps) {
+export function M03RequestWorkspace({ role, scope = {}, prefill, prefillReason, className, exactRequestId, metaManagement, googleManagement, tiktokManagement, showNewRequestAction, focusEditorWhenOpen = false }: M03RequestWorkspaceProps) {
   const controller = useM03WorkspaceController({ scope, prefill, prefillReason, exactRequestId });
-  const policies = useWorkflowPolicies();
-  const m03ApprovalRequired = approvalRequired(policies, "m03_change_control_approval");
+  const capabilities = m03CapabilitiesForRole(role);
   const accountScoped = Boolean(scope.accountIdentity);
   const metaResolution = metaManagement
     ? resolveMetaManagementResourceForForm(controller.form, metaManagement.resources)
@@ -114,7 +114,7 @@ export function M03RequestWorkspace({ scope = {}, prefill, prefillReason, classN
     },
   } : undefined;
   const detailIsListed = Boolean(controller.detail && controller.payload?.requests.some((request) => request.id === controller.detail?.request.id));
-  const detailView = controller.detail ? <M03RequestDetailView detail={controller.detail} providerPreview={controller.providerPreview} providerPreviewError={controller.providerPreviewError} busy={controller.busy} approvalRequired={m03ApprovalRequired} editingBlocked={Boolean(controller.reconciliation)} onEdit={() => controller.openEditRequest(controller.detail!.request)} onAction={controller.action} /> : null;
+  const detailView = controller.detail ? <M03RequestDetailView detail={controller.detail} providerPreview={controller.providerPreview} providerPreviewError={controller.providerPreviewError} busy={controller.busy} role={role} editingBlocked={Boolean(controller.reconciliation)} onEdit={() => controller.openEditRequest(controller.detail!.request)} onAction={controller.action} /> : null;
 
   return <div className={className ?? "space-y-5"}>
     {controller.error ? <div role="alert" className="rounded-xl border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-800">{controller.error}</div> : null}
@@ -127,7 +127,7 @@ export function M03RequestWorkspace({ scope = {}, prefill, prefillReason, classN
       page={controller.page}
       pageSize={controller.pageSize}
       navigationBlocked={Boolean(controller.reconciliation)}
-      showNewRequestAction={showNewRequestAction}
+      showNewRequestAction={Boolean(showNewRequestAction && capabilities.create)}
       allowPlatformFilter={!scope.platform}
       allowCampaignFilter={accountScoped && !scope.campaignIdentity}
       campaignIdentity={controller.campaignIdentity}
@@ -137,12 +137,12 @@ export function M03RequestWorkspace({ scope = {}, prefill, prefillReason, classN
       onPageChange={controller.setPage}
       onPageSizeChange={controller.setPageSize}
       onRefresh={() => void controller.load()}
-      onNewRequest={() => controller.openNewRequest()}
+      onNewRequest={() => { if (capabilities.create) controller.openNewRequest(); }}
       onSelectRequest={(request) => void controller.selectRequest(request)}
       renderSelectedDetail={() => detailView}
     /> : null}
     {controller.detail && !detailIsListed && !(focusEditorWhenOpen && controller.formOpen) ? detailView : null}
-    {controller.formOpen ? <M03RequestEditor form={controller.form} setForm={controller.setForm} editing={controller.editing} reconciliation={controller.reconciliation} scope={scope} busy={controller.busy} canSave={controller.canSave && metaIssues.length === 0 && googleIssues.length === 0 && tiktokIssues.length === 0 && !baselineConflict} sourceEvidenceError={controller.sourceEvidenceError} baselineConflict={baselineConflict} onClose={controller.closeEditor} onReloadLatest={() => void controller.reloadLatestVersion()} onSave={() => void controller.saveRequest()} metaManagement={effectiveMetaManagement} googleManagement={effectiveGoogleManagement} tiktokManagement={effectiveTikTokManagement} /> : null}
+    {controller.formOpen && (controller.editing ? capabilities.edit : capabilities.create) ? <M03RequestEditor form={controller.form} setForm={controller.setForm} editing={controller.editing} reconciliation={controller.reconciliation} scope={scope} busy={controller.busy} canSave={controller.canSave && metaIssues.length === 0 && googleIssues.length === 0 && tiktokIssues.length === 0 && !baselineConflict} sourceEvidenceError={controller.sourceEvidenceError} baselineConflict={baselineConflict} onClose={controller.closeEditor} onReloadLatest={() => void controller.reloadLatestVersion()} onSave={() => void controller.saveRequest()} metaManagement={effectiveMetaManagement} googleManagement={effectiveGoogleManagement} tiktokManagement={effectiveTikTokManagement} /> : null}
   </div>;
 }
 

@@ -64,7 +64,7 @@ export type M03ChangeRequestSummary = {
   client_id: string | null; account_identity: string; campaign_identity: string;
   source_m04_plan_id: number | null; source_m04_revision_id: number | null;
   source_m05_recommendation_ref: string | null; rollback_of_request_id: string | null;
-  supersedes_request_id: string | null; created_by_name: string; created_at: string;
+  supersedes_request_id: string | null; created_by_id: string; created_by_name: string; created_at: string;
   updated_at: string; lock_version: number; provider_execution_locked: true;
 };
 
@@ -94,7 +94,9 @@ export type M03Approval = {
 
 export type M03AuditEvent = {
   id: number; event_type: string; from_status: M03Status | null; to_status: M03Status | null;
-  actor_name: string | null; trusted_ip: string | null; metadata: Record<string, unknown>; created_at: string;
+  revision_id?: string | null;
+  actor_name: string | null; actor_email: string | null; actor_role: import("@/lib/auth/roles").AuthRole | null;
+  trusted_ip: string | null; metadata: Record<string, unknown>; created_at: string;
 };
 
 export type M03ProviderBaselineSnapshot = {
@@ -193,7 +195,7 @@ export type WorkflowSettingMutation = {
 };
 
 export type TrustedRequestContext = {
-  actor_id: string; actor_name: string; actor_email: string; trusted_ip: string; user_agent: string;
+  actor_id: string; actor_name: string; actor_email: string; actor_role: import("@/lib/auth/roles").AuthRole; trusted_ip: string; user_agent: string;
 };
 
 export const PROVIDER_EXECUTION_LOCKED = {

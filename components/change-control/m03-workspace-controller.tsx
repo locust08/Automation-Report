@@ -8,6 +8,7 @@ import {
   buildM03RequestListQuery,
   buildM03EditForm,
   canSaveM03EditorSession,
+  createM03LatestRequestGuard,
   loadM03ExactRequest,
   M03ApiError,
   matchesM03WorkspaceScope,
@@ -52,6 +53,7 @@ export function useM03WorkspaceController({ scope = {}, prefill, prefillReason =
   const [sourceEvidenceError, setSourceEvidenceError] = useState<string | null>(null);
   const handledPrefill = useRef<M03RequestPrefill | null>(null);
   const handledExactRequestId = useRef<string | null>(null);
+  const listRequestGuard = useRef(createM03LatestRequestGuard());
   const scopeKey = `${scopePlatform ?? "*"}:${scopeAccountIdentity ?? "*"}:${scopeCampaignIdentity ?? "*"}`;
   const previousScopeKey = useRef(scopeKey);
   const activeScopeKey = useRef(scopeKey);
@@ -65,15 +67,16 @@ export function useM03WorkspaceController({ scope = {}, prefill, prefillReason =
 
   const load = useCallback(async () => {
     const requestedScopeKey = scopeKey;
+    const requestNumber = listRequestGuard.current.begin();
     setError(null);
     try {
       const query = buildM03RequestListQuery({ scope: effectiveScope, status, page, pageSize });
       const result = await requestM03Api<M03RequestListPayload>(`/api/change-control/requests?${query}`);
-      if (activeScopeKey.current !== requestedScopeKey) return;
+      if (activeScopeKey.current !== requestedScopeKey || !listRequestGuard.current.isCurrent(requestNumber)) return;
       setPayload(result);
       dispatchEditor({ type: "list_refreshed" });
     } catch (caught) {
-      if (activeScopeKey.current === requestedScopeKey) setError(message(caught));
+      if (activeScopeKey.current === requestedScopeKey && listRequestGuard.current.isCurrent(requestNumber)) setError(message(caught));
     }
   }, [effectiveScope, page, pageSize, scopeKey, status]);
 
@@ -198,7 +201,13 @@ export function useM03WorkspaceController({ scope = {}, prefill, prefillReason =
     if (!detail) return;
     setBusy(true); setError(null);
     try {
-      await requestM03Api(`/api/change-control/requests/${detail.request.id}/${name}`, { method: "POST", body: JSON.stringify({ idempotency_key: crypto.randomUUID() }) });
+      await requestM03Api(`/api/change-control/requests/${detail.request.id}/${name}`, {
+        method: "POST",
+        body: JSON.stringify({
+          idempotency_key: crypto.randomUUID(),
+          ...(name === "approve" ? { revision_hash: detail.revisions[0]?.payload_hash } : {}),
+        }),
+      });
       await refreshDetail(detail.request.id); await load();
     } catch (caught) { setError(message(caught)); }
     finally { setBusy(false); }

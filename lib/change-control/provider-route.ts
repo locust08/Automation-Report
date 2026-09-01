@@ -10,6 +10,7 @@ export async function lockedProviderAction(request: Request, params: Promise<{ i
   const parsed = m03ProviderActionSchema.safeParse(await request.json().catch(() => null));
   if (!parsed.success) return NextResponse.json({ error: "Select the exact approved revision before this action." }, { status: 400 });
   try {
+    if (session.role !== "admin") throw new M03AccessError("Administrator access is required for provider recovery actions.");
     const context = buildTrustedRequestContext(request, session);
     await assertM03Operator(context);
     const detail = await getMockChangeRequest((await params).id);

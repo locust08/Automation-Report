@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { getServerAuthSession } from "@/lib/auth/server-session";
 import { assertM03Operator, M03RepositoryError } from "@/lib/change-control/repository";
-import { buildTrustedRequestContext, M03AccessError } from "@/lib/change-control/request-context";
+import { assertM03ActionAllowed, buildTrustedRequestContext, M03AccessError } from "@/lib/change-control/request-context";
 import { discoverMetaSynchronizedResources } from "@/lib/change-control/meta-resource-discovery";
 
 export const dynamic = "force-dynamic";
@@ -19,6 +19,7 @@ export async function GET(request: Request) {
   const parsed = querySchema.safeParse(Object.fromEntries(new URL(request.url).searchParams));
   if (!parsed.success) return NextResponse.json({ error: "Invalid Meta resource query.", issues: parsed.error.issues }, { status: 400 });
   try {
+    assertM03ActionAllowed(session, "view");
     const context = buildTrustedRequestContext(request, session);
     await assertM03Operator(context);
     return NextResponse.json(await discoverMetaSynchronizedResources({

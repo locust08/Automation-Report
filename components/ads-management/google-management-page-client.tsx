@@ -18,7 +18,9 @@ import { ReportShell } from "@/components/reporting/report-shell";
 import { ReportHeaderMonthPicker } from "@/components/reporting/report-header-month-picker";
 import { Skeleton } from "@/components/ui/skeleton";
 import { M03RequestWorkspace, type M03RequestPrefill } from "@/components/change-control/m03-request-workspace";
-import { canEditAds, type AuthenticatedAdsUser } from "@/lib/auth/permissions";
+import { type AuthenticatedAdsUser } from "@/lib/auth/permissions";
+import type { AuthRole } from "@/lib/auth/roles";
+import { m03CapabilitiesForRole } from "@/lib/change-control/permissions";
 import { formatAdsManagementUserError } from "@/lib/ads-management/user-error";
 import type { AdsChangeSetRecord, DraftChangeInput, DraftEditorContext, ManagedAd, ManagedAdTextAsset, ManagedAssetAutomationSetting, ManagedCampaign, ManagedCampaignPerformancePoint, ManagedCustomParameter, ManagedFieldValue, ManagedPerformanceMetrics, ManagedRecommendation, ManagedRecommendationCategory, ManagedRecommendationDetailFamily, ManagedRecommendationDetailSection, ManagedSitelink, ManagedSitelinkAssociation, ManagedSitelinkScope } from "@/lib/ads-management/types";
 import { getGoogleEntityViewLayout, GOOGLE_PAGINATED_LIST_CLASS, selectGoogleChangeRequestNavigation, selectGooglePrimaryNavigation, shouldDismissGoogleAccountSearch, type GoogleChangeRequestFilter, type GoogleManagementView } from "@/lib/ads-management/google-management-navigation";
@@ -37,7 +39,8 @@ const MANAGEMENT_ACCOUNT_CACHE_TTL_MS = 15 * 60 * 1000;
 const MANAGEMENT_FILTER_MENU_CLASS = "max-h-[22rem]";
 
 export function GoogleManagementPageClient({ currentUser }: { currentUser: AuthenticatedAdsUser }) {
-  const canRequestChanges = canEditAds(currentUser.role);
+  const role = currentUser.role as AuthRole;
+  const canRequestChanges = m03CapabilitiesForRole(role).create;
   const canEdit = false;
   const router = useRouter();
   const params = useSearchParams();
@@ -541,7 +544,7 @@ export function GoogleManagementPageClient({ currentUser }: { currentUser: Authe
           </div>
         ) : null}
         <div className="grid items-start gap-4 lg:grid-cols-[220px_minmax(0,1fr)]">
-          <ManagementSectionNavigation value={view} onChange={(next) => {
+          <ManagementSectionNavigation role={role} value={view} onChange={(next) => {
             if (next === "change_requests") {
               const selected = selectGoogleChangeRequestNavigation("requests");
               setView(selected.view); setChangeRequestFilter(selected.changeRequestFilter); setChangeRequestsOpen(selected.changeRequestsOpen);
@@ -575,7 +578,7 @@ export function GoogleManagementPageClient({ currentUser }: { currentUser: Authe
                       : undefined
                   }
                 />
-              ) : view === "change_requests" ? <GoogleChangeRequestsPanel filter={changeRequestFilter} accountId={accountId} accountName={accountName} resources={googleManagementResources} prefill={requestPrefill} prefillReason={requestReason} onRequestChange={requestChange} onRefresh={refreshOfficialGoogleResources} /> : null}
+              ) : view === "change_requests" ? <GoogleChangeRequestsPanel role={role} filter={changeRequestFilter} accountId={accountId} accountName={accountName} resources={googleManagementResources} prefill={requestPrefill} prefillReason={requestReason} onRequestChange={requestChange} onRefresh={refreshOfficialGoogleResources} /> : null}
           </section>
         </div>
       </div>
@@ -617,7 +620,8 @@ function GoogleManagementViewSkeleton({ view }: { view: ManagementView }) {
   </div>;
 }
 
-function GoogleChangeRequestsPanel({ filter, accountId, accountName, resources, prefill, prefillReason, onRequestChange, onRefresh }: {
+function GoogleChangeRequestsPanel({ role, filter, accountId, accountName, resources, prefill, prefillReason, onRequestChange, onRefresh }: {
+  role: AuthRole;
   filter: GoogleChangeRequestFilter;
   accountId: string;
   accountName: string;
@@ -634,7 +638,7 @@ function GoogleChangeRequestsPanel({ filter, accountId, accountName, resources, 
     return <div className="space-y-4"><div className="rounded-2xl border bg-white p-5 shadow-sm"><p className="text-xs font-semibold uppercase tracking-[0.18em] text-red-700">Change control</p><h2 className="mt-2 text-xl font-semibold capitalize">{filter.replace("_", " ")} changes</h2><div className="mt-3 flex flex-wrap gap-2">{googleChangeFieldsForEntity(filter).map((field) => <span key={field.field_path} className="rounded-full border bg-slate-50 px-2.5 py-1 text-xs">{field.label}</span>)}</div></div>
       <div className={`${GOOGLE_PAGINATED_LIST_CLASS} border bg-white shadow-sm`}>{selectedResources.map((resource) => <div key={`${resource.entityType}:${resource.entityIdentity}`} className="flex flex-wrap items-center justify-between gap-3 border-b p-4 last:border-b-0"><div><p className="font-medium">{resource.name}</p><p className="text-xs text-slate-500">{resource.entityIdentity} · {resource.status}</p></div><Button variant="outline" size="sm" onClick={() => onRequestChange({ campaignId: resource.campaignIdentity, adGroupId: resource.adGroupIdentity, adId: resource.entityType === "ad" ? resource.entityIdentity : undefined })}>Request change</Button></div>)}<GooglePaginationFooter model={pagination} /></div></div>;
   }
-  return <M03RequestWorkspace scope={{ platform: "google", accountIdentity: accountId }} prefill={prefill} prefillReason={prefillReason} showNewRequestAction={false} focusEditorWhenOpen googleManagement={{ accountIdentity: accountId, accountName, resources, onRefreshOfficialData: onRefresh }} />;
+  return <M03RequestWorkspace role={role} scope={{ platform: "google", accountIdentity: accountId }} prefill={prefill} prefillReason={prefillReason} showNewRequestAction={false} focusEditorWhenOpen googleManagement={{ accountIdentity: accountId, accountName, resources, onRefreshOfficialData: onRefresh }} />;
 }
 
 function GoogleManagementAccountSearch({ currentAccount, synchronizedAt }: { currentAccount?: ManagementAccountSuggestion; synchronizedAt?: string }) {

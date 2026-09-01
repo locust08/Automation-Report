@@ -51,6 +51,13 @@ type ManagementDisplayNameInput = {
   providerName?: string | null;
 };
 
+type RefreshedManagementAccountNameInput = {
+  platform: AdsManagementPlatform;
+  accountId: string;
+  selectedName: string;
+  providerName?: string | null;
+};
+
 const PLATFORM_LABELS: Record<AdsManagementPlatform, string> = {
   meta: "Meta",
   google: "Google",
@@ -154,6 +161,15 @@ export function resolveManagementDisplayName(input: ManagementDisplayNameInput):
     return providerName;
   }
   return canonicalName || providerName || defaultAccountName(input.platform, accountId);
+}
+
+export function resolveRefreshedManagementAccountName(input: RefreshedManagementAccountNameInput): string {
+  return resolveManagementDisplayName({
+    platform: input.platform,
+    accountId: input.accountId,
+    canonicalName: input.selectedName,
+    providerName: input.providerName,
+  });
 }
 
 export function mergeManagementRecentAccounts(

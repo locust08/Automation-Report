@@ -41,7 +41,7 @@ export function ChangeControlPageClient({ initialRole }: { initialRole: AuthRole
         <span className="flex items-center gap-2"><CircleSlash2Icon className="size-4" /> Provider publishing, retry, verification, and rollback remain locked.</span>
         <Link href="/campaigns" className="font-semibold underline underline-offset-4">Initial campaign setup →</Link>
       </div>
-      <M03RequestWorkspace prefill={prefill} prefillReason={prefillReason} exactRequestId={searchParams.get("request_id")} />
+      <M03RequestWorkspace role={initialRole} prefill={prefill} prefillReason={prefillReason} exactRequestId={searchParams.get("request_id")} />
       <M03LegacyGoogleHistory initialAccountId={searchParams.get("legacy_account_id") || ""} initialRequestId={searchParams.get("legacy_request_id") || ""} />
       <M03WorkflowSettings />
     </div>

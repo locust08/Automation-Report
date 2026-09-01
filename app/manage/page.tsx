@@ -17,6 +17,15 @@ export default async function AdsManagementPage({ searchParams }: { searchParams
   if (!session) redirect("/");
 
   const params = await searchParams;
+  if (session.role === "user" && first(params.view) === "change_requests") {
+    const safeParams = new URLSearchParams();
+    for (const [key, rawValue] of Object.entries(params)) {
+      const value = first(rawValue);
+      if (value) safeParams.set(key, value);
+    }
+    safeParams.set("view", "campaigns");
+    redirect("/manage?" + safeParams.toString());
+  }
   const platform = first(params.platform);
   const accountId = first(params.accountId);
   const accountName = first(params.accountName);

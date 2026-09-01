@@ -33,6 +33,9 @@ export const m03MockChangeRequestEditSchema = z.object({ ...requestFields, expec
 export const m03MutationSchema = z.object({
   idempotency_key: z.string().trim().min(8).max(200), comment: z.string().trim().max(5_000).optional(),
 });
+export const m03ApprovalMutationSchema = m03MutationSchema.extend({
+  revision_hash: z.string().regex(/^[a-f0-9]{64}$/i),
+});
 export const m03ProviderActionSchema = z.object({
   idempotency_key: z.string().trim().min(8).max(200),
   revision_id: z.string().uuid(),
