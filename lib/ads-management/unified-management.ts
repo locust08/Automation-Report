@@ -18,9 +18,9 @@ export type ManagementAccountSelection = {
 
 export type ManagementMetricVocabulary = {
   spend: "Spend";
-  results: "Results";
+  results: "Results" | "Conversions";
   activity: "Clicks" | "Engagements";
-  costPerResult: "Cost / result";
+  costPerResult: "Cost / result" | "Cost / conversion";
 };
 
 type AccountResolutionInput = {
@@ -150,9 +150,9 @@ export function translateLegacyManagementQuery(
 export function getManagementMetricVocabulary(platform: AdsManagementPlatform): ManagementMetricVocabulary {
   return {
     spend: "Spend",
-    results: "Results",
+    results: platform === "google" ? "Conversions" : "Results",
     activity: platform === "tiktok" ? "Engagements" : "Clicks",
-    costPerResult: "Cost / result",
+    costPerResult: platform === "google" ? "Cost / conversion" : "Cost / result",
   };
 }
 

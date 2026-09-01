@@ -167,8 +167,12 @@ test("legacy management queries translate provider-specific IDs and view names",
   );
 });
 
-test("all providers use one section order and TikTok alone uses Engagements", () => {
+test("providers use accurate management metric labels", () => {
   assert.deepEqual(MANAGEMENT_VIEWS, ["campaigns", "ad_groups", "ads", "recommendations", "change_requests"]);
+  assert.equal(getManagementMetricVocabulary("meta").results, "Results");
+  assert.equal(getManagementMetricVocabulary("meta").costPerResult, "Cost / result");
+  assert.equal(getManagementMetricVocabulary("google").results, "Conversions");
+  assert.equal(getManagementMetricVocabulary("google").costPerResult, "Cost / conversion");
   assert.equal(getManagementMetricVocabulary("meta").activity, "Clicks");
   assert.equal(getManagementMetricVocabulary("google").activity, "Clicks");
   assert.equal(getManagementMetricVocabulary("tiktok").activity, "Engagements");

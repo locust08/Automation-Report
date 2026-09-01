@@ -28,7 +28,7 @@ import { buildGoogleManagementRequestPrefill, toGoogleAdGroupManagementResource,
 import { googleChangeFieldsForEntity } from "@/lib/change-control/google-capability-registry";
 import { paginateRows, type MetaPageSize } from "@/lib/ads-management/pagination";
 import { toGoogleManagementPerformancePoints } from "@/lib/ads-management/management-performance";
-import { buildCanonicalManagementQuery, isAdsManagementView } from "@/lib/ads-management/unified-management";
+import { buildCanonicalManagementQuery, getManagementMetricVocabulary, isAdsManagementView } from "@/lib/ads-management/unified-management";
 
 type SaveState = "idle" | "saving" | "saved" | "failed";
 type ManagementView = GoogleManagementView;
@@ -1180,7 +1180,8 @@ function CampaignPerformancePanel({ campaign }: { campaign: ManagedCampaign }) {
   return <PerformancePanel performance={campaign.performance ?? []} title="Campaign performance" subtitle="Daily official Google Ads metrics for the selected campaign" />;
 }
 function PerformancePanel({ performance, title, subtitle, headerControl }: { performance: ManagedCampaignPerformancePoint[]; title: string; subtitle?: string; headerControl?: React.ReactNode }) {
-  return <ManagementPerformancePanel points={toGoogleManagementPerformancePoints(performance)} title={title} subtitle={subtitle} headerControl={headerControl} labels={{ cost: "Spend", results: "Results", clicks: "Clicks", costPerResult: "Cost / result" }} emptyTitle="No performance activity in this date range" emptyDescription="Google returned no daily spend, result, or click rows for this selection." chartAriaLabel="Google Ads performance line chart" />;
+  const labels = getManagementMetricVocabulary("google");
+  return <ManagementPerformancePanel points={toGoogleManagementPerformancePoints(performance)} title={title} subtitle={subtitle} headerControl={headerControl} labels={{ cost: labels.spend, results: labels.results, clicks: labels.activity, costPerResult: labels.costPerResult }} emptyTitle="No performance activity in this date range" emptyDescription="Google returned no daily spend, conversion, or click rows for this selection." chartAriaLabel="Google Ads performance line chart" />;
 }
 function RecommendationsPage({ recommendations, loading, error, optimizationScore, optimizationScoreUrl, filter, onFilter, canEdit, onRequestChange }: { accountId: string; accountName: string; recommendations: ManagedRecommendation[]; loading: boolean; error: string | null; optimizationScore: number | null; optimizationScoreUrl: string | null; filter: "all" | ManagedRecommendationCategory; onFilter: (filter: "all" | ManagedRecommendationCategory) => void; canEdit: boolean; onRequestChange: (recommendation: Pick<ManagedRecommendation, "title" | "description"> & Partial<Pick<ManagedRecommendation, "campaignResourceName" | "category">>) => void }) {
   const filters: Array<{
