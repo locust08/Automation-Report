@@ -1,5 +1,7 @@
 import type { Metadata } from "next";
 import { Inter, JetBrains_Mono } from "next/font/google";
+import { Suspense } from "react";
+import { SearchTermAnalysisTracker } from "@/components/optimization/search-term-analysis-tracker";
 import "./globals.css";
 
 const inter = Inter({
@@ -31,7 +33,11 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en" className={`${inter.variable} ${jetbrainsMono.variable}`}>
-      <body className="antialiased">{children}</body>
+      <body className="antialiased">
+        <Suspense fallback={children}>
+          <SearchTermAnalysisTracker>{children}</SearchTermAnalysisTracker>
+        </Suspense>
+      </body>
     </html>
   );
 }

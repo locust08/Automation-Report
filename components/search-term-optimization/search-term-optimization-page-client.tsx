@@ -26,9 +26,12 @@ import { ReportDatePicker, type ReportDateSelection } from "@/components/search-
 import { ReportShell } from "@/components/reporting/report-shell";
 import { AccountEscalationNotice } from "@/components/team-lead-monitoring/account-escalation-notice";
 import { GoogleAccountSearchField } from "@/components/optimization/google-account-search-field";
+import { useSearchTermAnalysisJobs } from "@/components/optimization/search-term-analysis-tracker";
 import { useWorkflowPolicies } from "@/components/workflow-settings/use-workflow-policies";
 import { isAdminRole, type AuthRole } from "@/lib/auth/roles";
 import { fetchDashboardWithRetry } from "@/lib/search-term-optimization/dashboard-load";
+import { analysisRecoveryForMissingDashboard, type SearchTermAnalysisJobSummary } from "@/lib/search-term-optimization/job-summary";
+import { DEFAULT_SEARCH_TERM_CATEGORY_FILTER } from "@/lib/search-term-optimization/search-term-view";
 import type {
   OptimizationDashboardPayload,
   OptimizationResult,
@@ -79,9 +82,10 @@ const REVIEW_ROLES: AuthRole[] = ["pms", "specialist", "admin"];
 
 export function SearchTermOptimizationPageClient({ role, embedded = false, externalAccount, embeddedHeaderTargetId }: { role: AuthRole; embedded?: boolean; externalAccount?: { accountName: string; adAccountId: string; accessPath?: string | null } | null; embeddedHeaderTargetId?: string }) {
   const isAdmin = isAdminRole(role);
+  const { jobs: activeAnalysisJobs, refreshJobs } = useSearchTermAnalysisJobs();
   const [embeddedHeaderTarget,setEmbeddedHeaderTarget]=useState<HTMLElement|null>(null);
   useEffect(()=>{setEmbeddedHeaderTarget(embeddedHeaderTargetId?document.getElementById(embeddedHeaderTargetId):null);},[embeddedHeaderTargetId]);
-  const [categoryFilter, setCategoryFilter] = useState<CategoryFilter>("special review needed");
+  const [categoryFilter, setCategoryFilter] = useState<CategoryFilter>(DEFAULT_SEARCH_TERM_CATEGORY_FILTER);
   const canReview = REVIEW_ROLES.includes(role);
   const workflowPolicies = useWorkflowPolicies();
   const searchApprovalRequired = approvalRequired(workflowPolicies, "search_term_approval");
@@ -125,6 +129,7 @@ export function SearchTermOptimizationPageClient({ role, embedded = false, exter
   const [reportDialogOpen, setReportDialogOpen] = useState(false);
   const [reportDateSelection, setReportDateSelection] = useState<ReportDateSelection>(() => ({ mode: "single", date: malaysiaToday() }));
   const [pendingDecision, setPendingDecision] = useState<{ rows: OptimizationResult[]; decision: ReviewDecision } | null>(null);
+  const attachedAnalysisJobId = useRef<string | null>(null);
 
   const loadDailyCapacity=useCallback(async()=>{try{const response=await fetch("/api/search-term-optimization/capacity",{cache:"no-store"});if(response.ok)setDailyCapacity(await response.json());}catch{/* Analysis remains usable when the capacity badge cannot refresh. */}},[]);
   useEffect(()=>{void loadDailyCapacity();},[loadDailyCapacity]);
@@ -144,6 +149,21 @@ export function SearchTermOptimizationPageClient({ role, embedded = false, exter
       const payload = (await response.json()) as OptimizationDashboardPayload & { code?: Exclude<DashboardLoadErrorCode, null>; error?: string };
       if (requestId !== dashboardLoadRequestId.current) return;
       if (!response.ok) {
+        if (payload.code === "SEARCH_TERM_ANALYSIS_NOT_FOUND" && accountId) {
+          const jobResponse = await fetch(`/api/search-term-optimization/jobs?accountId=${encodeURIComponent(accountId)}`, { cache: "no-store" });
+          if (jobResponse.ok) {
+            const { job } = await jobResponse.json() as { job: SearchTermAnalysisJobSummary | null };
+            const recovery = analysisRecoveryForMissingDashboard(job);
+            if (recovery && requestId === dashboardLoadRequestId.current) {
+              setRetryAnalysisJobId(recovery.jobId);
+              setLoadErrorCode("SEARCH_TERM_DASHBOARD_LOAD_FAILED");
+              setError(recovery.error);
+              setRefreshMessage("The previous analysis can be retried from its saved search-term batch.");
+              setData(null);
+              return;
+            }
+          }
+        }
         setLoadErrorCode(payload.code ?? "SEARCH_TERM_DASHBOARD_LOAD_FAILED");
         throw new Error(payload.error ?? "Unable to load optimization data.");
       }
@@ -171,6 +191,58 @@ export function SearchTermOptimizationPageClient({ role, embedded = false, exter
       if (requestId === dashboardLoadRequestId.current) setLoading(false);
     }
   }, []);
+
+  useEffect(() => {
+    const accountId = accountPerformance?.adAccountId.replace(/\D/g, "");
+    if (!accountId) return;
+    const job = activeAnalysisJobs.find(item => item.accountId.replace(/\D/g, "") === accountId);
+    if (job) {
+      attachedAnalysisJobId.current = job.jobId;
+      setActiveAnalysisJobId(job.jobId);
+      setAnalysisStage(job.stale ? "Worker update is delayed; progress is safely stored" : job.stage);
+      setAnalysisStartedAt(job.startedAt);
+      setAnalysisActivityAt(job.activityAt);
+      setAnalysisProgress({ currentBatch: job.currentRun, completedBatches: job.completedRuns, maxBatches: job.plannedRuns, currentBatchSize: job.currentRunTerms, termsProcessed: job.termsProcessed, progressComplete: job.progressComplete });
+      if (job.status === "needs_retry") {
+        setAnalysisLoading(false);
+        setLoading(false);
+        setRetryAnalysisJobId(job.jobId);
+        setError(job.error ?? "This analysis needs retry. Completed runs were kept.");
+      } else {
+        setAnalysisLoading(true);
+        setLoading(true);
+        setRetryAnalysisJobId(null);
+      }
+      return;
+    }
+    const finishedJobId = attachedAnalysisJobId.current;
+    if (!finishedJobId) return;
+    attachedAnalysisJobId.current = null;
+    void (async () => {
+      try {
+        const response = await fetch(`/api/search-term-optimization/analyze?jobId=${encodeURIComponent(finishedJobId)}`, { cache: "no-store" });
+        const status = await response.json() as { status?: string; dashboard?: OptimizationDashboardPayload; totalTerms?: number; error?: string; stage?: string };
+        if (!response.ok) throw new Error(status.error ?? "Unable to read the completed analysis.");
+        if (status.dashboard) {
+          setData(status.dashboard);
+          setDecisions(Object.fromEntries(status.dashboard.results.filter(row => row.reviewDecision).map(row => [row.id, row.reviewDecision as ReviewDecision])));
+          setApproverDecisions(Object.fromEntries(status.dashboard.results.filter(row => row.approverDecision).map(row => [row.id, row.approverDecision as ApproverDecision])));
+        } else if (status.status === "completed" && status.totalTerms === 0) {
+          setData(null);
+        }
+        setRefreshMessage(status.status === "stopped" ? "Analysis stopped. Completed runs were kept." : status.status === "failed" ? "Analysis failed. Previous saved results were kept." : status.totalTerms === 0 ? "No search terms were detected. Daily analysis capacity was not used." : "Search-term analysis completed and the saved dashboard was refreshed.");
+        if (status.status === "failed") setError(status.error ?? "Search-term analysis failed.");
+      } catch (caught) {
+        setError(caught instanceof Error ? caught.message : "Unable to load the completed analysis.");
+      } finally {
+        setAnalysisLoading(false);
+        setLoading(false);
+        setActiveAnalysisJobId(null);
+        setAnalysisStopping(false);
+        void loadDailyCapacity();
+      }
+    })();
+  }, [accountPerformance?.adAccountId, activeAnalysisJobs, loadDailyCapacity]);
 
   useEffect(()=>{if(!analysisLoading&&accountPerformance&&error?.startsWith("Analysis was stopped"))void load(accountPerformance.adAccountId);},[accountPerformance,analysisLoading,error,load]);
 
@@ -332,7 +404,7 @@ export function SearchTermOptimizationPageClient({ role, embedded = false, exter
     setSelectedIds(new Set());
     setCategoryPages({});
     setCampaignFilter("all");
-    setCategoryFilter("special review needed");
+    setCategoryFilter(DEFAULT_SEARCH_TERM_CATEGORY_FILTER);
     setRecommendationsLoaded(false);
     setGoogleRecommendations([]);
     setGoogleRecommendationsWarning(null);
@@ -345,6 +417,7 @@ export function SearchTermOptimizationPageClient({ role, embedded = false, exter
     setLoading(true);
     setError(null);
     setAccountDropdownOpen(false);
+    let handedOff = false;
     try {
       const response = await fetch("/api/search-term-optimization/analyze", {
         method: "POST",
@@ -367,73 +440,33 @@ export function SearchTermOptimizationPageClient({ role, embedded = false, exter
         return;
       }
       if (!started.jobId) throw new Error(started.error ?? "Unable to start search-term analysis.");
+      if (started.status === "needs_retry") {
+        setRetryAnalysisJobId(started.jobId);
+        setLoadErrorCode("SEARCH_TERM_DASHBOARD_LOAD_FAILED");
+        setError(started.error ?? "The previous analysis needs retry. Completed runs were kept.");
+        setRefreshMessage("The previous analysis is recoverable and was not added to the active queue again.");
+        return;
+      }
+      attachedAnalysisJobId.current = started.jobId;
       setActiveAnalysisJobId(started.jobId);
       setAnalysisStage(started.stage ?? "Analysis queued");
-      let payload: OptimizationDashboardPayload | null = null;
-      let terminalMessage:string|null=null;
-      let noTermsFound=false;
-      for (let attempt = 0; attempt < 7_200; attempt += 1) {
-        await new Promise((resolve) => window.setTimeout(resolve, 2_000));
-        const statusResponse = await fetch(`/api/search-term-optimization/analyze?jobId=${encodeURIComponent(started.jobId)}`, { cache: "no-store" });
-        const status = (await statusResponse.json()) as {
-          status?: "queued" | "running" | "needs_retry" | "stopping" | "stopped" | "completed" | "failed";
-          stage?: string;
-          error?: string;
-          dashboard?: OptimizationDashboardPayload;
-          startedAt?: string;
-          activityAt?: string;
-          currentBatch?: number;
-          completedBatches?: number;
-          maxBatches?: number;
-          currentBatchSize?: number;
-          termsProcessed?: number;
-          totalTerms?: number;
-          progressComplete?: boolean;
-        };
-        if (!statusResponse.ok) throw new Error(status.error ?? "Unable to read analysis status.");
-        setAnalysisStage(status.stage ?? "Analyzing search terms");
-        if (status.startedAt) setAnalysisStartedAt(status.startedAt);
-        if (status.activityAt) setAnalysisActivityAt(status.activityAt);
-        setAnalysisProgress(current => ({ currentBatch: status.currentBatch ?? current.currentBatch, completedBatches: status.completedBatches ?? current.completedBatches, maxBatches: status.maxBatches ?? current.maxBatches, currentBatchSize: status.currentBatchSize ?? current.currentBatchSize, termsProcessed: status.termsProcessed ?? current.termsProcessed, progressComplete: status.progressComplete ?? current.progressComplete }));
-        if(status.dashboard){setData(status.dashboard);setDecisions(Object.fromEntries(status.dashboard.results.filter(row=>row.reviewDecision).map(row=>[row.id,row.reviewDecision as ReviewDecision])));setApproverDecisions(Object.fromEntries(status.dashboard.results.filter(row=>row.approverDecision).map(row=>[row.id,row.approverDecision as ApproverDecision])));}
-        if (status.status === "failed") throw new Error(status.error ?? "Search-term refresh failed. The previous saved analysis was kept.");
-        if (status.status === "needs_retry") {setRetryAnalysisJobId(started.jobId);if(status.dashboard){payload=status.dashboard;terminalMessage="Analysis paused for retry. Completed runs are shown below.";break;}throw new Error(status.error ?? "This analysis needs retry. Completed runs were kept.");}
-        if (status.status === "stopped") {if(status.dashboard){payload=status.dashboard;terminalMessage="Analysis stopped. Completed runs are shown below.";break;}throw new Error("Analysis was stopped before a run could be saved.");}
-        if (status.status === "completed" && status.totalTerms === 0) { noTermsFound=true; terminalMessage="No search terms were detected. Daily analysis capacity was not used."; break; }
-        if (status.status === "completed" && status.dashboard) { payload = status.dashboard; break; }
-      }
-      if(noTermsFound){setData(null);setRefreshMessage(terminalMessage);void loadDailyCapacity();return;}
-      if (!payload) throw new Error("Search-term analysis exceeded four hours. Its saved progress was kept.");
-      setData(payload);
-      if(payload.source.label.includes("progressive"))setRefreshMessage(`Loaded the first ${payload.results.length} of ${payload.refresh?.reusedTerms??payload.summary.totalReviewed} saved recommendations.${payload.refresh?.queuedNewTerms?` ${payload.refresh.queuedNewTerms} terms remain unreviewed.`:""}`);
-      void loadDailyCapacity();
-      setDecisions(Object.fromEntries(payload.results.filter((row) => row.reviewDecision).map((row) => [row.id, row.reviewDecision as ReviewDecision])));
-      setApproverDecisions(Object.fromEntries(payload.results.filter((row) => row.approverDecision).map((row) => [row.id, row.approverDecision as ApproverDecision])));
-      setSelectedIds(new Set());
-      setRecommendationsLoaded(false);
-      setGoogleRecommendations([]);
-      setGoogleRecommendationsWarning(null);
-      const refresh=payload.refresh;
-      setRefreshMessage(terminalMessage??(refresh?.mode==="cached"
-        ? payload.source.label.includes("progressive")
-          ? `Loaded the first ${payload.results.length} of ${refresh.reusedTerms} saved recommendations. ${refresh.queuedNewTerms} terms remain unreviewed.`
-          : `No new search terms. Reused ${refresh.reusedTerms} saved recommendations and refreshed their metrics.`
-        : refresh?.mode==="incremental"
-          ? `Analyzed ${refresh.newTerms} new search terms and reused ${refresh.reusedTerms} saved recommendations.${refresh.queuedNewTerms?` ${refresh.queuedNewTerms} new terms remain queued.`:""}`
-          : `Completed a full analysis of ${refresh?.currentTerms??payload.results.length} search terms.`));
+      handedOff = true;
+      await refreshJobs();
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Unable to refresh search-term analysis. The previous saved analysis was kept.");
     } finally {
-      setAnalysisLoading(false);
-      setAnalysisStage(null);
-      setLoading(false);
-      setActiveAnalysisJobId(null);
-      setAnalysisStopping(false);
+      if (!handedOff) {
+        setAnalysisLoading(false);
+        setAnalysisStage(null);
+        setLoading(false);
+        setActiveAnalysisJobId(null);
+        setAnalysisStopping(false);
+      }
     }
   }
 
-  async function stopSearchTermAnalysis(){if(!activeAnalysisJobId||analysisStopping)return;setAnalysisStopping(true);setAnalysisStage("Force stopping analysis");try{const response=await fetch(`/api/search-term-optimization/analyze?jobId=${encodeURIComponent(activeAnalysisJobId)}`,{method:"DELETE"});const payload=await response.json() as {status?:string;stage?:string;error?:string};if(!response.ok)throw new Error(payload.error??"Unable to force stop the analysis.");setAnalysisStage(payload.stage??"Analysis force stopped");if(payload.status==="stopped"){setAnalysisLoading(false);setLoading(false);setActiveAnalysisJobId(null);setRefreshMessage("Analysis force stopped. Completed runs were kept.");}}catch(caught){setError(caught instanceof Error?caught.message:"Unable to force stop the analysis.");setAnalysisStopping(false);}}
-  async function retrySearchTermAnalysis(){if(!retryAnalysisJobId)return;setError(null);const response=await fetch("/api/search-term-optimization/analyze",{method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify({jobId:retryAnalysisJobId,action:"retry"})});if(!response.ok){const payload=await response.json().catch(()=>({})) as {error?:string};setError(payload.error??"Unable to retry this analysis.");return;}setRetryAnalysisJobId(null);setRefreshMessage("The failed run was queued again from its cached search terms.");}
+  async function stopSearchTermAnalysis(){if(!activeAnalysisJobId||analysisStopping)return;setAnalysisStopping(true);setAnalysisStage("Force stopping analysis");try{const response=await fetch(`/api/search-term-optimization/analyze?jobId=${encodeURIComponent(activeAnalysisJobId)}`,{method:"DELETE"});const payload=await response.json() as {status?:string;stage?:string;error?:string};if(!response.ok)throw new Error(payload.error??"Unable to force stop the analysis.");setAnalysisStage(payload.stage??"Analysis force stopped");await refreshJobs();}catch(caught){setError(caught instanceof Error?caught.message:"Unable to force stop the analysis.");setAnalysisStopping(false);}}
+  async function retrySearchTermAnalysis(){if(!retryAnalysisJobId)return;setError(null);const response=await fetch("/api/search-term-optimization/analyze",{method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify({jobId:retryAnalysisJobId,action:"retry"})});if(!response.ok){const payload=await response.json().catch(()=>({})) as {error?:string};setError(payload.error??"Unable to retry this analysis.");return;}setRetryAnalysisJobId(null);setRefreshMessage("The failed run was queued again from its cached search terms.");await refreshJobs();}
 
   function handleAccountKeyDown(event: KeyboardEvent<HTMLInputElement>) {
     if (event.key === "Escape") { setAccountDropdownOpen(false); setHighlightedAccountIndex(-1); return; }
@@ -523,14 +556,10 @@ export function SearchTermOptimizationPageClient({ role, embedded = false, exter
     if (!cached) return;
     try {
       const parsed = JSON.parse(cached) as {
-        categoryFilter?: CategoryFilter;
         selectedIds?: string[];
         categoryPages?: Record<string, number>;
       };
       window.queueMicrotask(() => {
-        if (parsed.categoryFilter) {
-          setCategoryFilter((parsed.categoryFilter as string) === "final review" ? "special review needed" : parsed.categoryFilter);
-        }
         setSelectedIds(new Set(parsed.selectedIds ?? []));
         setCategoryPages(parsed.categoryPages ?? {});
       });
@@ -542,11 +571,10 @@ export function SearchTermOptimizationPageClient({ role, embedded = false, exter
   useEffect(() => {
     if (!cacheKey) return;
     window.localStorage.setItem(cacheKey, JSON.stringify({
-      categoryFilter,
       selectedIds: [...selectedIds],
       categoryPages,
     }));
-  }, [cacheKey, categoryFilter, categoryPages, selectedIds]);
+  }, [cacheKey, categoryPages, selectedIds]);
 
   function toggleRow(id: string, checked: boolean) {
     setSelectedIds((current) => {
@@ -887,16 +915,6 @@ export function SearchTermOptimizationPageClient({ role, embedded = false, exter
               {grouped.length === 0 ? <p className="rounded-2xl bg-white p-6 text-center text-neutral-500">No results match the selected filter.</p> : null}
             </section>
 
-            <section className="relative overflow-hidden rounded-2xl border border-white/30 bg-neutral-900/75 p-5 text-white shadow-xl backdrop-blur-md" aria-label="Automatic action history to be implemented">
-              <div className="pointer-events-none absolute inset-0 bg-gradient-to-br from-white/15 via-white/5 to-black/20" />
-              <div className="relative flex items-center gap-3">
-                <span className="flex size-10 shrink-0 items-center justify-center rounded-xl border border-amber-300/30 bg-amber-400/15 text-amber-200"><ConstructionIcon className="size-5" /></span>
-                <div>
-                  <h2 className="text-lg font-semibold">Automatic action history</h2>
-                  <p className="text-sm text-white/65">Unavailable · To be implemented</p>
-                </div>
-              </div>
-            </section>
           </>
         ) : null}
       </div>
@@ -984,7 +1002,7 @@ function LoadingDataIndicator({ title = "Analyzing search terms", label, compact
   }, [compact, startedAt]);
   const elapsedSeconds = startedAt ? Math.max(0, Math.floor((now - Date.parse(startedAt)) / 1_000)) : null;
   const activitySeconds = activityAt ? Math.max(0, Math.floor((now - Date.parse(activityAt)) / 1_000)) : null;
-  const heartbeatHealthy = activitySeconds === null || activitySeconds < 20;
+  const heartbeatHealthy = activitySeconds === null || activitySeconds < 10 * 60;
   const progressPercent = progress?.progressComplete ? 100 : Math.round(100 * (progress?.completedBatches ?? 0) / Math.max(1, progress?.maxBatches ?? 10));
   if (compact) {
     return (

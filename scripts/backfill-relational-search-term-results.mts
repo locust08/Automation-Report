@@ -1,7 +1,7 @@
 import type { OptimizationResult } from "../lib/search-term-optimization/types";
 
-const [loadedSupabaseRepository,loadedRest]=await Promise.all([import("../lib/search-term-optimization/supabase-repository"),import("../lib/optimization/supabase-rest")]);
-const {stableSearchTermKey}=((loadedSupabaseRepository as unknown as {default?:typeof loadedSupabaseRepository}).default??loadedSupabaseRepository);
+const [loadedStableKey,loadedRest]=await Promise.all([import("../lib/search-term-optimization/stable-search-term-key"),import("../lib/optimization/supabase-rest")]);
+const {stableSearchTermKey}=((loadedStableKey as unknown as {default?:typeof loadedStableKey}).default??loadedStableKey);
 const {supabaseRest,jsonBody}=((loadedRest as unknown as {default?:typeof loadedRest}).default??loadedRest);
 
 const accountId=(process.argv[2]??"").replace(/\D/g,"");

@@ -4,7 +4,11 @@ import type { LeadQualityImportRow, LeadQualityValues } from "@/lib/search-term-
 import { getSearchTermAccountSettings } from "@/lib/search-term-optimization/supabase-settings";
 import type { OptimizationDashboardPayload, OptimizationResult } from "@/lib/search-term-optimization/types";
 import type { RawCurrentSearchTerm } from "@/lib/search-term-optimization/repository";
+import { collectPagedResults } from "@/lib/search-term-optimization/paged-results";
+import { stableSearchTermKey } from "@/lib/search-term-optimization/stable-search-term-key";
 import { isWorkflowApprovalRequired } from "@/lib/workflow-settings/repository";
+
+export { stableSearchTermKey } from "@/lib/search-term-optimization/stable-search-term-key";
 
 export type SpecialistDecision="approved"|"rejected"; export type ApproverDecision="accepted"|"rejected";
 export type SearchTermDecisionSummaryRow={customerId:string;customerName:string;searchTerm:string;campaign:string;outcome:"approved"|"negative";clicks:number;spend:number;conversions:number;classification:string;decidedAt:string|null};
@@ -13,7 +17,6 @@ type Decision={id:number;analysis_run_id:number;recommendation_key:string;item_k
 type DurableJob={id:string;google_customer_id:string;account_name:string;reporting_start_date:string|null;reporting_end_date:string|null;total_terms:number;terms_processed:number;status:string;started_at:string|null;updated_at:string};
 type DurableRow={id:number;result_json:OptimizationResult;review_status:string|null;review_decision:string|null;updated_at:string};
 
-export function stableSearchTermKey(row:Pick<OptimizationResult,"campaignId"|"adGroupId"|"searchTerm">){return `${row.campaignId??""}|${row.adGroupId??""}|${normalize(row.searchTerm)}`;}
 function rawKey(row:RawCurrentSearchTerm){return `${row.campaign_id}|${row.ad_group_id}|${normalize(row.search_term)}`;}
 function normalize(value:string){return value.trim().toLowerCase().replace(/\s+/g," ");}
 function accountFilter(customerId:string){const normalized=customerId.replace(/\D/g,"");const formatted=`${normalized.slice(0,3)}-${normalized.slice(3,6)}-${normalized.slice(6)}`;return `or=(google_customer_id.eq.${qs(normalized)},google_customer_id.eq.${qs(formatted)})`;}
@@ -51,7 +54,7 @@ async function getLatestRelationalDashboard(customerId?:string):Promise<Optimiza
 }
 
 async function loadDurableRows(jobId:string){
- return supabaseRest<DurableRow[]>(`ad_automation_search_term_analysis_rows?job_id=eq.${qs(jobId)}&select=id,result_json,review_status,review_decision,updated_at&order=batch_number.asc,id.asc&limit=250`);
+ return collectPagedResults(({limit,offset})=>supabaseRest<DurableRow[]>(`ad_automation_search_term_analysis_rows?job_id=eq.${qs(jobId)}&select=id,result_json,review_status,review_decision,updated_at&order=batch_number.asc,id.asc&limit=${limit}&offset=${offset}`));
 }
 
 async function loadDurableSummary(jobId:string,totalReviewed:number):Promise<OptimizationDashboardPayload["summary"]>{

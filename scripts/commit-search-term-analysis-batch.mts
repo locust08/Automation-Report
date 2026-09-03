@@ -4,13 +4,13 @@ const [jobId,batchId,accountId,expectedRaw,checksum,resultPath,planPath]=process
 const expected=Number(expectedRaw);
 if(!jobId||!batchId||!/^\d{10}$/.test(accountId??"")||!Number.isInteger(expected)||expected<1||!resultPath||!planPath)process.exit(2);
 
-const [loadedRepository,loadedSupabaseRepository,loadedRest]=await Promise.all([
+const [loadedRepository,loadedStableKey,loadedRest]=await Promise.all([
   import("../lib/search-term-optimization/repository"),
-  import("../lib/search-term-optimization/supabase-repository"),
+  import("../lib/search-term-optimization/stable-search-term-key"),
   import("../lib/optimization/supabase-rest"),
 ]);
 const {ManualRunnerOutputRepository}=((loadedRepository as unknown as {default?:typeof loadedRepository}).default??loadedRepository);
-const {stableSearchTermKey}=((loadedSupabaseRepository as unknown as {default?:typeof loadedSupabaseRepository}).default??loadedSupabaseRepository);
+const {stableSearchTermKey}=((loadedStableKey as unknown as {default?:typeof loadedStableKey}).default??loadedStableKey);
 const {supabaseRest,jsonBody}=((loadedRest as unknown as {default?:typeof loadedRest}).default??loadedRest);
 const isolatedCopy=`${process.cwd()}/tmp/google_ads_search_term_review_agent_${accountId}_${jobId}_${batchId}.json`;
 await fs.copyFile(planPath,isolatedCopy);

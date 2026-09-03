@@ -1,4 +1,5 @@
 import { jsonBody, qs, supabaseRest } from "@/lib/optimization/supabase-rest";
+import { ACTIVE_ANALYSIS_JOB_STATUSES, GLOBALLY_VISIBLE_ANALYSIS_JOB_STATUSES, dedupeLatestAnalysisJobsByAccount, toSearchTermAnalysisJobSummary, type SearchTermAnalysisJobSummary } from "@/lib/search-term-optimization/job-summary";
 
 export const DAILY_ACCOUNT_LIMIT = 4;
 export const SEARCH_TERMS_PER_RUN = 250;
@@ -60,7 +61,12 @@ export async function createDurableAnalysisJob(input:{id:string;customerId:strin
 }
 
 export async function getDurableAnalysisJob(id:string){const rows=await supabaseRest<DurableAnalysisJob[]>(`ad_automation_search_term_analysis_jobs?id=eq.${qs(id)}&select=*&limit=1`);return rows[0]??null;}
-export async function getActiveDurableAnalysisJob(customerId:string){const rows=await supabaseRest<DurableAnalysisJob[]>(`ad_automation_search_term_analysis_jobs?google_customer_id=eq.${qs(customerId)}&status=in.(queued,fetching,running,stopping)&select=*&order=created_at.desc&limit=1`);return rows[0]??null;}
+export async function getActiveDurableAnalysisJob(customerId:string){const statuses=ACTIVE_ANALYSIS_JOB_STATUSES.join(",");const rows=await supabaseRest<DurableAnalysisJob[]>(`ad_automation_search_term_analysis_jobs?google_customer_id=eq.${qs(customerId)}&status=in.(${statuses})&select=*&order=created_at.desc&limit=1`);return rows[0]??null;}
+export async function getActiveDurableAnalysisJobs():Promise<SearchTermAnalysisJobSummary[]>{
+  const statuses=GLOBALLY_VISIBLE_ANALYSIS_JOB_STATUSES.join(",");
+  const rows=await supabaseRest<DurableAnalysisJob[]>(`ad_automation_search_term_analysis_jobs?status=in.(${statuses})&select=*&order=created_at.desc`);
+  return dedupeLatestAnalysisJobsByAccount(rows.map(job=>toSearchTermAnalysisJobSummary(job)));
+}
 export async function patchDurableAnalysisJob(id:string,values:Record<string,unknown>){const rows=await supabaseRest<DurableAnalysisJob[]>(`ad_automation_search_term_analysis_jobs?id=eq.${qs(id)}`,{method:"PATCH",body:JSON.stringify({...values,updated_at:new Date().toISOString()})});return rows[0]??null;}
 
 export async function requestDurableAnalysisStop(id:string){return patchDurableAnalysisJob(id,{status:"stopping",stage:"Stopping after the current run",cancellation_requested:true});}
@@ -72,4 +78,4 @@ export async function stopDurableAnalysisImmediately(id:string,reason="Analysis 
 }
 export async function retryDurableAnalysis(id:string){return patchDurableAnalysisJob(id,{status:"queued",stage:"Queued to retry the failed run",cancellation_requested:false,error:null});}
 
-export function toClientJob(job:DurableAnalysisJob){const currentRunTerms=job.current_run>0?Math.min(SEARCH_TERMS_PER_RUN,Math.max(0,job.total_terms-(job.current_run-1)*SEARCH_TERMS_PER_RUN)):0;const activityAt=job.last_worker_ping_at??job.updated_at;return{jobId:job.id,accountId:job.google_customer_id,status:job.status,stage:job.stage,startedAt:job.started_at??job.created_at,updatedAt:job.updated_at,heartbeatAt:job.last_worker_ping_at,activityAt,totalTerms:job.total_terms,plannedRuns:job.planned_runs,currentRun:job.current_run,completedRuns:job.completed_runs,currentRunTerms,currentBatch:job.current_run,completedBatches:job.completed_runs,maxBatches:job.planned_runs,currentBatchSize:currentRunTerms,termsProcessed:job.terms_processed,retryCount:job.retry_count,error:job.error,progressComplete:job.status==="completed"};}
+export function toClientJob(job:DurableAnalysisJob){const summary=toSearchTermAnalysisJobSummary(job);return{...summary,currentBatch:summary.currentRun,completedBatches:summary.completedRuns,maxBatches:summary.plannedRuns,currentBatchSize:summary.currentRunTerms,heartbeatAt:job.last_worker_ping_at};}
