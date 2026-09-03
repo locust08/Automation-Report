@@ -6,6 +6,7 @@ export type DailyAnalysisCapacity = {
   reserved: number;
   claiming: number;
   available: number;
+  allocatedAccountIds?: string[];
 };
 
 export function DailyCapacityCounterGrid({ capacity }: { capacity: DailyAnalysisCapacity | null }) {

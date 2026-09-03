@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import * as jobSummaryModule from "./job-summary";
+
 import {
   analysisRecoveryForMissingDashboard,
   analysisJobProgressPercent,
@@ -114,4 +116,48 @@ test("keeps only the newest visible job for each Google Ads account", () => {
   const other = toSearchTermAnalysisJobSummary({ ...baseJob, id: "other", google_customer_id: "9999999999" });
 
   assert.deepEqual(dedupeLatestAnalysisJobsByAccount([newest, duplicate, other]).map(job => job.jobId), ["newest", "other"]);
+});
+
+test("uses durable completion time before update and start timestamps", () => {
+  const helper = (jobSummaryModule as unknown as {
+    analysisTimestampForJob?: (job: { completed_at: string | null; updated_at: string; started_at: string | null }) => string;
+  }).analysisTimestampForJob;
+
+  assert.equal(typeof helper, "function");
+  assert.equal(helper?.({
+    completed_at: "2026-09-03T04:08:28.583Z",
+    updated_at: "2026-09-03T04:09:00.000Z",
+    started_at: "2026-09-03T03:57:45.747Z",
+  }), "2026-09-03T04:08:28.583Z");
+  assert.equal(helper?.({
+    completed_at: null,
+    updated_at: "2026-09-03T04:09:00.000Z",
+    started_at: "2026-09-03T03:57:45.747Z",
+  }), "2026-09-03T04:09:00.000Z");
+});
+
+test("resolves account identity without replacing a known name with a generic fallback", () => {
+  const helper = (jobSummaryModule as unknown as {
+    resolveGoogleAccountName?: (input: {
+      directoryName?: string | null;
+      dashboardName?: string | null;
+      jobName?: string | null;
+      recentName?: string | null;
+      accountId: string;
+    }) => string;
+  }).resolveGoogleAccountName;
+
+  assert.equal(typeof helper, "function");
+  assert.equal(helper?.({ directoryName: "Microfusion Technologies", dashboardName: "Old name", accountId: "4300673415" }), "Microfusion Technologies");
+  assert.equal(helper?.({ directoryName: "Google Ads account", dashboardName: "Microfusion Technologies", accountId: "4300673415" }), "Microfusion Technologies");
+  assert.equal(helper?.({ dashboardName: "Google Ads account", jobName: "", recentName: "Microfusion Technologies", accountId: "4300673415" }), "Microfusion Technologies");
+  assert.equal(helper?.({ accountId: "3532708050" }), "Google Ads 3532708050");
+});
+
+test("blocks only unallocated accounts when daily capacity is exhausted", () => {
+  const helper=(jobSummaryModule as unknown as {isDailyCapacityReached?:(capacity:{available:number;allocatedAccountIds?:string[]}|null,accountId:string|null)=>boolean}).isDailyCapacityReached;
+  assert.equal(typeof helper,"function");
+  assert.equal(helper?.({available:0,allocatedAccountIds:["4300673415"]},"430-067-3415"),false);
+  assert.equal(helper?.({available:0,allocatedAccountIds:["4300673415"]},"3532708050"),true);
+  assert.equal(helper?.({available:1,allocatedAccountIds:[]},"3532708050"),false);
 });

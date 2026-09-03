@@ -5,6 +5,7 @@ import { getSearchTermAccountSettings } from "@/lib/search-term-optimization/sup
 import type { OptimizationDashboardPayload, OptimizationResult } from "@/lib/search-term-optimization/types";
 import type { RawCurrentSearchTerm } from "@/lib/search-term-optimization/repository";
 import { collectPagedResults } from "@/lib/search-term-optimization/paged-results";
+import { analysisTimestampForJob, resolveGoogleAccountName } from "@/lib/search-term-optimization/job-summary";
 import { stableSearchTermKey } from "@/lib/search-term-optimization/stable-search-term-key";
 import { isWorkflowApprovalRequired } from "@/lib/workflow-settings/repository";
 
@@ -14,7 +15,7 @@ export type SpecialistDecision="approved"|"rejected"; export type ApproverDecisi
 export type SearchTermDecisionSummaryRow={customerId:string;customerName:string;searchTerm:string;campaign:string;outcome:"approved"|"negative";clicks:number;spend:number;conversions:number;classification:string;decidedAt:string|null};
 type Run={id:number;google_customer_id:string;customer_name:string|null;reporting_start_date:string;reporting_end_date:string;analyzed_at:string;recommendations:OptimizationResult[];last_checked_at?:string|null;source_fingerprint?:string|null;current_term_count?:number;reused_term_count?:number;new_term_count?:number;queued_new_term_count?:number;refresh_status?:string|null};
 type Decision={id:number;analysis_run_id:number;recommendation_key:string;item_key?:string|null;decision:string|null;status:string;reviewer_user_id:string|null;reviewer_email:string|null;reviewer_role:string|null;reviewed_at:string|null;metadata:Record<string,unknown>};
-type DurableJob={id:string;google_customer_id:string;account_name:string;reporting_start_date:string|null;reporting_end_date:string|null;total_terms:number;terms_processed:number;status:string;started_at:string|null;updated_at:string};
+type DurableJob={id:string;google_customer_id:string;account_name:string;reporting_start_date:string|null;reporting_end_date:string|null;total_terms:number;terms_processed:number;status:string;started_at:string|null;completed_at:string|null;updated_at:string};
 type DurableRow={id:number;result_json:OptimizationResult;review_status:string|null;review_decision:string|null;updated_at:string};
 
 function rawKey(row:RawCurrentSearchTerm){return `${row.campaign_id}|${row.ad_group_id}|${normalize(row.search_term)}`;}
@@ -39,7 +40,7 @@ export async function getLatestDashboardFromSupabase(customerId?:string):Promise
 
 async function getLatestRelationalDashboard(customerId?:string):Promise<OptimizationDashboardPayload|null>{
  if(!customerId)return null;
- const jobs=await supabaseRest<DurableJob[]>(`ad_automation_search_term_analysis_jobs?google_customer_id=eq.${qs(customerId)}&terms_processed=gt.0&select=id,google_customer_id,account_name,reporting_start_date,reporting_end_date,total_terms,terms_processed,status,started_at,updated_at&order=created_at.desc&limit=1`);
+ const jobs=await supabaseRest<DurableJob[]>(`ad_automation_search_term_analysis_jobs?google_customer_id=eq.${qs(customerId)}&terms_processed=gt.0&select=id,google_customer_id,account_name,reporting_start_date,reporting_end_date,total_terms,terms_processed,status,started_at,completed_at,updated_at&order=created_at.desc&limit=1`);
  const job=jobs[0];
  if(!job)return null;
  const [stored,settings,dashboardSummary]=await Promise.all([
@@ -49,8 +50,8 @@ async function getLatestRelationalDashboard(customerId?:string):Promise<Optimiza
  ]);
  if(!stored.length)return null;
  const results=stored.map(item=>({...item.result_json,id:`rel:${item.id}`,recommendationId:`rel:${item.id}`,searchTermId:`rel:${item.id}`,reviewStatus:item.review_status??item.result_json.reviewStatus,reviewDecision:(item.review_decision as "approved"|"rejected"|null)??item.result_json.reviewDecision,lastReviewedAt:item.updated_at}));
- const analyzedAt=job.started_at??job.updated_at;
- return {account:{customerId,customerName:job.account_name||`Google Ads ${customerId}`,reportingPeriod:{startDate:job.reporting_start_date??analyzedAt.slice(0,10),endDate:job.reporting_end_date??analyzedAt.slice(0,10)},lastAnalysisAt:analyzedAt,nextRunAt:settings.nextRunAt,automationEnabled:settings.automationEnabled},source:{label:"Supabase progressive reviewed search terms",fresh:true,termsReviewed:dashboardSummary.totalReviewed,mutatingGoogleAdsChanges:false},summary:dashboardSummary,results,history:results.filter(row=>row.verificationStatus==="verified"),googleRecommendations:[],googleRecommendationsWarning:null,changeSets:[],settings,refresh:{mode:"cached",checkedAt:job.updated_at,currentTerms:job.total_terms,reusedTerms:dashboardSummary.totalReviewed,newTerms:0,queuedNewTerms:Math.max(0,job.total_terms-dashboardSummary.totalReviewed)}};
+ const analyzedAt=analysisTimestampForJob(job);
+ return {account:{customerId,customerName:resolveGoogleAccountName({jobName:job.account_name,accountId:customerId}),reportingPeriod:{startDate:job.reporting_start_date??analyzedAt.slice(0,10),endDate:job.reporting_end_date??analyzedAt.slice(0,10)},lastAnalysisAt:analyzedAt,nextRunAt:settings.nextRunAt,automationEnabled:settings.automationEnabled},source:{label:"Supabase progressive reviewed search terms",fresh:true,termsReviewed:dashboardSummary.totalReviewed,mutatingGoogleAdsChanges:false},summary:dashboardSummary,results,history:results.filter(row=>row.verificationStatus==="verified"),googleRecommendations:[],googleRecommendationsWarning:null,changeSets:[],settings,refresh:{mode:"cached",checkedAt:job.updated_at,currentTerms:job.total_terms,reusedTerms:dashboardSummary.totalReviewed,newTerms:0,queuedNewTerms:Math.max(0,job.total_terms-dashboardSummary.totalReviewed)}};
 }
 
 async function loadDurableRows(jobId:string){

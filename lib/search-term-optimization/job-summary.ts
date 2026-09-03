@@ -44,6 +44,35 @@ export type SearchTermAnalysisJobRecord = {
   last_worker_ping_at: string | null;
 };
 
+type AnalysisTimestampJob = Pick<SearchTermAnalysisJobRecord, "completed_at" | "updated_at" | "started_at">;
+
+export function analysisTimestampForJob(job: AnalysisTimestampJob): string {
+  return job.completed_at ?? job.updated_at ?? job.started_at ?? new Date(0).toISOString();
+}
+
+export function resolveGoogleAccountName(input: {
+  directoryName?: string | null;
+  dashboardName?: string | null;
+  jobName?: string | null;
+  recentName?: string | null;
+  accountId: string;
+}): string {
+  const resolved = [input.directoryName, input.dashboardName, input.jobName, input.recentName]
+    .map((name) => name?.trim())
+    .find((name): name is string => typeof name === "string" && name.length > 0 && !isGenericGoogleAccountName(name));
+  return resolved ?? `Google Ads ${input.accountId.replace(/\D/g, "")}`;
+}
+
+function isGenericGoogleAccountName(name: string): boolean {
+  return /^google ads(?: account)?(?: \d{10})?$/i.test(name.trim());
+}
+
+export function isDailyCapacityReached(capacity:{available:number;allocatedAccountIds?:string[]}|null,accountId:string|null):boolean {
+  if(!capacity||!accountId||capacity.available>0)return false;
+  const normalized=accountId.replace(/\D/g,"");
+  return !(capacity.allocatedAccountIds??[]).some(id=>id.replace(/\D/g,"")===normalized);
+}
+
 const STALE_AFTER_MS = 10 * 60 * 1_000;
 
 export function isActiveAnalysisJobStatus(status: AnalysisJobStatus): status is ActiveAnalysisJobStatus {

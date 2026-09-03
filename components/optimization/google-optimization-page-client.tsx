@@ -1,15 +1,17 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 
 import { GoogleAccountSearchField } from "@/components/optimization/google-account-search-field";
-import { DailyCapacityCounterGrid, type DailyAnalysisCapacity } from "@/components/optimization/daily-capacity-counter-grid";
+import { DailyCapacityCounterGrid } from "@/components/optimization/daily-capacity-counter-grid";
+import { useGoogleOptimizationCapacity } from "@/components/optimization/use-google-optimization-capacity";
 import { PlacementOptimizationPageClient } from "@/components/placement-optimization/placement-optimization-page-client";
 import { ReportShell } from "@/components/reporting/report-shell";
 import { SearchTermOptimizationPageClient } from "@/components/search-term-optimization/search-term-optimization-page-client";
 import { Button } from "@/components/ui/button";
 import type { AuthRole } from "@/lib/auth/roles";
+import { resolveGoogleAccountName } from "@/lib/search-term-optimization/job-summary";
 
 type OptimizationTab = "search-terms" | "placements";
 type Account = {
@@ -37,16 +39,7 @@ export function GoogleOptimizationPageClient({ role }: { role: AuthRole }) {
   const [open, setOpen] = useState(false);
   const [highlightedIndex, setHighlightedIndex] = useState(-1);
   const requestId = useRef(0);
-  const [dailyCapacity, setDailyCapacity] = useState<DailyAnalysisCapacity | null>(null);
-
-  useEffect(() => {
-    const controller = new AbortController();
-    void fetch("/api/search-term-optimization/capacity", { cache: "no-store", signal: controller.signal })
-      .then(async response => response.ok ? response.json() as Promise<DailyAnalysisCapacity> : null)
-      .then(capacity => setDailyCapacity(capacity))
-      .catch(() => undefined);
-    return () => controller.abort();
-  }, []);
+  const {capacity:dailyCapacity,refresh:refreshDailyCapacity}=useGoogleOptimizationCapacity(`${initialAccountId}:${tab}`);
 
   useEffect(() => {
     try {
@@ -62,7 +55,12 @@ export function GoogleOptimizationPageClient({ role }: { role: AuthRole }) {
       setSelectedAccount(null);
       return;
     }
-    if (selectedAccount && normalizeId(selectedAccount.adAccountId) === normalizeId(initialAccountId)) return;
+    if (selectedAccount && normalizeId(selectedAccount.adAccountId) === normalizeId(initialAccountId)) {
+      const recent = recentAccounts.find((item) => normalizeId(item.adAccountId) === normalizeId(initialAccountId));
+      const accountName = resolveGoogleAccountName({ directoryName: selectedAccount.accountName, recentName: recent?.accountName, accountId: initialAccountId });
+      if (accountName !== selectedAccount.accountName) setSelectedAccount((current) => current ? { ...current, accountName, accessPath: current.accessPath ?? recent?.accessPath } : current);
+      return;
+    }
     const controller = new AbortController();
     setSelectedAccount(null);
     setQuery(initialAccountId);
@@ -74,12 +72,16 @@ export function GoogleOptimizationPageClient({ role }: { role: AuthRole }) {
           setSelectedAccount(account);
           setQuery(`${account.accountName} | ${account.adAccountId}`);
         } else {
-          setSelectedAccount({ accountName: "Google Ads account", adAccountId: initialAccountId });
+          const recent = recentAccounts.find((item) => normalizeId(item.adAccountId) === normalizeId(initialAccountId));
+          setSelectedAccount({ accountName: resolveGoogleAccountName({ recentName: recent?.accountName, accountId: initialAccountId }), adAccountId: initialAccountId, accessPath: recent?.accessPath });
         }
       })
-      .catch(() => setSelectedAccount({ accountName: "Google Ads account", adAccountId: initialAccountId }));
+      .catch(() => {
+        const recent = recentAccounts.find((item) => normalizeId(item.adAccountId) === normalizeId(initialAccountId));
+        setSelectedAccount({ accountName: resolveGoogleAccountName({ recentName: recent?.accountName, accountId: initialAccountId }), adAccountId: initialAccountId, accessPath: recent?.accessPath });
+      });
     return () => controller.abort();
-  }, [initialAccountId, selectedAccount]);
+  }, [initialAccountId, recentAccounts, selectedAccount]);
 
   useEffect(() => {
     const trimmed = query.trim();
@@ -136,6 +138,15 @@ export function GoogleOptimizationPageClient({ role }: { role: AuthRole }) {
     params.set("googleAccountId", account.adAccountId);
     router.replace(`${pathname}?${params.toString()}`, { scroll: false });
   }
+
+  const handleResolvedAccount = useCallback((account: Account) => {
+    setSelectedAccount((current) => {
+      if (!current || normalizeId(current.adAccountId) !== normalizeId(account.adAccountId)) return current;
+      const accountName = resolveGoogleAccountName({ directoryName: current.accountName, dashboardName: account.accountName, accountId: account.adAccountId });
+      if (accountName === current.accountName && (current.accessPath ?? null) === (account.accessPath ?? current.accessPath ?? null)) return current;
+      return { ...current, ...account, accountName, accessPath: account.accessPath ?? current.accessPath };
+    });
+  }, []);
 
   const matchingRecentAccounts=useMemo(()=>{
     if(selectedAccount&&query.trim()===`${selectedAccount.accountName} | ${selectedAccount.adAccountId}`)return recentAccounts;
@@ -212,7 +223,7 @@ export function GoogleOptimizationPageClient({ role }: { role: AuthRole }) {
 
         {!selectedAccount ? <section className="rounded-2xl border border-neutral-200 bg-white p-8 text-center shadow-sm"><h2 className="font-semibold">Select a Google Ads account</h2><p className="mt-1 text-sm text-neutral-500">Both optimization dashboards will load for the selected account.</p></section> : null}
         <div role="tabpanel" hidden={tab !== "search-terms"} className={tab === "search-terms" && selectedAccount ? "block" : "hidden"}>
-          <SearchTermOptimizationPageClient key={`search-terms-${normalizeId(selectedAccount?.adAccountId ?? "none")}`} role={role} embedded externalAccount={selectedAccount} embeddedHeaderTargetId={tab === "search-terms" ? ACCOUNT_SUMMARY_HOST_ID : undefined} />
+          <SearchTermOptimizationPageClient key={`search-terms-${normalizeId(selectedAccount?.adAccountId ?? "none")}`} role={role} embedded externalAccount={selectedAccount} embeddedHeaderTargetId={tab === "search-terms" ? ACCOUNT_SUMMARY_HOST_ID : undefined} dailyCapacity={dailyCapacity} onCapacityRefresh={refreshDailyCapacity} onAccountResolved={handleResolvedAccount} />
         </div>
         <div role="tabpanel" hidden={tab !== "placements"} className={tab === "placements" && selectedAccount ? "block" : "hidden"}>
           <PlacementOptimizationPageClient key={`placements-${normalizeId(selectedAccount?.adAccountId ?? "none")}`} role={role} embedded externalAccount={selectedAccount} />
