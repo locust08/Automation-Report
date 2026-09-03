@@ -1,5 +1,5 @@
 import { jsonBody, qs, supabaseRest } from "@/lib/optimization/supabase-rest";
-import { ACTIVE_ANALYSIS_JOB_STATUSES, GLOBALLY_VISIBLE_ANALYSIS_JOB_STATUSES, dedupeLatestAnalysisJobsByAccount, toSearchTermAnalysisJobSummary, type SearchTermAnalysisJobSummary } from "@/lib/search-term-optimization/job-summary";
+import { ACTIVE_ANALYSIS_JOB_STATUSES, GLOBALLY_VISIBLE_ANALYSIS_JOB_STATUSES, dedupeLatestAnalysisJobsByAccount, summarizeDailyCapacity, toSearchTermAnalysisJobSummary, type SearchTermAnalysisJobSummary } from "@/lib/search-term-optimization/job-summary";
 
 export const DAILY_ACCOUNT_LIMIT = 4;
 export const SEARCH_TERMS_PER_RUN = 250;
@@ -22,11 +22,13 @@ export function malaysiaDate(now = new Date()) {
 
 export async function getDailyCapacity(date = malaysiaDate()):Promise<DailyCapacity>{
   await reserveScheduledSlots(date);
-  const slots=await supabaseRest<Slot[]>(`ad_automation_search_term_daily_slots?malaysia_run_date=eq.${qs(date)}&select=status,google_customer_id`);
-  const used=slots.filter(slot=>slot.status==="used").length;
-  const reserved=slots.filter(slot=>slot.status==="reserved").length;
-  const claiming=slots.filter(slot=>slot.status==="claiming").length;
-  return{total:DAILY_ACCOUNT_LIMIT,used,reserved,claiming,available:Math.max(0,DAILY_ACCOUNT_LIMIT-slots.length),malaysiaDate:date,allocatedAccountIds:slots.map(slot=>slot.google_customer_id)};
+  const dayStart=new Date(`${date}T00:00:00+08:00`);
+  const dayEnd=new Date(dayStart.getTime()+86_400_000);
+  const [slots,jobs]=await Promise.all([
+    supabaseRest<Slot[]>(`ad_automation_search_term_daily_slots?malaysia_run_date=eq.${qs(date)}&select=status,google_customer_id`),
+    supabaseRest<Array<{google_customer_id:string;total_terms:number}>>(`ad_automation_search_term_analysis_jobs?updated_at=gte.${qs(dayStart.toISOString())}&updated_at=lt.${qs(dayEnd.toISOString())}&total_terms=gt.0&select=google_customer_id,total_terms`),
+  ]);
+  return{total:DAILY_ACCOUNT_LIMIT,malaysiaDate:date,...summarizeDailyCapacity(slots,jobs,DAILY_ACCOUNT_LIMIT)};
 }
 
 async function reserveScheduledSlots(date:string){

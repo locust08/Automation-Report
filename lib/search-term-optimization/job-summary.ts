@@ -73,6 +73,14 @@ export function isDailyCapacityReached(capacity:{available:number;allocatedAccou
   return !(capacity.allocatedAccountIds??[]).some(id=>id.replace(/\D/g,"")===normalized);
 }
 
+export function summarizeDailyCapacity(slots:Array<{status:"reserved"|"claiming"|"used";google_customer_id:string}>,jobs:Array<{google_customer_id:string;total_terms:number}>,limit:number) {
+  const allocations=new Map<string,"reserved"|"claiming"|"used">();
+  for(const slot of slots)allocations.set(slot.google_customer_id.replace(/\D/g,""),slot.status);
+  for(const job of jobs)if(job.total_terms>0)allocations.set(job.google_customer_id.replace(/\D/g,""),"used");
+  const statuses=[...allocations.values()];
+  return {used:statuses.filter(status=>status==="used").length,reserved:statuses.filter(status=>status==="reserved").length,claiming:statuses.filter(status=>status==="claiming").length,available:Math.max(0,limit-allocations.size),allocatedAccountIds:[...allocations.keys()]};
+}
+
 const STALE_AFTER_MS = 10 * 60 * 1_000;
 
 export function isActiveAnalysisJobStatus(status: AnalysisJobStatus): status is ActiveAnalysisJobStatus {

@@ -29,6 +29,6 @@ export function SearchTermAccountSummary({ account, dashboard, analysisLoading, 
   </div>;
 }
 
-function formatDateTime(value:string){return new Intl.DateTimeFormat("en-MY",{dateStyle:"medium",timeStyle:"short",timeZone:"Asia/Kuala_Lumpur"}).format(new Date(value));}
+function formatDateTime(value:string){return new Intl.DateTimeFormat("en-MY",{dateStyle:"medium",timeStyle:"medium",timeZone:"Asia/Kuala_Lumpur"}).format(new Date(value));}
 function formatDate(value:string){const date=new Date(`${value}T00:00:00+08:00`);return Number.isNaN(date.getTime())?value:new Intl.DateTimeFormat("en-MY",{day:"numeric",month:"short",year:"numeric",timeZone:"Asia/Kuala_Lumpur"}).format(date);}
 function AccountDetail({label,value,emphasized=false}:{label:string;value:string;emphasized?:boolean}){return <div className={`rounded-xl border px-3.5 py-3 ${emphasized?"border-red-200 bg-red-50":"border-neutral-200 bg-neutral-50"}`}><p className={`text-[11px] font-semibold uppercase tracking-wide ${emphasized?"text-red-700":"text-neutral-500"}`}>{label}</p><p className="mt-1 text-sm font-semibold text-neutral-900">{value}</p></div>;}

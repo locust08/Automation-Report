@@ -161,3 +161,10 @@ test("blocks only unallocated accounts when daily capacity is exhausted", () => 
   assert.equal(helper?.({available:0,allocatedAccountIds:["4300673415"]},"3532708050"),true);
   assert.equal(helper?.({available:1,allocatedAccountIds:[]},"3532708050"),false);
 });
+
+test("counts a durable non-empty analysis when its daily slot is missing", () => {
+  const helper=(jobSummaryModule as unknown as {summarizeDailyCapacity?:(slots:Array<{status:"reserved"|"claiming"|"used";google_customer_id:string}>,jobs:Array<{google_customer_id:string;total_terms:number}>,limit:number)=>{used:number;reserved:number;claiming:number;available:number;allocatedAccountIds:string[]}}).summarizeDailyCapacity;
+  assert.equal(typeof helper,"function");
+  assert.deepEqual(helper?.([], [{google_customer_id:"4300673415",total_terms:1190}], 4), {used:1,reserved:0,claiming:0,available:3,allocatedAccountIds:["4300673415"]});
+  assert.deepEqual(helper?.([{status:"claiming",google_customer_id:"4300673415"}], [{google_customer_id:"4300673415",total_terms:1190}], 4), {used:1,reserved:0,claiming:0,available:3,allocatedAccountIds:["4300673415"]});
+});
