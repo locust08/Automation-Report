@@ -731,7 +731,7 @@ function ReportAccountSearchInput({
           className={cn(
             "absolute top-full z-50 mt-2 overflow-hidden rounded-xl border border-border bg-popover p-2 text-popover-foreground shadow-xl",
             compactToolbar
-              ? "right-0 mt-1.5 w-[min(20rem,calc(100vw-1.5rem))] min-w-0 rounded-lg p-1.5"
+              ? "right-0 mt-1.5 w-[min(clamp(20rem,50vw,34rem),calc(100vw-1.5rem))] min-w-0 rounded-lg p-1.5"
               : "left-0 right-0 min-w-[320px]"
           )}
         >
