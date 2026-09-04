@@ -567,13 +567,13 @@ export async function getOverallReport(input: OverallInput): Promise<OverallRepo
 
   if (resolvedAccountIds.metaAccountIds.length > 0 && metaCurrentResult.rows.length === 0) {
     warnings.push(
-      `Meta Ads returned no campaign rows with spend greater than RM${MIN_REPORTING_CAMPAIGN_SPEND} for the selected account and date range. If this account spent during the period, verify the account ID and token permissions.`
+      "No activity was found for Meta Ads. Please change the date range."
     );
   }
 
   if (resolvedAccountIds.googleAccountIds.length > 0 && googleCurrentResult.rows.length === 0) {
     warnings.push(
-      `Google Ads returned no campaign rows with spend greater than RM${MIN_REPORTING_CAMPAIGN_SPEND} for the selected account and date range. If this account spent during the period, verify that the selected Access Path can read it.`
+      "No activity was found for Google Ads. Please change the date range."
     );
   }
 
@@ -924,13 +924,13 @@ async function fetchOverallPerformanceStageData(input: OverallInput): Promise<Ov
 
   if (resolvedAccountIds.metaAccountIds.length > 0 && metaCurrentResult.rows.length === 0) {
     warnings.push(
-      `Meta Ads returned no campaign rows with spend greater than RM${MIN_REPORTING_CAMPAIGN_SPEND} for the selected account and date range. If this account spent during the period, verify the account ID and token permissions.`
+      "No activity was found for Meta Ads. Please change the date range."
     );
   }
 
   if (resolvedAccountIds.googleAccountIds.length > 0 && googleCurrentResult.rows.length === 0) {
     warnings.push(
-      `Google Ads returned no campaign rows with spend greater than RM${MIN_REPORTING_CAMPAIGN_SPEND} for the selected account and date range. If this account spent during the period, verify that the selected Access Path can read it.`
+      "No activity was found for Google Ads. Please change the date range."
     );
   }
 

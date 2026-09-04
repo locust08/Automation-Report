@@ -34,3 +34,16 @@ Meta now follows the Google management information structure: a focused performa
 No actionable P0, P1, or P2 visual differences remain in the requested scope. The selected live account returned campaigns but no ad/ad-set rows for the active range, so empty report states were also verified.
 
 final result: passed
+
+---
+
+# Overall Report Date-Control Design QA
+
+- Source visuals: `codex-clipboard-95d1493c-b906-412f-bef6-088d99a5a21b.png` and `codex-clipboard-96081542-cfba-43d0-96e7-1a1996af8f99.png`.
+- Implementation evidence: in-app Browser verification at a 531 × 631 CSS-pixel viewport on `/overall?startDate=2026-08-01&endDate=2026-08-31&platform=google&googleAccountId=196-372-7709`.
+- The inactive-account warning uses concise “No activity” language and directs the user to change the date range.
+- The August report ends on August 31 and the compact control displays `Aug 1–31, 2026`.
+- The date picker is grouped immediately beside Report, and its right-aligned two-month popover remains inside the mobile viewport.
+- Screenshot/PDF header behavior is unchanged because relocation only applies to the interactive compact layout.
+
+final result: passed

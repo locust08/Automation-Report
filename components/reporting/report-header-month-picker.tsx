@@ -27,12 +27,14 @@ export function ReportHeaderMonthPicker({
   onChange,
   variant = "header",
   densePopover = false,
+  className,
 }: {
   startDate: string;
   endDate: string;
   onChange: (next: { startDate: string; endDate: string }) => void;
   variant?: "header" | "compact";
   densePopover?: boolean;
+  className?: string;
 }) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const [open, setOpen] = useState(false);
@@ -52,6 +54,10 @@ export function ReportHeaderMonthPicker({
   );
   const dateLabel = useMemo(
     () => `${formatLabelDate(normalizedCurrent.startDate)} - ${formatLabelDate(normalizedCurrent.endDate)}`,
+    [normalizedCurrent.endDate, normalizedCurrent.startDate]
+  );
+  const compactDateLabel = useMemo(
+    () => formatCompactDateRange(normalizedCurrent.startDate, normalizedCurrent.endDate),
     [normalizedCurrent.endDate, normalizedCurrent.startDate]
   );
 
@@ -155,7 +161,8 @@ export function ReportHeaderMonthPicker({
         "relative flex max-w-full items-center text-[#5f5f5f]",
         compact
           ? "h-9 w-auto min-w-[280px] gap-0.5 rounded-lg border border-slate-200 bg-white p-0.5 shadow-none"
-          : "h-auto w-full gap-1 rounded-2xl bg-[#d9d9d9] p-1.5 shadow-sm sm:h-12 sm:min-w-[340px] sm:w-auto"
+          : "h-auto w-full gap-1 rounded-2xl bg-[#d9d9d9] p-1.5 shadow-sm sm:h-12 sm:min-w-[340px] sm:w-auto",
+        className,
       )}
     >
       <button
@@ -170,7 +177,9 @@ export function ReportHeaderMonthPicker({
         aria-expanded={open}
       >
         <CalendarDaysIcon className={cn("text-[#7a7a7a]", compact ? "size-3.5" : "size-4")} />
-        <span className={cn("truncate font-semibold leading-none text-[#5f5f5f]", compact ? "text-xs" : "text-sm sm:text-base")}>{dateLabel}</span>
+        <span className={cn("truncate font-semibold leading-none text-[#5f5f5f]", compact ? "text-xs" : "text-sm sm:text-base")}>
+          {compact ? compactDateLabel : dateLabel}
+        </span>
         <ChevronDownIcon
           className={cn("ml-auto text-[#7a7a7a]", compact ? "size-3.5" : "size-4")}
           data-report-export-exclude="true"
@@ -182,7 +191,7 @@ export function ReportHeaderMonthPicker({
           className={cn(
             "absolute top-[calc(100%+8px)] z-50 max-h-[min(680px,calc(100vh-6rem))] max-w-[calc(100vw-2rem)] overflow-auto rounded-2xl border bg-white shadow-[0_12px_32px_rgba(0,0,0,0.18)]",
             densePopover ? "w-[min(clamp(360px,80vw,560px),calc(100vw-2rem))] rounded-xl" : compact ? "w-[520px]" : "w-[600px]",
-            densePopover ? "left-0" : compact ? "-left-[18px]" : "left-0 sm:left-auto sm:right-0"
+            densePopover ? "right-0" : compact ? "-left-[18px]" : "left-0 sm:left-auto sm:right-0"
           )}
         >
           <div className={cn("flex items-center justify-between border-b", densePopover ? "gap-2 p-2.5 max-[399px]:flex-col max-[399px]:items-stretch" : "gap-3 p-3")}>
@@ -303,6 +312,24 @@ function formatLabelDate(value: string): string {
     year: "numeric",
     timeZone: "UTC",
   }).format(date);
+}
+
+function formatCompactDateRange(startDate: string, endDate: string): string {
+  const start = parseIsoDate(startDate);
+  const end = parseIsoDate(endDate);
+  const sameMonth =
+    start.getUTCFullYear() === end.getUTCFullYear() &&
+    start.getUTCMonth() === end.getUTCMonth();
+
+  if (sameMonth) {
+    const month = new Intl.DateTimeFormat("en-US", {
+      month: "short",
+      timeZone: "UTC",
+    }).format(start);
+    return `${month} ${start.getUTCDate()}–${end.getUTCDate()}, ${end.getUTCFullYear()}`;
+  }
+
+  return `${formatLabelDate(startDate)} – ${formatLabelDate(endDate)}`;
 }
 
 function getPresetRange(preset: Exclude<DatePreset, "custom">): { startDate: string; endDate: string } {

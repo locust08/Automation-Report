@@ -216,6 +216,7 @@ export function OverallPageClient({
       activeQuery={activeQueryString}
       reportReady={reportReady}
       titleLoading={compactInteractive && hasAccountId && !splitByAccount && summaryQuery.loading && !summaryQuery.data}
+      hideHeaderDateControl={compactInteractive}
       headerDateControl={
         <ReportHeaderMonthPicker
           startDate={filters.startDate}
@@ -237,7 +238,23 @@ export function OverallPageClient({
           compact
           compactToolbar
           immediateAccountApply
-          footerContent={<ReportDownloadButton fileNamePrefix={title} compact={compactInteractive} />}
+          footerContent={
+            <div className="flex min-w-0 items-center justify-end gap-1.5">
+              <ReportDownloadButton fileNamePrefix={title} compact={compactInteractive} />
+              {compactInteractive ? (
+                <ReportHeaderMonthPicker
+                  startDate={filters.startDate}
+                  endDate={filters.endDate}
+                  variant="compact"
+                  densePopover
+                  className="min-w-0 w-[clamp(13rem,30vw,17.5rem)]"
+                  onChange={(next) =>
+                    setFilters({ startDate: next.startDate, endDate: next.endDate })
+                  }
+                />
+              ) : null}
+            </div>
+          }
           onApply={(next) => {
             const unchanged =
               next.accountId === filters.accountId &&

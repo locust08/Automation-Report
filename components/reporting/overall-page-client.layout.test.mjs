@@ -37,6 +37,11 @@ test("enables balanced compact sizing only for interactive overall reports", () 
 
 test("keeps compact account filters readable before the large breakpoint", () => {
   assert.match(overall, /compactToolbar/);
+  assert.match(overall, /hideHeaderDateControl=\{compactInteractive\}/);
+  assert.match(overall, /<ReportDownloadButton[\s\S]*?<ReportHeaderMonthPicker/);
+  assert.match(overall, /className="min-w-0 w-\[clamp\(13rem,30vw,17\.5rem\)\]"/);
+  assert.match(picker, /densePopover \? "right-0"/);
+  assert.match(picker, /formatCompactDateRange/);
   assert.match(filters, /grid-cols-\[84px_minmax\(0,1fr\)_32px\]/);
   assert.match(filters, /<ButtonGroup className="flex-none">/);
   assert.match(filters, /denseToolbar[\s\S]*?"h-8 w-auto flex-none px-2 text-\[11px\]"/);
