@@ -42,6 +42,9 @@ test("keeps compact account filters readable before the large breakpoint", () =>
   assert.match(filters, /denseToolbar[\s\S]*?"h-8 w-auto flex-none px-2 text-\[11px\]"/);
   assert.match(filters, /denseToolbar \? "ml-auto w-auto flex-none"/);
   assert.match(filters, /useState<SearchEntry\[\]>\(\(\) =>/);
+  assert.match(filters, /w-\[min\(18rem,calc\(100vw-1\.5rem\)\)\]/);
+  assert.match(filters, /compact \? "gap-0\.5 px-2 py-1\.5 text-xs leading-snug"/);
+  assert.doesNotMatch(filters, /No country set/);
   assert.match(download, /compact\?: boolean/);
   assert.match(download, /compact \? "w-auto" : "w-full"/);
 });

@@ -731,12 +731,17 @@ function ReportAccountSearchInput({
           className={cn(
             "absolute top-full z-50 mt-2 overflow-hidden rounded-xl border border-border bg-popover p-2 text-popover-foreground shadow-xl",
             compactToolbar
-              ? "right-0 w-[min(22rem,calc(100vw-2rem))] min-w-0"
+              ? "right-0 mt-1.5 w-[min(18rem,calc(100vw-1.5rem))] min-w-0 rounded-lg p-1.5"
               : "left-0 right-0 min-w-[320px]"
           )}
         >
           <div className="relative">
-            <SearchIcon className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+            <SearchIcon
+              className={cn(
+                "pointer-events-none absolute top-1/2 -translate-y-1/2 text-muted-foreground",
+                compactToolbar ? "left-2.5 size-3.5" : "left-3 size-4"
+              )}
+            />
             <Input
               ref={searchInputRef}
               value={searchQuery}
@@ -745,7 +750,7 @@ function ReportAccountSearchInput({
                 setHighlightedId(null);
               }}
               onKeyDown={handleKeyDown}
-              className="h-10 pl-9"
+              className={compactToolbar ? "h-8 px-2 pl-8 text-xs" : "h-10 pl-9"}
               placeholder="Search account name or ID"
               aria-label="Search accounts"
               aria-autocomplete="list"
@@ -753,8 +758,11 @@ function ReportAccountSearchInput({
             />
           </div>
 
-          <div className="mt-2 max-h-80 overflow-auto">
-            <div className="px-2 py-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+          <div className={compactToolbar ? "mt-1.5 max-h-64 overflow-auto" : "mt-2 max-h-80 overflow-auto"}>
+            <div className={cn(
+              "font-semibold uppercase tracking-wide text-muted-foreground",
+              compactToolbar ? "px-2 py-1 text-[10px]" : "px-2 py-1.5 text-xs"
+            )}>
               Recent
             </div>
             {recentAccounts.length > 0 ? (
@@ -763,6 +771,7 @@ function ReportAccountSearchInput({
                 highlightedId={highlightedId}
                 onSelect={selectSuggestion}
                 onHighlight={setHighlightedId}
+                compact={compactToolbar}
               />
             ) : (
               <p className="px-2 py-2 text-sm text-muted-foreground">
@@ -770,7 +779,10 @@ function ReportAccountSearchInput({
               </p>
             )}
 
-            <div className="mt-1 border-t border-border px-2 pb-1 pt-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+            <div className={cn(
+              "mt-1 border-t border-border px-2 pb-1 font-semibold uppercase tracking-wide text-muted-foreground",
+              compactToolbar ? "pt-2 text-[10px]" : "pt-3 text-xs"
+            )}>
               Results
             </div>
             {query.length < 2 ? (
@@ -796,6 +808,7 @@ function ReportAccountSearchInput({
                 highlightedId={highlightedId}
                 onSelect={selectSuggestion}
                 onHighlight={setHighlightedId}
+                compact={compactToolbar}
               />
             ) : null}
           </div>
@@ -810,11 +823,13 @@ function AccountSuggestionList({
   highlightedId,
   onSelect,
   onHighlight,
+  compact = false,
 }: {
   suggestions: AccountSearchSuggestion[];
   highlightedId: string | null;
   onSelect: (suggestion: AccountSearchSuggestion) => void;
   onHighlight: (notionPageId: string) => void;
+  compact?: boolean;
 }) {
   return (
     <ul className="space-y-1" role="listbox">
@@ -830,23 +845,26 @@ function AccountSuggestionList({
               onMouseEnter={() => onHighlight(suggestion.notionPageId)}
               onClick={() => onSelect(suggestion)}
               className={cn(
-                "grid w-full gap-1 rounded-md px-3 py-2 text-left text-sm transition",
+                "grid w-full rounded-md text-left transition",
+                compact ? "gap-0.5 px-2 py-1.5 text-xs leading-snug" : "gap-1 px-3 py-2 text-sm",
                 highlighted
                   ? "bg-red-600 text-white"
                   : "hover:bg-accent hover:text-accent-foreground"
               )}
             >
-              <span className="font-semibold">
+              <span className="font-semibold leading-snug">
                 {formatAccountSuggestionLabel(suggestion)}
               </span>
-              <span
-                className={cn(
-                  "text-xs",
-                  highlighted ? "text-white/75" : "text-muted-foreground"
-                )}
-              >
-                {suggestion.country ?? "No country set"}
-              </span>
+              {suggestion.country ? (
+                <span
+                  className={cn(
+                    compact ? "text-[10px]" : "text-xs",
+                    highlighted ? "text-white/75" : "text-muted-foreground"
+                  )}
+                >
+                  {suggestion.country}
+                </span>
+              ) : null}
             </button>
           </li>
         );
