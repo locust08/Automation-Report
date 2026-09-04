@@ -34,6 +34,9 @@ test("keeps compact account filters readable before the large breakpoint", () =>
 
 test("opts report body sections into compact sizing without changing defaults", () => {
   assert.match(metrics, /compact = false/);
+  assert.match(metrics, /ScrollArea type="always"/);
+  assert.match(metrics, /orientation="horizontal"/);
+  assert.match(metrics, /compact \? \(/);
   assert.match(campaigns, /compact = false/);
   assert.match(audience, /compact = false/);
   assert.match(audience, /compact && !screenshotMode/);

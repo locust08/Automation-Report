@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 import { CircleHelpIcon, Music2Icon, TrendingDownIcon, TrendingUpIcon, XIcon } from "lucide-react";
 
 import { getMetricExplanation } from "@/components/reporting/metric-explanation";
+import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area";
 import { formatDelta, formatMetricValue } from "@/lib/reporting/format";
 import { DateRangeConfig, SummaryMetric, SummarySection } from "@/lib/reporting/types";
 
@@ -61,6 +62,21 @@ function MetricSectionContent({
   const safeActiveIndex = Math.min(activeMetricIndex, Math.max(0, metricCount - 1));
   const activeMetric = metrics[safeActiveIndex];
   const selectedMetric = metrics.find((metric) => metric.key === selectedMetricKey) ?? null;
+  const metricTabs = metrics.map((metric, index) => (
+    <button
+      key={`metric-tab-${metric.key}`}
+      type="button"
+      onClick={() => setActiveMetricState({ index, signature: metricSignature })}
+      className={`shrink-0 rounded-full border px-3 py-1.5 text-xs font-semibold transition-colors ${
+        index === safeActiveIndex
+          ? "border-red-700 bg-red-700 text-white"
+          : "border-[#c9c9c9] bg-white text-[#555]"
+      }`}
+      aria-pressed={index === safeActiveIndex}
+    >
+      {metric.label}
+    </button>
+  ));
 
   return (
     <article className={compact ? "rounded-[1.25rem] bg-[#e7e7e7] p-3 shadow-sm sm:p-3.5 lg:p-4" : "rounded-[1.5rem] bg-[#e7e7e7] p-3 shadow-sm sm:p-4"}>
@@ -69,23 +85,19 @@ function MetricSectionContent({
       </div>
 
       <div className="space-y-3 md:hidden">
-        <div className="flex gap-2 overflow-x-auto pb-1 [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
-          {metrics.map((metric, index) => (
-            <button
-              key={`metric-tab-${metric.key}`}
-              type="button"
-              onClick={() => setActiveMetricState({ index, signature: metricSignature })}
-              className={`shrink-0 rounded-full border px-3 py-1.5 text-xs font-semibold transition-colors ${
-                index === safeActiveIndex
-                  ? "border-red-700 bg-red-700 text-white"
-                  : "border-[#c9c9c9] bg-white text-[#555]"
-              }`}
-              aria-pressed={index === safeActiveIndex}
-            >
-              {metric.label}
-            </button>
-          ))}
-        </div>
+        {compact ? (
+          <ScrollArea type="always" className="w-full whitespace-nowrap">
+            <div className="flex w-max gap-2 pb-2.5">{metricTabs}</div>
+            <ScrollBar
+              orientation="horizontal"
+              className="h-2 rounded-full bg-black/10 [&_[data-slot=scroll-area-thumb]]:bg-red-700/70"
+            />
+          </ScrollArea>
+        ) : (
+          <div className="flex gap-2 overflow-x-auto pb-1 [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
+            {metricTabs}
+          </div>
+        )}
 
         <MetricCard
           metric={activeMetric}
