@@ -750,7 +750,7 @@ function ReportAccountSearchInput({
                 setHighlightedId(null);
               }}
               onKeyDown={handleKeyDown}
-              className={compactToolbar ? "h-8 px-2 pl-8 text-xs" : "h-10 pl-9"}
+              className={compactToolbar ? "h-8 px-2 pl-8 text-[11px]" : "h-10 pl-9"}
               placeholder="Search account name or ID"
               aria-label="Search accounts"
               aria-autocomplete="list"
@@ -761,7 +761,7 @@ function ReportAccountSearchInput({
           <div className={compactToolbar ? "mt-1.5 max-h-64 overflow-auto" : "mt-2 max-h-80 overflow-auto"}>
             <div className={cn(
               "font-semibold uppercase tracking-wide text-muted-foreground",
-              compactToolbar ? "px-2 py-1 text-[10px]" : "px-2 py-1.5 text-xs"
+              compactToolbar ? "px-2 py-1 text-[9px]" : "px-2 py-1.5 text-xs"
             )}>
               Recent
             </div>
@@ -781,7 +781,7 @@ function ReportAccountSearchInput({
 
             <div className={cn(
               "mt-1 border-t border-border px-2 pb-1 font-semibold uppercase tracking-wide text-muted-foreground",
-              compactToolbar ? "pt-2 text-[10px]" : "pt-3 text-xs"
+              compactToolbar ? "pt-2 text-[9px]" : "pt-3 text-xs"
             )}>
               Results
             </div>
@@ -846,7 +846,7 @@ function AccountSuggestionList({
               onClick={() => onSelect(suggestion)}
               className={cn(
                 "grid w-full rounded-md text-left transition",
-                compact ? "gap-0.5 px-2 py-1.5 text-xs leading-snug" : "gap-1 px-3 py-2 text-sm",
+                compact ? "gap-0.5 px-2 py-1.5 text-[11px] leading-snug" : "gap-1 px-3 py-2 text-sm",
                 highlighted
                   ? "bg-red-600 text-white"
                   : "hover:bg-accent hover:text-accent-foreground"
@@ -858,7 +858,7 @@ function AccountSuggestionList({
               {suggestion.country ? (
                 <span
                   className={cn(
-                    compact ? "text-[10px]" : "text-xs",
+                    compact ? "text-[9px]" : "text-xs",
                     highlighted ? "text-white/75" : "text-muted-foreground"
                   )}
                 >
