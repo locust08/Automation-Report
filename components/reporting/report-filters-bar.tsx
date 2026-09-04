@@ -103,8 +103,14 @@ export function ReportFiltersBar({
   onAccountSelected,
 }: ReportFiltersBarProps) {
   const denseToolbar = compact && compactToolbar;
-  const [searchEntries, setSearchEntries] = useState<SearchEntry[]>([]);
   const nextSearchEntryId = useRef(0);
+  const [searchEntries, setSearchEntries] = useState<SearchEntry[]>(() =>
+    parseSearchEntries(filters).map((entry, index) => ({
+      ...entry,
+      searchText: entry.accountId,
+      key: `search-entry-initial-${index}`,
+    }))
+  );
   const [startDate, setStartDate] = useState(filters.startDate);
   const [endDate, setEndDate] = useState(filters.endDate);
   const [selectedMonth, setSelectedMonth] = useState(toMonthValue(filters.startDate));

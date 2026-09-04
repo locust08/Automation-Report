@@ -4,16 +4,20 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { AudienceClickBreakdownSection } from "@/components/reporting/audience-click-breakdown";
 import { OverallCampaignGroupsTable } from "@/components/reporting/campaign-table";
-import { ReportSuccessScreen } from "@/components/reporting/report-loading-screen";
 import { ReportHeaderMonthPicker } from "@/components/reporting/report-header-month-picker";
 import { MetricSection } from "@/components/reporting/metric-grid";
+import {
+  OverallAudienceSkeleton,
+  OverallCampaignSkeleton,
+  OverallReportSkeleton,
+  OverallSummarySkeleton,
+} from "@/components/reporting/overall-report-skeleton";
 import { TikTokInsightsPanel } from "@/components/reporting/tiktok-insights-panel";
 import { ReportFiltersBar } from "@/components/reporting/report-filters-bar";
 import { ReportDownloadButton } from "@/components/reporting/screenshot-mode-toggle";
 import { ReportShell } from "@/components/reporting/report-shell";
 import {
   ReportErrorState,
-  ReportLoadingState,
   ReportWarnings,
 } from "@/components/reporting/report-state";
 import {
@@ -28,7 +32,6 @@ import {
   useTikTokInsightsStage,
 } from "@/components/reporting/use-report-data";
 import { useScreenshotMode } from "@/components/reporting/use-screenshot-mode";
-import { useReportReadyTransition } from "@/components/reporting/use-report-ready-transition";
 import type { CampaignNameFilter } from "@/lib/reporting/campaign-name-filter";
 import { getCampaignNameOptions } from "@/lib/reporting/campaign-name-filter";
 import { OverallReportPayload } from "@/lib/reporting/types";
@@ -157,20 +160,6 @@ export function OverallPageClient({
       : [],
     [campaignQuery.data?.warnings, isTikTokOnly, summaryQuery.data?.warnings],
   );
-  const overallReady =
-    hasAccountId &&
-    !splitByAccount &&
-    !summaryQuery.loading &&
-    !campaignQuery.loading &&
-    !summaryQuery.error &&
-    !campaignQuery.error &&
-    Boolean(summaryQuery.data) &&
-    Boolean(campaignQuery.data);
-  const { showReadyState } = useReportReadyTransition({
-    ready: overallReady,
-    transitionKey: summaryQuery.successToken,
-  });
-
   const handleAccountResolved = useCallback((label: ResolvedAccountLabel) => {
     setResolvedLabels((current) => {
       const withoutCurrent = current.filter((item) => item.key !== label.key);
@@ -211,21 +200,6 @@ export function OverallPageClient({
   const dateLabel =
     data?.dateRange.currentLabel ?? `${filters.startDate} - ${filters.endDate}`;
 
-  if (showReadyState) {
-    return <ReportSuccessScreen kind="overall" fullPage />;
-  }
-
-  if (hasAccountId && !splitByAccount && summaryQuery.loading && !summaryQuery.data) {
-    return (
-      <ReportLoadingState
-        kind="overall"
-        message="Loading summary metrics..."
-        fullPage
-        onRetry={summaryQuery.retry}
-      />
-    );
-  }
-
   return (
     <ReportShell
       compactResponsive={compactInteractive}
@@ -233,6 +207,7 @@ export function OverallPageClient({
       dateLabel={dateLabel}
       activeQuery={activeQueryString}
       reportReady={reportReady}
+      titleLoading={compactInteractive && hasAccountId && !splitByAccount && summaryQuery.loading && !summaryQuery.data}
       headerDateControl={
         <ReportHeaderMonthPicker
           startDate={filters.startDate}
@@ -307,13 +282,7 @@ export function OverallPageClient({
           </div>
         ) : hasAccountId ? (
           <>
-            {summaryQuery.loading ? (
-              <ReportLoadingState
-                kind="overall"
-                message="Loading summary metrics..."
-                onRetry={summaryQuery.retry}
-              />
-            ) : null}
+            {summaryQuery.loading && !summaryQuery.data ? <OverallSummarySkeleton compact={compactInteractive} /> : null}
             {summaryQuery.error ? (
               <ReportErrorState
                 kind="overall"
@@ -338,13 +307,7 @@ export function OverallPageClient({
               </>
             ) : null}
 
-            {campaignQuery.loading ? (
-              <ReportLoadingState
-                kind="overall"
-                message="Loading campaign performance..."
-                onRetry={campaignQuery.retry}
-              />
-            ) : null}
+            {campaignQuery.loading && !campaignQuery.data ? <OverallCampaignSkeleton compact={compactInteractive} /> : null}
             {campaignQuery.error ? (
               <ReportErrorState
                 kind="overall"
@@ -444,13 +407,7 @@ function SplitAccountOverallReport({
         </p>
       </div>
 
-      {loading ? (
-        <ReportLoadingState
-          kind="overall"
-          message={`Loading ${platformDisplayName(entry.platform)} report for ${entry.accountId}...`}
-          onRetry={retry}
-        />
-      ) : null}
+      {loading && !data ? <OverallReportSkeleton compact={!screenshotMode} /> : null}
 
       {error ? <ReportErrorState kind="overall" message={error} onRetry={retry} /> : null}
 
@@ -560,19 +517,7 @@ function LazyAudienceBreakdown({
 
   return (
     <div ref={markerRef} className="space-y-5">
-      {!shouldLoad ? (
-        <ReportLoadingState
-          kind="overall"
-          message="Audience breakdown will load when this section is visible."
-        />
-      ) : null}
-      {loading ? (
-        <ReportLoadingState
-          kind="overall"
-          message="Loading audience click breakdown..."
-          onRetry={retry}
-        />
-      ) : null}
+      {!shouldLoad || (loading && !data) ? <OverallAudienceSkeleton compact={compact} /> : null}
       {error ? <ReportErrorState kind="overall" message={error} onRetry={retry} /> : null}
       {data ? (
         <>
@@ -740,8 +685,7 @@ function LazyTikTokInsights({
 
   return (
     <div ref={markerRef} className="space-y-5">
-      {!shouldLoad ? <ReportLoadingState kind="overall" message="TikTok insights will load when this section is visible." /> : null}
-      {loading ? <ReportLoadingState kind="overall" message="Loading TikTok insights..." onRetry={retry} /> : null}
+      {!shouldLoad || (loading && !data) ? <OverallAudienceSkeleton compact={!screenshotMode} /> : null}
       {error ? <ReportErrorState kind="overall" message={error} onRetry={retry} /> : null}
       {data ? <TikTokInsightsPanel payload={data} /> : null}
     </div>

@@ -48,6 +48,7 @@ interface ReportShellProps {
   reportReady?: boolean;
   suppressExportHeader?: boolean;
   compactResponsive?: boolean;
+  titleLoading?: boolean;
   initialRole?: AuthRole;
   children: React.ReactNode;
 }
@@ -67,6 +68,7 @@ export function ReportShell({
   reportReady = false,
   suppressExportHeader = false,
   compactResponsive = false,
+  titleLoading = false,
   initialRole,
   children,
 }: ReportShellProps) {
@@ -180,6 +182,7 @@ export function ReportShell({
             >
               <div className="min-w-0 space-y-3">
                 <h1
+                  aria-label={titleLoading ? "Loading report title" : undefined}
                   className={
                     compactResponsive
                       ? "max-w-[32ch] break-words text-[clamp(1.75rem,3.2vw,2.5rem)] font-semibold leading-[1.08] tracking-tight [overflow-wrap:normal]"
@@ -187,7 +190,12 @@ export function ReportShell({
                   }
                   data-report-export-title="true"
                 >
-                  {title}
+                  {titleLoading ? (
+                    <span className="block space-y-2" aria-hidden="true">
+                      <span className="block h-[0.82em] w-[min(28rem,88%)] animate-pulse rounded-lg bg-white/25" />
+                      <span className="block h-[0.82em] w-[min(20rem,62%)] animate-pulse rounded-lg bg-white/20" />
+                    </span>
+                  ) : title}
                 </h1>
               </div>
               {hideHeaderDateControl ? null : headerDateControl ? (

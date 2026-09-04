@@ -5,7 +5,10 @@ import test from "node:test";
 const readComponent = (name) =>
   readFile(new URL(`./${name}`, import.meta.url), "utf8");
 
-const [overall, shell, filters, picker, download, metrics, campaigns, audience] = await Promise.all([
+const readOverallRoute = (name) =>
+  readFile(new URL(`../../app/overall/${name}`, import.meta.url), "utf8");
+
+const [overall, shell, filters, picker, download, metrics, campaigns, audience, skeletons, routeSkeleton, routePage, routeLoading] = await Promise.all([
   readComponent("overall-page-client.tsx"),
   readComponent("report-shell.tsx"),
   readComponent("report-filters-bar.tsx"),
@@ -14,6 +17,10 @@ const [overall, shell, filters, picker, download, metrics, campaigns, audience] 
   readComponent("metric-grid.tsx"),
   readComponent("campaign-table.tsx"),
   readComponent("audience-click-breakdown.tsx"),
+  readComponent("overall-report-skeleton.tsx"),
+  readComponent("overall-route-skeleton.tsx"),
+  readOverallRoute("page.tsx"),
+  readOverallRoute("loading.tsx"),
 ]);
 
 test("enables balanced compact sizing only for interactive overall reports", () => {
@@ -34,6 +41,7 @@ test("keeps compact account filters readable before the large breakpoint", () =>
   assert.match(filters, /<ButtonGroup className="flex-none">/);
   assert.match(filters, /denseToolbar[\s\S]*?"h-8 w-auto flex-none px-2 text-\[11px\]"/);
   assert.match(filters, /denseToolbar \? "ml-auto w-auto flex-none"/);
+  assert.match(filters, /useState<SearchEntry\[\]>\(\(\) =>/);
   assert.match(download, /compact\?: boolean/);
   assert.match(download, /compact \? "w-auto" : "w-full"/);
 });
@@ -48,4 +56,24 @@ test("opts report body sections into compact sizing without changing defaults", 
   assert.match(audience, /compact && !screenshotMode/);
   assert.match(campaigns, /xl:hidden/);
   assert.match(campaigns, /xl:block/);
+});
+
+test("renders the overall report shell immediately with section skeletons", () => {
+  assert.doesNotMatch(overall, /ReportSuccessScreen/);
+  assert.doesNotMatch(overall, /useReportReadyTransition/);
+  assert.doesNotMatch(overall, /ReportLoadingState/);
+  assert.match(overall, /titleLoading=\{compactInteractive/);
+  assert.match(overall, /<OverallSummarySkeleton compact=\{compactInteractive\}/);
+  assert.match(overall, /<OverallCampaignSkeleton compact=\{compactInteractive\}/);
+  assert.match(overall, /<OverallAudienceSkeleton compact=\{compact\}/);
+  assert.match(shell, /titleLoading \? \(/);
+  assert.match(skeletons, /aria-label="Loading summary metrics"/);
+  assert.match(skeletons, /aria-label="Loading campaign performance"/);
+  assert.match(skeletons, /aria-label="Loading audience breakdown"/);
+  assert.doesNotMatch(routePage, /ReportRouteLoading/);
+  assert.match(routePage, /fallback=\{<OverallRouteSkeleton \/>\}/);
+  assert.match(routeLoading, /<OverallRouteSkeleton \/>/);
+  assert.match(routeSkeleton, /aria-label="Loading monthly performance report"/);
+  assert.match(routeSkeleton, /<OverallSummarySkeleton compact \/>/);
+  assert.doesNotMatch(routeSkeleton, /Preparing your page|Your report is ready/);
 });
