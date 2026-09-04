@@ -60,14 +60,14 @@ export class TikTokBusinessAuthError extends Error {
 }
 
 function defaultDependencies(): TikTokBusinessTokenManagerDependencies {
-  const target = getDopplerTarget();
-  const mirrorTargets = getTikTokBusinessMirrorTargets(target.config);
   const localEnvironmentAuthorization = isTikTokLocalEnvironmentAuthorization();
+  const target = localEnvironmentAuthorization ? undefined : getDopplerTarget();
+  const mirrorTargets = target ? getTikTokBusinessMirrorTargets(target.config) : [];
   return {
     readSecrets: async (names) => {
       const environmentValues = getTikTokBusinessEnvironmentSecrets();
       const missingNames = names.filter((name) => environmentValues[name] === undefined);
-      const dopplerValues = missingNames.length > 0
+      const dopplerValues = missingNames.length > 0 && target
         ? await dopplerGetSecrets({ names: missingNames, ...target })
         : {};
       return { ...dopplerValues, ...environmentValues };
@@ -78,6 +78,9 @@ function defaultDependencies(): TikTokBusinessTokenManagerDependencies {
           "Local TikTok authorization is read-only. Refresh ai-backend/dev, then run the local TikTok secret sync again.",
         );
       }
+      if (!target) {
+        throw new Error("Missing Doppler target for TikTok authorization storage.");
+      }
       return dopplerSetSecrets({
         secrets,
         project: target.project,
@@ -86,7 +89,7 @@ function defaultDependencies(): TikTokBusinessTokenManagerDependencies {
       });
     },
     now: Date.now,
-    primaryConfig: target.config,
+    primaryConfig: target?.config,
     mirrorTargets,
   };
 }

@@ -137,6 +137,20 @@ test("prefers explicit server-side TikTok environment values without exposing un
   assert.equal(isTikTokLocalEnvironmentAuthorization({}), false);
 });
 
+test("uses a locally synced TikTok authorization without requiring a Doppler target", async () => {
+  delete process.env.DOPPLER_PROJECT;
+  delete process.env.DOPPLER_CONFIG;
+  delete process.env.DOPPLER_TOKEN;
+  process.env.TIKTOK_BUSINESS_ACCESS_TOKEN = "local-access";
+  process.env.TIKTOK_BUSINESS_GRANTED_SCOPES = "[1,2]";
+  process.env.TIKTOK_BUSINESS_AUTHORIZED_ADVERTISERS = JSON.stringify([
+    { advertiser_id: "123", advertiser_name: "Local Ads" },
+  ]);
+  process.env.TIKTOK_BUSINESS_TOKEN_UPDATED_AT = "2026-08-19T00:00:00.000Z";
+
+  assert.equal(await getValidTikTokBusinessAccessToken(), "local-access");
+});
+
 test("writes the same authorization bundle to the primary and mirror configs", async () => {
   const writes: Array<{ config: string; secrets: Record<string, string> }> = [];
   const dependencies: TikTokBusinessTokenManagerDependencies = {
