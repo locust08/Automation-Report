@@ -151,14 +151,22 @@ export function OverallPageClient({
   );
   const data = summaryQuery.data;
   const isTikTokOnly = isTikTokOnlyFilters(filters);
+  const summaryStageWarnings = useMemo(
+    () => dedupeWarnings(summaryQuery.data?.warnings ?? []),
+    [summaryQuery.data?.warnings],
+  );
+  const campaignStageWarnings = useMemo(
+    () => excludeWarnings(campaignQuery.data?.warnings ?? [], summaryStageWarnings),
+    [campaignQuery.data?.warnings, summaryStageWarnings],
+  );
   const tiktokStageWarnings = useMemo(
     () => isTikTokOnly
       ? dedupeWarnings([
-          ...(summaryQuery.data?.warnings ?? []),
-          ...(campaignQuery.data?.warnings ?? []),
+          ...summaryStageWarnings,
+          ...campaignStageWarnings,
         ])
       : [],
-    [campaignQuery.data?.warnings, isTikTokOnly, summaryQuery.data?.warnings],
+    [campaignStageWarnings, isTikTokOnly, summaryStageWarnings],
   );
   const handleAccountResolved = useCallback((label: ResolvedAccountLabel) => {
     setResolvedLabels((current) => {
@@ -292,7 +300,7 @@ export function OverallPageClient({
             ) : null}
             {summaryQuery.data ? (
               <>
-                <ReportWarnings warnings={isTikTokOnly ? tiktokStageWarnings : summaryQuery.data.warnings} />
+                <ReportWarnings warnings={isTikTokOnly ? tiktokStageWarnings : summaryStageWarnings} />
                 {summaryQuery.data.tiktokAccounts?.map((account) => (
                   <TikTokAccountContext key={account.advertiserId} account={account} />
                 ))}
@@ -317,7 +325,7 @@ export function OverallPageClient({
             ) : null}
             {campaignQuery.data ? (
               <>
-                {!isTikTokOnly ? <ReportWarnings warnings={campaignQuery.data.warnings} /> : null}
+                {!isTikTokOnly ? <ReportWarnings warnings={campaignStageWarnings} /> : null}
                 <OverallCampaignGroupsTable
                   groups={campaignQuery.data.campaignGroups}
                   queryString={forwardQuery}
@@ -338,6 +346,7 @@ export function OverallPageClient({
                 screenshotMode={screenshotMode}
                 compact={compactInteractive}
                 summaryData={summaryQuery.data}
+                inheritedWarnings={[...summaryStageWarnings, ...campaignStageWarnings]}
               />
             )}
           </>
@@ -483,6 +492,7 @@ function LazyAudienceBreakdown({
   screenshotMode,
   compact,
   summaryData,
+  inheritedWarnings,
 }: {
   accountKey: string;
   queryString: string;
@@ -490,6 +500,7 @@ function LazyAudienceBreakdown({
   screenshotMode: boolean;
   compact: boolean;
   summaryData: Pick<OverallReportPayload, "accountIds"> | null;
+  inheritedWarnings: string[];
 }) {
   const [visible, setVisible] = useState(screenshotMode);
   const shouldLoad = enabled && (visible || screenshotMode);
@@ -521,7 +532,7 @@ function LazyAudienceBreakdown({
       {error ? <ReportErrorState kind="overall" message={error} onRetry={retry} /> : null}
       {data ? (
         <>
-          <ReportWarnings warnings={data.warnings} />
+          <ReportWarnings warnings={excludeWarnings(data.warnings, inheritedWarnings)} />
           <AudienceClickBreakdownSection
             breakdown={data.audienceClickBreakdown}
             compact={compact}
@@ -703,6 +714,11 @@ function isTikTokOnlyPayload(data: OverallReportPayload): boolean {
 
 function dedupeWarnings(warnings: string[]): string[] {
   return Array.from(new Set(warnings.map((warning) => warning.trim()).filter(Boolean)));
+}
+
+function excludeWarnings(warnings: string[], inheritedWarnings: string[]): string[] {
+  const inherited = new Set(dedupeWarnings(inheritedWarnings));
+  return dedupeWarnings(warnings).filter((warning) => !inherited.has(warning));
 }
 
 function TikTokAccountContext({
