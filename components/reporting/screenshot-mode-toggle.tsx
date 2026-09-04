@@ -289,7 +289,7 @@ export function ReportDownloadButton({ fileNamePrefix, compact = false }: Report
               className={cn(
                 "items-center justify-center gap-2 border-border/60 bg-background text-center font-medium leading-none text-foreground hover:bg-muted",
                 compact
-                  ? "h-9 w-auto px-2.5 text-xs shadow-none"
+                  ? "h-8 w-auto px-2 text-[11px] shadow-none"
                   : "h-10 w-full px-4 text-sm shadow-sm sm:min-w-[148px] sm:w-auto"
               )}
               disabled={isBusy}

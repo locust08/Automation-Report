@@ -257,7 +257,7 @@ export function ReportFiltersBar({
       className={cn(
         "items-center justify-center gap-2 bg-red-600 text-center font-medium leading-none text-white hover:bg-red-700",
         denseToolbar
-          ? "h-9 w-auto flex-none px-2.5 text-xs"
+          ? "h-8 w-auto flex-none px-2 text-[11px]"
           : compact
             ? "h-9 w-full px-3 text-xs sm:min-w-[112px] sm:w-auto"
             : "h-10 w-full px-4 text-sm sm:min-w-[148px] sm:w-auto"
@@ -276,7 +276,7 @@ export function ReportFiltersBar({
       className={cn(
         "items-center justify-center gap-2 font-medium leading-none",
         denseToolbar
-          ? "h-9 w-auto flex-none px-2.5 text-xs"
+          ? "h-8 w-auto flex-none px-2 text-[11px]"
           : compact
             ? "h-9 w-full px-3 text-xs sm:min-w-[112px] sm:w-auto"
             : "h-10 w-full px-4 text-sm sm:min-w-[148px] sm:w-auto"
@@ -297,7 +297,7 @@ export function ReportFiltersBar({
       variant="outline"
       className={cn(
         denseToolbar
-          ? "h-9 w-auto flex-none px-2.5 text-xs"
+          ? "h-8 w-auto flex-none px-2 text-[11px]"
           : "w-full sm:w-auto sm:self-start",
         !denseToolbar && (compact ? "h-8 px-2.5 text-xs" : "h-9")
       )}
@@ -314,7 +314,9 @@ export function ReportFiltersBar({
       className={cn(
         "flex flex-col rounded-2xl border border-border/40 bg-card/90 shadow-sm",
         compact
-          ? "gap-2 border-white/20 bg-white/90 p-2.5 shadow-none lg:flex-row lg:flex-wrap lg:items-start"
+          ? denseToolbar
+            ? "gap-1.5 rounded-xl border-white/20 bg-white/90 p-2 shadow-none lg:flex-row lg:flex-wrap lg:items-start"
+            : "gap-2 border-white/20 bg-white/90 p-2.5 shadow-none lg:flex-row lg:flex-wrap lg:items-start"
           : "gap-3 p-4 sm:flex-row sm:flex-wrap sm:items-start"
       )}
     >
@@ -325,7 +327,7 @@ export function ReportFiltersBar({
             className={cn(
               "min-w-0 items-center gap-2",
               denseToolbar
-                ? "grid grid-cols-[92px_minmax(0,1fr)_34px] sm:grid-cols-[104px_minmax(0,1fr)_36px]"
+                ? "grid grid-cols-[84px_minmax(0,1fr)_32px] gap-1.5 sm:grid-cols-[96px_minmax(0,1fr)_32px]"
                 : "flex flex-wrap sm:flex-nowrap"
             )}
           >
@@ -336,7 +338,7 @@ export function ReportFiltersBar({
               <SelectTrigger
                 className={cn(
                   denseToolbar
-                    ? "h-9 w-full text-xs"
+                    ? "h-8 w-full px-2 text-[11px]"
                     : compact
                       ? "h-9 w-full text-xs sm:w-[130px]"
                       : "h-10 w-full sm:w-[130px]"
@@ -364,7 +366,7 @@ export function ReportFiltersBar({
               variant="outline"
               className={cn(
                 "shrink-0",
-                denseToolbar ? "size-[34px] p-0 sm:size-9" : compact ? "h-9 px-3" : "h-10 px-3"
+                denseToolbar ? "size-8 p-0" : compact ? "h-9 px-3" : "h-10 px-3"
               )}
               onClick={() => removeSearchRow(entry.key)}
               aria-label="Remove account row"
@@ -461,7 +463,7 @@ export function ReportFiltersBar({
         className={cn(
           "flex w-full",
           denseToolbar
-            ? "flex-wrap items-center gap-2"
+            ? "flex-wrap items-center gap-1.5"
             : compact
               ? "flex-row flex-wrap items-start gap-2 lg:ml-auto lg:w-auto"
               : "flex-col gap-2 sm:ml-auto sm:w-auto sm:items-start"
@@ -694,8 +696,8 @@ function ReportAccountSearchInput({
           setHighlightedId(recentAccounts[0]?.notionPageId ?? null);
         }}
         className={cn(
-          "flex w-full min-w-0 items-center gap-2 rounded-md border border-input bg-background px-3 text-left shadow-xs outline-none transition focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50",
-          compact ? "h-9 text-xs" : "h-10 text-sm"
+          "flex w-full min-w-0 items-center gap-2 rounded-md border border-input bg-background text-left shadow-xs outline-none transition focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50",
+          compactToolbar ? "h-8 px-2 text-[11px]" : compact ? "h-9 px-3 text-xs" : "h-10 px-3 text-sm"
         )}
         aria-label={`${entry.platform === "meta" ? "Meta Ads" : entry.platform === "tiktok" ? "TikTok Ads" : "Google Ads"} account`}
         aria-expanded={isOpen}
