@@ -238,6 +238,7 @@ export function OverallPageClient({
           startDate={filters.startDate}
           endDate={filters.endDate}
           variant={compactInteractive ? "compact" : "header"}
+          densePopover={compactInteractive}
           onChange={(next) =>
             setFilters({ startDate: next.startDate, endDate: next.endDate })
           }

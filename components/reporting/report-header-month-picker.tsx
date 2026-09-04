@@ -26,11 +26,13 @@ export function ReportHeaderMonthPicker({
   endDate,
   onChange,
   variant = "header",
+  densePopover = false,
 }: {
   startDate: string;
   endDate: string;
   onChange: (next: { startDate: string; endDate: string }) => void;
   variant?: "header" | "compact";
+  densePopover?: boolean;
 }) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const [open, setOpen] = useState(false);
@@ -179,14 +181,16 @@ export function ReportHeaderMonthPicker({
         <div
           className={cn(
             "absolute top-[calc(100%+8px)] z-50 max-h-[min(680px,calc(100vh-6rem))] max-w-[calc(100vw-2rem)] overflow-auto rounded-2xl border bg-white shadow-[0_12px_32px_rgba(0,0,0,0.18)]",
-            compact ? "w-[520px]" : "w-[600px]",
-            compact ? "-left-[18px]" : "left-0 sm:left-auto sm:right-0"
+            densePopover ? "w-[min(clamp(360px,80vw,560px),calc(100vw-2rem))] rounded-xl" : compact ? "w-[520px]" : "w-[600px]",
+            densePopover ? "left-0" : compact ? "-left-[18px]" : "left-0 sm:left-auto sm:right-0"
           )}
         >
-          <div className="flex items-center justify-between gap-3 border-b p-3">
+          <div className={cn("flex items-center justify-between border-b", densePopover ? "gap-2 p-2.5 max-[399px]:flex-col max-[399px]:items-stretch" : "gap-3 p-3")}>
             <div>
-              <p className="text-sm font-semibold text-foreground">Select date range</p>
-              <p className="text-xs text-muted-foreground">Choose a preset or select dates from the calendar.</p>
+              <p className={cn("font-semibold text-foreground", densePopover ? "text-xs" : "text-sm")}>Select date range</p>
+              <p className={cn("text-muted-foreground", densePopover ? "max-w-48 text-[10px] leading-3.5" : "text-xs")}>
+                Choose a preset or select dates from the calendar.
+              </p>
             </div>
             <label className="flex shrink-0 items-center justify-end">
               <span className="sr-only">Quick date range</span>
@@ -194,7 +198,10 @@ export function ReportHeaderMonthPicker({
                 value={preset}
                 onValueChange={(value) => handlePresetChange(value as DatePreset)}
               >
-                <SelectTrigger aria-label="Quick date range" className="w-36 bg-white">
+                <SelectTrigger
+                  aria-label="Quick date range"
+                  className={cn("bg-white", densePopover ? "h-8 w-28 text-xs max-[399px]:w-full" : "w-36")}
+                >
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent position="popper" align="end">
@@ -210,18 +217,24 @@ export function ReportHeaderMonthPicker({
             </label>
           </div>
 
-          <div className="space-y-3 p-3">
+          <div className={cn(densePopover ? "space-y-2 p-2" : "space-y-3 p-3")}>
             <Calendar02
               mode="range"
               defaultMonth={parseIsoDate(draftStartDate)}
+              numberOfMonths={2}
               pagedNavigation
               selected={draftRange}
               onDayClick={handleCalendarDayClick}
-              className={cn("mx-auto w-fit", compact && "border-0 shadow-none [&_.rdp-months]:gap-1")}
+              classNames={densePopover ? { caption_label: "whitespace-nowrap text-[10px] font-medium select-none" } : undefined}
+              className={cn(
+                "mx-auto w-fit",
+                compact && "border-0 shadow-none [&_.rdp-months]:gap-1",
+                densePopover && "p-1 text-[clamp(9px,2vw,11px)] [--cell-size:clamp(1.25rem,4.5vw,1.75rem)] [&_.rdp-months]:flex-row [&_.rdp-months]:gap-2 [&_.rdp-month]:gap-2 [&_.rdp-week]:mt-1"
+              )}
             />
 
-            <div className={cn("gap-3", compact ? "flex items-center justify-between" : "space-y-3")}>
-              <div className={cn("flex items-center gap-2 text-sm text-muted-foreground", !compact && "justify-center")}>
+            <div className={cn(densePopover ? "flex flex-wrap items-center justify-between gap-2" : "gap-3", !densePopover && (compact ? "flex items-center justify-between" : "space-y-3"))}>
+              <div className={cn("flex items-center text-muted-foreground", densePopover ? "gap-1 text-[10px]" : "gap-2 text-sm", !compact && "justify-center")}>
                 <span>{formatLabelDate(draftStartDate)}</span>
                 <span aria-hidden="true">→</span>
                 <span>{draftEndDate ? formatLabelDate(draftEndDate) : "Select end date"}</span>
@@ -231,7 +244,7 @@ export function ReportHeaderMonthPicker({
                 <Button
                   type="button"
                   variant="ghost"
-                  className={cn("h-9 px-4 text-[#6f6f6f]", !compact && "w-full sm:w-auto")}
+                  className={cn(densePopover ? "h-8 px-2.5 text-xs" : "h-9 px-4", "text-[#6f6f6f]", !compact && "w-full sm:w-auto")}
                   onClick={() => {
                     setDraftStartDate(normalizedCurrent.startDate);
                     setDraftEndDate(normalizedCurrent.endDate);
@@ -248,7 +261,7 @@ export function ReportHeaderMonthPicker({
                 </Button>
                 <Button
                   type="button"
-                  className={cn("h-9 px-4", !compact && "w-full sm:w-auto")}
+                  className={cn(densePopover ? "h-8 px-2.5 text-xs" : "h-9 px-4", !compact && "w-full sm:w-auto")}
                   onClick={applyDraftRange}
                   disabled={!draftRange.from || !draftRange.to || !draftEndDate}
                 >

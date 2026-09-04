@@ -5,10 +5,11 @@ import test from "node:test";
 const readComponent = (name) =>
   readFile(new URL(`./${name}`, import.meta.url), "utf8");
 
-const [overall, shell, filters, download, metrics, campaigns, audience] = await Promise.all([
+const [overall, shell, filters, picker, download, metrics, campaigns, audience] = await Promise.all([
   readComponent("overall-page-client.tsx"),
   readComponent("report-shell.tsx"),
   readComponent("report-filters-bar.tsx"),
+  readComponent("report-header-month-picker.tsx"),
   readComponent("screenshot-mode-toggle.tsx"),
   readComponent("metric-grid.tsx"),
   readComponent("campaign-table.tsx"),
@@ -19,6 +20,10 @@ test("enables balanced compact sizing only for interactive overall reports", () 
   assert.match(overall, /const compactInteractive = !screenshotMode/);
   assert.match(overall, /compactResponsive=\{compactInteractive\}/);
   assert.match(overall, /variant=\{compactInteractive \? "compact" : "header"\}/);
+  assert.match(overall, /densePopover=\{compactInteractive\}/);
+  assert.match(picker, /numberOfMonths=\{2\}/);
+  assert.match(picker, /w-\[min\(clamp\(360px,80vw,560px\),calc\(100vw-2rem\)\)\]/);
+  assert.match(picker, /\[--cell-size:clamp\(1\.25rem,4\.5vw,1\.75rem\)\]/);
   assert.match(shell, /text-\[clamp\(1\.75rem,3\.2vw,2\.5rem\)\]/);
   assert.match(shell, /minmax\(260px,360px\)/);
 });
