@@ -171,7 +171,7 @@ export function ReportShell({
             <div
               className={
                 compactResponsive
-                  ? "grid gap-3 text-white lg:grid-cols-[minmax(0,1fr)_auto] lg:items-start lg:gap-x-6"
+                  ? "grid gap-3 text-white lg:grid-cols-[minmax(0,1fr)_minmax(260px,360px)] lg:items-start lg:gap-x-6"
                   : headerControlLayout === "wide"
                   ? "grid gap-5 text-white lg:grid-cols-[minmax(430px,0.8fr)_minmax(0,1.2fr)] lg:items-start lg:gap-x-8"
                   : "grid gap-4 text-white md:grid-cols-[minmax(0,1fr)_auto] md:items-start md:gap-x-8"
@@ -182,7 +182,7 @@ export function ReportShell({
                 <h1
                   className={
                     compactResponsive
-                      ? "break-words text-[clamp(1.9rem,5vw,3.25rem)] font-semibold leading-[1.08] tracking-tight [overflow-wrap:normal]"
+                      ? "max-w-[32ch] break-words text-[clamp(1.75rem,3.2vw,2.5rem)] font-semibold leading-[1.08] tracking-tight [overflow-wrap:normal]"
                       : `${headerControlLayout === "wide" ? "lg:text-4xl lg:[overflow-wrap:normal]" : "md:text-6xl"} break-words text-3xl font-semibold leading-tight tracking-tight [overflow-wrap:anywhere] sm:text-4xl`
                   }
                   data-report-export-title="true"
@@ -194,7 +194,7 @@ export function ReportShell({
                 <div
                   className={
                     compactResponsive
-                      ? "flex w-full max-w-[420px] items-start lg:w-auto lg:justify-self-end"
+                      ? "flex w-full max-w-[360px] items-start lg:justify-self-end"
                       : headerControlLayout === "wide"
                       ? "flex w-full items-start lg:w-full lg:max-w-[920px] lg:justify-self-end"
                       : "flex w-full items-start md:w-auto md:max-w-[420px] md:justify-self-end"
@@ -220,7 +220,7 @@ export function ReportShell({
               <Link
                 href={hrefs.home}
                 aria-current={pathname === "/" ? "page" : undefined}
-                className={`inline-flex items-center rounded-lg font-semibold outline-none transition focus-visible:ring-2 focus-visible:ring-white/90 focus-visible:ring-offset-2 focus-visible:ring-offset-red-900 ${compactResponsive ? "min-h-9 gap-1.5 px-3 text-xs sm:min-h-10 sm:text-sm" : "min-h-11 gap-2 px-4 text-sm"} ${
+                className={`inline-flex items-center rounded-lg font-semibold outline-none transition focus-visible:ring-2 focus-visible:ring-white/90 focus-visible:ring-offset-2 focus-visible:ring-offset-red-900 ${compactResponsive ? "min-h-9 gap-1.5 px-3 text-xs sm:text-sm" : "min-h-11 gap-2 px-4 text-sm"} ${
                   pathname === "/"
                     ? "bg-white text-[#9f0712] shadow-md"
                     : "bg-white/10 text-white hover:bg-white/20"
@@ -232,7 +232,7 @@ export function ReportShell({
 
               <DropdownMenu>
                 <DropdownMenuTrigger
-                  className={`group relative inline-flex items-center rounded-lg font-semibold outline-none transition focus-visible:ring-2 focus-visible:ring-white/90 focus-visible:ring-offset-2 focus-visible:ring-offset-red-900 data-[state=open]:z-[60] data-[state=open]:rounded-b-none data-[state=open]:border data-[state=open]:border-b-0 data-[state=open]:border-[#e6d7d9] data-[state=open]:bg-white data-[state=open]:text-[#9f0712] data-[state=open]:shadow-none ${compactResponsive ? "min-h-9 gap-1.5 px-3 text-xs sm:min-h-10 sm:text-sm" : "min-h-11 gap-2 px-4 text-sm"} ${
+                  className={`group relative inline-flex items-center rounded-lg font-semibold outline-none transition focus-visible:ring-2 focus-visible:ring-white/90 focus-visible:ring-offset-2 focus-visible:ring-offset-red-900 data-[state=open]:z-[60] data-[state=open]:rounded-b-none data-[state=open]:border data-[state=open]:border-b-0 data-[state=open]:border-[#e6d7d9] data-[state=open]:bg-white data-[state=open]:text-[#9f0712] data-[state=open]:shadow-none ${compactResponsive ? "min-h-9 gap-1.5 px-3 text-xs sm:text-sm" : "min-h-11 gap-2 px-4 text-sm"} ${
                     navigationIsActive
                       ? "bg-white text-[#9f0712] shadow-md"
                       : "bg-white/10 text-white hover:bg-white/20"
@@ -276,7 +276,7 @@ export function ReportShell({
               <ReportLogoutButton compact={compactResponsive} />
             </nav>
             {headerBottomControl ? (
-              <div className="mt-4" data-report-export-exclude="true">
+              <div className={compactResponsive ? "mt-3" : "mt-4"} data-report-export-exclude="true">
                 {headerBottomControl}
               </div>
             ) : null}

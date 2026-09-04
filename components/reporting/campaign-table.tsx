@@ -21,12 +21,14 @@ export function OverallCampaignGroupsTable({
   campaignNameFilter = null,
   campaignOptions,
   onCampaignNameFilterChange,
+  compact = false,
 }: {
   groups: CampaignGroup[];
   queryString: string;
   campaignNameFilter?: CampaignNameFilter | null;
   campaignOptions?: string[];
   onCampaignNameFilterChange?: (filter: CampaignNameFilter | null) => void;
+  compact?: boolean;
 }) {
   const resolvedCampaignOptions = useMemo(
     () =>
@@ -106,9 +108,9 @@ export function OverallCampaignGroupsTable({
   }
 
   return (
-    <section className="space-y-4 rounded-[2rem] bg-[#e7e7e7] p-4 shadow-sm sm:p-6">
+    <section className={compact ? "space-y-3 rounded-[1.5rem] bg-[#e7e7e7] p-3 shadow-sm sm:p-4 lg:p-5" : "space-y-4 rounded-[2rem] bg-[#e7e7e7] p-4 shadow-sm sm:p-6"}>
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <h2 className="text-2xl font-semibold text-[#555] sm:text-3xl md:text-4xl">Campaign Breakdown</h2>
+        <h2 className={compact ? "text-xl font-semibold text-[#555] sm:text-2xl lg:text-3xl" : "text-2xl font-semibold text-[#555] sm:text-3xl md:text-4xl"}>Campaign Breakdown</h2>
         {onCampaignNameFilterChange ? (
           <CampaignNameFilterControl
             filter={campaignNameFilter}
@@ -122,16 +124,16 @@ export function OverallCampaignGroupsTable({
           No campaigns match the current campaign name filter.
         </div>
       ) : null}
-      <div className="space-y-4">
+      <div className={compact ? "space-y-3" : "space-y-4"}>
         {visibleGroups.map((group) => (
           <details key={group.id} open className="overflow-hidden rounded-xl border border-[#d7d7d7] bg-white shadow-sm">
-            <summary className="flex cursor-pointer items-center justify-between rounded-xl bg-[#f0adad] px-4 py-3 text-base font-semibold sm:text-lg">
+            <summary className={compact ? "flex cursor-pointer items-center justify-between rounded-xl bg-[#f0adad] px-3 py-2.5 text-sm font-semibold sm:px-4 sm:text-base" : "flex cursor-pointer items-center justify-between rounded-xl bg-[#f0adad] px-4 py-3 text-base font-semibold sm:text-lg"}>
               <span>
                 {platformLabel(group.platform)} - {group.campaignType}
               </span>
               <ChevronDownIcon className="size-5" />
             </summary>
-            <div className="space-y-2 px-2 pb-2 md:hidden">
+            <div className={compact ? "space-y-2 px-2 pb-2 xl:hidden" : "space-y-2 px-2 pb-2 md:hidden"}>
               {group.rows.map((row) => (
                 <CampaignMobileCard
                   key={row.id}
@@ -147,7 +149,7 @@ export function OverallCampaignGroupsTable({
               ))}
               <CampaignMobileCard row={group.totals} forceTitle="Grand Total" />
             </div>
-            <div className="hidden px-2 pb-2 md:block">
+            <div className={compact ? "hidden px-2 pb-2 xl:block" : "hidden px-2 pb-2 md:block"}>
               <table className="w-full table-fixed text-left text-xs sm:text-sm">
                 <colgroup>
                   <col className="w-[30%]" />

@@ -12,9 +12,11 @@ type MetricDateRange = Pick<DateRangeConfig, "currentLabel" | "previousLabel">;
 export function MetricSection({
   section,
   dateRange,
+  compact = false,
 }: {
   section: SummarySection;
   dateRange?: MetricDateRange;
+  compact?: boolean;
 }) {
   const spendMetric = section.metrics.find((metric) => metric.key === "spend");
   if (spendMetric && (spendMetric.value ?? 0) <= 0) {
@@ -25,15 +27,17 @@ export function MetricSection({
     return null;
   }
 
-  return <MetricSectionContent section={section} dateRange={dateRange} />;
+  return <MetricSectionContent section={section} dateRange={dateRange} compact={compact} />;
 }
 
 function MetricSectionContent({
   section,
   dateRange,
+  compact,
 }: {
   section: SummarySection;
   dateRange?: MetricDateRange;
+  compact: boolean;
 }) {
   const metrics = section.metrics;
   const metricCount = metrics.length;
@@ -59,7 +63,7 @@ function MetricSectionContent({
   const selectedMetric = metrics.find((metric) => metric.key === selectedMetricKey) ?? null;
 
   return (
-    <article className="rounded-[1.5rem] bg-[#e7e7e7] p-3 shadow-sm sm:p-4">
+    <article className={compact ? "rounded-[1.25rem] bg-[#e7e7e7] p-3 shadow-sm sm:p-3.5 lg:p-4" : "rounded-[1.5rem] bg-[#e7e7e7] p-3 shadow-sm sm:p-4"}>
       <div className="mb-3 flex items-center gap-3">
         <PlatformBadge section={section} />
       </div>
@@ -90,7 +94,7 @@ function MetricSectionContent({
           labelClassName="text-sm"
           valueClassName="text-[clamp(1.75rem,8vw,2.4rem)]"
           deltaClassName="mt-2 text-base"
-          cardClassName="min-h-[150px] px-3 py-4"
+          cardClassName={compact ? "min-h-[128px] px-3 py-3" : "min-h-[150px] px-3 py-4"}
         />
       </div>
 
@@ -105,7 +109,7 @@ function MetricSectionContent({
             labelStyle={{ fontSize: `clamp(0.82rem, 1.2vw, ${fittedLabelSizeRem}rem)` }}
             valueStyle={{ fontSize: `clamp(1.05rem, 1.55vw, ${fittedValueSizeRem}rem)` }}
             deltaClassName="mt-1.5 text-xs sm:text-sm"
-            cardClassName="min-h-[104px] px-2 py-2.5"
+            cardClassName={compact ? "min-h-[92px] px-2 py-2" : "min-h-[104px] px-2 py-2.5"}
           />
         ))}
       </div>

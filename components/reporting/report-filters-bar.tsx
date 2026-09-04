@@ -166,12 +166,6 @@ export function ReportFiltersBar({
     ]);
   }
 
-  function updateSearchRow(key: string, next: Partial<Omit<SearchEntry, "key">>) {
-    setSearchEntries((prev) =>
-      prev.map((entry) => (entry.key === key ? { ...entry, ...next } : entry))
-    );
-  }
-
   function switchSearchRowPlatform(key: string, nextPlatform: SearchPlatform) {
     setPlatform(nextPlatform);
     setSearchEntries((prev) =>
@@ -256,18 +250,20 @@ export function ReportFiltersBar({
     <form
       onSubmit={handleSubmit}
       className={cn(
-        "flex flex-col gap-3 rounded-2xl border border-border/40 bg-card/90 p-4 shadow-sm sm:flex-row sm:flex-wrap sm:items-start",
-        compact && "gap-2 border-white/20 bg-white/90 p-3 shadow-none"
+        "flex flex-col rounded-2xl border border-border/40 bg-card/90 shadow-sm",
+        compact
+          ? "gap-2 border-white/20 bg-white/90 p-2.5 shadow-none lg:flex-row lg:flex-wrap lg:items-start"
+          : "gap-3 p-4 sm:flex-row sm:flex-wrap sm:items-start"
       )}
     >
-      <div className="w-full min-w-0 space-y-1.5 sm:flex-1 md:min-w-[360px]">
+      <div className={cn("w-full min-w-0 space-y-1.5 sm:flex-1", compact ? "lg:min-w-[360px]" : "md:min-w-[360px]")}>
         {searchEntries.map((entry) => (
           <div key={entry.key} className="flex min-w-0 flex-wrap items-center gap-2 sm:flex-nowrap">
             <Select
               value={entry.platform}
               onValueChange={(value) => switchSearchRowPlatform(entry.key, value as SearchPlatform)}
             >
-              <SelectTrigger className="h-10 w-full sm:w-[130px]">
+              <SelectTrigger className={cn("w-full sm:w-[130px]", compact ? "h-9 text-xs" : "h-10")}>
                 <SelectValue placeholder="Platform" />
               </SelectTrigger>
               <SelectContent>
@@ -279,6 +275,7 @@ export function ReportFiltersBar({
 
             <ReportAccountSearchInput
               entry={entry}
+              compact={compact}
               onChange={(value) => updateSearchRowAccountId(entry.key, value)}
               onSelect={(suggestion) => selectSearchRowAccount(entry.key, suggestion)}
             />
@@ -286,7 +283,7 @@ export function ReportFiltersBar({
             {allowMultipleAccounts ? <Button
               type="button"
               variant="outline"
-              className="h-10 shrink-0 px-3"
+              className={cn("shrink-0 px-3", compact ? "h-9" : "h-10")}
               onClick={() => removeSearchRow(entry.key)}
               aria-label="Remove account row"
               title="Remove"
@@ -299,7 +296,7 @@ export function ReportFiltersBar({
         {allowMultipleAccounts ? <Button
           type="button"
           variant="outline"
-          className="h-9 w-full sm:w-auto sm:self-start"
+          className={cn("w-full sm:w-auto sm:self-start", compact ? "h-8 px-2.5 text-xs" : "h-9")}
           onClick={addSearchRow}
         >
           <PlusIcon data-icon="inline-start" />
@@ -386,12 +383,15 @@ export function ReportFiltersBar({
         <div className="hidden" />
       )}
 
-      <div className="flex w-full flex-col gap-2 sm:ml-auto sm:w-auto sm:items-start">
-        <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:items-start">
+      <div className={cn("flex w-full gap-2", compact ? "flex-row flex-wrap items-start lg:ml-auto lg:w-auto" : "flex-col sm:ml-auto sm:w-auto sm:items-start")}>
+        <div className={cn("flex w-full gap-2 sm:w-auto sm:items-start", compact ? "flex-row" : "flex-col sm:flex-row")}>
           <Button
             type="submit"
             disabled={!searchEntries.some((entry) => Boolean(entry.accountId.trim()))}
-            className="h-10 w-full items-center justify-center gap-2 bg-red-600 px-4 text-center text-sm font-medium leading-none text-white hover:bg-red-700 sm:min-w-[148px] sm:w-auto"
+            className={cn(
+              "w-full items-center justify-center gap-2 bg-red-600 text-center font-medium leading-none text-white hover:bg-red-700 sm:w-auto",
+              compact ? "h-9 px-3 text-xs sm:min-w-[112px]" : "h-10 px-4 text-sm sm:min-w-[148px]"
+            )}
           >
             <SearchIcon data-icon="inline-start" className="shrink-0" />
             {submitLabel}
@@ -400,7 +400,10 @@ export function ReportFiltersBar({
             <Button
               type="button"
               variant="outline"
-              className="h-10 w-full items-center justify-center gap-2 px-4 text-sm font-medium leading-none sm:min-w-[148px] sm:w-auto"
+              className={cn(
+                "w-full items-center justify-center gap-2 font-medium leading-none sm:w-auto",
+                compact ? "h-9 px-3 text-xs sm:min-w-[112px]" : "h-10 px-4 text-sm sm:min-w-[148px]"
+              )}
               onClick={() => {
                 if (rememberAccountSelection) clearRememberedReportAccount(window.localStorage);
                 onReset();
@@ -411,7 +414,7 @@ export function ReportFiltersBar({
             </Button>
           ) : null}
         </div>
-        {footerContent ? <div className="w-full sm:w-auto">{footerContent}</div> : null}
+        {footerContent ? <div className={cn("w-full sm:w-auto", compact && "[&_button]:h-9 [&_button]:px-3 [&_button]:text-xs")}>{footerContent}</div> : null}
       </div>
     </form>
   );
@@ -419,10 +422,12 @@ export function ReportFiltersBar({
 
 function ReportAccountSearchInput({
   entry,
+  compact,
   onChange,
   onSelect,
 }: {
   entry: SearchEntry;
+  compact?: boolean;
   onChange: (value: string) => void;
   onSelect: (suggestion: AccountSearchSuggestion) => void;
 }) {
@@ -606,7 +611,10 @@ function ReportAccountSearchInput({
           setIsOpen((current) => !current);
           setHighlightedId(recentAccounts[0]?.notionPageId ?? null);
         }}
-        className="flex h-10 w-full min-w-0 items-center gap-2 rounded-md border border-input bg-background px-3 text-left text-sm shadow-xs outline-none transition focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50"
+        className={cn(
+          "flex w-full min-w-0 items-center gap-2 rounded-md border border-input bg-background px-3 text-left shadow-xs outline-none transition focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50",
+          compact ? "h-9 text-xs" : "h-10 text-sm"
+        )}
         aria-label={`${entry.platform === "meta" ? "Meta Ads" : entry.platform === "tiktok" ? "TikTok Ads" : "Google Ads"} account`}
         aria-expanded={isOpen}
         aria-haspopup="listbox"

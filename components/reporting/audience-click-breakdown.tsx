@@ -28,11 +28,14 @@ const PIE_COLORS = ["#f30707", "#ff4d4d", "#b91c1c", "#ef4444", "#991b1b", "#f87
 export function AudienceClickBreakdownSection({
   breakdown,
   pdfLocationTab,
+  compact = false,
 }: {
   breakdown: AudienceClickBreakdownResponse;
   pdfLocationTab?: LocationTabKey;
+  compact?: boolean;
 }) {
   const { screenshotMode } = useScreenshotMode();
+  const compactInteractive = compact && !screenshotMode;
   const searchParams = useSearchParams();
   const [selectedLocationTab, setSelectedLocationTab] = useState<LocationTabKey | null>(null);
   const [chartType, setChartType] = useState<ChartType>("bar");
@@ -108,10 +111,10 @@ export function AudienceClickBreakdownSection({
     LOCATION_TABS.find((tab) => tab.key === activeLocationTab)?.label ?? "State / Region";
 
   return (
-    <section className="space-y-4 rounded-[2rem] bg-[#e7e7e7] p-4 shadow-sm sm:p-6">
+    <section className={compactInteractive ? "space-y-3 rounded-[1.5rem] bg-[#e7e7e7] p-3 shadow-sm sm:p-4 lg:p-5" : "space-y-4 rounded-[2rem] bg-[#e7e7e7] p-4 shadow-sm sm:p-6"}>
       <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-start">
         <div className="space-y-1.5">
-          <h2 className="text-2xl font-semibold text-[#555] sm:text-3xl md:text-4xl">
+          <h2 className={compactInteractive ? "text-xl font-semibold text-[#555] sm:text-2xl lg:text-3xl" : "text-2xl font-semibold text-[#555] sm:text-3xl md:text-4xl"}>
             Audience Click Breakdown
           </h2>
           <p className="max-w-4xl text-sm leading-6 text-[#5f5f5f] sm:text-base">

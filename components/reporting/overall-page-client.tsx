@@ -54,6 +54,7 @@ export function OverallPageClient({
   const { filters, hasAccountId, setFilters } =
     useReportFilters(initialFilters);
   const { screenshotMode } = useScreenshotMode();
+  const compactInteractive = !screenshotMode;
   const [resolvedLabels, setResolvedLabels] = useState<ResolvedAccountLabel[]>([]);
   const [readyAccountKeys, setReadyAccountKeys] = useState<Record<string, boolean>>({});
   const [refreshKey, setRefreshKey] = useState(0);
@@ -227,6 +228,7 @@ export function OverallPageClient({
 
   return (
     <ReportShell
+      compactResponsive={compactInteractive}
       title={title}
       dateLabel={dateLabel}
       activeQuery={activeQueryString}
@@ -235,6 +237,7 @@ export function OverallPageClient({
         <ReportHeaderMonthPicker
           startDate={filters.startDate}
           endDate={filters.endDate}
+          variant={compactInteractive ? "compact" : "header"}
           onChange={(next) =>
             setFilters({ startDate: next.startDate, endDate: next.endDate })
           }
@@ -277,7 +280,7 @@ export function OverallPageClient({
         />
       }
     >
-      <div className="space-y-5">
+      <div className={compactInteractive ? "space-y-4 lg:space-y-5" : "space-y-5"}>
         {!hasAccountId ? (
           <ReportErrorState
             kind="overall"
@@ -327,6 +330,7 @@ export function OverallPageClient({
                     key={section.platform}
                     section={section}
                     dateRange={summaryQuery.data?.dateRange}
+                    compact={compactInteractive}
                   />
                 ))}
               </>
@@ -352,6 +356,7 @@ export function OverallPageClient({
                 <OverallCampaignGroupsTable
                   groups={campaignQuery.data.campaignGroups}
                   queryString={forwardQuery}
+                  compact={compactInteractive}
                   campaignNameFilter={campaignNameFilter}
                   onCampaignNameFilterChange={handleCampaignNameFilterChange}
                 />
@@ -366,6 +371,7 @@ export function OverallPageClient({
                 queryString={stageQueryString}
                 enabled={hasAccountId}
                 screenshotMode={screenshotMode}
+                compact={compactInteractive}
                 summaryData={summaryQuery.data}
               />
             )}
@@ -475,6 +481,8 @@ export function AccountReportContent({
   screenshotMode?: boolean;
   showTikTokAccountContext?: boolean;
 }) {
+  const compactInteractive = !screenshotMode;
+
   return (
     <>
       <ReportWarnings warnings={data.warnings} />
@@ -482,11 +490,12 @@ export function AccountReportContent({
         <TikTokAccountContext key={account.advertiserId} account={account} />
       )) : null}
       {data.summaries.map((section) => (
-        <MetricSection key={section.platform} section={section} dateRange={data.dateRange} />
+        <MetricSection key={section.platform} section={section} dateRange={data.dateRange} compact={compactInteractive} />
       ))}
       <OverallCampaignGroupsTable
         groups={data.campaignGroups}
         queryString={queryString}
+        compact={compactInteractive}
         campaignNameFilter={campaignNameFilter}
         onCampaignNameFilterChange={onCampaignNameFilterChange}
       />
@@ -501,6 +510,7 @@ export function AccountReportContent({
         <AudienceClickBreakdownSection
           breakdown={data.audienceClickBreakdown}
           pdfLocationTab={resolvePdfAudienceLocationTab(data)}
+          compact={compactInteractive}
         />
       )}
     </>
@@ -512,12 +522,14 @@ function LazyAudienceBreakdown({
   queryString,
   enabled,
   screenshotMode,
+  compact,
   summaryData,
 }: {
   accountKey: string;
   queryString: string;
   enabled: boolean;
   screenshotMode: boolean;
+  compact: boolean;
   summaryData: Pick<OverallReportPayload, "accountIds"> | null;
 }) {
   const [visible, setVisible] = useState(screenshotMode);
@@ -565,6 +577,7 @@ function LazyAudienceBreakdown({
           <ReportWarnings warnings={data.warnings} />
           <AudienceClickBreakdownSection
             breakdown={data.audienceClickBreakdown}
+            compact={compact}
             pdfLocationTab={resolvePdfAudienceLocationTab({
               accountIds: data.accountIds ??
                 summaryData?.accountIds ?? {
