@@ -26,8 +26,9 @@ test("enables balanced compact sizing only for interactive overall reports", () 
 test("keeps compact account filters readable before the large breakpoint", () => {
   assert.match(overall, /compactToolbar/);
   assert.match(filters, /grid-cols-\[92px_minmax\(0,1fr\)_34px\]/);
+  assert.match(filters, /<ButtonGroup className="flex-none">/);
   assert.match(filters, /denseToolbar[\s\S]*?"h-9 w-auto flex-none px-2\.5 text-xs"/);
-  assert.match(filters, /denseToolbar[\s\S]*?"w-auto flex-none"/);
+  assert.match(filters, /denseToolbar \? "ml-auto w-auto flex-none"/);
   assert.match(download, /compact\?: boolean/);
   assert.match(download, /compact \? "w-auto" : "w-full"/);
 });

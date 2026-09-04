@@ -23,6 +23,7 @@ import {
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
+import { ButtonGroup } from "@/components/ui/button-group";
 import { Input } from "@/components/ui/input";
 import {
   Select,
@@ -249,6 +250,64 @@ export function ReportFiltersBar({
     });
   }
 
+  const reloadButton = (
+    <Button
+      type="submit"
+      disabled={!searchEntries.some((entry) => Boolean(entry.accountId.trim()))}
+      className={cn(
+        "items-center justify-center gap-2 bg-red-600 text-center font-medium leading-none text-white hover:bg-red-700",
+        denseToolbar
+          ? "h-9 w-auto flex-none px-2.5 text-xs"
+          : compact
+            ? "h-9 w-full px-3 text-xs sm:min-w-[112px] sm:w-auto"
+            : "h-10 w-full px-4 text-sm sm:min-w-[148px] sm:w-auto"
+      )}
+    >
+      <SearchIcon data-icon="inline-start" className="shrink-0" />
+      {submitLabel}
+    </Button>
+  );
+
+  const resetButton = showResetButton ? (
+    <Button
+      type="button"
+      variant="outline"
+      title="Clear all selected accounts"
+      className={cn(
+        "items-center justify-center gap-2 font-medium leading-none",
+        denseToolbar
+          ? "h-9 w-auto flex-none px-2.5 text-xs"
+          : compact
+            ? "h-9 w-full px-3 text-xs sm:min-w-[112px] sm:w-auto"
+            : "h-10 w-full px-4 text-sm sm:min-w-[148px] sm:w-auto"
+      )}
+      onClick={() => {
+        if (rememberAccountSelection) clearRememberedReportAccount(window.localStorage);
+        onReset();
+      }}
+    >
+      <RefreshCcwIcon data-icon="inline-start" className="shrink-0" />
+      Reset
+    </Button>
+  ) : null;
+
+  const addAccountButton = allowMultipleAccounts ? (
+    <Button
+      type="button"
+      variant="outline"
+      className={cn(
+        denseToolbar
+          ? "h-9 w-auto flex-none px-2.5 text-xs"
+          : "w-full sm:w-auto sm:self-start",
+        !denseToolbar && (compact ? "h-8 px-2.5 text-xs" : "h-9")
+      )}
+      onClick={addSearchRow}
+    >
+      <PlusIcon data-icon="inline-start" />
+      Add Account
+    </Button>
+  ) : null;
+
   return (
     <form
       onSubmit={handleSubmit}
@@ -316,15 +375,7 @@ export function ReportFiltersBar({
           </div>
         ))}
 
-        {allowMultipleAccounts && !denseToolbar ? <Button
-          type="button"
-          variant="outline"
-          className={cn("w-full sm:w-auto sm:self-start", compact ? "h-8 px-2.5 text-xs" : "h-9")}
-          onClick={addSearchRow}
-        >
-          <PlusIcon data-icon="inline-start" />
-          Add Account
-        </Button> : null}
+        {!denseToolbar ? addAccountButton : null}
 
         {!searchEntries.some((entry) => Boolean(entry.accountId.trim())) ? (
           <p className="text-xs font-medium text-amber-700" role="status">
@@ -410,74 +461,34 @@ export function ReportFiltersBar({
         className={cn(
           "flex w-full",
           denseToolbar
-            ? "flex-wrap items-center gap-1.5 lg:ml-auto lg:w-auto"
+            ? "flex-wrap items-center gap-2"
             : compact
               ? "flex-row flex-wrap items-start gap-2 lg:ml-auto lg:w-auto"
               : "flex-col gap-2 sm:ml-auto sm:w-auto sm:items-start"
         )}
       >
-        {allowMultipleAccounts && denseToolbar ? (
-          <Button
-            type="button"
-            variant="outline"
-            className="h-9 w-auto flex-none px-2.5 text-xs"
-            onClick={addSearchRow}
-          >
-            <PlusIcon data-icon="inline-start" />
-            Add Account
-          </Button>
-        ) : null}
-
-        <div
-          className={
-            denseToolbar
-              ? "contents"
-              : compact
+        {denseToolbar ? (
+          <ButtonGroup className="flex-none">
+            {addAccountButton}
+            {reloadButton}
+            {resetButton}
+          </ButtonGroup>
+        ) : (
+          <div
+            className={
+              compact
                 ? "flex w-full flex-row gap-2 sm:w-auto sm:items-start"
                 : "flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:items-start"
-          }
-        >
-          <Button
-            type="submit"
-            disabled={!searchEntries.some((entry) => Boolean(entry.accountId.trim()))}
-            className={cn(
-              "items-center justify-center gap-2 bg-red-600 text-center font-medium leading-none text-white hover:bg-red-700",
-              denseToolbar
-                ? "h-9 w-auto flex-none px-2.5 text-xs"
-                : compact
-                  ? "h-9 w-full px-3 text-xs sm:min-w-[112px] sm:w-auto"
-                  : "h-10 w-full px-4 text-sm sm:min-w-[148px] sm:w-auto"
-            )}
+            }
           >
-            <SearchIcon data-icon="inline-start" className="shrink-0" />
-            {submitLabel}
-          </Button>
-          {showResetButton ? (
-            <Button
-              type="button"
-              variant="outline"
-              className={cn(
-                "items-center justify-center gap-2 font-medium leading-none",
-                denseToolbar
-                  ? "h-9 w-auto flex-none px-2.5 text-xs"
-                  : compact
-                    ? "h-9 w-full px-3 text-xs sm:min-w-[112px] sm:w-auto"
-                    : "h-10 w-full px-4 text-sm sm:min-w-[148px] sm:w-auto"
-              )}
-              onClick={() => {
-                if (rememberAccountSelection) clearRememberedReportAccount(window.localStorage);
-                onReset();
-              }}
-            >
-              <RefreshCcwIcon data-icon="inline-start" className="shrink-0" />
-              Reset
-            </Button>
-          ) : null}
-        </div>
+            {reloadButton}
+            {resetButton}
+          </div>
+        )}
         {footerContent ? (
           <div
             className={cn(
-              denseToolbar ? "w-auto flex-none" : "w-full sm:w-auto",
+              denseToolbar ? "ml-auto w-auto flex-none" : "w-full sm:w-auto",
               compact && !denseToolbar && "[&_button]:h-9 [&_button]:px-3 [&_button]:text-xs"
             )}
           >
