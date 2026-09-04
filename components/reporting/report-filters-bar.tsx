@@ -55,6 +55,7 @@ interface ReportFiltersBarProps {
   showResetButton?: boolean;
   submitLabel?: string;
   compact?: boolean;
+  compactToolbar?: boolean;
   footerContent?: ReactNode;
   immediateAccountApply?: boolean;
   allowMultipleAccounts?: boolean;
@@ -93,12 +94,14 @@ export function ReportFiltersBar({
   showResetButton = true,
   submitLabel = "Load Report",
   compact = false,
+  compactToolbar = false,
   footerContent,
   immediateAccountApply = false,
   allowMultipleAccounts = true,
   rememberAccountSelection = true,
   onAccountSelected,
 }: ReportFiltersBarProps) {
+  const denseToolbar = compact && compactToolbar;
   const [searchEntries, setSearchEntries] = useState<SearchEntry[]>([]);
   const nextSearchEntryId = useRef(0);
   const [startDate, setStartDate] = useState(filters.startDate);
@@ -258,12 +261,28 @@ export function ReportFiltersBar({
     >
       <div className={cn("w-full min-w-0 space-y-1.5 sm:flex-1", compact ? "lg:min-w-[360px]" : "md:min-w-[360px]")}>
         {searchEntries.map((entry) => (
-          <div key={entry.key} className="flex min-w-0 flex-wrap items-center gap-2 sm:flex-nowrap">
+          <div
+            key={entry.key}
+            className={cn(
+              "min-w-0 items-center gap-2",
+              denseToolbar
+                ? "grid grid-cols-[92px_minmax(0,1fr)_34px] sm:grid-cols-[104px_minmax(0,1fr)_36px]"
+                : "flex flex-wrap sm:flex-nowrap"
+            )}
+          >
             <Select
               value={entry.platform}
               onValueChange={(value) => switchSearchRowPlatform(entry.key, value as SearchPlatform)}
             >
-              <SelectTrigger className={cn("w-full sm:w-[130px]", compact ? "h-9 text-xs" : "h-10")}>
+              <SelectTrigger
+                className={cn(
+                  denseToolbar
+                    ? "h-9 w-full text-xs"
+                    : compact
+                      ? "h-9 w-full text-xs sm:w-[130px]"
+                      : "h-10 w-full sm:w-[130px]"
+                )}
+              >
                 <SelectValue placeholder="Platform" />
               </SelectTrigger>
               <SelectContent>
@@ -276,6 +295,7 @@ export function ReportFiltersBar({
             <ReportAccountSearchInput
               entry={entry}
               compact={compact}
+              compactToolbar={denseToolbar}
               onChange={(value) => updateSearchRowAccountId(entry.key, value)}
               onSelect={(suggestion) => selectSearchRowAccount(entry.key, suggestion)}
             />
@@ -283,7 +303,10 @@ export function ReportFiltersBar({
             {allowMultipleAccounts ? <Button
               type="button"
               variant="outline"
-              className={cn("shrink-0 px-3", compact ? "h-9" : "h-10")}
+              className={cn(
+                "shrink-0",
+                denseToolbar ? "size-[34px] p-0 sm:size-9" : compact ? "h-9 px-3" : "h-10 px-3"
+              )}
               onClick={() => removeSearchRow(entry.key)}
               aria-label="Remove account row"
               title="Remove"
@@ -293,7 +316,7 @@ export function ReportFiltersBar({
           </div>
         ))}
 
-        {allowMultipleAccounts ? <Button
+        {allowMultipleAccounts && !denseToolbar ? <Button
           type="button"
           variant="outline"
           className={cn("w-full sm:w-auto sm:self-start", compact ? "h-8 px-2.5 text-xs" : "h-9")}
@@ -383,14 +406,47 @@ export function ReportFiltersBar({
         <div className="hidden" />
       )}
 
-      <div className={cn("flex w-full gap-2", compact ? "flex-row flex-wrap items-start lg:ml-auto lg:w-auto" : "flex-col sm:ml-auto sm:w-auto sm:items-start")}>
-        <div className={cn("flex w-full gap-2 sm:w-auto sm:items-start", compact ? "flex-row" : "flex-col sm:flex-row")}>
+      <div
+        className={cn(
+          "flex w-full",
+          denseToolbar
+            ? "flex-wrap items-center gap-1.5 lg:ml-auto lg:w-auto"
+            : compact
+              ? "flex-row flex-wrap items-start gap-2 lg:ml-auto lg:w-auto"
+              : "flex-col gap-2 sm:ml-auto sm:w-auto sm:items-start"
+        )}
+      >
+        {allowMultipleAccounts && denseToolbar ? (
+          <Button
+            type="button"
+            variant="outline"
+            className="h-9 w-auto flex-none px-2.5 text-xs"
+            onClick={addSearchRow}
+          >
+            <PlusIcon data-icon="inline-start" />
+            Add Account
+          </Button>
+        ) : null}
+
+        <div
+          className={
+            denseToolbar
+              ? "contents"
+              : compact
+                ? "flex w-full flex-row gap-2 sm:w-auto sm:items-start"
+                : "flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:items-start"
+          }
+        >
           <Button
             type="submit"
             disabled={!searchEntries.some((entry) => Boolean(entry.accountId.trim()))}
             className={cn(
-              "w-full items-center justify-center gap-2 bg-red-600 text-center font-medium leading-none text-white hover:bg-red-700 sm:w-auto",
-              compact ? "h-9 px-3 text-xs sm:min-w-[112px]" : "h-10 px-4 text-sm sm:min-w-[148px]"
+              "items-center justify-center gap-2 bg-red-600 text-center font-medium leading-none text-white hover:bg-red-700",
+              denseToolbar
+                ? "h-9 w-auto flex-none px-2.5 text-xs"
+                : compact
+                  ? "h-9 w-full px-3 text-xs sm:min-w-[112px] sm:w-auto"
+                  : "h-10 w-full px-4 text-sm sm:min-w-[148px] sm:w-auto"
             )}
           >
             <SearchIcon data-icon="inline-start" className="shrink-0" />
@@ -401,8 +457,12 @@ export function ReportFiltersBar({
               type="button"
               variant="outline"
               className={cn(
-                "w-full items-center justify-center gap-2 font-medium leading-none sm:w-auto",
-                compact ? "h-9 px-3 text-xs sm:min-w-[112px]" : "h-10 px-4 text-sm sm:min-w-[148px]"
+                "items-center justify-center gap-2 font-medium leading-none",
+                denseToolbar
+                  ? "h-9 w-auto flex-none px-2.5 text-xs"
+                  : compact
+                    ? "h-9 w-full px-3 text-xs sm:min-w-[112px] sm:w-auto"
+                    : "h-10 w-full px-4 text-sm sm:min-w-[148px] sm:w-auto"
               )}
               onClick={() => {
                 if (rememberAccountSelection) clearRememberedReportAccount(window.localStorage);
@@ -414,7 +474,16 @@ export function ReportFiltersBar({
             </Button>
           ) : null}
         </div>
-        {footerContent ? <div className={cn("w-full sm:w-auto", compact && "[&_button]:h-9 [&_button]:px-3 [&_button]:text-xs")}>{footerContent}</div> : null}
+        {footerContent ? (
+          <div
+            className={cn(
+              denseToolbar ? "w-auto flex-none" : "w-full sm:w-auto",
+              compact && !denseToolbar && "[&_button]:h-9 [&_button]:px-3 [&_button]:text-xs"
+            )}
+          >
+            {footerContent}
+          </div>
+        ) : null}
       </div>
     </form>
   );
@@ -423,11 +492,13 @@ export function ReportFiltersBar({
 function ReportAccountSearchInput({
   entry,
   compact,
+  compactToolbar,
   onChange,
   onSelect,
 }: {
   entry: SearchEntry;
   compact?: boolean;
+  compactToolbar?: boolean;
   onChange: (value: string) => void;
   onSelect: (suggestion: AccountSearchSuggestion) => void;
 }) {
@@ -637,7 +708,14 @@ function ReportAccountSearchInput({
       </button>
 
       {isOpen ? (
-        <div className="absolute left-0 right-0 top-full z-50 mt-2 min-w-[320px] overflow-hidden rounded-xl border border-border bg-popover p-2 text-popover-foreground shadow-xl">
+        <div
+          className={cn(
+            "absolute top-full z-50 mt-2 overflow-hidden rounded-xl border border-border bg-popover p-2 text-popover-foreground shadow-xl",
+            compactToolbar
+              ? "right-0 w-[min(22rem,calc(100vw-2rem))] min-w-0"
+              : "left-0 right-0 min-w-[320px]"
+          )}
+        >
           <div className="relative">
             <SearchIcon className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
             <Input

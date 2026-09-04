@@ -22,6 +22,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { useScreenshotMode } from "@/components/reporting/use-screenshot-mode";
+import { cn } from "@/lib/utils";
 
 type DownloadFormat = "png" | "pdf";
 const DOWNLOAD_READY_DELAY_MS = 650;
@@ -129,9 +130,10 @@ const REPORT_EXPORT_CAPTURE_STYLE = `
 
 interface ReportDownloadButtonProps {
   fileNamePrefix?: string;
+  compact?: boolean;
 }
 
-export function ReportDownloadButton({ fileNamePrefix }: ReportDownloadButtonProps) {
+export function ReportDownloadButton({ fileNamePrefix, compact = false }: ReportDownloadButtonProps) {
   const { screenshotMode, setScreenshotMode } = useScreenshotMode();
   const [queuedFormat, setQueuedFormat] = useState<DownloadFormat | null>(null);
   const [downloadingFormat, setDownloadingFormat] = useState<DownloadFormat | null>(null);
@@ -278,13 +280,18 @@ export function ReportDownloadButton({ fileNamePrefix }: ReportDownloadButtonPro
 
   return (
     <>
-      <div className="w-full">
+      <div className={compact ? "w-auto" : "w-full"}>
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button
               type="button"
               variant="outline"
-              className="h-10 w-full items-center justify-center gap-2 border-border/60 bg-background px-4 text-center text-sm font-medium leading-none text-foreground shadow-sm hover:bg-muted sm:min-w-[148px] sm:w-auto"
+              className={cn(
+                "items-center justify-center gap-2 border-border/60 bg-background text-center font-medium leading-none text-foreground hover:bg-muted",
+                compact
+                  ? "h-9 w-auto px-2.5 text-xs shadow-none"
+                  : "h-10 w-full px-4 text-sm shadow-sm sm:min-w-[148px] sm:w-auto"
+              )}
               disabled={isBusy}
             >
               {isBusy ? (

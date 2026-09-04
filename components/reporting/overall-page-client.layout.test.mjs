@@ -5,10 +5,11 @@ import test from "node:test";
 const readComponent = (name) =>
   readFile(new URL(`./${name}`, import.meta.url), "utf8");
 
-const [overall, shell, filters, metrics, campaigns, audience] = await Promise.all([
+const [overall, shell, filters, download, metrics, campaigns, audience] = await Promise.all([
   readComponent("overall-page-client.tsx"),
   readComponent("report-shell.tsx"),
   readComponent("report-filters-bar.tsx"),
+  readComponent("screenshot-mode-toggle.tsx"),
   readComponent("metric-grid.tsx"),
   readComponent("campaign-table.tsx"),
   readComponent("audience-click-breakdown.tsx"),
@@ -23,9 +24,12 @@ test("enables balanced compact sizing only for interactive overall reports", () 
 });
 
 test("keeps compact account filters readable before the large breakpoint", () => {
-  assert.match(filters, /lg:flex-row lg:flex-wrap lg:items-start/);
-  assert.match(filters, /compact \? "h-9 text-xs" : "h-10 text-sm"/);
-  assert.match(filters, /compact \? "h-9 px-3 text-xs sm:min-w-\[112px\]"/);
+  assert.match(overall, /compactToolbar/);
+  assert.match(filters, /grid-cols-\[92px_minmax\(0,1fr\)_34px\]/);
+  assert.match(filters, /denseToolbar[\s\S]*?"h-9 w-auto flex-none px-2\.5 text-xs"/);
+  assert.match(filters, /denseToolbar[\s\S]*?"w-auto flex-none"/);
+  assert.match(download, /compact\?: boolean/);
+  assert.match(download, /compact \? "w-auto" : "w-full"/);
 });
 
 test("opts report body sections into compact sizing without changing defaults", () => {

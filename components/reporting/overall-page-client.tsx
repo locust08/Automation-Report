@@ -251,8 +251,9 @@ export function OverallPageClient({
           showResetButton
           submitLabel="Reload"
           compact
+          compactToolbar
           immediateAccountApply
-          footerContent={<ReportDownloadButton fileNamePrefix={title} />}
+          footerContent={<ReportDownloadButton fileNamePrefix={title} compact={compactInteractive} />}
           onApply={(next) => {
             const unchanged =
               next.accountId === filters.accountId &&
