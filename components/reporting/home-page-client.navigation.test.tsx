@@ -4,10 +4,10 @@ import { renderToStaticMarkup } from "react-dom/server";
 
 import { HomePageClient } from "./home-page-client";
 
-test("uses the wide dashboard layout on large screens", () => {
+test("uses a viewport-aware dashboard width with a compact desktop cap", () => {
   const html = renderToStaticMarkup(<HomePageClient displayName="Admin" role="admin" />);
 
-  assert.match(html, /class="w-full max-w-6xl space-y-3"/);
+  assert.match(html, /class="w-\[min\(92vw,64rem\)\] space-y-3"/);
 });
 
 test("offers the shared navigation destinations from dashboard tools", () => {

@@ -245,8 +245,8 @@ export function HomePageClient({ displayName, role }: HomePageClientProps) {
   }
 
   return (
-    <main className="flex min-h-screen items-center justify-center bg-[url('/background.png')] bg-cover bg-center bg-no-repeat px-4 py-8">
-      <div className="w-full max-w-6xl space-y-3">
+    <main className="flex min-h-screen items-center justify-center bg-[url('/background.png')] bg-cover bg-center bg-no-repeat px-4 py-6 sm:py-8">
+      <div className="w-[min(92vw,64rem)] space-y-3">
         {displayName && (
           <div className="flex items-center justify-between gap-4 rounded-2xl border border-white/25 bg-black/40 px-5 py-3 text-white backdrop-blur-sm">
             <p className="min-w-0 truncate text-sm font-medium sm:text-base">
@@ -264,39 +264,39 @@ export function HomePageClient({ displayName, role }: HomePageClientProps) {
             </form>
           </div>
         )}
-        <div className="rounded-3xl border border-white/25 bg-black/40 p-6 text-white backdrop-blur-sm sm:p-8">
-        <h1 className="text-3xl font-semibold sm:text-4xl md:text-5xl">
+        <div className="rounded-3xl border border-white/25 bg-black/40 p-4 text-white backdrop-blur-sm md:p-5 lg:p-6">
+        <h1 className="text-[clamp(24px,3vw,32px)] font-semibold leading-tight">
           Ads Reporting Dashboard
         </h1>
 
         <section
-          className="mt-8 rounded-2xl border border-white/20 bg-white/[0.06] p-4 sm:p-5"
+          className="mt-6 rounded-2xl border border-white/20 bg-white/[0.06] p-3 md:p-4"
           aria-labelledby="reports-heading"
         >
           <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
             <div className="min-w-0 flex-1">
-              <h2 id="reports-heading" className="text-lg font-semibold">Reports</h2>
-              <p className="mt-1 text-sm text-white/65">Open a report, then search for its advertising account there.</p>
+              <h2 id="reports-heading" className="text-[clamp(15px,1.8vw,17px)] font-semibold">Reports</h2>
+              <p className="mt-1 text-[clamp(12px,1.45vw,14px)] text-white/65">Open a report, then search for its advertising account there.</p>
             </div>
-            <span className="w-fit shrink-0 whitespace-nowrap rounded-full border border-emerald-200/30 bg-emerald-200/10 px-3 py-1 text-xs font-semibold text-emerald-100">
+            <span className="w-fit shrink-0 whitespace-nowrap rounded-full border border-emerald-200/30 bg-emerald-200/10 px-3 py-1 text-[11px] font-semibold text-emerald-100">
               Choose account inside
             </span>
           </div>
 
           <div className="mt-5 grid gap-3 sm:grid-cols-3">
-            <Button asChild className="h-auto min-h-14 whitespace-normal bg-red-600 px-4 py-3 text-center font-semibold leading-snug hover:bg-red-700">
+            <Button asChild className="h-auto min-h-12 whitespace-normal bg-red-600 px-3 py-2.5 text-center text-[clamp(12px,1.45vw,14px)] font-semibold leading-snug hover:bg-red-700 lg:min-h-14 lg:px-4 lg:py-3">
               <Link href={overallHref}>
                 View Monthly Performance
                 <ArrowRightIcon data-icon="inline-end" />
               </Link>
             </Button>
-            <Button asChild variant="outline" className="h-auto min-h-14 whitespace-normal border-white/30 bg-white/10 px-4 py-3 text-center text-white hover:bg-white/20 hover:text-white">
+            <Button asChild variant="outline" className="h-auto min-h-12 whitespace-normal border-white/30 bg-white/10 px-3 py-2.5 text-center text-[clamp(12px,1.45vw,14px)] text-white hover:bg-white/20 hover:text-white lg:min-h-14 lg:px-4 lg:py-3">
               <Link href={previewHref}>
                 Campaign Preview
                 <EyeIcon data-icon="inline-end" />
               </Link>
             </Button>
-            <Button asChild variant="outline" className="h-auto min-h-14 whitespace-normal border-white/30 bg-white/10 px-4 py-3 text-center text-white hover:bg-white/20 hover:text-white">
+            <Button asChild variant="outline" className="h-auto min-h-12 whitespace-normal border-white/30 bg-white/10 px-3 py-2.5 text-center text-[clamp(12px,1.45vw,14px)] text-white hover:bg-white/20 hover:text-white lg:min-h-14 lg:px-4 lg:py-3">
               <Link href={advancedHref}>
                 Open Advanced Report
                 <SlidersHorizontalIcon data-icon="inline-end" />
@@ -306,21 +306,21 @@ export function HomePageClient({ displayName, role }: HomePageClientProps) {
         </section>
 
         {!isBasicUser ? <section
-          className="mt-5 rounded-2xl border border-white/20 bg-white/[0.06] p-4 sm:p-5"
+          className="mt-5 rounded-2xl border border-white/20 bg-white/[0.06] p-3 md:p-4"
           aria-labelledby="dashboard-tools-heading"
         >
           <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
             <div className="min-w-0 flex-1">
-              <h2 id="dashboard-tools-heading" className="text-lg font-semibold">Dashboard tools</h2>
-              <p className="mt-1 text-sm text-white/65">Open these workflows directly. Select their account inside the destination page when needed.</p>
+              <h2 id="dashboard-tools-heading" className="text-[clamp(15px,1.8vw,17px)] font-semibold">Dashboard tools</h2>
+              <p className="mt-1 text-[clamp(12px,1.45vw,14px)] text-white/65">Open these workflows directly. Select their account inside the destination page when needed.</p>
             </div>
-            <span className="w-fit shrink-0 whitespace-nowrap rounded-full border border-emerald-200/30 bg-emerald-200/10 px-3 py-1 text-xs font-semibold text-emerald-100">
+            <span className="w-fit shrink-0 whitespace-nowrap rounded-full border border-emerald-200/30 bg-emerald-200/10 px-3 py-1 text-[11px] font-semibold text-emerald-100">
               No account required here
             </span>
           </div>
 
         <section className="mt-5" aria-labelledby="report-tools-heading">
-          <h2 id="report-tools-heading" className="mb-3 text-sm font-semibold uppercase tracking-[0.18em] text-white/70">Reports</h2>
+          <h2 id="report-tools-heading" className="mb-3 text-[12px] font-semibold uppercase tracking-[0.18em] text-white/70">Reports</h2>
           <Button
             type="button"
             onClick={() => {
@@ -328,7 +328,7 @@ export function HomePageClient({ displayName, role }: HomePageClientProps) {
               setSendError(null);
             }}
             disabled={sendControlsLocked}
-            className="h-auto min-h-14 w-full whitespace-normal bg-red-600 px-4 py-3 text-center font-semibold leading-snug shadow-lg shadow-red-950/25 hover:bg-red-700"
+            className="h-auto min-h-12 w-full whitespace-normal bg-red-600 px-3 py-2.5 text-center text-[clamp(12px,1.45vw,14px)] font-semibold leading-snug shadow-lg shadow-red-950/25 hover:bg-red-700 lg:min-h-14 lg:px-4 lg:py-3"
           >
             Send Report
             <SendIcon data-icon="inline-end" />
@@ -336,50 +336,50 @@ export function HomePageClient({ displayName, role }: HomePageClientProps) {
         </section>
 
         <section className="mt-5" aria-labelledby="planning-operations-heading">
-          <h2 id="planning-operations-heading" className="mb-3 text-sm font-semibold uppercase tracking-[0.18em] text-white/70">Planning &amp; Operations</h2>
+          <h2 id="planning-operations-heading" className="mb-3 text-[12px] font-semibold uppercase tracking-[0.18em] text-white/70">Planning &amp; Operations</h2>
           <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-            <Link href="/campaigns" className="flex items-center rounded-2xl border border-white/25 bg-white/10 p-4 text-white transition hover:bg-white/15">
-              <span className="flex items-center gap-2 text-base font-semibold"><MegaphoneIcon className="size-5" />Campaign Planning &amp; Launch</span>
+            <Link href="/campaigns" className="flex min-h-12 items-center rounded-2xl border border-white/25 bg-white/10 p-3 text-white transition hover:bg-white/15 lg:min-h-14 lg:p-4">
+              <span className="flex items-center gap-2 text-[clamp(12px,1.45vw,14px)] font-semibold"><MegaphoneIcon className="size-[16px] lg:size-[18px]" />Campaign Planning &amp; Launch</span>
             </Link>
-            <a href={mediaPlanHref} className="flex items-center rounded-2xl border border-white/25 bg-white/10 p-4 text-white transition hover:bg-white/15">
-              <span className="flex items-center gap-2 text-base font-semibold"><ClipboardListIcon className="size-5" />Create Media Plan</span>
+            <a href={mediaPlanHref} className="flex min-h-12 items-center rounded-2xl border border-white/25 bg-white/10 p-3 text-white transition hover:bg-white/15 lg:min-h-14 lg:p-4">
+              <span className="flex items-center gap-2 text-[clamp(12px,1.45vw,14px)] font-semibold"><ClipboardListIcon className="size-[16px] lg:size-[18px]" />Create Media Plan</span>
             </a>
-            <Link href="/meta-import" className="flex items-center rounded-2xl border border-white/25 bg-white/10 p-4 text-white transition hover:bg-white/15">
-              <span className="flex items-center gap-2 text-base font-semibold"><UploadCloudIcon className="size-5" />Import Meta CSV</span>
+            <Link href="/meta-import" className="flex min-h-12 items-center rounded-2xl border border-white/25 bg-white/10 p-3 text-white transition hover:bg-white/15 lg:min-h-14 lg:p-4">
+              <span className="flex items-center gap-2 text-[clamp(12px,1.45vw,14px)] font-semibold"><UploadCloudIcon className="size-[16px] lg:size-[18px]" />Import Meta CSV</span>
             </Link>
-            <a href={billingHref} className="flex items-center rounded-2xl border border-white/25 bg-white/10 p-4 text-white transition hover:bg-white/15">
-              <span className="flex items-center gap-2 text-base font-semibold"><ListChecksIcon className="size-5" />Billing Operations</span>
+            <a href={billingHref} className="flex min-h-12 items-center rounded-2xl border border-white/25 bg-white/10 p-3 text-white transition hover:bg-white/15 lg:min-h-14 lg:p-4">
+              <span className="flex items-center gap-2 text-[clamp(12px,1.45vw,14px)] font-semibold"><ListChecksIcon className="size-[16px] lg:size-[18px]" />Billing Operations</span>
             </a>
           </div>
         </section>
 
         <section className="mt-5" aria-labelledby="ads-management-tools-heading">
-          <h2 id="ads-management-tools-heading" className="mb-3 text-sm font-semibold uppercase tracking-[0.18em] text-white/70">Ad Management</h2>
+          <h2 id="ads-management-tools-heading" className="mb-3 text-[12px] font-semibold uppercase tracking-[0.18em] text-white/70">Ad Management</h2>
           <div className={`grid gap-3 ${role === "admin" ? "md:grid-cols-3" : "md:grid-cols-1"}`}>
             <Link
               href="/manage"
-              className="flex items-center rounded-2xl border border-white/25 bg-white/10 p-4 text-white transition hover:bg-white/15"
+              className="flex min-h-12 items-center rounded-2xl border border-white/25 bg-white/10 p-3 text-white transition hover:bg-white/15 lg:min-h-14 lg:p-4"
             >
-              <span className="flex items-center gap-2 text-base font-semibold">
-                <SlidersHorizontalIcon className="size-5" />
+              <span className="flex items-center gap-2 text-[clamp(12px,1.45vw,14px)] font-semibold">
+                <SlidersHorizontalIcon className="size-[16px] lg:size-[18px]" />
                 Ads Management
               </span>
             </Link>
             {role === "admin" ? <a
               href={googleOptimizationHref}
-              className="flex items-center rounded-2xl border border-white/25 bg-white/10 p-4 text-white transition hover:bg-white/15"
+              className="flex min-h-12 items-center rounded-2xl border border-white/25 bg-white/10 p-3 text-white transition hover:bg-white/15 lg:min-h-14 lg:p-4"
             >
-              <span className="flex items-center gap-2 text-base font-semibold">
-                <SearchIcon className="size-5" />
+              <span className="flex items-center gap-2 text-[clamp(12px,1.45vw,14px)] font-semibold">
+                <SearchIcon className="size-[16px] lg:size-[18px]" />
                 Google Optimization
               </span>
             </a> : null}
             {role === "admin" ? <a
               href="/optimization-scheduling"
-              className="flex items-center rounded-2xl border border-white/25 bg-white/10 p-4 text-white transition hover:bg-white/15"
+              className="flex min-h-12 items-center rounded-2xl border border-white/25 bg-white/10 p-3 text-white transition hover:bg-white/15 lg:min-h-14 lg:p-4"
             >
-              <span className="flex items-center gap-2 text-base font-semibold">
-                <CalendarDaysIcon className="size-5" />
+              <span className="flex items-center gap-2 text-[clamp(12px,1.45vw,14px)] font-semibold">
+                <CalendarDaysIcon className="size-[16px] lg:size-[18px]" />
                 Optimization Scheduling
               </span>
             </a> : null}
@@ -387,16 +387,16 @@ export function HomePageClient({ displayName, role }: HomePageClientProps) {
         </section>
 
         {role === "admin" ? <section className="mt-5" aria-labelledby="admin-tools-heading">
-          <h2 id="admin-tools-heading" className="mb-3 text-sm font-semibold uppercase tracking-[0.18em] text-white/70">Admin</h2>
+          <h2 id="admin-tools-heading" className="mb-3 text-[12px] font-semibold uppercase tracking-[0.18em] text-white/70">Admin</h2>
           <div className="grid gap-3 md:grid-cols-3">
-            <Link href="/change-control" className="flex items-center rounded-2xl border border-white/25 bg-white/10 p-4 text-white transition hover:bg-white/15">
-              <span className="flex items-center gap-2 text-base font-semibold"><ClipboardListIcon className="size-5" />Change Control Admin</span>
+            <Link href="/change-control" className="flex min-h-12 items-center rounded-2xl border border-white/25 bg-white/10 p-3 text-white transition hover:bg-white/15 lg:min-h-14 lg:p-4">
+              <span className="flex items-center gap-2 text-[clamp(12px,1.45vw,14px)] font-semibold"><ClipboardListIcon className="size-[16px] lg:size-[18px]" />Change Control Admin</span>
             </Link>
-            <Link href="/user-management" className="flex items-center rounded-2xl border border-white/25 bg-white/10 p-4 text-white transition hover:bg-white/15">
-              <span className="flex items-center gap-2 text-base font-semibold"><UsersRoundIcon className="size-5" />User Management</span>
+            <Link href="/user-management" className="flex min-h-12 items-center rounded-2xl border border-white/25 bg-white/10 p-3 text-white transition hover:bg-white/15 lg:min-h-14 lg:p-4">
+              <span className="flex items-center gap-2 text-[clamp(12px,1.45vw,14px)] font-semibold"><UsersRoundIcon className="size-[16px] lg:size-[18px]" />User Management</span>
             </Link>
-            <Link href="/settings" className="flex items-center rounded-2xl border border-white/25 bg-white/10 p-4 text-white transition hover:bg-white/15">
-              <span className="flex items-center gap-2 text-base font-semibold"><SettingsIcon className="size-5" />Workflow Settings</span>
+            <Link href="/settings" className="flex min-h-12 items-center rounded-2xl border border-white/25 bg-white/10 p-3 text-white transition hover:bg-white/15 lg:min-h-14 lg:p-4">
+              <span className="flex items-center gap-2 text-[clamp(12px,1.45vw,14px)] font-semibold"><SettingsIcon className="size-[16px] lg:size-[18px]" />Workflow Settings</span>
             </Link>
           </div>
         </section> : null}
