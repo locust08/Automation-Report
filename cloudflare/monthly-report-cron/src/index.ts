@@ -488,13 +488,20 @@ async function createReportJob(
       })
     : { targets: recipientTargets, skippedAlreadySent: 0 };
   const targets = duplicateResult.targets;
-  const skippedTotal = skippedUnchecked + skippedMissingEmail + duplicateResult.skippedAlreadySent;
+  const targetDecisions = classifySameAccountTargets(targets, {
+    reportMonthKey: resolved.reportMonthKey,
+    scheduledDate,
+  });
+  const skippedSameAccount = targetDecisions.filter((decision) => decision.skippedSameAccount).length;
+  const queuedTargetCount = targetDecisions.length - skippedSameAccount;
+  const skippedTotal = skippedUnchecked + skippedMissingEmail + duplicateResult.skippedAlreadySent + skippedSameAccount;
   const jobMetadata = {
     ...metadata,
     manualLifecycleNotification: String(isManualJob),
     skippedUnchecked: String(skippedUnchecked),
     skippedMissingEmail: String(skippedMissingEmail),
     skippedAlreadySent: String(duplicateResult.skippedAlreadySent),
+    skippedSameAccount: String(skippedSameAccount),
     skippedTotal: String(skippedTotal),
   };
 
@@ -546,7 +553,7 @@ async function createReportJob(
       resolved.reportMonthLabel,
       resolved.startDate,
       resolved.endDate,
-      targets.length,
+      queuedTargetCount,
       sendEmail ? 1 : 0,
       testMode ? 1 : 0,
       JSON.stringify(jobMetadata),
@@ -572,25 +579,22 @@ async function createReportJob(
     };
   }
 
-  for (const target of targets) {
+  for (const decision of targetDecisions) {
+    const { target, idempotencyKey: liveIdempotencyKey, skippedSameAccount: sameAccountDuplicate } = decision;
     const itemId = crypto.randomUUID();
-    const liveIdempotencyKey = buildReportIdempotencyKey(target, {
-      reportMonthKey: resolved.reportMonthKey,
-      scheduledDate,
-    });
     const idempotencyKey = testMode
       ? `test:${jobId}:${liveIdempotencyKey}`
       : liveIdempotencyKey;
     await env.REPORT_JOBS_DB.prepare(
       `INSERT INTO report_job_items (
         id, job_id, status, client_name, platform, report_type, country, google_account_id, meta_account_id, tiktok_account_id,
-        idempotency_key, recipient_email, cc_email, attempts, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        idempotency_key, recipient_email, cc_email, attempts, error_message, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     )
       .bind(
         itemId,
         jobId,
-        "queued",
+        sameAccountDuplicate ? "skipped_same_account" : "queued",
         target.clientName,
         target.platform ?? inferPlatform(target),
         normalizeReportType(target.reportType),
@@ -602,10 +606,20 @@ async function createReportJob(
         resolveRecipientEmail(env, target, testMode),
         testMode ? null : normalizeOptional(target.ccEmail),
         0,
+        sameAccountDuplicate
+          ? "Skipped because another row in this job uses the same ad account. One report was generated and sent to the combined recipient list."
+          : null,
         now,
         now
       )
       .run();
+
+    if (sameAccountDuplicate) {
+      console.info(
+        `[monthly-report-automation] skipped same account idempotency_key=${idempotencyKey} client=${target.clientName} skipped_reason="same ad account as another row in this job"`
+      );
+      continue;
+    }
 
     await env.MONTHLY_REPORT_QUEUE.send({
       jobId,
@@ -625,7 +639,7 @@ async function createReportJob(
   }
 
   console.info(
-    `[monthly-report-automation] debug summary processed=0 sent=0 skipped=${skippedTotal} failed=0 report_type=${normalizeReportType(input.reportType)} period=${resolved.reportMonthKey} scheduled_date=${scheduledDate} queued=${targets.length}`
+    `[monthly-report-automation] debug summary processed=0 sent=0 skipped=${skippedTotal} failed=0 report_type=${normalizeReportType(input.reportType)} period=${resolved.reportMonthKey} scheduled_date=${scheduledDate} queued=${queuedTargetCount}`
   );
 
   if (isManualJob) {
@@ -634,7 +648,7 @@ async function createReportJob(
       jobId,
       reportType: jobReportType,
       reportMonthLabel: resolved.reportMonthLabel,
-      total: targets.length,
+      total: queuedTargetCount,
       skippedTotal,
     });
   }
@@ -643,10 +657,11 @@ async function createReportJob(
     success: true,
     jobId,
     status: jobStatus,
-    total: targets.length,
+    total: queuedTargetCount,
     skippedUnchecked,
     skippedMissingEmail,
     skippedAlreadySent: duplicateResult.skippedAlreadySent,
+    skippedSameAccount,
     reportMonthKey: resolved.reportMonthKey,
     reportMonthLabel: resolved.reportMonthLabel,
     createdAt: now,
@@ -706,6 +721,36 @@ async function filterAlreadySentTargets(
     targets: queuedTargets,
     skippedAlreadySent,
   };
+}
+
+function classifySameAccountTargets(
+  targets: ReportTarget[],
+  input: {
+    reportMonthKey: string;
+    scheduledDate: string;
+  }
+): Array<{ target: ReportTarget; idempotencyKey: string; skippedSameAccount: boolean }> {
+  const primaryTargetByKey = new Map<string, ReportTarget>();
+
+  return targets.map((target) => {
+    const idempotencyKey = buildReportIdempotencyKey(target, input);
+    const primaryTarget = primaryTargetByKey.get(idempotencyKey);
+
+    if (!primaryTarget) {
+      const queuedTarget = { ...target };
+      primaryTargetByKey.set(idempotencyKey, queuedTarget);
+      return { target: queuedTarget, idempotencyKey, skippedSameAccount: false };
+    }
+
+    primaryTarget.recipientEmail = mergeEmailLists(primaryTarget.recipientEmail, target.recipientEmail);
+    primaryTarget.ccEmail = mergeEmailLists(primaryTarget.ccEmail, target.ccEmail);
+    return { target, idempotencyKey, skippedSameAccount: true };
+  });
+}
+
+function mergeEmailLists(left: string | null | undefined, right: string | null | undefined): string | null {
+  const merged = parseEmailList([left, right].filter(Boolean).join(","));
+  return merged.length > 0 ? merged.join(", ") : null;
 }
 
 async function processReportItem(env: Env, message: ReportQueueMessage): Promise<void> {
@@ -2356,6 +2401,7 @@ async function sendCompletionNotificationEmail(
   const subjectPrefix = input.job.test_mode ? "[TEST] " : "";
   const completedCount = input.items.filter((item) => item.status === "completed").length;
   const failedCount = input.failedItems.length;
+  const skippedCount = resolveSkippedCount(input.job, input.items);
   const statusLabel = failedCount > 0 ? `${failedCount} failed` : "all completed";
   const completionVerb = manualLifecycleRecipients.length > 0 ? "Ended" : "Finished";
   const fromAddress = env.RESEND_FROM_MONTHLY_REPORT?.trim() || DEFAULT_FROM_ADDRESS;
@@ -2364,7 +2410,7 @@ async function sendCompletionNotificationEmail(
     to: recipients,
     cc: cc.length > 0 ? cc : undefined,
     bcc: manualLifecycleRecipients.length > 0 ? manualLifecycleRecipients : undefined,
-    subject: `${subjectPrefix}[Report Automation] ${completionVerb} - ${input.job.report_month_label} - ${completedCount}/${input.items.length} completed, ${statusLabel}`,
+    subject: `${subjectPrefix}[Report Automation] ${completionVerb} - ${input.job.report_month_label} - ${completedCount} completed${skippedCount > 0 ? `, ${skippedCount} skipped` : ""}, ${statusLabel}`,
     html: buildCompletionNotificationEmailHtml({
       job: input.job,
       items: input.items,
@@ -2480,8 +2526,8 @@ async function refreshJobStatus(env: Env, jobId: string): Promise<void> {
     .all<{ status: string }>();
   const statuses = (result.results ?? []).map((row) => row.status);
   const hasFailure = statuses.some((status) => status === "failed");
-  const isTerminal = statuses.length > 0 && statuses.every((status) => status === "completed" || status === "failed");
-  const nextStatus = statuses.length > 0 && statuses.every((status) => status === "completed")
+  const isTerminal = statuses.length > 0 && statuses.every(isTerminalItemStatus);
+  const nextStatus = statuses.length > 0 && statuses.every((status) => status === "completed" || isSkippedStatus(status))
     ? "completed"
     : isTerminal && hasFailure
       ? "completed_with_failures"
@@ -2514,7 +2560,7 @@ async function maybeSendJobCompletionNotification(env: Env, jobId: string): Prom
     .all<JobItemRow>();
   const items = itemsResult.results ?? [];
   const failedItems = items.filter((item) => item.status === "failed");
-  const isTerminal = items.length > 0 && items.every((item) => item.status === "completed" || item.status === "failed");
+  const isTerminal = items.length > 0 && items.every((item) => isTerminalItemStatus(item.status));
 
   if (!isTerminal) {
     return;
@@ -2558,6 +2604,10 @@ async function maybeSendJobCompletionNotification(env: Env, jobId: string): Prom
 
 function isTerminalJobStatus(status: string): boolean {
   return status === "completed" || status === "failed" || status === "completed_with_failures";
+}
+
+function isTerminalItemStatus(status: string): boolean {
+  return status === "completed" || status === "failed" || isSkippedStatus(status);
 }
 
 function buildReportUrl(
@@ -3000,7 +3050,9 @@ function buildCompletionNotificationEmailHtml(input: {
     .join("");
   const summaryText = failedCount > 0
     ? "The monthly report automation has finished. Some reports failed after the retry limit and need review."
-    : "All monthly report emails were generated and sent successfully.";
+    : skippedCount > 0
+      ? "All required monthly report emails were sent successfully. Duplicate rows using the same ad account were skipped."
+      : "All monthly report emails were generated and sent successfully.";
   const failureTable = failedCount > 0
     ? `
               <tr>
@@ -3226,6 +3278,15 @@ function getAccountStatusBadge(
       background: "#fee2e2",
       border: "#fecaca",
       color: "#b91c1c",
+    };
+  }
+
+  if (normalized === "skipped_same_account") {
+    return {
+      label: "Skipped — same account",
+      background: "#fef3c7",
+      border: "#fde68a",
+      color: "#b45309",
     };
   }
 
