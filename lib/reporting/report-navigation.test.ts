@@ -29,3 +29,12 @@ test("preserves repeated campaign filters while dropping hierarchy selections", 
   assert.equal(params.has("campaignId"), false);
   assert.equal(params.has("adGroupId"), false);
 });
+
+test("preserves LT campaign scope", () => {
+  const query = buildReportContextQuery(
+    "metaAccountId=96906550&campaignScope=lt&startDate=2026-08-01&endDate=2026-08-31",
+  );
+  const params = new URLSearchParams(query);
+
+  assert.equal(params.get("campaignScope"), "lt");
+});

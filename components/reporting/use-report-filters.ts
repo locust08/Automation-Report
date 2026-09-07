@@ -13,6 +13,7 @@ export interface ReportFilters {
   platform: "meta" | "google" | "googleYoutube" | "tiktok";
   campaignNameFilterMode: "include" | "exclude";
   campaignNameFilterValues: string[];
+  campaignScope: "all" | "lt";
   source: "api" | "meta_csv";
 }
 
@@ -58,6 +59,8 @@ export function useReportFilters(initialFilters?: Partial<ReportFilters>): {
         searchParams.getAll("campaignNameFilterValue").length > 0
           ? searchParams.getAll("campaignNameFilterValue")
           : initialFilters?.campaignNameFilterValues ?? [],
+      campaignScope:
+        (searchParams.get("campaignScope") ?? initialFilters?.campaignScope) === "lt" ? "lt" : "all",
       source:
         searchParams.get("source") === "meta_csv" || initialFilters?.source === "meta_csv"
           ? "meta_csv"
@@ -82,6 +85,7 @@ export function useReportFilters(initialFilters?: Partial<ReportFilters>): {
     setParam(params, "platform", merged.platform);
     setParam(params, "campaignNameFilterMode", merged.campaignNameFilterValues.length ? merged.campaignNameFilterMode : "");
     setParamValues(params, "campaignNameFilterValue", merged.campaignNameFilterValues);
+    setParam(params, "campaignScope", merged.campaignScope === "lt" ? "lt" : "");
     setParam(params, "source", merged.source === "meta_csv" ? "meta_csv" : "");
     options?.clearParams?.forEach((key) => params.delete(key));
 

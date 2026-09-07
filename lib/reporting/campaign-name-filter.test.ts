@@ -4,11 +4,63 @@ import assert from "node:assert/strict";
 import {
   campaignNameMatchesFilter,
   filterRowsByCampaignName,
+  filterRowsByCampaignScope,
   formatCampaignNameFilterLabel,
   getCampaignNameOptions,
+  isLtCampaignName,
   parseCampaignNameFilter,
+  parseCampaignScope,
+  resolveEffectiveCampaignScope,
   writeCampaignNameFilterParams,
 } from "./campaign-name-filter";
+
+test("parses only the supported LT campaign scope", () => {
+  assert.equal(parseCampaignScope("lt"), "lt");
+  assert.equal(parseCampaignScope("LT"), "lt");
+  assert.equal(parseCampaignScope("anything-else"), "all");
+  assert.equal(parseCampaignScope(null), "all");
+});
+
+test("matches LT as a separate case-insensitive campaign token", () => {
+  assert.equal(isLtCampaignName("ANDA | Aug 26 | LEADS | LT"), true);
+  assert.equal(isLtCampaignName("LT - Leads"), true);
+  assert.equal(isLtCampaignName("campaign_lt_v2"), true);
+  assert.equal(isLtCampaignName("lowercase lt campaign"), true);
+  assert.equal(isLtCampaignName("MULTI campaign"), false);
+  assert.equal(isLtCampaignName("Resulting campaign"), false);
+});
+
+test("enables LT scope only for the standalone configured Meta account", () => {
+  assert.equal(
+    resolveEffectiveCampaignScope({ requestedScope: "lt", metaAccountIds: ["96906550"] }),
+    "lt"
+  );
+  assert.equal(
+    resolveEffectiveCampaignScope({ requestedScope: "lt", metaAccountIds: ["715915495675171"] }),
+    "all"
+  );
+  assert.equal(
+    resolveEffectiveCampaignScope({
+      requestedScope: "lt",
+      metaAccountIds: ["96906550"],
+      googleAccountIds: ["1234567890"],
+    }),
+    "all"
+  );
+});
+
+test("filters campaign rows with the shared LT scope matcher", () => {
+  const rows = [
+    { campaignName: "ANDA | LEADS | LT", spend: 10 },
+    { campaignName: "MULTI Brand", spend: 20 },
+  ];
+
+  assert.deepEqual(
+    filterRowsByCampaignScope(rows, (row) => row.campaignName, "lt"),
+    [rows[0]]
+  );
+  assert.equal(filterRowsByCampaignScope(rows, (row) => row.campaignName, "all"), rows);
+});
 
 test("parses repeated campaign name filter query params", () => {
   const params = new URLSearchParams();

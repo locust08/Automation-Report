@@ -10,6 +10,7 @@ import {
 } from "@/src/lib/cron/monthly-report-date";
 import { parseBooleanEnv } from "@/src/lib/cron/monthly-report-targets";
 import type { MonthlyReportAccount } from "@/src/lib/notion/get-monthly-report-accounts";
+import type { CampaignScope } from "@/lib/reporting/campaign-name-filter";
 
 const DEFAULT_CONCURRENCY = 1;
 const PDF_RENDER_TIMEOUT_MS = 180000;
@@ -59,6 +60,7 @@ export async function generateMonthlyReportPdfForAccount(
     dateRange?: MonthlyReportDateRange;
     outputDir?: string;
     saveToDisk?: boolean;
+    campaignScope?: CampaignScope;
   }
 ): Promise<MonthlyReportPdfResult> {
   const dateRange = input?.dateRange ?? resolveMonthlyReportDateRange();
@@ -84,6 +86,7 @@ export async function generateMonthlyReportPdfForAccount(
       dateRange,
       outputDir: input?.outputDir,
       saveToDisk: input?.saveToDisk,
+      campaignScope: input?.campaignScope,
     });
   } finally {
     if (ownsBrowser) {
@@ -143,6 +146,7 @@ async function generateMonthlyReportPdfWithBrowser(
     dateRange: MonthlyReportDateRange;
     outputDir?: string;
     saveToDisk?: boolean;
+    campaignScope?: CampaignScope;
   }
 ): Promise<MonthlyReportPdfResult> {
   const startedAtMs = Date.now();
@@ -176,7 +180,7 @@ async function generateMonthlyReportPdfWithBrowser(
 
     const pageUrl = isAdvancedReportAccount(account)
       ? buildAdvancedReportUrl(account, input.dateRange)
-      : buildPrintReportUrl(account, input.dateRange);
+      : buildPrintReportUrl(account, input.dateRange, input.campaignScope);
     const response = await page.goto(pageUrl, {
       waitUntil: "domcontentloaded",
       timeout: PDF_RENDER_TIMEOUT_MS,
@@ -519,7 +523,11 @@ async function saveMonthlyReportPdf(input: {
   }
 }
 
-function buildPrintReportUrl(account: MonthlyReportAccount, dateRange: MonthlyReportDateRange): string {
+function buildPrintReportUrl(
+  account: MonthlyReportAccount,
+  dateRange: MonthlyReportDateRange,
+  campaignScope: CampaignScope = "all"
+): string {
   const accountId = resolvePrimaryAccountId(account);
   if (!accountId) {
     throw new Error("Account data missing.");
@@ -544,6 +552,9 @@ function buildPrintReportUrl(account: MonthlyReportAccount, dateRange: MonthlyRe
 
   if (reportType !== "overall") {
     query.set("platform", reportType);
+  }
+  if (campaignScope === "lt") {
+    query.set("campaignScope", "lt");
   }
 
   return `${resolveMonthlyReportAppBaseUrl()}/reports/print/monthly/${encodeURIComponent(

@@ -7,6 +7,7 @@ import {
   sortAudienceItems,
 } from "@/lib/reporting/audience-breakdown";
 import { emptyCampaignRow, hasReportableCampaignSpend } from "@/lib/reporting/metrics";
+import { isLtCampaignName, type CampaignScope } from "@/lib/reporting/campaign-name-filter";
 import {
   groupMetaDailyPerformance,
   mergeMetaDailyPerformanceSeries,
@@ -749,7 +750,8 @@ export async function fetchMetaAudienceBreakdown({
   accessToken,
   startDate,
   endDate,
-}: MetaFetchInput): Promise<AudienceClickBreakdownResponse> {
+  campaignScope = "all",
+}: MetaFetchInput & { campaignScope?: CampaignScope }): Promise<AudienceClickBreakdownResponse> {
   const [age, gender, country, region] = await Promise.all([
     fetchMetaAudienceBreakdownDimension({
       accountId,
@@ -757,6 +759,7 @@ export async function fetchMetaAudienceBreakdown({
       startDate,
       endDate,
       dimension: "age",
+      campaignScope,
     }),
     fetchMetaAudienceBreakdownDimension({
       accountId,
@@ -764,6 +767,7 @@ export async function fetchMetaAudienceBreakdown({
       startDate,
       endDate,
       dimension: "gender",
+      campaignScope,
     }),
     fetchMetaAudienceBreakdownDimension({
       accountId,
@@ -771,6 +775,7 @@ export async function fetchMetaAudienceBreakdown({
       startDate,
       endDate,
       dimension: "country",
+      campaignScope,
     }),
     fetchMetaAudienceBreakdownDimension({
       accountId,
@@ -778,6 +783,7 @@ export async function fetchMetaAudienceBreakdown({
       startDate,
       endDate,
       dimension: "region",
+      campaignScope,
     }),
   ]);
 
@@ -1773,6 +1779,7 @@ async function fetchMetaAudienceBreakdownDimension(input: {
   startDate: string;
   endDate: string;
   dimension: "age" | "gender" | "country" | "region" | "city";
+  campaignScope: CampaignScope;
 }): Promise<AudienceClickBreakdownItem[]> {
   const breakdownLabel = `[audience-breakdown][meta][${input.dimension}]`;
 
@@ -1783,11 +1790,11 @@ async function fetchMetaAudienceBreakdownDimension(input: {
       startDate: input.startDate,
       endDate: input.endDate,
       breakdowns: [input.dimension],
-      fields: ["clicks"],
+      fields: input.campaignScope === "lt" ? ["clicks", "campaign_name"] : ["clicks"],
     });
 
     const items = sortAudienceItems(
-      aggregateMetaAudienceItems(rows, input.dimension),
+      aggregateMetaAudienceItems(rows, input.dimension, input.campaignScope),
       input.dimension
     );
     console.info(`${breakdownLabel} accountId=${input.accountId} rows=${items.length}`);
@@ -1802,11 +1809,15 @@ async function fetchMetaAudienceBreakdownDimension(input: {
 
 function aggregateMetaAudienceItems(
   rows: MetaInsightRow[],
-  dimension: "age" | "gender" | "country" | "region" | "city"
+  dimension: "age" | "gender" | "country" | "region" | "city",
+  campaignScope: CampaignScope = "all"
 ): AudienceClickBreakdownItem[] {
   const totals = new Map<string, number>();
 
   rows.forEach((row) => {
+    if (campaignScope === "lt" && !isLtCampaignName(row.campaign_name)) {
+      return;
+    }
     const clicks = coerceAudienceClicks(row.clicks);
     if (clicks <= 0) {
       return;

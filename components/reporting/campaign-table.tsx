@@ -4,10 +4,10 @@ import { Fragment, useMemo, useState } from "react";
 import Link from "next/link";
 import { ChevronDownIcon, ChevronLeftIcon, ChevronRightIcon, ExternalLinkIcon } from "lucide-react";
 
-import { CampaignNameFilterControl } from "@/components/reporting/campaign-name-filter-control";
+import { CampaignNameFilterControl, CampaignScopeControl } from "@/components/reporting/campaign-name-filter-control";
 import { CampaignHierarchyTree } from "@/components/reporting/campaign-hierarchy-tree";
 import { Button } from "@/components/ui/button";
-import type { CampaignNameFilter } from "@/lib/reporting/campaign-name-filter";
+import type { CampaignNameFilter, CampaignScope } from "@/lib/reporting/campaign-name-filter";
 import { filterRowsByCampaignName, getCampaignNameOptions } from "@/lib/reporting/campaign-name-filter";
 import { formatCompactNumber } from "@/lib/reporting/format";
 import { emptyCampaignRow, hasReportableCampaignSpend, mergeCampaignRows } from "@/lib/reporting/metrics";
@@ -21,6 +21,8 @@ export function OverallCampaignGroupsTable({
   campaignNameFilter = null,
   campaignOptions,
   onCampaignNameFilterChange,
+  campaignScope = "all",
+  onCampaignScopeChange,
   compact = false,
 }: {
   groups: CampaignGroup[];
@@ -28,6 +30,8 @@ export function OverallCampaignGroupsTable({
   campaignNameFilter?: CampaignNameFilter | null;
   campaignOptions?: string[];
   onCampaignNameFilterChange?: (filter: CampaignNameFilter | null) => void;
+  campaignScope?: CampaignScope;
+  onCampaignScopeChange?: (scope: CampaignScope) => void;
   compact?: boolean;
 }) {
   const resolvedCampaignOptions = useMemo(
@@ -56,6 +60,7 @@ export function OverallCampaignGroupsTable({
       .filter((group): group is CampaignGroup => Boolean(group));
   }, [campaignNameFilter, groups]);
   const hasCampaignNameFilter = Boolean(campaignNameFilter?.values.length);
+  const hasCampaignScopeFilter = campaignScope === "lt";
   const hierarchySignature = useMemo(
     () =>
       `${queryString}::${visibleGroups
@@ -103,7 +108,7 @@ export function OverallCampaignGroupsTable({
     }));
   };
 
-  if (visibleGroups.length === 0 && !hasCampaignNameFilter) {
+  if (visibleGroups.length === 0 && !hasCampaignNameFilter && !hasCampaignScopeFilter) {
     return null;
   }
 
@@ -111,17 +116,24 @@ export function OverallCampaignGroupsTable({
     <section className={compact ? "space-y-3 rounded-[1.5rem] bg-[#e7e7e7] p-3 shadow-sm sm:p-4 lg:p-5" : "space-y-4 rounded-[2rem] bg-[#e7e7e7] p-4 shadow-sm sm:p-6"}>
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <h2 className={compact ? "text-xl font-semibold text-[#555] sm:text-2xl lg:text-3xl" : "text-2xl font-semibold text-[#555] sm:text-3xl md:text-4xl"}>Campaign Breakdown</h2>
-        {onCampaignNameFilterChange ? (
-          <CampaignNameFilterControl
-            filter={campaignNameFilter}
-            campaignOptions={resolvedCampaignOptions}
-            onChange={onCampaignNameFilterChange}
-          />
-        ) : null}
+        <div className="flex flex-wrap items-center justify-end gap-2">
+          {onCampaignNameFilterChange ? (
+            <CampaignNameFilterControl
+              filter={campaignNameFilter}
+              campaignOptions={resolvedCampaignOptions}
+              onChange={onCampaignNameFilterChange}
+            />
+          ) : null}
+          {onCampaignScopeChange ? (
+            <CampaignScopeControl value={campaignScope} onChange={onCampaignScopeChange} />
+          ) : null}
+        </div>
       </div>
       {visibleGroups.length === 0 ? (
         <div className="rounded-lg border border-red-100 bg-white p-5 text-sm font-medium text-[#7f1d1d]">
-          No campaigns match the current campaign name filter.
+          {hasCampaignScopeFilter
+            ? "No campaigns containing the LT token were found for this period."
+            : "No campaigns match the current campaign name filter."}
         </div>
       ) : null}
       <div className={compact ? "space-y-3" : "space-y-4"}>

@@ -25,6 +25,7 @@ export async function GET(request: Request): Promise<NextResponse> {
     tiktokAccountId: context.tiktokAccountId,
     startDate: context.startDate,
     endDate: context.endDate,
+    campaignScope: context.campaignScope,
   });
   const forceRefresh = searchParams.get("regenerate") === "1" || searchParams.get("refresh") === "1";
   const allowCache = searchParams.get("cache") === "1";
@@ -60,6 +61,7 @@ export async function GET(request: Request): Promise<NextResponse> {
         tiktokAccountId: context.tiktokAccountId,
         startDate: context.startDate,
         endDate: context.endDate,
+        campaignScope: context.campaignScope,
       })
         .then(async (payload) => {
           if (allowCache) {

@@ -1,5 +1,6 @@
 import { MonthlyReportPrint } from "@/components/reporting/print/monthly-report-print";
 import { getOverallReport } from "@/lib/reporting/service";
+import { parseCampaignScope } from "@/lib/reporting/campaign-name-filter";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -13,6 +14,7 @@ interface MonthlyReportPrintPageProps {
     metaAccountId?: string;
     googleAccountId?: string;
     platform?: string;
+    campaignScope?: string;
   }>;
 }
 
@@ -23,12 +25,14 @@ export default async function MonthlyReportPrintPage({
   const [{ accountId }, query] = await Promise.all([params, searchParams]);
   const decodedAccountId = decodeURIComponent(accountId);
   const dateRange = resolveDateRange(query);
+  const fallbackAccountId = query.metaAccountId || query.googleAccountId ? null : decodedAccountId;
   const report = await getOverallReport({
-    accountId: decodedAccountId,
+    accountId: fallbackAccountId,
     metaAccountId: query.metaAccountId ?? null,
     googleAccountId: query.googleAccountId ?? null,
     startDate: dateRange.startDate,
     endDate: dateRange.endDate,
+    campaignScope: parseCampaignScope(query.campaignScope),
   });
 
   return <MonthlyReportPrint accountId={decodedAccountId} report={report} platform={query.platform} />;

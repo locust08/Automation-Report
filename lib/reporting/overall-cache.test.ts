@@ -12,5 +12,20 @@ test("overall report cache key changes when report query semantics change", () =
     endDate: "2026-05-31",
   });
 
-  assert.match(cacheKey, /^overall-v4-/);
+  assert.match(cacheKey, /^overall-v6-/);
+});
+
+test("overall report cache separates All and LT campaign scopes", () => {
+  const input = {
+    accountId: null,
+    metaAccountId: "96906550",
+    googleAccountId: null,
+    startDate: "2026-08-01",
+    endDate: "2026-08-31",
+  };
+
+  assert.notEqual(
+    buildOverallReportCacheKey({ ...input, campaignScope: "all" }),
+    buildOverallReportCacheKey({ ...input, campaignScope: "lt" })
+  );
 });

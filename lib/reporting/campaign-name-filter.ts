@@ -1,11 +1,46 @@
 export const CAMPAIGN_NAME_FILTER_MODE_PARAM = "campaignNameFilterMode";
 export const CAMPAIGN_NAME_FILTER_VALUE_PARAM = "campaignNameFilterValue";
+export const CAMPAIGN_SCOPE_PARAM = "campaignScope";
+export const LT_CAMPAIGN_META_ACCOUNT_ID = "96906550";
+
+export type CampaignScope = "all" | "lt";
 
 export type CampaignNameFilterMode = "include" | "exclude";
 
 export interface CampaignNameFilter {
   mode: CampaignNameFilterMode;
   values: string[];
+}
+
+export function parseCampaignScope(value: string | null | undefined): CampaignScope {
+  return value?.trim().toLocaleLowerCase() === "lt" ? "lt" : "all";
+}
+
+export function isLtCampaignName(campaignName: string | null | undefined): boolean {
+  return /(^|[^a-z0-9])lt(?=$|[^a-z0-9])/i.test(campaignName?.trim() ?? "");
+}
+
+export function resolveEffectiveCampaignScope(input: {
+  requestedScope: CampaignScope | null | undefined;
+  metaAccountIds: string[];
+  googleAccountIds?: string[];
+  tiktokAccountIds?: string[];
+}): CampaignScope {
+  const isEligibleAccount =
+    input.metaAccountIds.length === 1 &&
+    input.metaAccountIds[0]?.replace(/\D/g, "") === LT_CAMPAIGN_META_ACCOUNT_ID &&
+    (input.googleAccountIds?.length ?? 0) === 0 &&
+    (input.tiktokAccountIds?.length ?? 0) === 0;
+
+  return isEligibleAccount && input.requestedScope === "lt" ? "lt" : "all";
+}
+
+export function filterRowsByCampaignScope<T>(
+  rows: T[],
+  getCampaignName: (row: T) => string | null | undefined,
+  scope: CampaignScope
+): T[] {
+  return scope === "lt" ? rows.filter((row) => isLtCampaignName(getCampaignName(row))) : rows;
 }
 
 export function parseCampaignNameFilter(

@@ -40,6 +40,8 @@ export default async function OverallPage({
         ? "exclude"
         : "include",
     campaignNameFilterValues: getValues(resolvedSearchParams?.campaignNameFilterValue),
+    campaignScope:
+      getSingleValue(resolvedSearchParams?.campaignScope) === "lt" ? "lt" : "all",
     source: getSingleValue(resolvedSearchParams?.source) === "meta_csv" ? "meta_csv" : "api",
   } satisfies Partial<ReportFilters>;
 

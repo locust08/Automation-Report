@@ -1,5 +1,10 @@
 import { buildDateRange } from "@/lib/reporting/date";
 import {
+  filterRowsByCampaignScope,
+  resolveEffectiveCampaignScope,
+  type CampaignScope,
+} from "@/lib/reporting/campaign-name-filter";
+import {
   createEmptyAudienceClickBreakdownResponse,
   mergeAudienceClickBreakdownResponses,
 } from "@/lib/reporting/audience-breakdown";
@@ -93,6 +98,7 @@ export interface OverallInput {
   tiktokAccountId?: string | null;
   startDate: string | null;
   endDate: string | null;
+  campaignScope?: CampaignScope;
   diagnosticsMode?: boolean;
   cacheRefreshKey?: string | null;
   previewStage?: PreviewFetchStage;
@@ -464,6 +470,12 @@ export async function getOverallReport(input: OverallInput): Promise<OverallRepo
   const companyName = mappedCompanyName ?? preferredLiveCompanyName ?? fallbackCompanyName;
 
   const warnings: string[] = [...googleManagerContext.messages];
+  const effectiveCampaignScope = resolveEffectiveCampaignScope({
+    requestedScope: input.campaignScope,
+    metaAccountIds: resolvedAccountIds.metaAccountIds,
+    googleAccountIds: resolvedAccountIds.googleAccountIds,
+    tiktokAccountIds: resolvedAccountIds.tiktokAccountIds,
+  });
 
   const [metaCurrentResult, metaPreviousResult, metaAudienceBreakdownResult] = await Promise.all([
     timeOverallReportStage(reportRequestId, diagnostics, "meta_current", () =>
@@ -487,7 +499,8 @@ export async function getOverallReport(input: OverallInput): Promise<OverallRepo
         resolvedAccountIds.metaAccountIds,
         credentials.metaAccessToken,
         dateRange.startDate,
-        dateRange.endDate
+        dateRange.endDate,
+        effectiveCampaignScope
       )
     ),
   ]);
@@ -585,8 +598,16 @@ export async function getOverallReport(input: OverallInput): Promise<OverallRepo
     );
   }
 
-  const metaCurrent = normalizeMetaMonthlyCampaignRows(metaCurrentResult.rows);
-  const metaPrevious = normalizeMetaMonthlyCampaignRows(metaPreviousResult.rows);
+  const metaCurrent = filterRowsByCampaignScope(
+    normalizeMetaMonthlyCampaignRows(metaCurrentResult.rows),
+    (row) => row.campaignName,
+    effectiveCampaignScope
+  );
+  const metaPrevious = filterRowsByCampaignScope(
+    normalizeMetaMonthlyCampaignRows(metaPreviousResult.rows),
+    (row) => row.campaignName,
+    effectiveCampaignScope
+  );
   const googleCurrent = googleCurrentResult.rows.filter((row) => row.platform === "google");
   const googlePrevious = googlePreviousResult.rows.filter((row) => row.platform === "google");
   const youtubeCurrent = googleCurrentResult.rows.filter((row) => row.platform === "googleYoutube");
@@ -729,6 +750,12 @@ export async function getOverallAudienceBreakdownStage(
     diagnostics,
     reportRequestId,
   } = base;
+  const effectiveCampaignScope = resolveEffectiveCampaignScope({
+    requestedScope: input.campaignScope,
+    metaAccountIds: resolvedAccountIds.metaAccountIds,
+    googleAccountIds: resolvedAccountIds.googleAccountIds,
+    tiktokAccountIds: resolvedAccountIds.tiktokAccountIds,
+  });
 
   const [metaAudienceBreakdownResult, googleAudienceBreakdownResult] = await Promise.all([
     timeOverallReportStage(reportRequestId, diagnostics, "meta_audience", () =>
@@ -736,7 +763,8 @@ export async function getOverallAudienceBreakdownStage(
         resolvedAccountIds.metaAccountIds,
         credentials.metaAccessToken,
         dateRange.startDate,
-        dateRange.endDate
+        dateRange.endDate,
+        effectiveCampaignScope
       )
     ),
     timeOverallReportStage(reportRequestId, diagnostics, "google_audience", () =>
@@ -790,6 +818,7 @@ async function getOverallPerformanceStageData(input: OverallInput): Promise<Over
     startDate: input.startDate,
     endDate: input.endDate,
     diagnosticsMode: Boolean(input.diagnosticsMode),
+    campaignScope: input.campaignScope ?? "all",
   });
   const refreshKey = input.cacheRefreshKey?.trim() || null;
   if (refreshKey) {
@@ -831,6 +860,12 @@ async function fetchOverallPerformanceStageData(input: OverallInput): Promise<Ov
     diagnostics,
     reportRequestId,
   } = base;
+  const effectiveCampaignScope = resolveEffectiveCampaignScope({
+    requestedScope: input.campaignScope,
+    metaAccountIds: resolvedAccountIds.metaAccountIds,
+    googleAccountIds: resolvedAccountIds.googleAccountIds,
+    tiktokAccountIds: resolvedAccountIds.tiktokAccountIds,
+  });
 
   const [metaCurrentResult, metaPreviousResult] = await Promise.all([
     timeOverallReportStage(reportRequestId, diagnostics, "meta_current", () =>
@@ -965,8 +1000,16 @@ async function fetchOverallPerformanceStageData(input: OverallInput): Promise<Ov
     warnings: dedupeWarnings(warnings),
     diagnostics,
     reportRequestId,
-    metaCurrent: normalizeMetaMonthlyCampaignRows(metaCurrentResult.rows),
-    metaPrevious: normalizeMetaMonthlyCampaignRows(metaPreviousResult.rows),
+    metaCurrent: filterRowsByCampaignScope(
+      normalizeMetaMonthlyCampaignRows(metaCurrentResult.rows),
+      (row) => row.campaignName,
+      effectiveCampaignScope
+    ),
+    metaPrevious: filterRowsByCampaignScope(
+      normalizeMetaMonthlyCampaignRows(metaPreviousResult.rows),
+      (row) => row.campaignName,
+      effectiveCampaignScope
+    ),
     googleCurrent: googleCurrentResult.rows.filter((row) => row.platform === "google"),
     googlePrevious: googlePreviousResult.rows.filter((row) => row.platform === "google"),
     youtubeCurrent: googleCurrentResult.rows.filter((row) => row.platform === "googleYoutube"),
@@ -1981,7 +2024,8 @@ async function tryFetchMetaAudience(
   accountId: string | null,
   accessToken: string | null,
   startDate: string,
-  endDate: string
+  endDate: string,
+  campaignScope: CampaignScope = "all"
 ): Promise<{ breakdown: AudienceClickBreakdownResponse; warnings: string[] }> {
   if (!accountId) {
     return { breakdown: createEmptyAudienceClickBreakdownResponse(), warnings: [] };
@@ -2001,6 +2045,7 @@ async function tryFetchMetaAudience(
       accessToken,
       startDate,
       endDate,
+      campaignScope,
     });
     return { breakdown, warnings: [] };
   } catch (error) {
@@ -2896,7 +2941,8 @@ async function tryFetchMetaAudienceBreakdownForAccounts(
   accountIds: string[],
   accessToken: string | null,
   startDate: string,
-  endDate: string
+  endDate: string,
+  campaignScope: CampaignScope = "all"
 ): Promise<{ breakdown: AudienceClickBreakdownResponse; warnings: string[] }> {
   if (accountIds.length === 0) {
     return { breakdown: createEmptyAudienceClickBreakdownResponse(), warnings: [] };
@@ -2906,7 +2952,7 @@ async function tryFetchMetaAudienceBreakdownForAccounts(
   const warnings: string[] = [];
 
   for (const accountId of accountIds) {
-    const result = await tryFetchMetaAudience(accountId, accessToken, startDate, endDate);
+    const result = await tryFetchMetaAudience(accountId, accessToken, startDate, endDate, campaignScope);
     breakdown = mergeAudienceClickBreakdownResponses(breakdown, result.breakdown);
     warnings.push(
       ...result.warnings.map((warning) => annotateWarningWithAccount(warning, "meta", accountId))

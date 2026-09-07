@@ -15,6 +15,7 @@ import {
 import type {
   CampaignNameFilter,
   CampaignNameFilterMode,
+  CampaignScope,
 } from "@/lib/reporting/campaign-name-filter";
 import { formatCampaignNameFilterLabel, getCampaignNameOptions } from "@/lib/reporting/campaign-name-filter";
 
@@ -234,5 +235,32 @@ export function CampaignNameFilterControl({
         </form>
       ) : null}
     </div>
+  );
+}
+
+export function CampaignScopeControl({
+  value,
+  onChange,
+}: {
+  value: CampaignScope;
+  onChange: (value: CampaignScope) => void;
+}) {
+  const active = value === "lt";
+
+  return (
+    <Button
+      type="button"
+      variant="outline"
+      className={`h-9 gap-2 border-red-200 px-3 text-sm font-semibold text-[#e10600] hover:bg-red-50 ${
+        active ? "border-[#e10600] bg-red-50" : "bg-white"
+      }`}
+      aria-pressed={active}
+      onClick={() => onChange(active ? "all" : "lt")}
+      data-report-export-exclude="true"
+    >
+      <FilterIcon className="size-4" />
+      LT only
+      {active ? <CheckIcon className="size-4" /> : null}
+    </Button>
   );
 }

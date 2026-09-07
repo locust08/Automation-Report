@@ -26,6 +26,7 @@ export async function GET(
       tiktokAccountId: context.tiktokAccountId,
       startDate: context.startDate,
       endDate: context.endDate,
+      campaignScope: context.campaignScope,
       cacheRefreshKey: searchParams.get("cacheRefresh") ?? searchParams.get("refresh"),
     });
 

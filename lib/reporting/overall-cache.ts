@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 
 import type { OverallReportPayload } from "@/lib/reporting/types";
+import type { CampaignScope } from "@/lib/reporting/campaign-name-filter";
 import { clonePlainData, MemoryCacheEntry, readThroughMemoryCache } from "@/lib/reporting/memory-cache";
 
 const OVERALL_REPORT_CACHE_SCHEMA_VERSION = 6;
@@ -40,6 +41,7 @@ export function buildOverallReportCacheKey(input: {
   tiktokAccountId?: string | null;
   startDate: string | null;
   endDate: string | null;
+  campaignScope?: CampaignScope;
 }): string {
   const payload = {
     version: OVERALL_REPORT_CACHE_SCHEMA_VERSION,
@@ -49,6 +51,7 @@ export function buildOverallReportCacheKey(input: {
     tiktokAccountId: normalizeAccountList(input.tiktokAccountId ?? null),
     startDate: normalizeCacheValue(input.startDate),
     endDate: normalizeCacheValue(input.endDate),
+    campaignScope: input.campaignScope ?? "all",
   };
   return `overall-v${OVERALL_REPORT_CACHE_SCHEMA_VERSION}-${createHash("sha256")
     .update(JSON.stringify(payload))

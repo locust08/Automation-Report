@@ -32,8 +32,8 @@ import {
   useTikTokInsightsStage,
 } from "@/components/reporting/use-report-data";
 import { useScreenshotMode } from "@/components/reporting/use-screenshot-mode";
-import type { CampaignNameFilter } from "@/lib/reporting/campaign-name-filter";
-import { getCampaignNameOptions } from "@/lib/reporting/campaign-name-filter";
+import type { CampaignNameFilter, CampaignScope } from "@/lib/reporting/campaign-name-filter";
+import { getCampaignNameOptions, LT_CAMPAIGN_META_ACCOUNT_ID } from "@/lib/reporting/campaign-name-filter";
 import { OverallReportPayload } from "@/lib/reporting/types";
 import { buildReportContextQuery } from "@/lib/reporting/report-navigation";
 
@@ -61,6 +61,8 @@ export function OverallPageClient({
   const [resolvedLabels, setResolvedLabels] = useState<ResolvedAccountLabel[]>([]);
   const [readyAccountKeys, setReadyAccountKeys] = useState<Record<string, boolean>>({});
   const [refreshKey, setRefreshKey] = useState(0);
+  const campaignScopeEligible = isLtCampaignScopeEligible(filters);
+  const campaignScope: CampaignScope = campaignScopeEligible ? filters.campaignScope : "all";
   const campaignNameFilter = useMemo<CampaignNameFilter | null>(() => {
     const values = getCampaignNameOptions(filters.campaignNameFilterValues);
     return values.length > 0
@@ -76,6 +78,12 @@ export function OverallPageClient({
         campaignNameFilterMode: nextFilter?.mode ?? "include",
         campaignNameFilterValues: nextFilter?.values ?? [],
       });
+    },
+    [setFilters]
+  );
+  const handleCampaignScopeChange = useCallback(
+    (nextScope: CampaignScope) => {
+      setFilters({ campaignScope: nextScope });
     },
     [setFilters]
   );
@@ -100,6 +108,9 @@ export function OverallPageClient({
       params.set("source", "meta_csv");
     }
     params.set("platform", filters.platform);
+    if (campaignScope === "lt") {
+      params.set("campaignScope", "lt");
+    }
     return buildReportContextQuery(params.toString());
   }, [
     filters.accountId,
@@ -110,6 +121,7 @@ export function OverallPageClient({
     filters.tiktokAccountId,
     filters.startDate,
     filters.source,
+    campaignScope,
   ]);
   const activeQueryString = useMemo(() => {
     const params = new URLSearchParams(queryString);
@@ -269,7 +281,11 @@ export function OverallPageClient({
               return;
             }
             setRefreshKey(0);
-            setFilters(next);
+            const nextScopeEligible = isLtCampaignScopeEligible({ ...filters, ...next });
+            setFilters({
+              ...next,
+              campaignScope: nextScopeEligible ? filters.campaignScope : "all",
+            });
           }}
           onReset={() =>
             setFilters({
@@ -277,6 +293,7 @@ export function OverallPageClient({
               metaAccountId: "",
               googleAccountId: "",
               tiktokAccountId: "",
+              campaignScope: "all",
             })
           }
         />
@@ -300,6 +317,8 @@ export function OverallPageClient({
                 screenshotMode={screenshotMode}
                 campaignNameFilter={campaignNameFilter}
                 onCampaignNameFilterChange={handleCampaignNameFilterChange}
+                campaignScope={campaignScope}
+                onCampaignScopeChange={campaignScopeEligible ? handleCampaignScopeChange : undefined}
                 onResolved={handleAccountResolved}
                 onReadyChange={handleAccountReadyChange}
               />
@@ -349,6 +368,8 @@ export function OverallPageClient({
                   compact={compactInteractive}
                   campaignNameFilter={campaignNameFilter}
                   onCampaignNameFilterChange={handleCampaignNameFilterChange}
+                  campaignScope={campaignScope}
+                  onCampaignScopeChange={campaignScopeEligible ? handleCampaignScopeChange : undefined}
                 />
               </>
             ) : null}
@@ -379,6 +400,8 @@ function SplitAccountOverallReport({
   screenshotMode,
   campaignNameFilter,
   onCampaignNameFilterChange,
+  campaignScope,
+  onCampaignScopeChange,
   onResolved,
   onReadyChange,
 }: {
@@ -387,6 +410,8 @@ function SplitAccountOverallReport({
   screenshotMode: boolean;
   campaignNameFilter: CampaignNameFilter | null;
   onCampaignNameFilterChange: (filter: CampaignNameFilter | null) => void;
+  campaignScope: CampaignScope;
+  onCampaignScopeChange?: (scope: CampaignScope) => void;
   onResolved: (label: ResolvedAccountLabel) => void;
   onReadyChange: (key: string, ready: boolean) => void;
 }) {
@@ -445,6 +470,8 @@ function SplitAccountOverallReport({
           showTikTokAccountContext={false}
           campaignNameFilter={campaignNameFilter}
           onCampaignNameFilterChange={onCampaignNameFilterChange}
+          campaignScope={campaignScope}
+          onCampaignScopeChange={onCampaignScopeChange}
         />
       ) : null}
     </section>
@@ -456,6 +483,8 @@ export function AccountReportContent({
   queryString,
   campaignNameFilter = null,
   onCampaignNameFilterChange,
+  campaignScope = "all",
+  onCampaignScopeChange,
   screenshotMode = false,
   showTikTokAccountContext = true,
 }: {
@@ -463,6 +492,8 @@ export function AccountReportContent({
   queryString: string;
   campaignNameFilter?: CampaignNameFilter | null;
   onCampaignNameFilterChange?: (filter: CampaignNameFilter | null) => void;
+  campaignScope?: CampaignScope;
+  onCampaignScopeChange?: (scope: CampaignScope) => void;
   screenshotMode?: boolean;
   showTikTokAccountContext?: boolean;
 }) {
@@ -483,6 +514,8 @@ export function AccountReportContent({
         compact={compactInteractive}
         campaignNameFilter={campaignNameFilter}
         onCampaignNameFilterChange={onCampaignNameFilterChange}
+        campaignScope={campaignScope}
+        onCampaignScopeChange={onCampaignScopeChange}
       />
       {isTikTokOnlyPayload(data) ? (
         <LazyTikTokInsights
@@ -731,6 +764,26 @@ function isTikTokOnlyPayload(data: OverallReportPayload): boolean {
 
 function dedupeWarnings(warnings: string[]): string[] {
   return Array.from(new Set(warnings.map((warning) => warning.trim()).filter(Boolean)));
+}
+
+function isLtCampaignScopeEligible(
+  filters: Pick<ReportFilters, "accountId" | "metaAccountId" | "googleAccountId" | "tiktokAccountId">
+): boolean {
+  const entries = [
+    ...splitAccountIdList(filters.metaAccountId).map((accountId) => ({ platform: "meta" as const, accountId })),
+    ...splitAccountIdList(filters.googleAccountId).map((accountId) => ({ platform: "google" as const, accountId })),
+    ...splitAccountIdList(filters.tiktokAccountId).map((accountId) => ({ platform: "tiktok" as const, accountId })),
+    ...splitAccountIdList(filters.accountId).map(classifyAccountIdToken),
+  ];
+  const deduped = dedupeAccountReportEntries(
+    entries.map((entry) => ({ ...entry, key: `${entry.platform}:${entry.accountId}`, queryString: "" }))
+  );
+
+  return (
+    deduped.length === 1 &&
+    deduped[0]?.platform === "meta" &&
+    deduped[0].accountId.replace(/\D/g, "") === LT_CAMPAIGN_META_ACCOUNT_ID
+  );
 }
 
 function excludeWarnings(warnings: string[], inheritedWarnings: string[]): string[] {

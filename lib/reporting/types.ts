@@ -709,5 +709,6 @@ export interface RequestContext {
   endDate: string | null;
   campaignType: string | null;
   platform: Platform | null;
+  campaignScope: import("@/lib/reporting/campaign-name-filter").CampaignScope;
   source: "api" | "meta_csv";
 }

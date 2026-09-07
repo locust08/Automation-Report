@@ -1,6 +1,7 @@
 import { generateMonthlyReportPdfForAccount } from "@/src/lib/cron/generate-monthly-report-pdf";
 import { resolveMonthlyReportDateRange } from "@/src/lib/cron/monthly-report-date";
 import type { MonthlyReportAccount } from "@/src/lib/notion/get-monthly-report-accounts";
+import { parseCampaignScope } from "@/lib/reporting/campaign-name-filter";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -33,6 +34,7 @@ export async function GET(request: Request) {
   const result = await generateMonthlyReportPdfForAccount(account, {
     dateRange,
     saveToDisk: false,
+    campaignScope: parseCampaignScope(url.searchParams.get("campaignScope")),
   });
 
   if (result.status !== "generated" || !result.pdfBuffer) {

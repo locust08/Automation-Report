@@ -10,6 +10,7 @@ const REPORT_CONTEXT_KEYS = [
   "source",
   "campaignNameFilterMode",
   "campaignNameFilterValue",
+  "campaignScope",
 ] as const;
 
 export function buildReportContextQuery(query: string): string {

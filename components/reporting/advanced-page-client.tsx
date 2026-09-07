@@ -110,6 +110,7 @@ function AdvancedAccountFilters({
     platform,
     campaignNameFilterMode: "include",
     campaignNameFilterValues: [],
+    campaignScope: "all",
     source: "api",
   }), [initialAccountId, initialEndDate, initialStartDate, platform]);
 
