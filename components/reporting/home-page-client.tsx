@@ -314,9 +314,6 @@ export function HomePageClient({ displayName, role }: HomePageClientProps) {
               <h2 id="dashboard-tools-heading" className="text-[clamp(15px,1.8vw,17px)] font-semibold">Dashboard tools</h2>
               <p className="mt-1 text-[clamp(12px,1.45vw,14px)] text-white/65">Open these workflows directly. Select their account inside the destination page when needed.</p>
             </div>
-            <span className="w-fit shrink-0 whitespace-nowrap rounded-full border border-emerald-200/30 bg-emerald-200/10 px-3 py-1 text-[11px] font-semibold text-emerald-100">
-              No account required here
-            </span>
           </div>
 
         <section className="mt-5" aria-labelledby="report-tools-heading">
