@@ -565,13 +565,21 @@ export async function getOverallReport(input: OverallInput): Promise<OverallRepo
     ...googleAudienceBreakdownResult.warnings
   );
 
-  if (resolvedAccountIds.metaAccountIds.length > 0 && metaCurrentResult.rows.length === 0) {
+  if (
+    resolvedAccountIds.metaAccountIds.length > 0 &&
+    metaCurrentResult.rows.length === 0 &&
+    metaCurrentResult.warnings.length === 0
+  ) {
     warnings.push(
       "No activity was found for Meta Ads. Please change the date range."
     );
   }
 
-  if (resolvedAccountIds.googleAccountIds.length > 0 && googleCurrentResult.rows.length === 0) {
+  if (
+    resolvedAccountIds.googleAccountIds.length > 0 &&
+    googleCurrentResult.rows.length === 0 &&
+    googleCurrentResult.warnings.length === 0
+  ) {
     warnings.push(
       "No activity was found for Google Ads. Please change the date range."
     );
@@ -922,13 +930,21 @@ async function fetchOverallPerformanceStageData(input: OverallInput): Promise<Ov
     reportRequestId
   );
 
-  if (resolvedAccountIds.metaAccountIds.length > 0 && metaCurrentResult.rows.length === 0) {
+  if (
+    resolvedAccountIds.metaAccountIds.length > 0 &&
+    metaCurrentResult.rows.length === 0 &&
+    metaCurrentResult.warnings.length === 0
+  ) {
     warnings.push(
       "No activity was found for Meta Ads. Please change the date range."
     );
   }
 
-  if (resolvedAccountIds.googleAccountIds.length > 0 && googleCurrentResult.rows.length === 0) {
+  if (
+    resolvedAccountIds.googleAccountIds.length > 0 &&
+    googleCurrentResult.rows.length === 0 &&
+    googleCurrentResult.warnings.length === 0
+  ) {
     warnings.push(
       "No activity was found for Google Ads. Please change the date range."
     );
@@ -2948,9 +2964,7 @@ async function tryFetchGoogleAudienceBreakdownForAccounts(
         throw error;
       }
 
-      const accountWarnings = [
-        annotateWarningWithAccount(error.payload.message, "google", accountId),
-      ];
+      const accountWarnings = [error.payload.message];
       logGoogleWarningsForTerminal(accountWarnings);
       warnings.push(...accountWarnings);
     }
@@ -3008,9 +3022,7 @@ async function tryFetchGoogleForAccounts(
         throw error;
       }
 
-      const accountWarnings = [
-        annotateWarningWithAccount(error.payload.message, "google", accountId),
-      ];
+      const accountWarnings = [error.payload.message];
       logGoogleWarningsForTerminal(accountWarnings);
       warnings.push(...accountWarnings);
     }

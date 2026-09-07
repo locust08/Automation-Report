@@ -136,11 +136,6 @@ export function formatGoogleAdsAccessPathErrorMessage(
   >
 ): string {
   const accountLabel = formatGoogleAdsCustomerId(payload.accountId);
-  const originalLabel = payload.originalAccessPath ?? "(missing)";
-  const resolvedLabel = payload.resolvedAccessPath ?? "(none)";
-  const fallbackLabel = payload.fallbackUsed ? "yes" : "no";
-  const errorCode = payload.errorCode || "UNKNOWN";
-  const errorMessage = payload.errorMessage || "Unknown Google Ads access-path failure.";
 
-  return `Google Ads access-path resolution failed for ${accountLabel}. originalAccessPath=${originalLabel}; resolvedAccessPath=${resolvedLabel}; fallbackUsed=${fallbackLabel}; errorCode=${errorCode}; errorMessage=${errorMessage}`;
+  return `Google Ads account ${accountLabel} is not connected to an accessible manager account.`;
 }

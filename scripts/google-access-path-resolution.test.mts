@@ -76,7 +76,7 @@ test("Invalid access path falls back to MCC 366-613-7525", () => {
   assert.equal(resolved.fallbackUsed, true);
 });
 
-test("Fallback failure message stays structured and explicit", () => {
+test("Fallback failure message is concise and user friendly", () => {
   const message = formatGoogleAdsAccessPathErrorMessage({
     accountId: "1234567890",
     originalAccessPath: "bad-path",
@@ -87,10 +87,8 @@ test("Fallback failure message stays structured and explicit", () => {
       "Google Ads preview account resolution failed: customer 1234567890 is not reachable under manager 3666137525.",
   });
 
-  assert.match(message, /123-456-7890/);
-  assert.match(message, /originalAccessPath=bad-path/);
-  assert.match(message, /resolvedAccessPath=366-613-7525/);
-  assert.match(message, /fallbackUsed=yes/);
-  assert.match(message, /errorCode=AUTHORIZATION_ERROR/);
-  assert.match(message, /not reachable under manager 3666137525/);
+  assert.equal(
+    message,
+    "Google Ads account 123-456-7890 is not connected to an accessible manager account."
+  );
 });
