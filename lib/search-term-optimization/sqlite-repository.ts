@@ -3,7 +3,7 @@ import { dirname, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
 import type { OptimizationDashboardPayload, OptimizationResult } from "@/lib/search-term-optimization/types";
-import { safetyBand } from "@/lib/search-term-optimization/scoring";
+import { applyAutomaticExclusionPolicy } from "@/lib/search-term-optimization/automatic-exclusion-rules";
 import { getSearchTermAccountSettings } from "@/lib/search-term-optimization/account-settings";
 
 type StoredResult = {
@@ -247,7 +247,7 @@ export function persistDashboardToSqlite(payload: OptimizationDashboardPayload):
       results: payload.results.map((row) => {
         const saved = byIdentity.get(identity(payload.account.customerId, row));
         if (!saved) return row;
-        return applyAccountSettings(applyStoredContext({
+        return applyAccountSettings({
           ...row,
           searchTermId: String(saved.search_term_id),
           qualifiedLeads: saved.qualified_leads,
@@ -270,7 +270,7 @@ export function persistDashboardToSqlite(payload: OptimizationDashboardPayload):
           approverDecision: saved.current_decision === "approver_approved" || saved.current_decision === "approver_rejected"
             ? "accepted"
             : saved.current_decision === "return_to_specialist" ? "rejected" : undefined,
-        }), settings);
+        }, settings);
       }),
       changeSets: changeSets.map((changeSet) => ({
         id: String(changeSet.id),
@@ -289,32 +289,13 @@ export function persistDashboardToSqlite(payload: OptimizationDashboardPayload):
 }
 
 function applyAccountSettings(row: OptimizationResult, settings: OptimizationDashboardPayload["settings"]): OptimizationResult {
-  const safetyBand = row.safetyScore >= settings.autoSafeScoreThreshold
-    ? "auto-safe" as const
-    : "review-recommended" as const;
   const critical = (row.clientComplaints ?? 0) > 0 || (row.spamLeads ?? 0) > 0 || row.spend >= settings.highSpendThreshold * 2;
   const high = row.spend >= settings.highSpendThreshold || row.clicks >= settings.minimumClicksThreshold;
   const priority = critical ? "critical" as const : high ? "high" as const : row.clicks > 0 || row.spend > 0 ? "medium" as const : "normal" as const;
   return {
-    ...row,
-    safetyBand,
-    executionEligibility: row.safetyScore >= settings.autoSafeScoreThreshold && row.hardGateFailures.length === 0,
+    ...applyAutomaticExclusionPolicy(row, { source: { label: "Stored analysis", fresh: true, termsReviewed: 1, mutatingGoogleAdsChanges: false } }, settings.autoSafeScoreThreshold),
     priority,
   };
-}
-
-function applyStoredContext(row: OptimizationResult): OptimizationResult {
-  const qualifiedSignal = row.qualifiedLeads === null ? null : row.qualifiedLeads === 0;
-  const scoreBreakdown = row.scoreBreakdown.map((item) => item.signal === "No available qualified-lead signal"
-    ? { ...item, applied: qualifiedSignal === true, status: qualifiedSignal === null ? "unknown" as const : qualifiedSignal ? "yes" as const : "no" as const }
-    : item);
-  const safetyScore = Math.max(0, Math.min(100, scoreBreakdown.reduce((total, item) => total + (item.applied ? item.points : 0), 0)));
-  const unknownGate = "Required signal is unknown: qualified-lead signal";
-  const hardGateFailures = row.hardGateFailures.filter((failure) => failure !== unknownGate && failure !== "Search term has qualified leads");
-  if (row.qualifiedLeads === null) hardGateFailures.push(unknownGate);
-  else if (row.qualifiedLeads > 0) hardGateFailures.push("Search term has qualified leads");
-  const executionEligibility = safetyScore >= 90 && hardGateFailures.length === 0;
-  return { ...row, scoreBreakdown, safetyScore, safetyBand: safetyBand(safetyScore), hardGateFailures, executionEligibility };
 }
 
 export function saveApproverDecision(input: {

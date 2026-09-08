@@ -10,7 +10,7 @@ export async function POST(request: Request) {
   const session = await getServerAuthSession();
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   if (session.role !== "approver" && session.role !== "admin") return NextResponse.json({ error: "Only an approver can authorize placement exclusions." }, { status: 403 });
-  if (!await isWorkflowApprovalRequired("placement_exclusion_approval")) return NextResponse.json({ error: "A separate placement approval is disabled in Workflow Settings." }, { status: 409 });
+  if (!await isWorkflowApprovalRequired("placement_exclusion_approval")) return NextResponse.json({ error: "A separate placement approval is disabled in Settings." }, { status: 409 });
   const body = await request.json().catch(() => null) as { recommendationIds?: unknown; accountId?: unknown; placements?: unknown; decision?: unknown } | null;
   const recommendationIds = Array.isArray(body?.recommendationIds) ? body.recommendationIds.map(String) : [];
   const accountId = String(body?.accountId ?? "").replace(/\D/g, "");

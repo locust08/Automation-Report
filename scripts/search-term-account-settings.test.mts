@@ -13,6 +13,7 @@ const settingsRepository = require("../lib/search-term-optimization/account-sett
 try {
   const defaults = settingsRepository.getSearchTermAccountSettings("1234567890", "2026-08-01T00:00:00.000Z");
   assert.equal(defaults.scheduleFrequency, "monthly");
+  assert.equal(defaults.automaticExclusionEnabled, true);
   assert.equal(defaults.nextRunAt, null);
 
   const saved = settingsRepository.saveSearchTermAccountSettings({
@@ -38,6 +39,7 @@ try {
     minimumClicksThreshold: 8,
   });
   assert.ok(enabled.nextRunAt);
+  assert.equal(enabled.automaticExclusionEnabled, true);
 
   const database = new DatabaseSync(process.env.SEARCH_TERM_SQLITE_PATH);
   database.prepare(`update ad_automation_search_term_account_settings set next_run_at = '2026-01-01T00:00:00.000Z' where google_customer_id = ?`).run("1234567890");

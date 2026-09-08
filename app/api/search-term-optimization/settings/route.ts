@@ -24,7 +24,7 @@ export async function PUT(request: Request) {
     const body = await request.json() as Record<string, unknown>;
     const googleCustomerId = typeof body.googleCustomerId === "string" ? body.googleCustomerId.replace(/\D/g, "") : "";
     const automationEnabled = body.automationEnabled === true;
-    const automaticExclusionEnabled = body.automaticExclusionEnabled === true;
+    const automaticExclusionEnabled = true;
     const scheduleFrequency = body.scheduleFrequency as AnalysisScheduleFrequency;
     const autoSafeScoreThreshold = Number(body.autoSafeScoreThreshold);
     const highSpendThreshold = Number(body.highSpendThreshold);

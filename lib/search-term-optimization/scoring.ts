@@ -81,7 +81,6 @@ export type HardGateInput = {
 
 export function evaluateHardGates(input: HardGateInput): string[] {
   const failures: string[] = [];
-  if (!input.automationEnabled) failures.push("Account automation is disabled");
   if (input.proposedAction !== "negative exact") failures.push("Action is not negative exact");
   if (input.conversions !== 0) failures.push("Search term has conversions");
   if (!input.landingContextLoaded) failures.push("Landing-page context did not load");

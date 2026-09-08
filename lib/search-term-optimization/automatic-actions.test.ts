@@ -1,3 +1,4 @@
+import { calculateSafetyScore } from "./scoring";
 import assert from "node:assert/strict";
 import test from "node:test";
 
@@ -33,18 +34,16 @@ test("dry-run execution records a claim and trips if Google publishing is attemp
     id:"dry-run-fixture",searchTerm:"codex dry run irrelevant query",campaignId:"456",campaign:"Dry Run Campaign",
     adGroupId:"123",adGroup:"Dry Run Ad Group",proposedAction:"negative exact",safetyScore:95,spend:50,
     conversions:0,qualifiedLeads:0,mismatchCategory:"wrong_product",hardGateFailures:[],addedExcludedStatus:null,
-    scoreBreakdown:[
-      {signal:"No live positive-keyword overlap",points:10,applied:true,status:"yes"},
-      {signal:"Search intent is absent from the landing page",points:10,applied:true,status:"yes"},
-    ],
+    scoreBreakdown:calculateSafetyScore({mismatchIsClear:true,mismatchCategory:"wrong_product",conversions:0,noPositiveKeywordOverlap:true,landingIntentAbsent:true,noQualifiedLeadSignal:true,hasPaidClicksOrSpend:true,meaningIsAmbiguous:false,requiresConfirmation:false}).breakdown,
     dataRetrievedAt:new Date().toISOString(),
   } as unknown as OptimizationResult;
   const settings={automaticExclusionEnabled:true,autoSafeScoreThreshold:90} as SearchTermAccountSettings;
   const result=await executeAutomaticExclusionsForBatch({jobId:"job",batchId:"batch",customerId:"593-981-4778"},{
     environment:{SEARCH_TERM_AUTOMATION_LIVE_PUBLISH_ENABLED:"false"},
     getSettings:async()=>settings,
-    loadRows:async()=>[{id:1,stable_term_key:"456|123|codex dry run irrelevant query",result_json:resultJson}],
-    claim:async({mode,candidates})=>{claims++;assert.equal(mode,"dry_run");assert.equal(candidates.length,1);return[action({status:"dry_run",execution_mode:"dry_run"})];},
+    // More than the former 25-row limit must reach the database cap evaluator.
+    loadRows:async()=>Array.from({length:40},(_,i)=>({id:i+1,stable_term_key:`456|123|codex dry run irrelevant query ${i}`,result_json:{...resultJson,searchTerm:`codex dry run irrelevant query ${i}`}})),
+    claim:async({mode,candidates})=>{claims++;assert.equal(mode,"dry_run");assert.equal(candidates.length,40);return[action({status:"dry_run",execution_mode:"dry_run"})];},
     publish:async()=>assert.fail("Dry-run attempted a Google Ads mutation"),
   });
   assert.equal(claims,1);

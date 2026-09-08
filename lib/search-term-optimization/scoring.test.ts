@@ -37,7 +37,7 @@ test("ambiguity and confirmation penalties cannot fall below zero", () => {
   assert.equal(score.total, 0);
 });
 
-test("score 90 cannot execute when any hard gate fails", () => {
+test("account activation is no longer an eligibility gate", () => {
   const failures = evaluateHardGates({
     automationEnabled: false,
     proposedAction: "negative exact",
@@ -50,7 +50,7 @@ test("score 90 cannot execute when any hard gate fails", () => {
     exactMatchOnly: true,
     unknownRequiredSignals: [],
   });
-  assert.deepEqual(failures, ["Account automation is disabled"]);
+  assert.deepEqual(failures, []);
 });
 
 test("add exact and phrase suggestions fail the action gate", () => {

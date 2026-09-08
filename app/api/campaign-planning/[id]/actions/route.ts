@@ -35,7 +35,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     };
     if (action === "approve_readiness") {
       if (!await isWorkflowApprovalRequired("m04_campaign_readiness_approval")) {
-        return NextResponse.json({ error: "A separate M04 approval is disabled in Workflow Settings." }, { status: 409 });
+        return NextResponse.json({ error: "A separate M04 approval is disabled in Settings." }, { status: 409 });
       }
       return NextResponse.json(await approveReadyCampaign(Number(id), requestContext));
     }

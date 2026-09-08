@@ -1,3 +1,5 @@
+import { loadProtectedSearchTermKeys } from "./review-protection";
+import { applyAutomaticExclusionPolicy } from "@/lib/search-term-optimization/automatic-exclusion-rules";
 import { createHash } from "node:crypto";
 import { jsonBody, qs, supabaseRest, supabaseRestCount } from "@/lib/optimization/supabase-rest";
 import type { LeadQualityImportRow, LeadQualityValues } from "@/lib/search-term-optimization/lead-quality-repository";
@@ -43,15 +45,16 @@ async function getLatestRelationalDashboard(customerId?:string):Promise<Optimiza
  const jobs=await supabaseRest<DurableJob[]>(`ad_automation_search_term_analysis_jobs?google_customer_id=eq.${qs(customerId)}&terms_processed=gt.0&select=id,google_customer_id,account_name,reporting_start_date,reporting_end_date,total_terms,terms_processed,status,started_at,completed_at,updated_at&order=created_at.desc&limit=1`);
  const job=jobs[0];
  if(!job)return null;
- const [stored,settings,dashboardSummary]=await Promise.all([
+ const [stored,settings,dashboardSummary,protectedKeys]=await Promise.all([
   loadDurableRows(job.id),
   getSearchTermAccountSettings(customerId,job.started_at??job.updated_at),
   loadDurableSummary(job.id,job.terms_processed),
+  loadProtectedSearchTermKeys(customerId),
  ]);
  if(!stored.length)return null;
- const results=stored.map(item=>({...item.result_json,id:`rel:${item.id}`,recommendationId:`rel:${item.id}`,searchTermId:`rel:${item.id}`,reviewStatus:item.review_status??item.result_json.reviewStatus,reviewDecision:(item.review_decision as "approved"|"rejected"|null)??item.result_json.reviewDecision,lastReviewedAt:item.updated_at}));
+ const results=stored.map(item=>({...item.result_json,id:`rel:${item.id}`,recommendationId:`rel:${item.id}`,searchTermId:`rel:${item.id}`,reviewStatus:item.review_status??item.result_json.reviewStatus,reviewDecision:(item.review_decision as "approved"|"rejected"|null)??item.result_json.reviewDecision,lastReviewedAt:item.updated_at,previousDecision:item.result_json.previousDecision??(protectedKeys.has(stableSearchTermKey(item.result_json))?"Previous review decision":null)})).map(row=>applyAutomaticExclusionPolicy(row,{source:{label:"Stored analysis",fresh:true,termsReviewed:stored.length,mutatingGoogleAdsChanges:false}},settings.autoSafeScoreThreshold));
  const analyzedAt=analysisTimestampForJob(job);
- return {account:{customerId,customerName:resolveGoogleAccountName({jobName:job.account_name,accountId:customerId}),reportingPeriod:{startDate:job.reporting_start_date??analyzedAt.slice(0,10),endDate:job.reporting_end_date??analyzedAt.slice(0,10)},lastAnalysisAt:analyzedAt,nextRunAt:settings.nextRunAt,automationEnabled:settings.automationEnabled},source:{label:"Supabase progressive reviewed search terms",fresh:true,termsReviewed:dashboardSummary.totalReviewed,mutatingGoogleAdsChanges:false},summary:dashboardSummary,results,history:results.filter(row=>row.verificationStatus==="verified"),googleRecommendations:[],googleRecommendationsWarning:null,changeSets:[],settings,refresh:{mode:"cached",checkedAt:job.updated_at,currentTerms:job.total_terms,reusedTerms:dashboardSummary.totalReviewed,newTerms:0,queuedNewTerms:Math.max(0,job.total_terms-dashboardSummary.totalReviewed)}};
+ return {account:{customerId,customerName:resolveGoogleAccountName({jobName:job.account_name,accountId:customerId}),reportingPeriod:{startDate:job.reporting_start_date??analyzedAt.slice(0,10),endDate:job.reporting_end_date??analyzedAt.slice(0,10)},lastAnalysisAt:analyzedAt,nextRunAt:settings.nextRunAt,automationEnabled:settings.automationEnabled},source:{label:"Supabase progressive reviewed search terms",fresh:true,termsReviewed:dashboardSummary.totalReviewed,mutatingGoogleAdsChanges:false},summary:summary(results),results,history:results.filter(row=>row.verificationStatus==="verified"),googleRecommendations:[],googleRecommendationsWarning:null,changeSets:[],settings,refresh:{mode:"cached",checkedAt:job.updated_at,currentTerms:job.total_terms,reusedTerms:dashboardSummary.totalReviewed,newTerms:0,queuedNewTerms:Math.max(0,job.total_terms-dashboardSummary.totalReviewed)}};
 }
 
 async function loadDurableRows(jobId:string){
@@ -90,7 +93,7 @@ async function dashboardForRun(run:Run,template?:OptimizationDashboardPayload):P
  const decisions=runIds.length?await supabaseRest<Decision[]>(`ad_automation_search_term_decisions?analysis_run_id=in.(${runIds.join(",")})&select=*&order=reviewed_at.desc.nullslast`):[];
  const latestByItem=new Map<string,Decision>();for(const decision of decisions){const key=decision.item_key;if(key&&!latestByItem.has(key))latestByItem.set(key,decision);}
  const settings=await getSearchTermAccountSettings(run.google_customer_id,run.analyzed_at);
- const results=run.recommendations.map((row,index)=>hydrate(row,run.id,String(index),latestByItem.get(stableSearchTermKey(row))));
+ const results=run.recommendations.map((row,index)=>applyAutomaticExclusionPolicy(hydrate(row,run.id,String(index),latestByItem.get(stableSearchTermKey(row))),{source:{label:"Stored analysis",fresh:template?.source.fresh??true,termsReviewed:run.recommendations.length,mutatingGoogleAdsChanges:false}},settings.autoSafeScoreThreshold));
  const base:OptimizationDashboardPayload=template??{account:{customerId:run.google_customer_id,customerName:run.customer_name||`Google Ads ${run.google_customer_id}`,reportingPeriod:{startDate:run.reporting_start_date,endDate:run.reporting_end_date},lastAnalysisAt:run.analyzed_at,nextRunAt:settings.nextRunAt,automationEnabled:false},source:{label:"Supabase analyzed search terms",fresh:true,termsReviewed:results.length,mutatingGoogleAdsChanges:false},summary:summary(results),results,history:results.filter(row=>row.verificationStatus==="verified"),googleRecommendations:[],googleRecommendationsWarning:null,changeSets:[],settings};
  return {...base,account:{...base.account,nextRunAt:settings.nextRunAt},settings,summary:summary(results),results,history:results.filter(row=>row.verificationStatus==="verified"),refresh:{mode:(run.refresh_status as "cached"|"incremental"|"full")||"cached",checkedAt:run.last_checked_at||run.analyzed_at,currentTerms:run.current_term_count??results.length,reusedTerms:run.reused_term_count??results.length,newTerms:run.new_term_count??0,queuedNewTerms:run.queued_new_term_count??0}};
 }

@@ -143,7 +143,7 @@ export function ReportShell({
             items: [
               { href: hrefs.changeControl, label: "Change Control Admin", active: pathname === "/change-control", icon: GitCompareArrowsIcon },
               { href: hrefs.userManagement, label: "User Management", active: pathname === "/user-management", icon: UsersRoundIcon },
-              { href: hrefs.settings, label: "Workflow Settings", active: pathname === "/settings", icon: SettingsIcon },
+              { href: hrefs.settings, label: "Settings", active: pathname === "/settings", icon: SettingsIcon },
             ],
           },
         ]

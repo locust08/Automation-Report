@@ -1,6 +1,7 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
 
+import { applyAutomaticExclusionPolicy } from "@/lib/search-term-optimization/automatic-exclusion-rules";
 import { getCredentials } from "@/lib/reporting/env";
 import { calculateSafetyScore, evaluateHardGates } from "@/lib/search-term-optimization/scoring";
 import { normalizeTrafficQualityRecommendation } from "@/lib/traffic-quality/contracts";
@@ -111,7 +112,7 @@ export class ManualRunnerOutputRepository implements SearchTermOptimizationRepos
     const googleContext = await getCachedGoogleSearchTermContext(raw).catch(() => new Map<string, GoogleSearchTermContext>());
 
     const mappedResults = raw.allRows.map((row, index) =>
-      mapResult({ row, index, criteria, landingText, landingContextLoaded, fresh, automationEnabled, generatedAt, googleContext }),
+      applyAutomaticExclusionPolicy(mapResult({ row, index, criteria, landingText, landingContextLoaded, fresh, automationEnabled, generatedAt, googleContext }), { source: { label: "Analysis", fresh, termsReviewed: raw.allRows.length, mutatingGoogleAdsChanges: false } }, 90),
     );
     // SQLite intentionally stores one recommendation per account/campaign/ad
     // group/search-term identity. The Google source can return that identity
@@ -156,7 +157,7 @@ export class ManualRunnerOutputRepository implements SearchTermOptimizationRepos
       settings: {
         googleCustomerId: raw.customerId,
         automationEnabled: false,
-        automaticExclusionEnabled: false,
+        automaticExclusionEnabled: true,
         scheduleFrequency: "monthly",
         autoSafeScoreThreshold: 90,
         highSpendThreshold: 500,

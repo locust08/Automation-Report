@@ -6,6 +6,7 @@ export type AnalysisScheduleFrequency = "manual" | "weekly" | "biweekly" | "mont
 export type SearchTermAccountSettings = {
   googleCustomerId: string;
   automationEnabled: boolean;
+  /** @deprecated Auto-exclusion is universal; responses always return true. */
   automaticExclusionEnabled: boolean;
   scheduleFrequency: AnalysisScheduleFrequency;
   autoSafeScoreThreshold: number;

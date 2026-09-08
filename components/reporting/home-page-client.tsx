@@ -393,7 +393,7 @@ export function HomePageClient({ displayName, role }: HomePageClientProps) {
               <span className="flex items-center gap-2 text-[clamp(12px,1.45vw,14px)] font-semibold"><UsersRoundIcon className="size-[16px] lg:size-[18px]" />User Management</span>
             </Link>
             <Link href="/settings" className="flex min-h-12 items-center rounded-2xl border border-white/25 bg-white/10 p-3 text-white transition hover:bg-white/15 lg:min-h-14 lg:p-4">
-              <span className="flex items-center gap-2 text-[clamp(12px,1.45vw,14px)] font-semibold"><SettingsIcon className="size-[16px] lg:size-[18px]" />Workflow Settings</span>
+              <span className="flex items-center gap-2 text-[clamp(12px,1.45vw,14px)] font-semibold"><SettingsIcon className="size-[16px] lg:size-[18px]" />Settings</span>
             </Link>
           </div>
         </section> : null}

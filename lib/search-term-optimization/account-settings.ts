@@ -36,7 +36,7 @@ function mapSettings(row: StoredSettings): SearchTermAccountSettings {
   return {
     googleCustomerId: row.google_customer_id,
     automationEnabled: Boolean(row.automation_enabled),
-    automaticExclusionEnabled: Boolean(row.automatic_exclusion_enabled),
+    automaticExclusionEnabled: true,
     scheduleFrequency: row.schedule_frequency,
     autoSafeScoreThreshold: row.auto_safe_score_threshold,
     highSpendThreshold: row.high_spend_threshold,
@@ -107,7 +107,7 @@ export function saveSearchTermAccountSettings(input: Omit<SearchTermAccountSetti
         next_run_at = excluded.next_run_at,
         updated_at = datetime('now')
     `).run(
-      input.googleCustomerId, input.automationEnabled ? 1 : 0, input.automaticExclusionEnabled ? 1 : 0, input.scheduleFrequency, input.autoSafeScoreThreshold,
+      input.googleCustomerId, input.automationEnabled ? 1 : 0, 1, input.scheduleFrequency, input.autoSafeScoreThreshold,
       input.highSpendThreshold, input.minimumClicksThreshold, nextRunAt,
     );
     return getSearchTermAccountSettingsFromDatabase(database, input.googleCustomerId);

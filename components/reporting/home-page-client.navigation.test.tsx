@@ -18,7 +18,7 @@ test("offers the shared navigation destinations from dashboard tools", () => {
   assert.match(html, /href="\/change-control"[^>]*>[\s\S]*?Change Control Admin/);
   assert.match(html, /href="\/meta-import"[^>]*>[\s\S]*?Import Meta CSV/);
   assert.match(html, /href="\/user-management"[^>]*>[\s\S]*?User Management/);
-  assert.match(html, /href="\/settings"[^>]*>[\s\S]*?Workflow Settings/);
+  assert.match(html, /href="\/settings"[^>]*>[\s\S]*?Settings/);
   assert.doesNotMatch(html, />Google</);
   assert.doesNotMatch(html, /Edit Google Ads/);
 });
@@ -45,5 +45,5 @@ test("groups dashboard tools by workflow category", () => {
   assert.ok(dashboardTools.indexOf("Optimization Scheduling", adsManagement) < admin);
   assert.ok(dashboardTools.indexOf("Change Control Admin", admin) > admin);
   assert.ok(dashboardTools.indexOf("User Management", admin) > admin);
-  assert.ok(dashboardTools.indexOf("Workflow Settings", admin) > admin);
+  assert.ok(dashboardTools.indexOf("Settings", admin) > admin);
 });

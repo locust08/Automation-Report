@@ -14,7 +14,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Only an approver can authorize change sets." }, { status: 403 });
   }
   if (!await isWorkflowApprovalRequired("search_term_approval")) {
-    return NextResponse.json({ error: "A separate search-term approval is disabled in Workflow Settings." }, { status: 409 });
+    return NextResponse.json({ error: "A separate search-term approval is disabled in Settings." }, { status: 409 });
   }
 
   const body = await request.json() as { recommendationIds?: unknown; decision?: unknown };

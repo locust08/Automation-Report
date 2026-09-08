@@ -94,7 +94,10 @@ declare
 begin
   if p_customer_id !~ '^[0-9]{10}$' then raise exception 'AUTOMATIC_ACTION_CUSTOMER_INVALID'; end if;
   if p_mode not in ('dry_run', 'live') then raise exception 'AUTOMATIC_ACTION_MODE_INVALID'; end if;
-  if p_run_cap < 1 or p_run_cap > 25 then raise exception 'AUTOMATIC_ACTION_CAP_INVALID'; end if;
+  -- The shared setting is authoritative, including calls from older workers.
+  select search_term_exclusion_cap into p_run_cap
+  from public.ads_dashboard_automation_settings where id = 'global' for share;
+  if p_run_cap is null then raise exception 'AUTOMATIC_ACTION_SETTINGS_UNAVAILABLE'; end if;
   if jsonb_typeof(p_candidates) <> 'array' then raise exception 'AUTOMATIC_ACTION_CANDIDATES_INVALID'; end if;
   if not exists (
     select 1 from public.ad_automation_search_term_analysis_jobs job
@@ -126,7 +129,7 @@ begin
       continue;
     end if;
 
-    if claimed_count >= p_run_cap then continue; end if;
+    if p_run_cap > 0 and claimed_count >= p_run_cap then continue; end if;
     if coalesce(candidate->>'adGroupId', '') !~ '^[0-9]+$' then continue; end if;
     if coalesce(candidate->>'analysisRowId', '') !~ '^[0-9]+$' then continue; end if;
 
