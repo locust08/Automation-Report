@@ -6,6 +6,14 @@ import { stableSearchTermKey } from "@/lib/search-term-optimization/stable-searc
 import type { AutomaticActionHistoryItem, AutomaticActionHistoryPayload, AutomaticActionStatus, OptimizationResult } from "@/lib/search-term-optimization/types";
 
 type AnalysisRow = { id:number;stable_term_key:string;result_json:OptimizationResult };
+type AutomaticActionExecutionDependencies = {
+  getSettings?:(customerId:string)=>ReturnType<typeof getSearchTermAccountSettings>;
+  loadRows?:(batchId:string)=>Promise<AnalysisRow[]>;
+  claim?:(input:{jobId:string;batchId:string;customerId:string;mode:"dry_run"|"live";candidates:unknown[]})=>Promise<ClaimedAutomaticAction[]>;
+  publish?:(customerId:string,rows:Array<{campaignId:string|null;adGroupId:string|null;searchTerm:string;action:string}>,options?:{rejectPositiveExactOverlap?:boolean})=>Promise<{published:number;deduplicated:number;resourceNames:string[]}>;
+  complete?:(id:string,status:AutomaticActionStatus,values?:{error?:string|null;googleResourceName?:string|null})=>Promise<void>;
+  environment?:Record<string,string|undefined>;
+};
 export type ClaimedAutomaticAction = {
   id:string;analysis_job_id:string;analysis_row_id:number;stable_term_key:string;search_term:string;
   campaign_id:string|null;campaign_name:string;ad_group_id:string;ad_group_name:string;
@@ -60,12 +68,17 @@ export async function processClaimedAutomaticActions(
   return totals;
 }
 
-export async function executeAutomaticExclusionsForBatch(input:{jobId:string;batchId:string;customerId:string}) {
+export async function executeAutomaticExclusionsForBatch(
+  input:{jobId:string;batchId:string;customerId:string},
+  dependencies:AutomaticActionExecutionDependencies={},
+) {
   const customerId=input.customerId.replace(/\D/g,"");
-  const settings=await getSearchTermAccountSettings(customerId);
-  const livePublishingEnabled=isLiveAutomaticPublishingEnabled();
+  const settings=await (dependencies.getSettings??getSearchTermAccountSettings)(customerId);
+  const livePublishingEnabled=isLiveAutomaticPublishingEnabled(dependencies.environment);
   if(!settings.automaticExclusionEnabled)return {disabled:true,mode:livePublishingEnabled?"live":"dry_run",claimed:0,published:0,reconciled:0,skipped:0,failed:0};
-  const stored=await supabaseRest<AnalysisRow[]>(`ad_automation_search_term_analysis_rows?batch_id=eq.${qs(input.batchId)}&select=id,stable_term_key,result_json&order=id.asc`);
+  const stored=dependencies.loadRows
+    ? await dependencies.loadRows(input.batchId)
+    : await supabaseRest<AnalysisRow[]>(`ad_automation_search_term_analysis_rows?batch_id=eq.${qs(input.batchId)}&select=id,stable_term_key,result_json&order=id.asc`);
   const fresh=stored.length>0&&stored.every(item=>Date.now()-new Date(item.result_json.dataRetrievedAt).getTime()<=48*60*60*1000);
   const byStableKey=new Map(stored.map(item=>[item.stable_term_key,item]));
   const selected=selectAutomaticExclusionCandidates(stored.map(item=>item.result_json),{source:{label:"Durable analysis batch",fresh,termsReviewed:stored.length,mutatingGoogleAdsChanges:false}},settings.autoSafeScoreThreshold).slice(0,AUTOMATIC_EXCLUSION_RUN_CAP);
@@ -76,9 +89,11 @@ export async function executeAutomaticExclusionsForBatch(input:{jobId:string;bat
   });
   if(!candidates.length)return {disabled:false,mode:livePublishingEnabled?"live":"dry_run",claimed:0,published:0,reconciled:0,skipped:0,failed:0};
   const mode=livePublishingEnabled?"live":"dry_run";
-  const claimed=await supabaseRest<ClaimedAutomaticAction[]>("rpc/claim_automatic_search_term_actions",{method:"POST",body:jsonBody({p_job_id:input.jobId,p_batch_id:input.batchId,p_customer_id:customerId,p_mode:mode,p_candidates:candidates,p_run_cap:AUTOMATIC_EXCLUSION_RUN_CAP})});
+  const claimed=dependencies.claim
+    ? await dependencies.claim({jobId:input.jobId,batchId:input.batchId,customerId,mode,candidates})
+    : await supabaseRest<ClaimedAutomaticAction[]>("rpc/claim_automatic_search_term_actions",{method:"POST",body:jsonBody({p_job_id:input.jobId,p_batch_id:input.batchId,p_customer_id:customerId,p_mode:mode,p_candidates:candidates,p_run_cap:AUTOMATIC_EXCLUSION_RUN_CAP})});
   if(!livePublishingEnabled)return {disabled:false,mode,claimed:claimed.length,published:0,reconciled:0,skipped:0,failed:0};
-  return {disabled:false,mode,claimed:claimed.length,...await processClaimedAutomaticActions(customerId,claimed)};
+  return {disabled:false,mode,claimed:claimed.length,...await processClaimedAutomaticActions(customerId,claimed,{publish:dependencies.publish,complete:dependencies.complete})};
 }
 
 export async function getAutomaticActionHistory(customerId:string,page=1,pageSize=10):Promise<AutomaticActionHistoryPayload> {

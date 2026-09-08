@@ -1,6 +1,42 @@
 alter table public.ad_automation_search_term_account_settings
   add column if not exists automatic_exclusion_enabled boolean not null default false;
 
+-- The first automatic-exclusion prototype used this table name with a legacy,
+-- analysis-run-based shape. Preserve that immutable audit before installing the
+-- durable job/batch/row contract used by the current worker.
+do $$
+declare
+  legacy_constraint record;
+  legacy_constraint_number integer := 0;
+begin
+  if to_regclass('public.ad_automation_search_term_automatic_actions') is not null
+    and not exists (
+      select 1
+      from information_schema.columns
+      where table_schema = 'public'
+        and table_name = 'ad_automation_search_term_automatic_actions'
+        and column_name = 'analysis_job_id'
+    )
+  then
+    alter table public.ad_automation_search_term_automatic_actions
+      rename to ad_automation_search_term_automatic_actions_legacy_20260818;
+
+    for legacy_constraint in
+      select conname
+      from pg_constraint
+      where conrelid = 'public.ad_automation_search_term_automatic_actions_legacy_20260818'::regclass
+    loop
+      legacy_constraint_number := legacy_constraint_number + 1;
+      execute format(
+        'alter table public.ad_automation_search_term_automatic_actions_legacy_20260818 rename constraint %I to %I',
+        legacy_constraint.conname,
+        'staa_legacy_20260818_' || legacy_constraint_number
+      );
+    end loop;
+  end if;
+end;
+$$;
+
 create table if not exists public.ad_automation_search_term_automatic_actions (
   id uuid primary key default gen_random_uuid(),
   google_customer_id text not null check (google_customer_id ~ '^[0-9]{10}$'),
