@@ -24,6 +24,7 @@ export async function PUT(request: Request) {
     const body = await request.json() as Record<string, unknown>;
     const googleCustomerId = typeof body.googleCustomerId === "string" ? body.googleCustomerId.replace(/\D/g, "") : "";
     const automationEnabled = body.automationEnabled === true;
+    const automaticExclusionEnabled = body.automaticExclusionEnabled === true;
     const scheduleFrequency = body.scheduleFrequency as AnalysisScheduleFrequency;
     const autoSafeScoreThreshold = Number(body.autoSafeScoreThreshold);
     const highSpendThreshold = Number(body.highSpendThreshold);
@@ -34,7 +35,7 @@ export async function PUT(request: Request) {
     if (!Number.isFinite(highSpendThreshold) || highSpendThreshold < 0) throw new Error("High-spend threshold cannot be negative.");
     if (!Number.isInteger(minimumClicksThreshold) || minimumClicksThreshold < 0) throw new Error("Minimum clicks cannot be negative.");
     return NextResponse.json(await saveSearchTermAccountSettings({
-      googleCustomerId, automationEnabled, scheduleFrequency, autoSafeScoreThreshold,
+      googleCustomerId, automationEnabled, automaticExclusionEnabled, scheduleFrequency, autoSafeScoreThreshold,
       highSpendThreshold, minimumClicksThreshold,
     }));
   } catch (error) {

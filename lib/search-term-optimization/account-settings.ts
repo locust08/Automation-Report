@@ -7,6 +7,7 @@ import type { AnalysisScheduleFrequency, SearchTermAccountSettings } from "@/lib
 type StoredSettings = {
   google_customer_id: string;
   automation_enabled: number;
+  automatic_exclusion_enabled?: number;
   schedule_frequency: AnalysisScheduleFrequency;
   auto_safe_score_threshold: number;
   review_score_threshold: number;
@@ -25,6 +26,9 @@ function openSettingsDatabase() {
   if (!columns.some((column) => column.name === "automation_enabled")) {
     database.exec("alter table ad_automation_search_term_account_settings add column automation_enabled integer not null default 0 check (automation_enabled in (0, 1))");
   }
+  if (!columns.some((column) => column.name === "automatic_exclusion_enabled")) {
+    database.exec("alter table ad_automation_search_term_account_settings add column automatic_exclusion_enabled integer not null default 0 check (automatic_exclusion_enabled in (0, 1))");
+  }
   return database;
 }
 
@@ -32,6 +36,7 @@ function mapSettings(row: StoredSettings): SearchTermAccountSettings {
   return {
     googleCustomerId: row.google_customer_id,
     automationEnabled: Boolean(row.automation_enabled),
+    automaticExclusionEnabled: Boolean(row.automatic_exclusion_enabled),
     scheduleFrequency: row.schedule_frequency,
     autoSafeScoreThreshold: row.auto_safe_score_threshold,
     highSpendThreshold: row.high_spend_threshold,
@@ -89,11 +94,12 @@ export function saveSearchTermAccountSettings(input: Omit<SearchTermAccountSetti
     const nextRunAt = input.automationEnabled ? calculateNextRun(input.scheduleFrequency, anchor) : null;
     database.prepare(`
       insert into ad_automation_search_term_account_settings (
-        google_customer_id, automation_enabled, schedule_frequency, auto_safe_score_threshold,
+        google_customer_id, automation_enabled, automatic_exclusion_enabled, schedule_frequency, auto_safe_score_threshold,
         high_spend_threshold, minimum_clicks_threshold, next_run_at, updated_at
-      ) values (?, ?, ?, ?, ?, ?, ?, datetime('now'))
+      ) values (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
       on conflict (google_customer_id) do update set
         automation_enabled = excluded.automation_enabled,
+        automatic_exclusion_enabled = excluded.automatic_exclusion_enabled,
         schedule_frequency = excluded.schedule_frequency,
         auto_safe_score_threshold = excluded.auto_safe_score_threshold,
         high_spend_threshold = excluded.high_spend_threshold,
@@ -101,7 +107,7 @@ export function saveSearchTermAccountSettings(input: Omit<SearchTermAccountSetti
         next_run_at = excluded.next_run_at,
         updated_at = datetime('now')
     `).run(
-      input.googleCustomerId, input.automationEnabled ? 1 : 0, input.scheduleFrequency, input.autoSafeScoreThreshold,
+      input.googleCustomerId, input.automationEnabled ? 1 : 0, input.automaticExclusionEnabled ? 1 : 0, input.scheduleFrequency, input.autoSafeScoreThreshold,
       input.highSpendThreshold, input.minimumClicksThreshold, nextRunAt,
     );
     return getSearchTermAccountSettingsFromDatabase(database, input.googleCustomerId);

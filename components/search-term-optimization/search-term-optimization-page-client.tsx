@@ -3,10 +3,10 @@
 import { KeyboardEvent, type ComponentProps, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import {
-  ConstructionIcon,
   ExternalLinkIcon,
   FileDownIcon,
   SearchIcon,
+  ShieldCheckIcon,
 } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
@@ -18,6 +18,7 @@ import { AnalysisProgressPanel } from "@/components/search-term-optimization/ana
 import { DecisionConfirmationDialog } from "@/components/search-term-optimization/decision-confirmation-dialog";
 import { SummaryReportDialog } from "@/components/search-term-optimization/summary-report-dialog";
 import { SearchTermAccountSummary } from "@/components/search-term-optimization/search-term-account-summary";
+import { AutomaticActionsPanel } from "@/components/search-term-optimization/automatic-actions-panel";
 import { ActionGroupTable, groupRowsByAction, type ApproverDecision, type ReviewDecision } from "@/components/search-term-optimization/search-term-results-table";
 import { ReportShell } from "@/components/reporting/report-shell";
 import { AccountEscalationNotice } from "@/components/team-lead-monitoring/account-escalation-notice";
@@ -727,8 +728,8 @@ export function SearchTermOptimizationPageClient({ role, embedded = false, exter
     <OptimizationPageFrame
       embedded={embedded}
       title="Search Term Optimization"
-      dateLabel="Automation to be implemented"
-      headerDateControl={<AutomationUnavailableStatus />}
+      dateLabel="Automatic negative-exact safeguards"
+      headerDateControl={<AutomationStatus />}
       activeQuery=""
       reportReady={!loading && !analysisLoading && !error}
     >
@@ -761,6 +762,7 @@ export function SearchTermOptimizationPageClient({ role, embedded = false, exter
 
         {!analysisLoading && refreshMessage ? <div className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-800">{refreshMessage}</div> : null}
         {!analysisLoading ? <AccountEscalationNotice module="search_term" accountId={data?.account.customerId} /> : null}
+        {!analysisLoading&&data?<AutomaticActionsPanel role={role} dashboard={data}/>:null}
 
         {!analysisLoading && error && !accountPerformance && error.includes("No completed search-term analysis output was found") ? (
           <section className="rounded-2xl border border-neutral-200 bg-white p-5 text-neutral-700 shadow-sm">
@@ -901,17 +903,17 @@ function OptimizationPageFrame({ embedded, children, ...shellProps }: ComponentP
   return embedded ? <>{children}</> : <ReportShell {...shellProps}>{children}</ReportShell>;
 }
 
-function AutomationUnavailableStatus() {
+function AutomationStatus() {
   return (
-    <div className="relative min-w-[230px] overflow-hidden rounded-2xl border border-white/25 bg-black/35 px-5 py-3 text-white shadow-xl backdrop-blur-md" aria-label="Automation to be implemented">
+    <div className="relative min-w-[230px] overflow-hidden rounded-2xl border border-white/25 bg-black/35 px-5 py-3 text-white shadow-xl backdrop-blur-md" aria-label="Automatic negative keyword publishing">
       <div className="pointer-events-none absolute inset-0 bg-gradient-to-br from-white/15 via-white/5 to-black/15" />
       <div className="relative flex items-center gap-3">
         <span className="flex size-10 shrink-0 items-center justify-center rounded-xl border border-amber-300/30 bg-amber-400/15 text-amber-200">
-          <ConstructionIcon className="size-5" />
+          <ShieldCheckIcon className="size-5" />
         </span>
         <span>
-          <span className="block text-xs font-semibold uppercase tracking-[0.16em] text-white/65">Automation unavailable</span>
-          <span className="mt-0.5 block text-base font-semibold">To be implemented</span>
+          <span className="block text-xs font-semibold uppercase tracking-[0.16em] text-white/65">Negative exact automation</span>
+          <span className="mt-0.5 block text-base font-semibold">Fail-closed safeguards</span>
         </span>
       </div>
     </div>

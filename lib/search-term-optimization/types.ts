@@ -6,12 +6,40 @@ export type AnalysisScheduleFrequency = "manual" | "weekly" | "biweekly" | "mont
 export type SearchTermAccountSettings = {
   googleCustomerId: string;
   automationEnabled: boolean;
+  automaticExclusionEnabled: boolean;
   scheduleFrequency: AnalysisScheduleFrequency;
   autoSafeScoreThreshold: number;
   highSpendThreshold: number;
   minimumClicksThreshold: number;
   lastRunAt: string | null;
   nextRunAt: string | null;
+};
+
+export type AutomaticActionStatus = "dry_run" | "pending" | "published" | "reconciled" | "skipped" | "failed";
+
+export type AutomaticActionHistoryItem = {
+  id: string;
+  analysisJobId: string;
+  searchTerm: string;
+  campaign: string;
+  adGroup: string;
+  action: "negative exact";
+  safetyScore: number;
+  scoreThreshold: number;
+  executionMode: "dry_run" | "live";
+  status: AutomaticActionStatus;
+  googleResourceName: string | null;
+  error: string | null;
+  createdAt: string;
+  completedAt: string | null;
+};
+
+export type AutomaticActionHistoryPayload = {
+  items: AutomaticActionHistoryItem[];
+  page: number;
+  pageSize: number;
+  total: number;
+  livePublishingEnabled: boolean;
 };
 
 export type ScoreBreakdownItem = {

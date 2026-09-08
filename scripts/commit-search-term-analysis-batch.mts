@@ -20,4 +20,13 @@ const rows=dashboard.results.map(row=>({...row,stableTermKey:stableSearchTermKey
 if(rows.length!==expected)throw new Error(`Expected ${expected} reviewed rows, but the mapped batch contains ${rows.length}.`);
 const result=await supabaseRest<Array<{saved_row_count:number;completed_runs:number;total_saved_rows:number}>>("rpc/commit_search_term_analysis_batch",{method:"POST",body:jsonBody({requested_job_id:jobId,requested_batch_id:batchId,expected_row_count:expected,reviewed_rows:rows,requested_checksum:checksum||null})});
 if(!result[0]||result[0].saved_row_count!==expected)throw new Error("Supabase did not confirm the complete reviewed batch.");
-await fs.writeFile(resultPath,JSON.stringify(result[0]),"utf8");
+let automaticActions:unknown={status:"not-run"};
+try {
+  const loadedAutomaticActions=await import("../lib/search-term-optimization/automatic-actions");
+  const {executeAutomaticExclusionsForBatch}=((loadedAutomaticActions as unknown as {default?:typeof loadedAutomaticActions}).default??loadedAutomaticActions);
+  automaticActions=await executeAutomaticExclusionsForBatch({jobId,batchId,customerId:accountId});
+} catch(error) {
+  automaticActions={status:"failed",error:error instanceof Error?error.message:String(error)};
+  console.error(`[automatic-negative-keywords] batch ${batchId} failed without invalidating analysis: ${JSON.stringify(automaticActions)}`);
+}
+await fs.writeFile(resultPath,JSON.stringify({...result[0],automaticActions}),"utf8");

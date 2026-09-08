@@ -156,6 +156,7 @@ export class ManualRunnerOutputRepository implements SearchTermOptimizationRepos
       settings: {
         googleCustomerId: raw.customerId,
         automationEnabled: false,
+        automaticExclusionEnabled: false,
         scheduleFrequency: "monthly",
         autoSafeScoreThreshold: 90,
         highSpendThreshold: 500,

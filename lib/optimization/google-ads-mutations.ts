@@ -77,11 +77,15 @@ async function existingKeywordKeys(customerIdInput: string, rows: SearchTermMuta
   }));
 }
 
-export async function publishSearchTermOptimizations(customerId: string, rows: SearchTermMutation[]) {
+export async function publishSearchTermOptimizations(customerId: string, rows: SearchTermMutation[], options: { rejectPositiveExactOverlap?: boolean } = {}) {
   if (rows.length > MAX_MUTATIONS_PER_REVIEW) throw new Error(`Select no more than ${MAX_MUTATIONS_PER_REVIEW} search terms at a time.`);
   const normalized = customerId.replace(/\D/g, "");
   const uniqueRows = [...new Map(rows.map((row) => [`${row.adGroupId}|${row.action}|${row.searchTerm.trim().toLowerCase()}`, row])).values()];
   const existing = await existingKeywordKeys(normalized, uniqueRows);
+  if (options.rejectPositiveExactOverlap) {
+    const overlap = uniqueRows.find((row) => existing.has(`${row.adGroupId}|add exact|${row.searchTerm.trim().toLowerCase()}`));
+    if (overlap) throw new Error(`Google Ads publishing stopped because “${overlap.searchTerm}” is already an enabled positive exact keyword in the target ad group.`);
+  }
   const publishableRows = uniqueRows.filter((row) => !existing.has(`${row.adGroupId}|${row.action}|${row.searchTerm.trim().toLowerCase()}`));
   const operations = publishableRows.map((row) => {
     if (!row.adGroupId) throw new Error(`Search term “${row.searchTerm}” is missing its Google Ads ad group ID.`);

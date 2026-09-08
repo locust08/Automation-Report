@@ -41,6 +41,7 @@ jobs:
           SUPABASE_SECRET_KEY: "${{ secrets.SUPABASE_SECRET_KEY }}"
           SEARCH_TERM_ANALYSIS_WORKER_URL: "${{ secrets.SEARCH_TERM_ANALYSIS_WORKER_URL }}"
           WORKER_API_SECRET: "${{ secrets.WORKER_API_SECRET }}"
+          SEARCH_TERM_AUTOMATION_LIVE_PUBLISH_ENABLED: "${{ vars.SEARCH_TERM_AUTOMATION_LIVE_PUBLISH_ENABLED }}"
       - name: Save analysis to Supabase
         if: always()
         continue-on-error: true

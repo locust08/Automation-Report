@@ -18,17 +18,20 @@ try {
   const saved = settingsRepository.saveSearchTermAccountSettings({
     googleCustomerId: "1234567890",
     automationEnabled: false,
+    automaticExclusionEnabled: true,
     scheduleFrequency: "weekly",
     autoSafeScoreThreshold: 92,
     highSpendThreshold: 750,
     minimumClicksThreshold: 8,
   });
   assert.equal(saved.autoSafeScoreThreshold, 92);
+  assert.equal(saved.automaticExclusionEnabled, true);
   assert.equal(saved.nextRunAt, null);
 
   const enabled = settingsRepository.saveSearchTermAccountSettings({
     googleCustomerId: "1234567890",
     automationEnabled: true,
+    automaticExclusionEnabled: false,
     scheduleFrequency: "weekly",
     autoSafeScoreThreshold: 92,
     highSpendThreshold: 750,
