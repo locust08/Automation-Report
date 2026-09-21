@@ -1,3 +1,4 @@
+import { googleAdsClient } from "../google-ads/client";
 import { promises as fs } from "node:fs";
 import path from "node:path";
 
@@ -179,9 +180,7 @@ export async function generateSearchTermAnalysis(input: GenerateSearchTermAnalys
   const customerId = input.accountId.replace(/\D/g, "");
   if (customerId.length !== 10) throw new Error("Google Ads customer ID must contain 10 digits.");
   const credentials = getCredentials();
-  if (!credentials.googleDeveloperToken) throw new Error("Google Ads developer token is unavailable.");
-  const accessToken = await resolveRecommendationAccessToken(credentials);
-  const loginCustomerId = (input.loginCustomerId || credentials.googleLoginCustomerId || "").replace(/\D/g, "");
+  const loginCustomerId = ((input.loginCustomerId === undefined ? credentials.googleLoginCustomerId : input.loginCustomerId) || "").replace(/\D/g, "");
   const end = new Date();
   const start = new Date(end);
   start.setUTCDate(start.getUTCDate() - Math.max(1, input.days ?? 30) + 1);
@@ -196,19 +195,7 @@ export async function generateSearchTermAnalysis(input: GenerateSearchTermAnalys
     WHERE segments.date BETWEEN '${startDate}' AND '${endDate}'
     ORDER BY metrics.cost_micros DESC
   `;
-  const response = await fetch(`https://googleads.googleapis.com/${credentials.googleAdsApiVersion}/customers/${customerId}/googleAds:searchStream`, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-      "developer-token": credentials.googleDeveloperToken,
-      ...(loginCustomerId ? { "login-customer-id": loginCustomerId } : {}),
-      "content-type": "application/json",
-    },
-    body: JSON.stringify({ query }),
-    cache: "no-store",
-  });
-  if (!response.ok) throw new Error(`Google search-term retrieval failed (${response.status}): ${(await response.text()).slice(0, 1_000)}`);
-  const batches = await response.json() as Array<{ results?: Array<{
+  const batches = await googleAdsClient(credentials).request(`customers/${customerId}/googleAds:searchStream`, { query }, { loginCustomerId }) as Array<{ results?: Array<{
     searchTermView?: { resourceName?: string; searchTerm?: string; status?: string };
     campaign?: { id?: string; name?: string };
     adGroup?: { id?: string; name?: string };
@@ -301,22 +288,9 @@ async function getCachedGoogleKeywordRecommendations(raw: RawOutput) {
 
 async function fetchGoogleKeywordRecommendations(raw: RawOutput): Promise<GoogleKeywordRecommendation[]> {
   const credentials = getCredentials();
-  if (!credentials.googleDeveloperToken) throw new Error("Google Ads developer token is unavailable.");
-  const accessToken = await resolveRecommendationAccessToken(credentials);
   const customerId = raw.customerIdNormalized || raw.customerId.replace(/\D/g, "");
-  const loginCustomerId = (raw.loginCustomerIdUsed || credentials.googleLoginCustomerId || "").replace(/\D/g, "");
-  const response = await fetch(
-    `https://googleads.googleapis.com/${credentials.googleAdsApiVersion}/customers/${customerId}/googleAds:searchStream`,
-    {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-        "developer-token": credentials.googleDeveloperToken,
-        ...(loginCustomerId ? { "login-customer-id": loginCustomerId } : {}),
-        "content-type": "application/json",
-      },
-      body: JSON.stringify({
-        query: `
+  const loginCustomerId = ((raw.loginCustomerIdUsed === undefined ? credentials.googleLoginCustomerId : raw.loginCustomerIdUsed) || "").replace(/\D/g, "");
+  const batches = await googleAdsClient(credentials).request(`customers/${customerId}/googleAds:searchStream`, { query: `
           SELECT
             search_term_view.resource_name,
             search_term_view.search_term,
@@ -329,15 +303,7 @@ async function fetchGoogleKeywordRecommendations(raw: RawOutput): Promise<Google
           WHERE segments.date BETWEEN '${raw.dateRange.startDate}' AND '${raw.dateRange.endDate}'
             AND search_term_view.status = 'NONE'
           ORDER BY metrics.cost_micros DESC
-        `,
-      }),
-      cache: "no-store",
-    },
-  );
-  if (!response.ok) {
-    throw new Error(`Google search terms failed (${response.status}): ${(await response.text()).slice(0, 2_000)}`);
-  }
-  const batches = (await response.json()) as Array<{
+        ` }, { loginCustomerId }) as Array<{
     results?: Array<{
       searchTermView?: {
         resourceName?: string;
@@ -362,22 +328,7 @@ async function fetchGoogleKeywordRecommendations(raw: RawOutput): Promise<Google
   });
 }
 
-async function resolveRecommendationAccessToken(credentials: ReturnType<typeof getCredentials>) {
-  if (credentials.googleRefreshToken && credentials.googleClientId && credentials.googleClientSecret) {
-    const body = new URLSearchParams({
-      client_id: credentials.googleClientId,
-      client_secret: credentials.googleClientSecret,
-      refresh_token: credentials.googleRefreshToken,
-      grant_type: "refresh_token",
-    });
-    const response = await fetch("https://oauth2.googleapis.com/token", { method: "POST", body, cache: "no-store" });
-    const payload = (await response.json()) as { access_token?: string; error_description?: string };
-    if (!response.ok || !payload.access_token) throw new Error(payload.error_description || "Google OAuth refresh failed.");
-    return payload.access_token;
-  }
-  if (credentials.googleAccessToken) return credentials.googleAccessToken;
-  throw new Error("Google Ads access credentials are unavailable.");
-}
+
 
 function mapResult(input: {
   row: RawRow;
@@ -501,10 +452,8 @@ async function getCachedGoogleSearchTermContext(raw: RawOutput) {
 
 async function fetchGoogleSearchTermContext(raw: RawOutput) {
   const credentials = getCredentials();
-  if (!credentials.googleDeveloperToken) throw new Error("Google Ads developer token is unavailable.");
-  const accessToken = await resolveRecommendationAccessToken(credentials);
   const customerId = raw.customerIdNormalized || raw.customerId.replace(/\D/g, "");
-  const loginCustomerId = (raw.loginCustomerIdUsed || credentials.googleLoginCustomerId || "").replace(/\D/g, "");
+  const loginCustomerId = ((raw.loginCustomerIdUsed === undefined ? credentials.googleLoginCustomerId : raw.loginCustomerIdUsed) || "").replace(/\D/g, "");
   const query = `
     SELECT search_term_view.resource_name, search_term_view.search_term, search_term_view.status,
       campaign.id, campaign.name, ad_group.id, ad_group.name,
@@ -513,19 +462,7 @@ async function fetchGoogleSearchTermContext(raw: RawOutput) {
     FROM search_term_view
     WHERE segments.date BETWEEN '${raw.dateRange.startDate}' AND '${raw.dateRange.endDate}'
   `;
-  const response = await fetch(`https://googleads.googleapis.com/${credentials.googleAdsApiVersion}/customers/${customerId}/googleAds:searchStream`, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-      "developer-token": credentials.googleDeveloperToken,
-      ...(loginCustomerId ? { "login-customer-id": loginCustomerId } : {}),
-      "content-type": "application/json",
-    },
-    body: JSON.stringify({ query }),
-    cache: "no-store",
-  });
-  if (!response.ok) throw new Error(`Google search-term context failed (${response.status}).`);
-  const batches = await response.json() as Array<{ results?: Array<{
+  const batches = await googleAdsClient(credentials).request(`customers/${customerId}/googleAds:searchStream`, { query }, { loginCustomerId }) as Array<{ results?: Array<{
     searchTermView?: { resourceName?: string; searchTerm?: string; status?: string };
     campaign?: { id?: string; name?: string };
     adGroup?: { id?: string; name?: string };

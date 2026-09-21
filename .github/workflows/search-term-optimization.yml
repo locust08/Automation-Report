@@ -32,7 +32,6 @@ jobs:
         run: node scripts/run-search-term-analysis-job.mjs "${{ inputs.run_id }}" "${{ inputs.account_id }}" "${{ inputs.start_date }}" "${{ inputs.end_date }}"
         env:
           OPENAI_API_KEY: "${{ secrets.OPENAI_API_KEY }}"
-          GOOGLE_ADS_DEVELOPER_TOKEN: "${{ secrets.GOOGLE_ADS_DEVELOPER_TOKEN }}"
           GOOGLE_ADS_CLIENT_ID: "${{ secrets.GOOGLE_ADS_CLIENT_ID }}"
           GOOGLE_ADS_CLIENT_SECRET: "${{ secrets.GOOGLE_ADS_CLIENT_SECRET }}"
           GOOGLE_ADS_REFRESH_TOKEN: "${{ secrets.GOOGLE_ADS_REFRESH_TOKEN }}"
@@ -47,7 +46,6 @@ jobs:
         continue-on-error: true
         run: npx tsx scripts/finalize-scheduled-search-term-analysis.mts "${{ inputs.account_id }}"
         env:
-          GOOGLE_ADS_DEVELOPER_TOKEN: "${{ secrets.GOOGLE_ADS_DEVELOPER_TOKEN }}"
           GOOGLE_ADS_CLIENT_ID: "${{ secrets.GOOGLE_ADS_CLIENT_ID }}"
           GOOGLE_ADS_CLIENT_SECRET: "${{ secrets.GOOGLE_ADS_CLIENT_SECRET }}"
           GOOGLE_ADS_REFRESH_TOKEN: "${{ secrets.GOOGLE_ADS_REFRESH_TOKEN }}"

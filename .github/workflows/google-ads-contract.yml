@@ -1,0 +1,17 @@
+name: Google Ads migration contract
+on:
+  pull_request:
+  push:
+    branches: ["codex/m07-cloud-project-access-migration", "main", "master"]
+jobs:
+  contract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm }
+      - uses: astral-sh/setup-uv@v5
+      - run: npm ci
+      - run: npm run google-ads:check
+      - run: npm run google-ads:test
+      - run: uv run --locked --project lib/search-term-optimization/python --group ads --group ads-agent python scripts/google-ads-python.test.py

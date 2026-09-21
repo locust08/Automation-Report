@@ -6,7 +6,7 @@ dependencies = []
 
 [dependency-groups]
 ads = [
-  "google-ads>=25.1.0",
+  "google-ads>=32.0.0",
 ]
 ads-agent = [
   "beautifulsoup4>=4.14.2",

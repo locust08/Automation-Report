@@ -13,12 +13,11 @@ This Worker retrieves Google Ads placements on demand and writes only the reques
 ## Required secrets and bindings
 
 - `WORKER_API_SECRET`
-- `GOOGLE_ADS_DEVELOPER_TOKEN`
 - `GOOGLE_ADS_REFRESH_TOKEN`
 - `GOOGLE_ADS_CLIENT_ID`
 - `GOOGLE_ADS_CLIENT_SECRET`
 - `GOOGLE_ADS_LOGIN_CUSTOMER_ID` (optional fallback)
-- `GOOGLE_ADS_API_VERSION` (optional, defaults to `v22`)
+- `GOOGLE_ADS_API_VERSION` (optional, defaults to `v25`)
 - `ACCOUNT_DIRECTORY` D1 binding for Google Ads access paths
 - `PLACEMENT_IMPORTS` private R2 binding
 - `PLACEMENT_QUEUE` Queue binding

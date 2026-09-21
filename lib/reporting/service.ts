@@ -302,14 +302,12 @@ function createGoogleFetchCacheKey(
 }
 
 function fingerprintGoogleCredentials(
-  developerToken: string | null,
   accessToken: string | null,
   refreshToken: string | null,
   clientId: string | null,
   clientSecret: string | null
 ): Record<string, string> {
   return {
-    developerToken: fingerprintSecret(developerToken),
     accessToken: fingerprintSecret(accessToken),
     refreshToken: fingerprintSecret(refreshToken),
     clientId: fingerprintSecret(clientId),
@@ -514,7 +512,6 @@ export async function getOverallReport(input: OverallInput): Promise<OverallRepo
       tryFetchGoogleForAccounts(
         resolvedAccountIds.googleAccountIds,
         credentials.googleAdsApiVersion,
-        credentials.googleDeveloperToken,
         credentials.googleAccessToken,
         credentials.googleRefreshToken,
         credentials.googleClientId,
@@ -535,7 +532,6 @@ export async function getOverallReport(input: OverallInput): Promise<OverallRepo
       tryFetchGoogleForAccounts(
         resolvedAccountIds.googleAccountIds,
         credentials.googleAdsApiVersion,
-        credentials.googleDeveloperToken,
         credentials.googleAccessToken,
         credentials.googleRefreshToken,
         credentials.googleClientId,
@@ -556,7 +552,6 @@ export async function getOverallReport(input: OverallInput): Promise<OverallRepo
       tryFetchGoogleAudienceBreakdownForAccounts(
         resolvedAccountIds.googleAccountIds,
         credentials.googleAdsApiVersion,
-        credentials.googleDeveloperToken,
         credentials.googleAccessToken,
         credentials.googleRefreshToken,
         credentials.googleClientId,
@@ -771,7 +766,6 @@ export async function getOverallAudienceBreakdownStage(
       tryFetchGoogleAudienceBreakdownForAccounts(
         resolvedAccountIds.googleAccountIds,
         credentials.googleAdsApiVersion,
-        credentials.googleDeveloperToken,
         credentials.googleAccessToken,
         credentials.googleRefreshToken,
         credentials.googleClientId,
@@ -894,7 +888,6 @@ async function fetchOverallPerformanceStageData(input: OverallInput): Promise<Ov
       tryFetchGoogleForAccounts(
         resolvedAccountIds.googleAccountIds,
         credentials.googleAdsApiVersion,
-        credentials.googleDeveloperToken,
         credentials.googleAccessToken,
         credentials.googleRefreshToken,
         credentials.googleClientId,
@@ -915,7 +908,6 @@ async function fetchOverallPerformanceStageData(input: OverallInput): Promise<Ov
       tryFetchGoogleForAccounts(
         resolvedAccountIds.googleAccountIds,
         credentials.googleAdsApiVersion,
-        credentials.googleDeveloperToken,
         credentials.googleAccessToken,
         credentials.googleRefreshToken,
         credentials.googleClientId,
@@ -1169,7 +1161,6 @@ export async function getPreviewReport(input: OverallInput): Promise<PreviewRepo
     tryFetchGooglePreviewSections(
       resolvedAccountIds.googleAccountIds,
       credentials.googleAdsApiVersion,
-      credentials.googleDeveloperToken,
       credentials.googleAccessToken,
       credentials.googleRefreshToken,
       credentials.googleClientId,
@@ -1380,7 +1371,6 @@ export async function getTopKeywordsReport(input: OverallInput): Promise<TopKeyw
   const keywordResult = await tryFetchGoogleKeywordsForAccounts(
     resolvedAccountIds.googleAccountIds,
     credentials.googleAdsApiVersion,
-    credentials.googleDeveloperToken,
     credentials.googleAccessToken,
     credentials.googleRefreshToken,
     credentials.googleClientId,
@@ -1433,7 +1423,6 @@ export async function getGoogleAdvancedAdUsageReport(input: OverallInput): Promi
     tryFetchGoogleKeywordsForAccounts(
       resolvedAccountIds.googleAccountIds,
       credentials.googleAdsApiVersion,
-      credentials.googleDeveloperToken,
       credentials.googleAccessToken,
       credentials.googleRefreshToken,
       credentials.googleClientId,
@@ -1447,7 +1436,6 @@ export async function getGoogleAdvancedAdUsageReport(input: OverallInput): Promi
     tryFetchGoogleFinalUrlsForAccounts(
       resolvedAccountIds.googleAccountIds,
       credentials.googleAdsApiVersion,
-      credentials.googleDeveloperToken,
       credentials.googleAccessToken,
       credentials.googleRefreshToken,
       credentials.googleClientId,
@@ -1481,7 +1469,6 @@ export async function getGoogleAdvancedAuctionInsightRows(input: OverallInput): 
   const auctionResult = await tryFetchGoogleAuctionInsightsForAccounts(
     resolvedAccountIds.googleAccountIds,
     credentials.googleAdsApiVersion,
-    credentials.googleDeveloperToken,
     credentials.googleAccessToken,
     credentials.googleRefreshToken,
     credentials.googleClientId,
@@ -1513,7 +1500,6 @@ export async function getGoogleAdvancedImageCreativeRows(input: OverallInput): P
   const creativeResult = await tryFetchGoogleImageCreativeRowsForAccounts(
     resolvedAccountIds.googleAccountIds,
     credentials.googleAdsApiVersion,
-    credentials.googleDeveloperToken,
     credentials.googleAccessToken,
     credentials.googleRefreshToken,
     credentials.googleClientId,
@@ -1545,7 +1531,6 @@ export async function getGoogleAdvancedVideoCreativeRows(input: OverallInput): P
   const creativeResult = await tryFetchGoogleVideoCreativeRowsForAccounts(
     resolvedAccountIds.googleAccountIds,
     credentials.googleAdsApiVersion,
-    credentials.googleDeveloperToken,
     credentials.googleAccessToken,
     credentials.googleRefreshToken,
     credentials.googleClientId,
@@ -1610,7 +1595,6 @@ export async function getAuctionInsightsReport(input: OverallInput): Promise<Auc
   const auctionResult = await tryFetchGoogleAuctionInsightsForAccounts(
     resolvedAccountIds.googleAccountIds,
     credentials.googleAdsApiVersion,
-    credentials.googleDeveloperToken,
     credentials.googleAccessToken,
     credentials.googleRefreshToken,
     credentials.googleClientId,
@@ -1688,7 +1672,6 @@ export async function getInsightsReport(input: OverallInput): Promise<InsightsPa
   const googleCurrentResult = await tryFetchGoogleForAccounts(
     resolvedAccountIds.googleAccountIds,
     credentials.googleAdsApiVersion,
-    credentials.googleDeveloperToken,
     credentials.googleAccessToken,
     credentials.googleRefreshToken,
     credentials.googleClientId,
@@ -1702,7 +1685,6 @@ export async function getInsightsReport(input: OverallInput): Promise<InsightsPa
   const googlePreviousResult = await tryFetchGoogleForAccounts(
     resolvedAccountIds.googleAccountIds,
     credentials.googleAdsApiVersion,
-    credentials.googleDeveloperToken,
     credentials.googleAccessToken,
     credentials.googleRefreshToken,
     credentials.googleClientId,
@@ -1798,7 +1780,6 @@ async function fetchByPlatform(args: {
   const result = await tryFetchGoogleForAccounts(
     googleAccountIds,
     credentials.googleAdsApiVersion,
-    credentials.googleDeveloperToken,
     credentials.googleAccessToken,
     credentials.googleRefreshToken,
     credentials.googleClientId,
@@ -2212,7 +2193,6 @@ async function tryFetchMetaCreativeRows(
 async function tryFetchGoogle(
   customerId: string | null,
   apiVersion: string,
-  developerToken: string | null,
   accessToken: string | null,
   refreshToken: string | null,
   clientId: string | null,
@@ -2226,19 +2206,11 @@ async function tryFetchGoogle(
   if (!customerId) {
     return { rows: [], warnings: [] };
   }
-  if (!developerToken) {
-    return {
-      rows: [],
-      warnings: [
-        "Google Ads API: Missing GOOGLE_ADS_DEVELOPER_TOKEN. Add this secret in Vercel Environment Variables or run locally with `doppler run -- npm run dev`.",
-      ],
-    };
-  }
   if (!hasGoogleOAuthCredentials(accessToken, refreshToken, clientId, clientSecret)) {
     return {
       rows: [],
       warnings: [
-        "Google Ads API: Missing OAuth credentials. Provide GOOGLE_ADS_ACCESS_TOKEN (or GOOGLE_OAUTH_ACCESS_TOKEN), or GOOGLE_ADS_REFRESH_TOKEN + GOOGLE_ADS_CLIENT_ID + GOOGLE_ADS_CLIENT_SECRET.",
+        "Google Ads API: Missing OAuth credentials. Provide GOOGLE_ADS_REFRESH_TOKEN + GOOGLE_ADS_CLIENT_ID + GOOGLE_ADS_CLIENT_SECRET.",
       ],
     };
   }
@@ -2252,7 +2224,6 @@ async function tryFetchGoogle(
     startDate,
     endDate,
     credentials: fingerprintGoogleCredentials(
-      developerToken,
       accessToken,
       refreshToken,
       clientId,
@@ -2268,7 +2239,6 @@ async function tryFetchGoogle(
         const rows = await fetchGoogleCampaignRows({
           customerId,
           apiVersion,
-          developerToken,
           accessToken,
           refreshToken,
           clientId,
@@ -2298,7 +2268,6 @@ async function tryFetchGoogle(
 async function tryFetchGoogleAudience(
   customerId: string | null,
   apiVersion: string,
-  developerToken: string | null,
   accessToken: string | null,
   refreshToken: string | null,
   clientId: string | null,
@@ -2314,7 +2283,6 @@ async function tryFetchGoogleAudience(
   }
 
   const credentialWarnings = getGoogleCredentialWarnings(
-    developerToken,
     accessToken,
     refreshToken,
     clientId,
@@ -2336,7 +2304,6 @@ async function tryFetchGoogleAudience(
     startDate,
     endDate,
     credentials: fingerprintGoogleCredentials(
-      developerToken,
       accessToken,
       refreshToken,
       clientId,
@@ -2352,7 +2319,6 @@ async function tryFetchGoogleAudience(
         const breakdown = await fetchGoogleAudienceBreakdown({
           customerId,
           apiVersion,
-          developerToken: developerToken!,
           accessToken,
           refreshToken,
           clientId,
@@ -2386,7 +2352,6 @@ async function tryFetchGoogleAudience(
 async function tryFetchGooglePreview(
   customerId: string | null,
   apiVersion: string,
-  developerToken: string | null,
   accessToken: string | null,
   refreshToken: string | null,
   clientId: string | null,
@@ -2417,7 +2382,6 @@ async function tryFetchGooglePreview(
   }
 
   const credentialWarnings = getGoogleCredentialWarnings(
-    developerToken,
     accessToken,
     refreshToken,
     clientId,
@@ -2447,7 +2411,6 @@ async function tryFetchGooglePreview(
     adGroupId: previewSelection.adGroupId,
     adId: previewSelection.adId,
     credentials: fingerprintGoogleCredentials(
-      developerToken,
       accessToken,
       refreshToken,
       clientId,
@@ -2463,7 +2426,6 @@ async function tryFetchGooglePreview(
         fetchGooglePreviewData({
           customerId,
           apiVersion,
-          developerToken: developerToken!,
           accessToken,
           refreshToken,
           clientId,
@@ -2510,7 +2472,6 @@ async function tryFetchGooglePreview(
 async function tryFetchGoogleKeywords(
   customerId: string | null,
   apiVersion: string,
-  developerToken: string | null,
   accessToken: string | null,
   refreshToken: string | null,
   clientId: string | null,
@@ -2526,7 +2487,6 @@ async function tryFetchGoogleKeywords(
   }
 
   const credentialWarnings = getGoogleCredentialWarnings(
-    developerToken,
     accessToken,
     refreshToken,
     clientId,
@@ -2545,7 +2505,6 @@ async function tryFetchGoogleKeywords(
     startDate,
     endDate,
     credentials: fingerprintGoogleCredentials(
-      developerToken,
       accessToken,
       refreshToken,
       clientId,
@@ -2561,7 +2520,6 @@ async function tryFetchGoogleKeywords(
         fetchGoogleTopKeywordRows({
           customerId,
           apiVersion,
-          developerToken: developerToken!,
           accessToken,
           refreshToken,
           clientId,
@@ -2591,7 +2549,6 @@ async function tryFetchGoogleKeywords(
 async function tryFetchGoogleFinalUrls(
   customerId: string | null,
   apiVersion: string,
-  developerToken: string | null,
   accessToken: string | null,
   refreshToken: string | null,
   clientId: string | null,
@@ -2607,7 +2564,6 @@ async function tryFetchGoogleFinalUrls(
   }
 
   const credentialWarnings = getGoogleCredentialWarnings(
-    developerToken,
     accessToken,
     refreshToken,
     clientId,
@@ -2626,7 +2582,6 @@ async function tryFetchGoogleFinalUrls(
     startDate,
     endDate,
     credentials: fingerprintGoogleCredentials(
-      developerToken,
       accessToken,
       refreshToken,
       clientId,
@@ -2642,7 +2597,6 @@ async function tryFetchGoogleFinalUrls(
         fetchGoogleFinalUrlSpendRows({
           customerId,
           apiVersion,
-          developerToken: developerToken!,
           accessToken,
           refreshToken,
           clientId,
@@ -2672,7 +2626,6 @@ async function tryFetchGoogleFinalUrls(
 async function tryFetchGoogleImageCreativeRows(
   customerId: string | null,
   apiVersion: string,
-  developerToken: string | null,
   accessToken: string | null,
   refreshToken: string | null,
   clientId: string | null,
@@ -2688,7 +2641,6 @@ async function tryFetchGoogleImageCreativeRows(
   }
 
   const credentialWarnings = getGoogleCredentialWarnings(
-    developerToken,
     accessToken,
     refreshToken,
     clientId,
@@ -2707,7 +2659,6 @@ async function tryFetchGoogleImageCreativeRows(
     startDate,
     endDate,
     credentials: fingerprintGoogleCredentials(
-      developerToken,
       accessToken,
       refreshToken,
       clientId,
@@ -2723,7 +2674,6 @@ async function tryFetchGoogleImageCreativeRows(
         fetchGoogleImageCreativePerformanceRows({
           customerId,
           apiVersion,
-          developerToken: developerToken!,
           accessToken,
           refreshToken,
           clientId,
@@ -2753,7 +2703,6 @@ async function tryFetchGoogleImageCreativeRows(
 async function tryFetchGoogleVideoCreativeRows(
   customerId: string | null,
   apiVersion: string,
-  developerToken: string | null,
   accessToken: string | null,
   refreshToken: string | null,
   clientId: string | null,
@@ -2769,7 +2718,6 @@ async function tryFetchGoogleVideoCreativeRows(
   }
 
   const credentialWarnings = getGoogleCredentialWarnings(
-    developerToken,
     accessToken,
     refreshToken,
     clientId,
@@ -2788,7 +2736,6 @@ async function tryFetchGoogleVideoCreativeRows(
     startDate,
     endDate,
     credentials: fingerprintGoogleCredentials(
-      developerToken,
       accessToken,
       refreshToken,
       clientId,
@@ -2804,7 +2751,6 @@ async function tryFetchGoogleVideoCreativeRows(
         fetchGoogleVideoCreativePerformanceRows({
           customerId,
           apiVersion,
-          developerToken: developerToken!,
           accessToken,
           refreshToken,
           clientId,
@@ -2834,7 +2780,6 @@ async function tryFetchGoogleVideoCreativeRows(
 async function tryFetchGoogleAuctionInsights(
   customerId: string | null,
   apiVersion: string,
-  developerToken: string | null,
   accessToken: string | null,
   refreshToken: string | null,
   clientId: string | null,
@@ -2850,7 +2795,6 @@ async function tryFetchGoogleAuctionInsights(
   }
 
   const credentialWarnings = getGoogleCredentialWarnings(
-    developerToken,
     accessToken,
     refreshToken,
     clientId,
@@ -2869,7 +2813,6 @@ async function tryFetchGoogleAuctionInsights(
     startDate,
     endDate,
     credentials: fingerprintGoogleCredentials(
-      developerToken,
       accessToken,
       refreshToken,
       clientId,
@@ -2885,7 +2828,6 @@ async function tryFetchGoogleAuctionInsights(
         fetchGoogleAuctionInsightRows({
           customerId,
           apiVersion,
-          developerToken: developerToken!,
           accessToken,
           refreshToken,
           clientId,
@@ -2965,7 +2907,6 @@ async function tryFetchMetaAudienceBreakdownForAccounts(
 async function tryFetchGoogleAudienceBreakdownForAccounts(
   accountIds: string[],
   apiVersion: string,
-  developerToken: string | null,
   accessToken: string | null,
   refreshToken: string | null,
   clientId: string | null,
@@ -2988,7 +2929,6 @@ async function tryFetchGoogleAudienceBreakdownForAccounts(
       const result = await tryFetchGoogleAudience(
         accountId,
         apiVersion,
-        developerToken,
         accessToken,
         refreshToken,
         clientId,
@@ -3022,7 +2962,6 @@ async function tryFetchGoogleAudienceBreakdownForAccounts(
 async function tryFetchGoogleForAccounts(
   accountIds: string[],
   apiVersion: string,
-  developerToken: string | null,
   accessToken: string | null,
   refreshToken: string | null,
   clientId: string | null,
@@ -3046,7 +2985,6 @@ async function tryFetchGoogleForAccounts(
       const result = await tryFetchGoogle(
         accountId,
         apiVersion,
-        developerToken,
         accessToken,
         refreshToken,
         clientId,
@@ -3138,7 +3076,6 @@ async function tryFetchMetaPreviewSections(
 async function tryFetchGooglePreviewSections(
   accountIds: string[],
   apiVersion: string,
-  developerToken: string | null,
   accessToken: string | null,
   refreshToken: string | null,
   clientId: string | null,
@@ -3175,7 +3112,6 @@ async function tryFetchGooglePreviewSections(
     const result = await tryFetchGooglePreview(
       accountId,
       apiVersion,
-      developerToken,
       accessToken,
       refreshToken,
       clientId,
@@ -3217,7 +3153,6 @@ async function tryFetchGooglePreviewSections(
 async function tryFetchGoogleKeywordsForAccounts(
   accountIds: string[],
   apiVersion: string,
-  developerToken: string | null,
   accessToken: string | null,
   refreshToken: string | null,
   clientId: string | null,
@@ -3239,7 +3174,6 @@ async function tryFetchGoogleKeywordsForAccounts(
     const result = await tryFetchGoogleKeywords(
       accountId,
       apiVersion,
-      developerToken,
       accessToken,
       refreshToken,
       clientId,
@@ -3266,7 +3200,6 @@ async function tryFetchGoogleKeywordsForAccounts(
 async function tryFetchGoogleFinalUrlsForAccounts(
   accountIds: string[],
   apiVersion: string,
-  developerToken: string | null,
   accessToken: string | null,
   refreshToken: string | null,
   clientId: string | null,
@@ -3288,7 +3221,6 @@ async function tryFetchGoogleFinalUrlsForAccounts(
     const result = await tryFetchGoogleFinalUrls(
       accountId,
       apiVersion,
-      developerToken,
       accessToken,
       refreshToken,
       clientId,
@@ -3314,7 +3246,6 @@ async function tryFetchGoogleFinalUrlsForAccounts(
 async function tryFetchGoogleImageCreativeRowsForAccounts(
   accountIds: string[],
   apiVersion: string,
-  developerToken: string | null,
   accessToken: string | null,
   refreshToken: string | null,
   clientId: string | null,
@@ -3336,7 +3267,6 @@ async function tryFetchGoogleImageCreativeRowsForAccounts(
     const result = await tryFetchGoogleImageCreativeRows(
       accountId,
       apiVersion,
-      developerToken,
       accessToken,
       refreshToken,
       clientId,
@@ -3362,7 +3292,6 @@ async function tryFetchGoogleImageCreativeRowsForAccounts(
 async function tryFetchGoogleVideoCreativeRowsForAccounts(
   accountIds: string[],
   apiVersion: string,
-  developerToken: string | null,
   accessToken: string | null,
   refreshToken: string | null,
   clientId: string | null,
@@ -3384,7 +3313,6 @@ async function tryFetchGoogleVideoCreativeRowsForAccounts(
     const result = await tryFetchGoogleVideoCreativeRows(
       accountId,
       apiVersion,
-      developerToken,
       accessToken,
       refreshToken,
       clientId,
@@ -3410,7 +3338,6 @@ async function tryFetchGoogleVideoCreativeRowsForAccounts(
 async function tryFetchGoogleAuctionInsightsForAccounts(
   accountIds: string[],
   apiVersion: string,
-  developerToken: string | null,
   accessToken: string | null,
   refreshToken: string | null,
   clientId: string | null,
@@ -3432,7 +3359,6 @@ async function tryFetchGoogleAuctionInsightsForAccounts(
     const result = await tryFetchGoogleAuctionInsights(
       accountId,
       apiVersion,
-      developerToken,
       accessToken,
       refreshToken,
       clientId,
@@ -3631,8 +3557,7 @@ function annotateWarningWithAccount(
   if (
     (platform === "meta" && warning.startsWith("Meta API: Missing META_ACCESS_TOKEN")) ||
     (platform === "google" &&
-      (warning.startsWith("Google Ads API: Missing GOOGLE_ADS_DEVELOPER_TOKEN") ||
-        warning.startsWith("Google Ads API: Missing OAuth credentials")))
+      warning.startsWith("Google Ads API: Missing OAuth credentials"))
   ) {
     return warning;
   }
@@ -3661,10 +3586,9 @@ async function tryFetchGoogleAccountName(
   credentials: ReturnType<typeof getCredentials>,
   loginCustomerId: string | null
 ): Promise<string | null> {
-  if (!googleAccountId || !credentials.googleDeveloperToken) {
+  if (!googleAccountId) {
     return null;
   }
-  const developerToken = credentials.googleDeveloperToken;
 
   if (
     !hasGoogleOAuthCredentials(
@@ -3682,7 +3606,6 @@ async function tryFetchGoogleAccountName(
     apiVersion: credentials.googleAdsApiVersion,
     loginCustomerId,
     credentials: fingerprintGoogleCredentials(
-      developerToken,
       credentials.googleAccessToken,
       credentials.googleRefreshToken,
       credentials.googleClientId,
@@ -3698,7 +3621,6 @@ async function tryFetchGoogleAccountName(
         fetchGoogleAccountName({
           customerId: googleAccountId,
           apiVersion: credentials.googleAdsApiVersion,
-          developerToken,
           accessToken: credentials.googleAccessToken,
           refreshToken: credentials.googleRefreshToken,
           clientId: credentials.googleClientId,
@@ -3878,21 +3800,15 @@ function resolveLoginCustomerIdForAccount(
 }
 
 function getGoogleCredentialWarnings(
-  developerToken: string | null,
   accessToken: string | null,
   refreshToken: string | null,
   clientId: string | null,
   clientSecret: string | null
 ): string[] {
-  if (!developerToken) {
-    return [
-      "Google Ads API: Missing GOOGLE_ADS_DEVELOPER_TOKEN. Add this secret in Vercel Environment Variables or run locally with `doppler run -- npm run dev`.",
-    ];
-  }
 
   if (!hasGoogleOAuthCredentials(accessToken, refreshToken, clientId, clientSecret)) {
     return [
-      "Google Ads API: Missing OAuth credentials. Provide GOOGLE_ADS_ACCESS_TOKEN (or GOOGLE_OAUTH_ACCESS_TOKEN), or GOOGLE_ADS_REFRESH_TOKEN + GOOGLE_ADS_CLIENT_ID + GOOGLE_ADS_CLIENT_SECRET.",
+      "Google Ads API: Missing OAuth credentials. Provide GOOGLE_ADS_REFRESH_TOKEN + GOOGLE_ADS_CLIENT_ID + GOOGLE_ADS_CLIENT_SECRET.",
     ];
   }
 
@@ -4281,14 +4197,10 @@ function sortPreviewCampaigns(campaigns: PreviewCampaignNode[]): PreviewCampaign
 }
 
 function hasGoogleOAuthCredentials(
-  accessToken: string | null,
+  _accessToken: string | null,
   refreshToken: string | null,
   clientId: string | null,
   clientSecret: string | null
 ): boolean {
-  if (accessToken) {
-    return true;
-  }
-
   return Boolean(refreshToken && clientId && clientSecret);
 }

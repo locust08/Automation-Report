@@ -1,9 +1,11 @@
+import { googleAdsClient } from "../google-ads/client";
+import type { GoogleAdsRestClient } from "../google-ads/rest-client";
 import { getCredentials, normalizeGoogleAccountId } from "@/lib/reporting/env";
 import { resolveGoogleAccountsFromNotion } from "@/lib/reporting/notion";
 import type { AdsFieldChangeRecord, ManagedAdTextAsset, ManagedAsset, ManagedAssetAutomationSetting, ManagedCampaign, ManagedCustomParameter, ManagedEntityType, ManagedFieldKey, ManagedFieldValue, ManagedRecommendation, ManagedRecommendationCategory, ManagedRecommendationDetailFamily, ManagedRecommendationDetailItem, ManagedRecommendationDetails, ManagedRecommendationMetrics, ManagedSitelink, ManagedSitelinkAssociation, ManagedSitelinkScope } from "@/lib/ads-management/types";
 
 interface GoogleRow {
-  campaign?: { id?: string; resourceName?: string; name?: string; status?: string; primaryStatus?: string; primaryStatusReasons?: string[]; optimizationScore?: number; startDate?: string; endDate?: string; advertisingChannelType?: string; biddingStrategyType?: string; campaignBudget?: string };
+  campaign?: { id?: string; resourceName?: string; name?: string; status?: string; primaryStatus?: string; primaryStatusReasons?: string[]; optimizationScore?: number; startDateTime?: string; endDateTime?: string; advertisingChannelType?: string; biddingStrategyType?: string; campaignBudget?: string };
   campaignBudget?: { resourceName?: string; amountMicros?: string | number; name?: string; period?: string };
   adGroup?: { id?: string; resourceName?: string; name?: string; status?: string; primaryStatus?: string; primaryStatusReasons?: string[]; cpcBidMicros?: string | number };
   adGroupAd?: { resourceName?: string; status?: string; adStrength?: string; actionItems?: string[]; adGroupAdAssetAutomationSettings?: ManagedAssetAutomationSetting[]; ad?: GoogleAd };
@@ -29,78 +31,25 @@ interface GoogleAd {
   demandGenProductAd?: { breadcrumb1?: string; breadcrumb2?: string; businessName?: ManagedAdTextAsset; headline?: ManagedAdTextAsset; description?: ManagedAdTextAsset; logoImage?: GoogleAssetRef; callToAction?: GoogleAssetRef };
 }
 
-interface GoogleContext { customerId: string; loginCustomerId: string | null; apiVersion: string; developerToken: string; accessToken: string }
+interface GoogleContext { customerId: string; loginCustomerId: string | null; client: GoogleAdsRestClient }
 
 async function contextFor(accountId: string): Promise<GoogleContext> {
   const credentials = getCredentials();
   const customerId = normalizeGoogleAccountId(accountId);
   if (!/^\d{10}$/.test(customerId)) throw new Error("Google Ads account ID must contain 10 digits.");
-  if (!credentials.googleDeveloperToken) throw new Error("GOOGLE_ADS_DEVELOPER_TOKEN is required.");
   const resolution = await resolveGoogleAccountsFromNotion({ googleAccountIds: [customerId], googleLookupTerms: [customerId], notionAccessToken: credentials.notionAccessToken, notionDatabaseId: process.env.NOTION_AD_ACCOUNTS_DATABASE_ID?.trim() || credentials.notionDatabaseId, fallbackLoginCustomerId: credentials.googleLoginCustomerId });
-  const accessToken = await resolveAccessToken(credentials.googleAccessToken, credentials.googleRefreshToken, credentials.googleClientId, credentials.googleClientSecret);
-  return { customerId, loginCustomerId: resolution.loginCustomerIdByAccount[customerId] ?? null, apiVersion: credentials.googleAdsApiVersion, developerToken: credentials.googleDeveloperToken, accessToken };
-}
-
-async function resolveAccessToken(accessToken: string | null, refreshToken: string | null, clientId: string | null, clientSecret: string | null) {
-  if (refreshToken && clientId && clientSecret) {
-    const response = await fetch("https://oauth2.googleapis.com/token", { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ grant_type: "refresh_token", refresh_token: refreshToken, client_id: clientId, client_secret: clientSecret }), cache: "no-store" });
-    const json = await response.json() as { access_token?: string; error_description?: string };
-    if (!response.ok || !json.access_token) throw new Error(json.error_description || "Google OAuth token refresh failed.");
-    return json.access_token;
-  }
-  if (accessToken) return accessToken;
-  throw new Error("Google Ads OAuth credentials are missing.");
+  const client = googleAdsClient(credentials);
+  return { customerId, loginCustomerId: resolution.loginCustomerIdByAccount[customerId] ?? null, client };
 }
 
 async function googlePost<T>(ctx: GoogleContext, path: string, body: unknown): Promise<T> {
-  const headers: Record<string, string> = { Authorization: `Bearer ${ctx.accessToken}`, "developer-token": ctx.developerToken, "Content-Type": "application/json" };
-  if (ctx.loginCustomerId) headers["login-customer-id"] = ctx.loginCustomerId;
-  const response = await fetch(`https://googleads.googleapis.com/${ctx.apiVersion}/customers/${ctx.customerId}/${path}`, { method: "POST", headers, body: JSON.stringify(body), cache: "no-store" });
-  const text = await response.text();
-  let json: T & GoogleErrorEnvelope;
-  try {
-    json = (text ? JSON.parse(text) : {}) as T & GoogleErrorEnvelope;
-  } catch {
-    throw new Error(`Google Ads returned a non-JSON response (${response.status}). Request ID: ${response.headers.get("request-id") || "unavailable"}.`);
-  }
-  if (!response.ok) {
-    const streamError = Array.isArray(json)
-      ? (json.find((item) => item && typeof item === "object" && "error" in item) as GoogleErrorEnvelope | undefined)?.error
-      : json.error;
-    throw new Error(formatGoogleError(response.status, response.headers.get("request-id"), streamError, text));
-  }
-  return json;
-}
-
-interface GoogleErrorEnvelope {
-  error?: {
-    message?: string;
-    status?: string;
-    details?: Array<{
-      errors?: Array<{
-        message?: string;
-        errorCode?: Record<string, string>;
-        location?: { fieldPathElements?: Array<{ fieldName?: string; index?: number }> };
-      }>;
-    }>;
-  };
-}
-
-function formatGoogleError(status: number, requestId: string | null, error: GoogleErrorEnvelope["error"], rawText: string): string {
-  const details = (error?.details ?? []).flatMap((detail) => detail.errors ?? []).map((item) => {
-    const code = Object.values(item.errorCode ?? {})[0];
-    const path = (item.location?.fieldPathElements ?? []).map((part) => `${part.fieldName ?? "field"}${part.index == null ? "" : `[${part.index}]`}`).join(".");
-    return [code, path, item.message].filter(Boolean).join(" · ");
-  });
-  const safeFallback = rawText.replace(/[\r\n\t]+/g, " ").slice(0, 500);
-  const description = details.length ? details.join(" | ") : error?.message || error?.status || safeFallback || "Unknown Google Ads error.";
-  return `Google Ads request failed (${status}): ${description} Request ID: ${requestId || "unavailable"}.`;
+  return ctx.client.request<T>(`customers/${ctx.customerId}/${path}`, body, { loginCustomerId: ctx.loginCustomerId });
 }
 
 export async function fetchManagedSearchCampaigns(accountId: string, dates?: { startDate?: string; endDate?: string }): Promise<{ campaigns: ManagedCampaign[]; synchronizedAt: string }> {
   const ctx = await contextFor(accountId);
   const dateCondition = managedDateCondition(dates?.startDate, dates?.endDate);
-  const campaignQuery = `SELECT campaign.id, campaign.resource_name, campaign.name, campaign.status, campaign.primary_status, campaign.primary_status_reasons, campaign.optimization_score, campaign.start_date, campaign.end_date, campaign.advertising_channel_type, campaign.bidding_strategy_type, campaign.campaign_budget, campaign_budget.amount_micros, campaign_budget.name, campaign_budget.period, customer.currency_code FROM campaign WHERE campaign.status != 'REMOVED' ORDER BY campaign.name`;
+  const campaignQuery = `SELECT campaign.id, campaign.resource_name, campaign.name, campaign.status, campaign.primary_status, campaign.primary_status_reasons, campaign.optimization_score, campaign.start_date_time, campaign.end_date_time, campaign.advertising_channel_type, campaign.bidding_strategy_type, campaign.campaign_budget, campaign_budget.amount_micros, campaign_budget.name, campaign_budget.period, customer.currency_code FROM campaign WHERE campaign.status != 'REMOVED' ORDER BY campaign.name`;
   const adGroupQuery = `SELECT campaign.id, campaign.bidding_strategy_type, ad_group.id, ad_group.resource_name, ad_group.name, ad_group.status, ad_group.primary_status, ad_group.primary_status_reasons, ad_group.cpc_bid_micros FROM ad_group WHERE campaign.status != 'REMOVED' AND ad_group.status != 'REMOVED' ORDER BY campaign.id, ad_group.name`;
   const performanceQuery = `SELECT campaign.id, segments.date, metrics.cost_micros, metrics.impressions, metrics.clicks, metrics.conversions, metrics.interactions FROM campaign WHERE segments.date ${dateCondition} AND campaign.status != 'REMOVED' ORDER BY segments.date`;
   const campaignSummaryQuery = `SELECT campaign.id, metrics.cost_micros, metrics.impressions, metrics.clicks, metrics.conversions, metrics.all_conversions, metrics.conversions_from_interactions_rate, metrics.interactions, metrics.search_budget_lost_impression_share, metrics.search_rank_lost_impression_share FROM campaign WHERE segments.date ${dateCondition} AND campaign.status != 'REMOVED'`;
@@ -108,7 +57,7 @@ export async function fetchManagedSearchCampaigns(accountId: string, dates?: { s
   const adPerformanceQuery = `SELECT campaign.id, ad_group.id, ad_group_ad.ad.id, segments.date, metrics.cost_micros, metrics.impressions, metrics.clicks, metrics.conversions, metrics.interactions FROM ad_group_ad WHERE segments.date ${dateCondition} AND campaign.status != 'REMOVED' AND ad_group.status != 'REMOVED' AND ad_group_ad.status != 'REMOVED'`;
   const sitelinkAssetFields = "asset.resource_name, asset.name, asset.source, asset.final_urls, asset.final_mobile_urls, asset.sitelink_asset.link_text, asset.sitelink_asset.description1, asset.sitelink_asset.description2, asset.sitelink_asset.start_date, asset.sitelink_asset.end_date";
   const campaignSitelinkQuery = `SELECT campaign.id, campaign.status, campaign_asset.resource_name, campaign_asset.campaign, campaign_asset.asset, campaign_asset.field_type, campaign_asset.status, campaign_asset.source, ${sitelinkAssetFields} FROM campaign_asset WHERE campaign_asset.field_type = 'SITELINK' AND campaign_asset.status != 'REMOVED' AND campaign.status != 'REMOVED'`;
-  const adQuery = `SELECT campaign.id, ad_group.id, ad_group_ad.resource_name, ad_group_ad.status, ad_group_ad.ad.id, ad_group_ad.ad.name, ad_group_ad.ad.type, ad_group_ad.ad.final_urls, ad_group_ad.ad.final_url_suffix, ad_group_ad.ad.tracking_url_template, ad_group_ad.ad.responsive_search_ad.path1, ad_group_ad.ad.responsive_search_ad.path2, ad_group_ad.ad.responsive_search_ad.headlines, ad_group_ad.ad.responsive_search_ad.descriptions, ad_group_ad.ad.demand_gen_multi_asset_ad.business_name, ad_group_ad.ad.demand_gen_multi_asset_ad.call_to_action_text, ad_group_ad.ad.demand_gen_multi_asset_ad.headlines, ad_group_ad.ad.demand_gen_multi_asset_ad.descriptions, ad_group_ad.ad.demand_gen_multi_asset_ad.lead_form_only, ad_group_ad.ad.demand_gen_multi_asset_ad.logo_images, ad_group_ad.ad.demand_gen_multi_asset_ad.marketing_images, ad_group_ad.ad.demand_gen_multi_asset_ad.square_marketing_images, ad_group_ad.ad.demand_gen_multi_asset_ad.portrait_marketing_images, ad_group_ad.ad.demand_gen_multi_asset_ad.tall_portrait_marketing_images, ad_group_ad.ad.demand_gen_video_responsive_ad.breadcrumb1, ad_group_ad.ad.demand_gen_video_responsive_ad.breadcrumb2, ad_group_ad.ad.demand_gen_video_responsive_ad.business_name, ad_group_ad.ad.demand_gen_video_responsive_ad.headlines, ad_group_ad.ad.demand_gen_video_responsive_ad.long_headlines, ad_group_ad.ad.demand_gen_video_responsive_ad.descriptions, ad_group_ad.ad.demand_gen_video_responsive_ad.call_to_actions, ad_group_ad.ad.demand_gen_video_responsive_ad.logo_images, ad_group_ad.ad.demand_gen_video_responsive_ad.videos, ad_group_ad.ad.demand_gen_carousel_ad.business_name, ad_group_ad.ad.demand_gen_carousel_ad.call_to_action_text, ad_group_ad.ad.demand_gen_carousel_ad.headline, ad_group_ad.ad.demand_gen_carousel_ad.description, ad_group_ad.ad.demand_gen_carousel_ad.logo_image, ad_group_ad.ad.demand_gen_carousel_ad.carousel_cards, ad_group_ad.ad.demand_gen_product_ad.breadcrumb1, ad_group_ad.ad.demand_gen_product_ad.breadcrumb2, ad_group_ad.ad.demand_gen_product_ad.business_name, ad_group_ad.ad.demand_gen_product_ad.headline, ad_group_ad.ad.demand_gen_product_ad.description, ad_group_ad.ad.demand_gen_product_ad.logo_image, ad_group_ad.ad.demand_gen_product_ad.call_to_action FROM ad_group_ad WHERE campaign.status != 'REMOVED' AND ad_group.status != 'REMOVED' AND ad_group_ad.status != 'REMOVED' ORDER BY campaign.id, ad_group.id, ad_group_ad.ad.id`;
+  const adQuery = `SELECT campaign.id, ad_group.id, ad_group_ad.resource_name, ad_group_ad.status, ad_group_ad.ad.id, ad_group_ad.ad.name, ad_group_ad.ad.type, ad_group_ad.ad.final_urls, ad_group_ad.ad.final_url_suffix, ad_group_ad.ad.tracking_url_template, ad_group_ad.ad.responsive_search_ad.path1, ad_group_ad.ad.responsive_search_ad.path2, ad_group_ad.ad.responsive_search_ad.headlines, ad_group_ad.ad.responsive_search_ad.descriptions, ad_group_ad.ad.demand_gen_multi_asset_ad.business_name, ad_group_ad.ad.demand_gen_multi_asset_ad.call_to_action_text, ad_group_ad.ad.demand_gen_multi_asset_ad.headlines, ad_group_ad.ad.demand_gen_multi_asset_ad.descriptions, ad_group_ad.ad.demand_gen_multi_asset_ad.logo_images, ad_group_ad.ad.demand_gen_multi_asset_ad.marketing_images, ad_group_ad.ad.demand_gen_multi_asset_ad.square_marketing_images, ad_group_ad.ad.demand_gen_multi_asset_ad.portrait_marketing_images, ad_group_ad.ad.demand_gen_multi_asset_ad.tall_portrait_marketing_images, ad_group_ad.ad.demand_gen_video_responsive_ad.breadcrumb1, ad_group_ad.ad.demand_gen_video_responsive_ad.breadcrumb2, ad_group_ad.ad.demand_gen_video_responsive_ad.business_name, ad_group_ad.ad.demand_gen_video_responsive_ad.headlines, ad_group_ad.ad.demand_gen_video_responsive_ad.long_headlines, ad_group_ad.ad.demand_gen_video_responsive_ad.descriptions, ad_group_ad.ad.demand_gen_video_responsive_ad.call_to_actions, ad_group_ad.ad.demand_gen_video_responsive_ad.logo_images, ad_group_ad.ad.demand_gen_video_responsive_ad.videos, ad_group_ad.ad.demand_gen_carousel_ad.business_name, ad_group_ad.ad.demand_gen_carousel_ad.call_to_action_text, ad_group_ad.ad.demand_gen_carousel_ad.headline, ad_group_ad.ad.demand_gen_carousel_ad.description, ad_group_ad.ad.demand_gen_carousel_ad.logo_image, ad_group_ad.ad.demand_gen_carousel_ad.carousel_cards, ad_group_ad.ad.demand_gen_product_ad.breadcrumb1, ad_group_ad.ad.demand_gen_product_ad.breadcrumb2, ad_group_ad.ad.demand_gen_product_ad.business_name, ad_group_ad.ad.demand_gen_product_ad.headline, ad_group_ad.ad.demand_gen_product_ad.description, ad_group_ad.ad.demand_gen_product_ad.logo_image, ad_group_ad.ad.demand_gen_product_ad.call_to_action FROM ad_group_ad WHERE campaign.status != 'REMOVED' AND ad_group.status != 'REMOVED' AND ad_group_ad.status != 'REMOVED' ORDER BY campaign.id, ad_group.id, ad_group_ad.ad.id`;
   const enrichedAdQuery = adQuery
     .replace("ad_group_ad.status,", "ad_group_ad.status, ad_group_ad.ad_strength, ad_group_ad.action_items, ad_group_ad.ad_group_ad_asset_automation_settings,")
     .replace("ad_group_ad.ad.final_urls,", "ad_group_ad.ad.final_urls, ad_group_ad.ad.final_mobile_urls, ad_group_ad.ad.url_custom_parameters,");
@@ -143,11 +92,11 @@ export async function fetchManagedSearchCampaigns(accountId: string, dates?: { s
       const fields: ManagedFieldValue[] = [
         field("campaign", c.id, name, "campaign.name", "Campaign name", "string", name),
         field("campaign", c.id, name, "campaign.status", "Campaign status", "string", c.status || "UNSPECIFIED"),
-        field("campaign", c.id, name, "campaign.start_date", "Start date", "date", c.startDate || ""),
-        field("campaign", c.id, name, "campaign.end_date", "End date", "date", c.endDate || ""),
+        field("campaign", c.id, name, "campaign.start_date", "Start date", "date", c.startDateTime?.slice(0, 10) || ""),
+        field("campaign", c.id, name, "campaign.end_date", "End date", "date", c.endDateTime?.slice(0, 10) || ""),
         field("campaign", c.campaignBudget, name, "campaign_budget.amount_micros", "Daily budget", "money_micros", String(b?.amountMicros ?? "0")),
       ];
-      campaign = { id: c.id, resourceName: c.resourceName, name, status: c.status || "UNSPECIFIED", primaryStatus: c.primaryStatus || "UNSPECIFIED", primaryStatusReasons: c.primaryStatusReasons ?? [], optimizationScore: typeof c.optimizationScore === "number" ? c.optimizationScore : null, startDate: c.startDate || "", endDate: c.endDate || "", budgetResourceName: c.campaignBudget, budgetAmountMicros: String(b?.amountMicros ?? "0"), budgetName: b?.name || "", budgetType: b?.period || "DAILY", currencyCode: row.customer?.currencyCode || "MYR", biddingStrategyType: c.biddingStrategyType || "UNSPECIFIED", channelType: c.advertisingChannelType || "UNSPECIFIED", adGroups: [], fields, performance: [] };
+      campaign = { id: c.id, resourceName: c.resourceName, name, status: c.status || "UNSPECIFIED", primaryStatus: c.primaryStatus || "UNSPECIFIED", primaryStatusReasons: c.primaryStatusReasons ?? [], optimizationScore: typeof c.optimizationScore === "number" ? c.optimizationScore : null, startDate: c.startDateTime?.slice(0, 10) || "", endDate: c.endDateTime?.slice(0, 10) || "", budgetResourceName: c.campaignBudget, budgetAmountMicros: String(b?.amountMicros ?? "0"), budgetName: b?.name || "", budgetType: b?.period || "DAILY", currencyCode: row.customer?.currencyCode || "MYR", biddingStrategyType: c.biddingStrategyType || "UNSPECIFIED", channelType: c.advertisingChannelType || "UNSPECIFIED", adGroups: [], fields, performance: [] };
       byId.set(c.id, campaign);
     }
   }
@@ -464,7 +413,6 @@ function adFields(adGroupAdResourceName: string | undefined, resourceName: strin
       field("ad", resourceName, name, "ad.demand_gen_multi_asset_ad.call_to_action_text", "Call to action", "string", value?.callToActionText || ""),
       field("ad", resourceName, name, "ad.demand_gen_multi_asset_ad.headlines", "Headlines", "text_assets", sanitizeAdTextAssets(value?.headlines)),
       field("ad", resourceName, name, "ad.demand_gen_multi_asset_ad.descriptions", "Descriptions", "text_assets", sanitizeAdTextAssets(value?.descriptions)),
-      field("ad", resourceName, name, "ad.demand_gen_multi_asset_ad.lead_form_only", "Lead form only", "boolean", Boolean(value?.leadFormOnly)),
       field("ad", resourceName, name, "ad.demand_gen_multi_asset_ad.logo_images", "Logo images", "asset_refs", assetRefs(value?.logoImages)),
       field("ad", resourceName, name, "ad.demand_gen_multi_asset_ad.marketing_images", "Landscape images", "asset_refs", assetRefs(value?.marketingImages)),
       field("ad", resourceName, name, "ad.demand_gen_multi_asset_ad.square_marketing_images", "Square images", "asset_refs", assetRefs(value?.squareMarketingImages)),
@@ -595,6 +543,7 @@ function key(type: string, id: string, field: string) { return `${type}:${id}:${
 
 export function validateLocalChange(change: AdsFieldChangeRecord): string[] {
   const errors: string[] = [];
+  if (change.field_key === "ad.demand_gen_multi_asset_ad.lead_form_only") errors.push("Lead form only is no longer supported by Google Ads API v25.");
   if (change.value_type === "negative_keyword") {
     const value = change.proposed_value as { text?: unknown; matchType?: unknown; negative?: unknown; campaignId?: unknown; adGroupId?: unknown };
     if (!String(value?.text ?? "").trim()) errors.push("Negative keyword text is required.");
@@ -706,7 +655,7 @@ export async function mutateGoogleChanges(accountId: string, changes: AdsFieldCh
         results.set(change.id, response);
         continue;
       }
-      const mapping = mutationFor(ctx.customerId, change);
+      const mapping = buildGoogleFieldMutation(ctx.customerId, change);
       const response = await googlePost(ctx, mapping.path, { operations: [{ update: mapping.update, updateMask: mapping.mask }], validateOnly, partialFailure: false, responseContentType: "MUTABLE_RESOURCE" });
       results.set(change.id, response);
     } catch (error) {
@@ -874,7 +823,7 @@ function isSitelinkChange(change: Pick<AdsFieldChangeRecord, "field_key" | "valu
   return change.value_type === "sitelinks" && ["campaign.sitelinks", "ad.sitelinks"].includes(change.field_key);
 }
 
-function mutationFor(customerId: string, c: AdsFieldChangeRecord) {
+export function buildGoogleFieldMutation(customerId: string, c: AdsFieldChangeRecord) {
   const value = c.proposed_value;
   if (c.field_key === "campaign_budget.amount_micros") return { path: "campaignBudgets:mutate", mask: "amount_micros", update: { resourceName: c.entity_id, amountMicros: String(value) } };
   if (c.entity_type === "ad") {
@@ -884,6 +833,11 @@ function mutationFor(customerId: string, c: AdsFieldChangeRecord) {
     const legacyProperty = c.field_key.split(".")[1];
     const mask = ["path1", "path2", "headlines", "descriptions"].includes(legacyProperty) && c.field_key.split(".").length === 2 ? `responsive_search_ad.${legacyProperty}` : c.field_key.slice(3);
     return { path: "ads:mutate", mask, update: setNestedAdValue(c.entity_id, mask, mutableAdValue(c.value_type, value)) };
+  }
+  if (c.entity_type === "campaign" && ["campaign.start_date", "campaign.end_date"].includes(c.field_key)) {
+    const start = c.field_key === "campaign.start_date";
+    return { path: "campaigns:mutate", mask: start ? "start_date_time" : "end_date_time",
+      update: { resourceName: `customers/${customerId}/campaigns/${c.entity_id}`, [start ? "startDateTime" : "endDateTime"]: `${String(value)} ${start ? "00:00:00" : "23:59:59"}` } };
   }
   if (c.entity_type === "campaign") {
     const property = c.field_key.split(".")[1];

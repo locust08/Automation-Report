@@ -1,6 +1,6 @@
+import { normalizeGoogleAdsApiVersion } from "../google-ads/rest-client";
 interface Credentials {
   metaAccessToken: string | null;
-  googleDeveloperToken: string | null;
   googleAccessToken: string | null;
   googleRefreshToken: string | null;
   googleClientId: string | null;
@@ -104,7 +104,6 @@ export function getCredentials(): Credentials {
 
   return {
     metaAccessToken: readSecret(["META_ACCESS_TOKEN"], false),
-    googleDeveloperToken: readSecret(["GOOGLE_ADS_DEVELOPER_TOKEN"], false),
     googleAccessToken,
     googleRefreshToken,
     googleClientId,
@@ -200,20 +199,7 @@ function normalizeOptionalGoogleCustomerId(value: string | null): string | null 
   return normalized || null;
 }
 
-function normalizeGoogleAdsApiVersion(value: string | null): string {
-  if (!value) {
-    return "v22";
-  }
 
-  const trimmed = value.trim().toLowerCase();
-  if (/^v\d+$/.test(trimmed)) {
-    return trimmed;
-  }
-  if (/^\d+$/.test(trimmed)) {
-    return `v${trimmed}`;
-  }
-  return "v22";
-}
 
 function sanitizeNotionDatabaseId(value: string | null): string | null {
   if (!value) {

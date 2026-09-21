@@ -2,7 +2,7 @@
 
 ## API version
 
-Use Google Ads REST `/v24` by default. Google Ads API minor releases such as v24.1 update the same major endpoint; keep an override through `GOOGLE_ADS_API_VERSION`.
+Use Google Ads REST `/v25` by default. Google Ads API minor releases such as v25 update the same major endpoint; keep an override through `GOOGLE_ADS_API_VERSION`.
 
 ## Search build
 
@@ -18,7 +18,7 @@ Create operations in one mutate request using temporary resource names:
 
 Use `MAXIMIZE_CONVERSIONS` when `06 Campaign Objective` is `Leads` or `Sales`, or when `08 Optimization Focus` is `Conversions`. If `13 Target CPA` is present, set `maximizeConversions.targetCpaMicros` only for conversion bidding. Use Google Ads Maximize clicks when `06 Campaign Objective` is `Website Traffic` or `08 Optimization Focus` is `Clicks`; in the API this is represented by `biddingStrategyType: TARGET_SPEND` with `targetSpend`. Do not apply target CPA on this path. For v23+ scheduling, map Notion `11 Start Date` to `campaign.startDateTime`, for example `2026-06-05 00:00:00`.
 
-Map Notion `06 Campaign Objective = Leads` to the supported Google Ads API setup controls: Maximize conversions bidding and campaign conversion goals. The Google Ads UI row called `Marketing Objective` is a campaign setup wizard label and is not exposed as a writable Campaign field in Google Ads API v24; do not claim the script can directly set that UI label.
+Map Notion `06 Campaign Objective = Leads` to the supported Google Ads API setup controls: Maximize conversions bidding and campaign conversion goals. The Google Ads UI row called `Marketing Objective` is a campaign setup wizard label and is not exposed as a writable Campaign field in Google Ads API v25; do not claim the script can directly set that UI label.
 
 Map Notion `06 Campaign Objective = Website Traffic` or `08 Optimization Focus = Clicks` to Maximize clicks bidding. Google Ads API bidding strategy docs identify `TARGET_SPEND` as the standard strategy for Maximize clicks, while the UI marketing objective label itself remains non-writable through the Campaign API.
 

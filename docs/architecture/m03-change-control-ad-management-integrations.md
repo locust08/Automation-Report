@@ -38,7 +38,7 @@ flowchart LR
 ### Security boundary
 
 1. The browser calls authenticated Next.js routes only.
-2. Provider access tokens, client secrets, developer tokens, Supabase secret/service-role keys, and cache gateway secrets remain server-only.
+2. Provider access tokens, client secrets, Supabase secret/service-role keys, and cache gateway secrets remain server-only.
 3. Every M03 public table has RLS enabled. Direct `public`, `anon`, and `authenticated` table access is revoked; the server uses `service_role`.
 4. Provider mutations additionally require the deployment master gate, audited platform/account settings, exact approved revision, fresh baseline, matching hash, approved operator domain, and explicit publish action.
 5. Management-page reads and cached report data do not constitute approval or provider verification.
@@ -1050,7 +1050,7 @@ erDiagram
 | Area | Specific keys or settings | Still required |
 |---|---|---|
 | All platforms | Deployment master switch plus audited Supabase settings for enabled platforms and approved account IDs. | Keep the master switch disabled until the pilot is approved. Administrators choose allowed platforms and accounts in Settings. Publishing still requires an approved revision, a fresh conflict-free baseline, and an explicit publish action. |
-| Google Ads | Use the existing Google Ads developer token and OAuth credentials. The OAuth token must include the `https://www.googleapis.com/auth/adwords` scope. | Confirm that the authenticated Google user can edit the target customer account, then allowlist that account in M03. |
+| Google Ads | Use the approved Cloud project’s OAuth credentials. The OAuth token must include the `https://www.googleapis.com/auth/adwords` scope. | Confirm that the authenticated Google user can edit the target customer account, then allowlist that account in M03. |
 | Meta Ads | Use `META_ACCESS_TOKEN` with the `ads_management` permission. | Confirm that the token can access the required Business, ad account, Page, Instagram identity, pixel or dataset, and creative assets, then allowlist the account in M03. |
 | TikTok Ads | Use `TIKTOK_BUSINESS_ACCESS_TOKEN` with advertiser campaign-management permission. | Confirm that the token is authorized for the target advertiser and can access the required identity, video, pixel, and conversion-event resources, then allowlist the advertiser in M03. |
 

@@ -7,10 +7,10 @@ import { getPlacementCacheStatus } from "@/lib/placement-optimization/cache-clie
 
 const DEFAULT_PROTOTYPE_ACCOUNT = "9858507935";
 
-function placementInput(customerId:string,credentials:ReturnType<typeof getCredentials>,loginCustomerId:string|null|undefined,accessPath:string|null,startDate:string,endDate:string){return {customerId,apiVersion:credentials.googleAdsApiVersion,developerToken:credentials.googleDeveloperToken!,accessToken:credentials.googleAccessToken,refreshToken:credentials.googleRefreshToken,clientId:credentials.googleClientId,clientSecret:credentials.googleClientSecret,loginCustomerId:loginCustomerId??null,accessPath,fallbackLoginCustomerId:credentials.googleLoginCustomerId,startDate,endDate};}
+function placementInput(customerId:string,credentials:ReturnType<typeof getCredentials>,loginCustomerId:string|null|undefined,accessPath:string|null,startDate:string,endDate:string){return {customerId,apiVersion:credentials.googleAdsApiVersion,accessToken:credentials.googleAccessToken,refreshToken:credentials.googleRefreshToken,clientId:credentials.googleClientId,clientSecret:credentials.googleClientSecret,loginCustomerId:loginCustomerId??null,accessPath,fallbackLoginCustomerId:credentials.googleLoginCustomerId,startDate,endDate};}
 
 export async function getPlacementOptimizationSummary(input:{accountId?:string;startDate?:string;endDate?:string}):Promise<PlacementDashboardPayload>{
-  const credentials=getCredentials(); if(!credentials.googleDeveloperToken)throw new Error("Google Ads developer token is unavailable.");
+  const credentials=getCredentials();
   const customerId=normalizeGoogleAccountId(input.accountId||process.env.GOOGLE_ADS_ACCOUNT_ID||DEFAULT_PROTOTYPE_ACCOUNT); const dateRange=buildDateRange(input.startDate??null,input.endDate??null);
   const routing=await resolveGoogleManagerIdsFromNotion({googleAccountIds:[customerId],notionAccessToken:credentials.notionAccessToken,notionDatabaseId:credentials.notionDatabaseId,fallbackLoginCustomerId:credentials.googleLoginCustomerId});
   const loginCustomerId=routing.loginCustomerIdByAccount[customerId]??credentials.googleLoginCustomerId; const accessPath=routing.accessPathByAccount[customerId]??null; const request=placementInput(customerId,credentials,loginCustomerId,accessPath,dateRange.startDate,dateRange.endDate);

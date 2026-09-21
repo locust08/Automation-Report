@@ -1,11 +1,20 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { buildSitelinkMutateOperations, buildTrafficQualityCriterionMutation, criterionVerificationMatches, sitelinkVerificationMatches, validateLocalChange } from "@/lib/ads-management/google";
+import { buildGoogleFieldMutation, buildSitelinkMutateOperations, buildTrafficQualityCriterionMutation, criterionVerificationMatches, sitelinkVerificationMatches, validateLocalChange } from "@/lib/ads-management/google";
 import type { AdsFieldChangeRecord } from "@/lib/ads-management/types";
 
 function change(overrides: Partial<AdsFieldChangeRecord>): AdsFieldChangeRecord {
   return { id: "1", change_set_id: "set", entity_type: "campaign", entity_id: "10", entity_name: "Search", field_key: "campaign.name", field_label: "Campaign name", value_type: "string", baseline_value: "Old", proposed_value: "New", latest_official_value: null, reviewed_official_value: null, published_value: null, verified_value: null, conflict_resolution: null, validation_errors: [], publish_status: "pending", verification_status: "pending", platform_response: null, last_error_message: null, publish_attempts: 0, ...overrides };
 }
+
+test("public date fields map to v25 date-time mutation fields", () => {
+  const start = buildGoogleFieldMutation("1234567890", change({ field_key: "campaign.start_date", proposed_value: "2026-10-01" }));
+  assert.equal(start.mask, "start_date_time");
+  assert.equal((start.update as Record<string, unknown>).startDateTime, "2026-10-01 00:00:00");
+  const end = buildGoogleFieldMutation("1234567890", change({ field_key: "campaign.end_date", proposed_value: "2026-10-31" }));
+  assert.equal(end.mask, "end_date_time");
+  assert.equal((end.update as Record<string, unknown>).endDateTime, "2026-10-31 23:59:59");
+});
 
 test("requires editable names", () => assert.deepEqual(validateLocalChange(change({ proposed_value: "" })), ["Campaign name is required."]));
 test("limits statuses to enabled and paused", () => assert.equal(validateLocalChange(change({ field_key: "campaign.status", field_label: "Campaign status", proposed_value: "REMOVED" })).length, 1));

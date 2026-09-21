@@ -11,21 +11,27 @@
  *     --page-ids <notion_page_ids> --execute-paused
  */
 
+import { require as tsxRequire } from "tsx/cjs/api";
+const { GoogleAdsRestClient, getGoogleAdsFailureDetails } = tsxRequire("../../../../lib/google-ads/rest-client.ts", import.meta.url);
+
 import fs from "node:fs/promises";
 import path from "node:path";
 import assert from "node:assert/strict";
 
 const DEFAULT_NOTION_VERSION = "2022-06-28";
-const DEFAULT_GOOGLE_ADS_VERSION = "v24";
+
 const DEFAULT_COUNTRY_CODE = "MY";
 const DEFAULT_DATABASE_ID = "8adaf03ad617472780f0b34e5ca6ef08";
 
+for (const suffix of ["CLIENT_ID", "CLIENT_SECRET", "REFRESH_TOKEN"]) {
+  process.env[`GOOGLE_ADS_${suffix}`] ||= process.env[`GOOGLE_OAUTH_${suffix}`] || "";
+}
+
 const REQUIRED_ENV = [
   "NOTION_TOKEN",
-  "GOOGLE_ADS_DEVELOPER_TOKEN",
-  "GOOGLE_OAUTH_CLIENT_ID",
-  "GOOGLE_OAUTH_CLIENT_SECRET",
-  "GOOGLE_OAUTH_REFRESH_TOKEN",
+  "GOOGLE_ADS_CLIENT_ID",
+  "GOOGLE_ADS_CLIENT_SECRET",
+  "GOOGLE_ADS_REFRESH_TOKEN",
 ];
 
 const LANGUAGE_FALLBACKS = new Map([
@@ -548,69 +554,18 @@ function groupPlanSummary(group) {
   };
 }
 
-async function getAccessToken() {
-  const body = new URLSearchParams({
-    client_id: process.env.GOOGLE_OAUTH_CLIENT_ID,
-    client_secret: process.env.GOOGLE_OAUTH_CLIENT_SECRET,
-    refresh_token: process.env.GOOGLE_OAUTH_REFRESH_TOKEN,
-    grant_type: "refresh_token",
-  });
-  const res = await fetchWithTimeout("https://oauth2.googleapis.com/token", {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body,
-  });
-  const text = await res.text();
-  if (!res.ok) throw new Error(`OAuth token request failed (${res.status}): ${text}`);
-  return JSON.parse(text).access_token;
+function googleClient() {
+  return new GoogleAdsRestClient({ clientId: process.env.GOOGLE_ADS_CLIENT_ID, clientSecret: process.env.GOOGLE_ADS_CLIENT_SECRET,
+    refreshToken: process.env.GOOGLE_ADS_REFRESH_TOKEN, apiVersion: process.env.GOOGLE_ADS_API_VERSION,
+    project: { id: process.env.GOOGLE_ADS_CLOUD_PROJECT_ID, number: process.env.GOOGLE_ADS_CLOUD_PROJECT_NUMBER,
+      name: process.env.GOOGLE_ADS_CLOUD_PROJECT_NAME, accessLevel: process.env.GOOGLE_ADS_PROJECT_ACCESS_LEVEL } });
 }
-
-function googleAdsVersion() {
-  return process.env.GOOGLE_ADS_API_VERSION || DEFAULT_GOOGLE_ADS_VERSION;
+async function getAccessToken() { return googleClient().getAccessToken(); }
+async function googleAdsRequest({ customerId, loginCustomerId, pathSuffix, body }) {
+  return googleClient().request(`customers/${customerId}${pathSuffix}`, body, { loginCustomerId });
 }
-
-function googleAdsHeaders(accessToken, loginCustomerId) {
-  const headers = {
-    Authorization: `Bearer ${accessToken}`,
-    "developer-token": process.env.GOOGLE_ADS_DEVELOPER_TOKEN,
-    "Content-Type": "application/json",
-  };
-  if (loginCustomerId) headers["login-customer-id"] = loginCustomerId;
-  return headers;
-}
-
-async function googleAdsRequest({ customerId, loginCustomerId, accessToken, pathSuffix, method = "POST", body }) {
-  const version = googleAdsVersion();
-  const endpoint = `https://googleads.googleapis.com/${version}/customers/${customerId}${pathSuffix}`;
-  const res = await fetchWithTimeout(endpoint, {
-    method,
-    headers: googleAdsHeaders(accessToken, loginCustomerId),
-    body: body ? JSON.stringify(body) : undefined,
-  }, 60_000);
-  const text = await res.text();
-  if (!res.ok) {
-    const err = new Error(`Google Ads API failed (${version}, ${res.status}): ${text}`);
-    err.status = res.status;
-    err.responseText = text;
-    try {
-      err.responseJson = JSON.parse(text);
-    } catch {
-      err.responseJson = null;
-    }
-    throw err;
-  }
-  return text ? JSON.parse(text) : {};
-}
-
-async function googleAdsSearch({ customerId, loginCustomerId, accessToken, query }) {
-  const data = await googleAdsRequest({
-    customerId,
-    loginCustomerId,
-    accessToken,
-    pathSuffix: "/googleAds:search",
-    body: { query },
-  });
-  return data.results || [];
+async function googleAdsSearch({ customerId, loginCustomerId, query }) {
+  return googleClient().searchAll(customerId, query, { loginCustomerId });
 }
 
 async function googleAdsMutate({ customerId, loginCustomerId, accessToken, mutateOperations, validateOnly }) {
@@ -628,7 +583,7 @@ async function googleAdsMutate({ customerId, loginCustomerId, accessToken, mutat
 }
 
 function googleAdsErrorsFromException(err) {
-  const details = err?.responseJson?.error?.details || [];
+  const details = getGoogleAdsFailureDetails(err)?.error?.details || [];
   return details.flatMap((detail) => detail.errors || []);
 }
 

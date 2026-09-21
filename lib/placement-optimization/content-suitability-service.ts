@@ -87,19 +87,10 @@ export async function getContentSuitability(input: {
   }
 
   const credentials = getCredentials();
-  if (!credentials.googleDeveloperToken) {
-    if (cached) {
-      return {
-        ...cached.payload,
-        source: "cache",
-        stale: true,
-        warnings: [
-          ...cached.payload.warnings,
-          "Google Ads credentials are unavailable; showing the last cached snapshot.",
-        ],
-      };
-    }
-    throw new Error("Google Ads developer token is unavailable.");
+  if (!credentials.googleClientId || !credentials.googleClientSecret || !credentials.googleRefreshToken) {
+    if (cached) return { ...cached.payload, source: "cache", stale: true,
+      warnings: [...cached.payload.warnings, "Google Ads credentials are unavailable; showing the last cached snapshot."] };
+    throw new Error("Google Ads OAuth credentials are unavailable.");
   }
 
   const routing = await resolveGoogleManagerIdsFromNotion({
@@ -117,7 +108,6 @@ export async function getContentSuitability(input: {
       (await fetchGoogleAccountName({
         customerId,
         apiVersion: credentials.googleAdsApiVersion,
-        developerToken: credentials.googleDeveloperToken,
         accessToken: credentials.googleAccessToken,
         refreshToken: credentials.googleRefreshToken,
         clientId: credentials.googleClientId,
@@ -127,7 +117,6 @@ export async function getContentSuitability(input: {
     const result = await fetchGoogleContentSuitability({
       customerId,
       apiVersion: credentials.googleAdsApiVersion,
-      developerToken: credentials.googleDeveloperToken,
       accessToken: credentials.googleAccessToken,
       refreshToken: credentials.googleRefreshToken,
       clientId: credentials.googleClientId,

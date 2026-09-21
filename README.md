@@ -51,11 +51,9 @@ Example:
 Credentials are expected from environment variables (Doppler injects these at runtime):
 
 - `META_ACCESS_TOKEN`
-- `GOOGLE_ADS_DEVELOPER_TOKEN`
-- `GOOGLE_ADS_ACCESS_TOKEN` (optional if refresh flow is configured)
-- `GOOGLE_ADS_REFRESH_TOKEN` (optional, enables automatic token refresh)
-- `GOOGLE_ADS_CLIENT_ID` (required for refresh flow)
-- `GOOGLE_ADS_CLIENT_SECRET` (required for refresh flow)
+- `GOOGLE_ADS_REFRESH_TOKEN` (required)
+- `GOOGLE_ADS_CLIENT_ID` (required)
+- `GOOGLE_ADS_CLIENT_SECRET` (required)
 - `NOTION_TOKEN` (used to read `DB | Ad Accounts`)
 - `NOTION_DATABASE_ID` (used to read `DB | Ad Accounts`; raw Notion database ID, not the full browser URL)
 - `NOTION_AD_ACCOUNTS_DATABASE_ID` (preferred override for monthly cron account selection)
@@ -66,7 +64,7 @@ Credentials are expected from environment variables (Doppler injects these at ru
 - `MONTHLY_REPORT_TEST_MODE` (optional; when `true`, only the first eligible account is processed)
 - `MONTHLY_REPORT_TEST_RECIPIENT` (optional; defaults to `ava@locus-t.com.my`)
 - `GOOGLE_ADS_LOGIN_CUSTOMER_ID` (optional override; defaults to fixed MCC `366-613-7525`)
-- `GOOGLE_ADS_API_VERSION` (optional, defaults to `v22`)
+- `GOOGLE_ADS_API_VERSION` (optional, defaults to `v25`)
 - `REPORT_COMPANY_NAME` (optional display label)
 - `REPORT_COMPANY_NAME_MAP` (optional account ID to company mapping)
   - JSON format example: `{"6972528848":"Soka International School"}`
@@ -163,8 +161,8 @@ npm run vercel:deploy:prod
 
 Notes:
 
-- Required secrets for sync: `META_ACCESS_TOKEN`, `GOOGLE_ADS_DEVELOPER_TOKEN`
-- Optional secrets are synced when present (`GOOGLE_ADS_ACCESS_TOKEN`, refresh/client credentials, login customer ID, API version, report company fields)
+- Required secrets are the Meta access token and Google OAuth client ID, client secret, and refresh token.
+- Optional values include the login customer ID, API version, Cloud project metadata, report company fields, and Meta import settings.
 - Alias names are supported for OAuth values (`GOOGLE_OAUTH_*`, `GOOGLE_WORKSPACE_OAUTH_*`)
 
 ### Troubleshooting `NOT_FOUND` on Vercel
@@ -311,3 +309,5 @@ Use the Advanced page download button to verify browser PDF export. For manual e
 Common failure reasons: missing Notion rows or unchecked `Advanced Report`, missing recipient email, inaccessible Google Ads or Meta Ads account, missing OpenAI/DataForSEO/OpenRouter keys, Advanced cache/generation timeout, PDF render failure, Resend failure, or duplicate send blocked by `accountId + reportType + period + scheduledDate`.
 
 Rollback: set `ADVANCED_REPORT_ENABLED=false` in Vercel/Cloudflare Worker env and redeploy/restart the scheduler environment. This disables scheduled Advanced Report automation only; manual `/advanced` preview and browser PDF download remain available.
+
+Google Ads uses the shared OAuth-only v25 client in `lib/google-ads/rest-client.ts`. Versions below v25 are rejected. Cloud-project inventory and staged rollout instructions: [M07 rollout](docs/operations/m07-rollout.md).

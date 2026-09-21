@@ -1,4 +1,6 @@
-import { getCredentials, normalizeGoogleAccountId } from "@/lib/reporting/env";
+import { googleAdsClient } from "./client";
+import { getGoogleAdsFailureDetails, type GoogleAdsRestClient } from "./rest-client";
+import { normalizeGoogleAccountId } from "@/lib/reporting/env";
 import sharp from "sharp";
 import {
   GOOGLE_AD_GROUP_SETUP_DATA_SOURCE_ID,
@@ -175,10 +177,7 @@ interface PlannedMediaPlanCampaign {
 interface GoogleAdsConfig {
   customerId: string;
   loginCustomerId: string | null;
-  developerToken: string;
-  accessToken: string;
-  apiVersion: string;
-  canRefreshAccessToken: boolean;
+  client: GoogleAdsRestClient;
 }
 
 interface LinkedGoogleAdAccount {
@@ -202,24 +201,10 @@ interface PolicyViolationExemption {
   };
 }
 
-class GoogleAdsApiRequestError extends Error {
-  readonly failedStep: string;
-  readonly status: number;
-  readonly payload: unknown;
 
-  constructor(failedStep: string, status: number, message: string, payload: unknown) {
-    super(message);
-    this.name = "GoogleAdsApiRequestError";
-    this.failedStep = failedStep;
-    this.status = status;
-    this.payload = payload;
-  }
-}
 
 const NOTION_API_VERSION = "2026-03-11";
 const NOTION_API_BASE = "https://api.notion.com/v1";
-const GOOGLE_ADS_API_DEFAULT_VERSION = "v24";
-const GOOGLE_ADS_REQUEST_TIMEOUT_MS = 180_000;
 const NOTION_REQUEST_TIMEOUT_MS = 60_000;
 const MEDIA_PLAN_SOURCE = "media-plan";
 const CAMPAIGN_RESULT_NOTE_PREFIX = "GoogleAdsCampaignID:";
@@ -777,68 +762,7 @@ function normalizeLoginCustomerId(accessPath: string): string | null {
 }
 
 async function resolveGoogleAdsConfig(account: LinkedGoogleAdAccount): Promise<GoogleAdsConfig> {
-  const credentials = getCredentials();
-  const developerToken = credentials.googleDeveloperToken;
-  if (!developerToken) {
-    throw stepError("configuration", "Missing required env var GOOGLE_ADS_DEVELOPER_TOKEN.");
-  }
-  const canRefreshAccessToken = Boolean(
-    credentials.googleRefreshToken && credentials.googleClientId && credentials.googleClientSecret
-  );
-  const accessToken = canRefreshAccessToken
-    ? await refreshGoogleAccessToken()
-    : credentials.googleAccessToken;
-  if (!accessToken) {
-    throw stepError(
-      "configuration",
-      "Missing Google OAuth credentials. Provide GOOGLE_ADS_REFRESH_TOKEN with client credentials, or GOOGLE_ADS_ACCESS_TOKEN."
-    );
-  }
-  return {
-    customerId: account.customerId,
-    loginCustomerId: account.loginCustomerId,
-    developerToken,
-    accessToken,
-    apiVersion: credentials.googleAdsApiVersion || GOOGLE_ADS_API_DEFAULT_VERSION,
-    canRefreshAccessToken,
-  };
-}
-
-async function refreshGoogleAccessToken(): Promise<string> {
-  const credentials = getCredentials();
-  if (!credentials.googleRefreshToken || !credentials.googleClientId || !credentials.googleClientSecret) {
-    throw stepError(
-      "configuration",
-      "Missing Google OAuth credentials. Provide GOOGLE_ADS_ACCESS_TOKEN or refresh token/client credentials."
-    );
-  }
-  let response: Response;
-  try {
-    response = await fetchWithTimeout("https://oauth2.googleapis.com/token", {
-      method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body: new URLSearchParams({
-        client_id: credentials.googleClientId,
-        client_secret: credentials.googleClientSecret,
-        refresh_token: credentials.googleRefreshToken,
-        grant_type: "refresh_token",
-      }),
-    });
-  } catch (error) {
-    throw stepError(
-      "google_oauth",
-      `OAuth token request failed or timed out: ${error instanceof Error ? error.message : String(error)}`
-    );
-  }
-  const text = await response.text();
-  if (!response.ok) {
-    throw stepError("google_oauth", `OAuth token request failed (${response.status}): ${text}`);
-  }
-  const data = JSON.parse(text) as { access_token?: string };
-  if (!data.access_token) {
-    throw stepError("google_oauth", "OAuth token response did not include access_token.");
-  }
-  return data.access_token;
+  return { customerId: account.customerId, loginCustomerId: account.loginCustomerId, client: googleAdsClient() };
 }
 
 async function assertNoExistingCampaign(config: GoogleAdsConfig, campaignName: string) {
@@ -1106,7 +1030,7 @@ function buildGoogleAdsMutateOperations(
             positiveGeoTargetType: "PRESENCE",
             negativeGeoTargetType: "PRESENCE",
           },
-          startDate: group.startDate,
+          startDateTime: `${group.startDate} 00:00:00`,
           ...buildBidding(group),
         },
       },
@@ -1313,25 +1237,7 @@ function buildBidding(group: MediaPlanRowGroup): Record<string, unknown> {
 }
 
 async function googleAdsValidateMutate(config: GoogleAdsConfig, mutateOperations: unknown[]) {
-  try {
-    return await googleAdsMutate(config, mutateOperations, true);
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    const failedStep =
-      error instanceof GoogleAdsApiRequestError && error.failedStep === "google_ads_quota"
-        ? error.failedStep
-        : "google_ads_validate";
-    const wrapped = stepError(failedStep, message) as Error & {
-      failedStep?: string;
-      payload?: unknown;
-      status?: number;
-    };
-    if (error instanceof GoogleAdsApiRequestError) {
-      wrapped.payload = error.payload;
-      wrapped.status = error.status;
-    }
-    throw wrapped;
-  }
+  return googleAdsMutate(config, mutateOperations, true);
 }
 
 async function googleAdsValidateMutateWithPolicyExemptions(
@@ -1366,188 +1272,19 @@ async function googleAdsMutate(config: GoogleAdsConfig, mutateOperations: unknow
 }
 
 async function googleAdsSearch(config: GoogleAdsConfig, query: string): Promise<unknown[]> {
-  const data = await googleAdsRequest(config, "/googleAds:search", { query });
-  return (data as { results?: unknown[] }).results || [];
+  return config.client.searchAll(config.customerId, query, { loginCustomerId: config.loginCustomerId });
 }
 
 async function googleAdsRequest(config: GoogleAdsConfig, pathSuffix: string, body: unknown): Promise<unknown> {
-  const firstAttempt = await sendGoogleAdsRequest(config, pathSuffix, body);
-  if (!firstAttempt.ok && firstAttempt.status === 401 && config.canRefreshAccessToken) {
-    console.warn("[media-plan:create-campaign] google_ads_access_token_rejected_refreshing", {
-      customerId: config.customerId,
-      pathSuffix,
-    });
-    config.accessToken = await refreshGoogleAccessToken();
-    const retryAttempt = await sendGoogleAdsRequest(config, pathSuffix, body);
-    if (retryAttempt.ok) {
-      return retryAttempt.text ? JSON.parse(retryAttempt.text) : {};
-    }
-    throw googleAdsHttpError(retryAttempt.status, retryAttempt.text);
-  }
-
-  if (!firstAttempt.ok) {
-    throw googleAdsHttpError(firstAttempt.status, firstAttempt.text);
-  }
-  return firstAttempt.text ? JSON.parse(firstAttempt.text) : {};
+  return config.client.request(`customers/${config.customerId}${pathSuffix}`, body, { loginCustomerId: config.loginCustomerId });
 }
 
-async function sendGoogleAdsRequest(
-  config: GoogleAdsConfig,
-  pathSuffix: string,
-  body: unknown
-): Promise<{ ok: boolean; status: number; text: string }> {
-  let response: Response;
-  try {
-    response = await fetchWithTimeout(
-      `https://googleads.googleapis.com/${normalizeApiVersion(config.apiVersion)}/customers/${config.customerId}${pathSuffix}`,
-      {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${config.accessToken}`,
-          "developer-token": config.developerToken,
-          "Content-Type": "application/json",
-          ...(config.loginCustomerId ? { "login-customer-id": config.loginCustomerId } : {}),
-        },
-        body: JSON.stringify(body),
-      },
-      GOOGLE_ADS_REQUEST_TIMEOUT_MS
-    );
-  } catch (error) {
-    throw stepError(
-      "google_ads_api",
-      `Google Ads API request failed or timed out: ${error instanceof Error ? error.message : String(error)}`
-    );
-  }
-  const text = await response.text();
-  return {
-    ok: response.ok,
-    status: response.status,
-    text,
-  };
-}
 
-function googleAdsHttpError(status: number, text: string) {
-  const payload = parseJsonOrNull(text);
-  const quotaDetails = extractQuotaErrorDetails(payload);
-  const failedStep =
-    quotaDetails || status === 429 || /RESOURCE_EXHAUSTED|quota/i.test(text)
-      ? "google_ads_quota"
-      : status === 401 || /UNAUTHENTICATED|invalid authentication credentials/i.test(text)
-        ? "google_ads_auth"
-        : "google_ads_api";
-  return new GoogleAdsApiRequestError(
-    failedStep,
-    status,
-    quotaDetails ? formatGoogleAdsQuotaMessage(quotaDetails) : `Google Ads API failed (${status}): ${text}`,
-    payload
-  );
-}
 
-interface GoogleAdsQuotaErrorDetails {
-  retryDelaySeconds: number | null;
-  requestId: string;
-  rateName: string;
-  rateScope: string;
-  message: string;
-}
 
-function extractQuotaErrorDetails(payload: unknown): GoogleAdsQuotaErrorDetails | null {
-  if (!payload || typeof payload !== "object") {
-    return null;
-  }
-
-  const error = (payload as { error?: unknown }).error;
-  if (!error || typeof error !== "object") {
-    return null;
-  }
-  const status = typeof (error as { status?: unknown }).status === "string" ? (error as { status: string }).status : "";
-  const details = (error as { details?: unknown }).details;
-  const topLevelMessage =
-    typeof (error as { message?: unknown }).message === "string" ? (error as { message: string }).message : "";
-
-  if (!Array.isArray(details) && status !== "RESOURCE_EXHAUSTED") {
-    return null;
-  }
-
-  for (const detail of Array.isArray(details) ? details : []) {
-    if (!detail || typeof detail !== "object") {
-      continue;
-    }
-    const requestId =
-      typeof (detail as { requestId?: unknown }).requestId === "string" ? (detail as { requestId: string }).requestId : "";
-    const errors = (detail as { errors?: unknown }).errors;
-    for (const item of Array.isArray(errors) ? errors : []) {
-      if (!item || typeof item !== "object") {
-        continue;
-      }
-      const errorCode = (item as { errorCode?: { quotaError?: string } }).errorCode;
-      const quotaError = errorCode?.quotaError;
-      const quotaErrorDetails = (item as {
-        details?: { quotaErrorDetails?: { retryDelay?: string; rateName?: string; rateScope?: string } };
-      }).details?.quotaErrorDetails;
-      if (!quotaError && !quotaErrorDetails) {
-        continue;
-      }
-      const itemMessage =
-        typeof (item as { message?: unknown }).message === "string" ? (item as { message: string }).message : "";
-      return {
-        retryDelaySeconds: parseGoogleRetryDelaySeconds(quotaErrorDetails?.retryDelay),
-        requestId,
-        rateName: quotaErrorDetails?.rateName || "",
-        rateScope: quotaErrorDetails?.rateScope || "",
-        message: itemMessage || topLevelMessage,
-      };
-    }
-  }
-
-  return status === "RESOURCE_EXHAUSTED"
-    ? {
-        retryDelaySeconds: null,
-        requestId: "",
-        rateName: "",
-        rateScope: "",
-        message: topLevelMessage || "Google Ads quota is temporarily exhausted.",
-      }
-    : null;
-}
-
-function formatGoogleAdsQuotaMessage(details: GoogleAdsQuotaErrorDetails): string {
-  const retryText =
-    details.retryDelaySeconds && details.retryDelaySeconds > 0
-      ? ` Retry after ${formatRetryDelay(details.retryDelaySeconds)}.`
-      : " Retry later.";
-  const rateText = details.rateName
-    ? ` Limit: ${details.rateName}${details.rateScope ? ` (${details.rateScope.toLowerCase()} scope)` : ""}.`
-    : "";
-  const requestText = details.requestId ? ` Google Ads request ID: ${details.requestId}.` : "";
-  const apiMessage = details.message ? ` ${details.message}` : "";
-  return `Google Ads quota is temporarily exhausted.${retryText}${rateText}${requestText}${apiMessage} The Notion rows were kept Ready for Setup so you can retry campaign creation later.`;
-}
-
-function parseGoogleRetryDelaySeconds(value: string | undefined): number | null {
-  if (!value) {
-    return null;
-  }
-  const match = /^(\d+)s$/.exec(value.trim());
-  if (!match) {
-    return null;
-  }
-  const seconds = Number(match[1]);
-  return Number.isFinite(seconds) ? seconds : null;
-}
-
-function formatRetryDelay(seconds: number): string {
-  const roundedSeconds = Math.max(0, Math.round(seconds));
-  const minutes = Math.floor(roundedSeconds / 60);
-  const remainingSeconds = roundedSeconds % 60;
-  if (minutes <= 0) {
-    return `${remainingSeconds} seconds`;
-  }
-  return `${minutes} min ${String(remainingSeconds).padStart(2, "0")} sec`;
-}
 
 function collectExemptiblePolicyViolations(error: unknown): PolicyViolationExemption[] {
-  const payload = (error as { payload?: unknown }).payload;
+  const payload = getGoogleAdsFailureDetails(error);
   const googleAdsErrors = extractGoogleAdsErrors(payload);
   if (googleAdsErrors.length === 0) {
     return [];
@@ -1632,13 +1369,6 @@ function extractGoogleAdsErrors(payload: unknown): Array<{
   }) as ReturnType<typeof extractGoogleAdsErrors>;
 }
 
-function parseJsonOrNull(value: string): unknown {
-  try {
-    return JSON.parse(value) as unknown;
-  } catch {
-    return null;
-  }
-}
 
 async function updateRowsForSetup(
   config: ReturnType<typeof resolveNotionConfig>,
@@ -2157,10 +1887,6 @@ function escapeGaql(value: string): string {
   return value.replace(/\\/g, "\\\\").replace(/'/g, "\\'");
 }
 
-function normalizeApiVersion(value: string): string {
-  const trimmed = value.trim();
-  return trimmed.startsWith("v") ? trimmed : `v${trimmed || GOOGLE_ADS_API_DEFAULT_VERSION.slice(1)}`;
-}
 
 function isValidUrl(value: string): boolean {
   try {

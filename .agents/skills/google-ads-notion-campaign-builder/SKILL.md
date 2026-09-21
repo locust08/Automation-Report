@@ -60,7 +60,7 @@ doppler run -- node .agents/skills/google-ads-notion-campaign-builder/scripts/cr
 - Groups rows by `05 Campaign Name`, linked ad account, and `07 Campaign Type`.
 - Resolves customer ID from the linked Ad Account `ID` property.
 - Resolves `login-customer-id` from the linked Ad Account `Access Path` property.
-- Defaults Google Ads REST calls to `/v24`; override with `GOOGLE_ADS_API_VERSION` only when needed.
+- Defaults Google Ads REST calls to `/v25`; rejects older versions. Uses the shared TypeScript OAuth transport from `lib/google-ads/rest-client.ts`. Required credentials are `GOOGLE_ADS_CLIENT_ID`, `GOOGLE_ADS_CLIENT_SECRET`, and `GOOGLE_ADS_REFRESH_TOKEN`; equivalent `GOOGLE_OAUTH_*` aliases remain supported.
 - Refuses existing non-removed campaign names unless `--allow-existing` is passed.
 - Creates campaigns in paused state, with ad groups, ads, keywords, and PMax asset groups enabled.
 - Maps `06 Campaign Objective = Leads` or `Sales` to `MAXIMIZE_CONVERSIONS`; maps `Website Traffic` objectives or `08 Optimization Focus = Clicks` to Google Ads Maximize clicks, represented as `TARGET_SPEND` in the API.

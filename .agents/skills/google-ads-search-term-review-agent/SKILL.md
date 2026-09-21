@@ -211,3 +211,9 @@ explicitly wants the phrase candidates validated.
 - Keep secrets in Doppler and out of logs.
 - Move any term with conversions that is proposed as `negative exact` to `special review needed`.
 - Treat `no action` as reviewed but hidden from proposal tables.
+
+## OAuth project configuration
+
+Use `google-ads>=32.0.0` from `lib/search-term-optimization/python/pyproject.toml`. The official client explicitly requests `version="v25"`. Required credentials: `GOOGLE_ADS_CLIENT_ID`, `GOOGLE_ADS_CLIENT_SECRET`, `GOOGLE_ADS_REFRESH_TOKEN`; equivalent `GOOGLE_OAUTH_*` aliases remain supported. Set `GOOGLE_ADS_LOGIN_CUSTOMER_ID` only for manager routing.
+
+Run `uv run --project lib/search-term-optimization/python --group ads --group ads-agent python scripts/google-ads-python.test.py` for the offline transport checks.

@@ -1,23 +1,27 @@
 from __future__ import annotations
 
 import os
+import json
+import re
 import time
 from dataclasses import asdict, dataclass, field
 from datetime import date, datetime, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
 
-import httpx
-from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
+from google.ads.googleads.client import GoogleAdsClient
+from google.oauth2.credentials import Credentials
+from google.ads.googleads.errors import GoogleAdsException
+from google.api_core.retry import Retry
+from google.api_core import exceptions as api_exceptions
 
-GOOGLE_ADS_VERSION = "v23"
+GOOGLE_ADS_VERSION = "v25"
 MAX_GOOGLE_RESPONSE_BYTES = int(os.environ.get("SEARCH_TERM_MAX_GOOGLE_RESPONSE_BYTES", str(32 * 1024 * 1024)))
 DEFAULT_MCCS = ("3666137525", "4114685827")
 REQUIRED_GOOGLE_ENV = (
-    "GOOGLE_ADS_DEVELOPER_TOKEN",
-    "GOOGLE_OAUTH_CLIENT_ID",
-    "GOOGLE_OAUTH_CLIENT_SECRET",
-    "GOOGLE_OAUTH_REFRESH_TOKEN",
+    "GOOGLE_ADS_CLIENT_ID",
+    "GOOGLE_ADS_CLIENT_SECRET",
+    "GOOGLE_ADS_REFRESH_TOKEN",
 )
 
 
@@ -82,6 +86,10 @@ def default_date_range(today: date | None = None, tz_name: str = "Asia/Kuala_Lum
 
 
 def require_google_ads_env() -> None:
+    for suffix in ("CLIENT_ID", "CLIENT_SECRET", "REFRESH_TOKEN"):
+        key = f"GOOGLE_ADS_{suffix}"
+        if not os.environ.get(key) and os.environ.get(f"GOOGLE_OAUTH_{suffix}"):
+            os.environ[key] = os.environ[f"GOOGLE_OAUTH_{suffix}"]
     missing = [key for key in REQUIRED_GOOGLE_ENV if not os.environ.get(key)]
     if missing:
         raise RuntimeError(f"Missing required Google Ads env vars: {', '.join(missing)}")
@@ -116,68 +124,91 @@ def chunked(values: list[str], size: int) -> list[list[str]]:
     return [values[i : i + size] for i in range(0, len(values), size)]
 
 
+class BoundedOAuthCredentials(Credentials):
+    request_timeout = 45.0
+
+    def refresh(self, request):
+        def bounded_request(*args, **kwargs):
+            kwargs["timeout"] = self.request_timeout
+            return request(*args, **kwargs)
+        return super().refresh(bounded_request)
+
+
 class GoogleAdsRestClient:
     def __init__(self, customer_id: str, timeout_seconds: float = 45.0):
         require_google_ads_env()
+        configured = (os.environ.get("GOOGLE_ADS_API_VERSION") or GOOGLE_ADS_VERSION).lower()
+        if configured.lstrip("v") != "25":
+            raise RuntimeError("Python search-term reader requires Google Ads API v25.")
         self.customer_id = strip_dashes(customer_id)
         self.timeout_seconds = timeout_seconds
-        self.access_token = self._get_access_token()
+        self.clients: dict[str, Any] = {}
 
-    def _get_access_token(self) -> str:
-        body = {
-            "client_id": os.environ["GOOGLE_OAUTH_CLIENT_ID"],
-            "client_secret": os.environ["GOOGLE_OAUTH_CLIENT_SECRET"],
-            "refresh_token": os.environ["GOOGLE_OAUTH_REFRESH_TOKEN"],
-            "grant_type": "refresh_token",
-        }
-        with httpx.Client(timeout=self.timeout_seconds) as client:
-            res = client.post("https://oauth2.googleapis.com/token", data=body)
-        if res.status_code >= 400:
-            raise RuntimeError(f"OAuth token request failed ({res.status_code}): {res.text}")
-        return str(res.json()["access_token"])
+    def _client(self, login_customer_id: str | None):
+        login = strip_dashes(login_customer_id)
+        if login not in self.clients:
+            credentials = BoundedOAuthCredentials(
+                token=None, client_id=os.environ["GOOGLE_ADS_CLIENT_ID"],
+                client_secret=os.environ["GOOGLE_ADS_CLIENT_SECRET"],
+                refresh_token=os.environ["GOOGLE_ADS_REFRESH_TOKEN"],
+                token_uri="https://oauth2.googleapis.com/token",
+            )
+            credentials.request_timeout = self.timeout_seconds
+            self.clients[login] = GoogleAdsClient(credentials=credentials, login_customer_id=login or None, use_proto_plus=True, version="v25")
+        return self.clients[login]
 
-    def _headers(self, login_customer_id: str | None) -> dict[str, str]:
-        headers = {
-            "Authorization": f"Bearer {self.access_token}",
-            "developer-token": os.environ["GOOGLE_ADS_DEVELOPER_TOKEN"],
-            "Content-Type": "application/json",
-        }
-        if login_customer_id:
-            headers["login-customer-id"] = strip_dashes(login_customer_id)
-        return headers
-
-    @retry(
-        retry=retry_if_exception_type((httpx.HTTPError, RuntimeError)),
-        wait=wait_exponential(multiplier=1, min=1, max=10),
-        stop=stop_after_attempt(3),
-        reraise=True,
-    )
     def search_page(self, login_customer_id: str | None, query: str, page_token: str = "") -> dict[str, Any]:
-        body: dict[str, Any] = {"query": query}
-        if page_token:
-            body["pageToken"] = page_token
-        endpoint = f"https://googleads.googleapis.com/{GOOGLE_ADS_VERSION}/customers/{self.customer_id}/googleAds:search"
-        with httpx.Client(timeout=self.timeout_seconds) as client:
-            res = client.post(endpoint, headers=self._headers(login_customer_id), json=body)
-        if res.status_code >= 400:
-            raise RuntimeError(f"Google Ads search failed ({res.status_code}): {res.text}")
-        if len(res.content) > MAX_GOOGLE_RESPONSE_BYTES:
-            raise RuntimeError("Google Ads search response exceeded the configured 32 MB safety limit.")
-        return res.json()
+        try:
+            client = self._client(login_customer_id)
+        except Exception:
+            raise RuntimeError("Google OAuth initialization failed.") from None
+        request = client.get_type("SearchGoogleAdsRequest", version="v25")
+        request.customer_id = self.customer_id
+        request.query = query
+        request.page_token = page_token
+        try:
+            pager = client.get_service("GoogleAdsService", version="v25").search(
+                request=request, timeout=self.timeout_seconds,
+                retry=Retry(predicate=lambda exc: isinstance(exc, (api_exceptions.ServiceUnavailable, api_exceptions.TooManyRequests)), initial=1, maximum=10, deadline=self.timeout_seconds),
+            )
+            page = next(iter(pager.pages))
+            payload = type(page).to_dict(page, preserving_proto_field_name=False, use_integers_for_enums=False)
+        except GoogleAdsException as exc:
+            codes = []
+            for error in exc.failure.errors:
+                code = type(error.error_code).to_dict(error.error_code, use_integers_for_enums=False)
+                codes.extend(str(value) for value in code.values() if re.fullmatch(r"[A-Z][A-Z0-9_]*", str(value)))
+            request_id = exc.request_id if re.fullmatch(r"[\w-]{1,150}", exc.request_id or "") else "unavailable"
+            raise RuntimeError(f"Google Ads request failed: {', '.join(codes)}; request ID {request_id}") from None
+        except Exception:
+            raise RuntimeError("Google Ads request failed or timed out.") from None
+        if len(json.dumps(payload).encode("utf-8")) > MAX_GOOGLE_RESPONSE_BYTES:
+            raise RuntimeError("Google Ads search response exceeded the configured safety limit.")
+        return payload
 
     def search_all(self, login_customer_id: str | None, query: str) -> list[dict[str, Any]]:
         rows: list[dict[str, Any]] = []
         page_token = ""
-        while True:
+        seen_tokens: set[str] = set()
+        seen_rows: set[str] = set()
+        for _ in range(10000):
             page = self.search_page(login_customer_id, query, page_token)
-            rows.extend(page.get("results") or [])
-            page_token = page.get("nextPageToken") or page.get("next_page_token") or ""
+            for row in page.get("results") or []:
+                key = json.dumps(row, sort_keys=True)
+                if key not in seen_rows:
+                    seen_rows.add(key)
+                    rows.append(row)
+            page_token = page.get("nextPageToken") or ""
             if not page_token:
                 return rows
+            if page_token in seen_tokens:
+                break
+            seen_tokens.add(page_token)
             time.sleep(0.1)
+        raise RuntimeError("Google Ads pagination did not terminate safely.")
 
     def resolve_access(self) -> tuple[str | None, str]:
-        candidates = unique([strip_dashes(os.environ.get("GOOGLE_ADS_LOGIN_CUSTOMER_ID")), "", *DEFAULT_MCCS])
+        candidates = list(dict.fromkeys([strip_dashes(os.environ.get("GOOGLE_ADS_LOGIN_CUSTOMER_ID")), "", *DEFAULT_MCCS]))
         query = "SELECT customer.id, customer.descriptive_name FROM customer LIMIT 1"
         errors: list[str] = []
         for candidate in candidates:

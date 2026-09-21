@@ -1,3 +1,4 @@
+import { GoogleAdsRestClient, GoogleAdsApiError, normalizeGoogleAdsApiVersion } from "../google-ads/rest-client";
 import { emptyCampaignRow, hasReportableCampaignSpend } from "@/lib/reporting/metrics";
 import {
   addSourceToAudienceItems,
@@ -45,7 +46,6 @@ import {
 interface GoogleFetchInput {
   customerId: string;
   apiVersion: string;
-  developerToken: string;
   accessToken: string | null;
   refreshToken: string | null;
   clientId: string | null;
@@ -69,7 +69,6 @@ interface GooglePreviewSelection {
 interface GoogleAccountNameInput {
   customerId: string;
   apiVersion: string;
-  developerToken: string;
   accessToken: string | null;
   refreshToken: string | null;
   clientId: string | null;
@@ -95,24 +94,7 @@ interface GoogleGeoSegmentBreakdown {
   countryItems: AudienceClickBreakdownItem[];
 }
 
-interface GoogleAdsStreamBatch {
-  results?: GoogleAdsResult[];
-  error?: {
-    message?: string;
-  };
-}
 
-interface GoogleAdsSearchResponse {
-  results?: Array<{
-    customer?: {
-      descriptiveName?: string;
-      descriptive_name?: string;
-    };
-  }>;
-  error?: {
-    message?: string;
-  };
-}
 
 interface GoogleProximityGeoPoint {
   latitudeInMicroDegrees?: string | number;
@@ -214,8 +196,8 @@ interface GoogleAdsResult {
     status?: string;
     servingStatus?: string;
     biddingStrategyType?: string;
-    startDate?: string;
-    endDate?: string;
+    startDateTime?: string;
+    endDateTime?: string;
     optimizationScore?: number | string;
     networkSettings?: {
       targetGoogleSearch?: boolean;
@@ -381,6 +363,7 @@ interface GoogleAdsResult {
     geoTargetState?: string;
   };
   adGroupCriterion?: {
+    topic?: { path?: string[] };
     criterionId?: string;
     ageRange?: {
       type?: string;
@@ -416,21 +399,7 @@ interface GoogleAdsResult {
   };
 }
 
-interface ParsedGoogleResponse {
-  status: number;
-  ok: boolean;
-  contentType: string;
-  json: GoogleAdsStreamBatch[] | { error?: { message?: string } } | null;
-  textSnippet: string;
-  parseError: string | null;
-  requestId: string | null;
-  errorCode: string | null;
-  errorMessage: string | null;
-}
 
-const GOOGLE_ADS_MAX_RETRIES = 3;
-const GOOGLE_ADS_STREAM_RETRIES = 2;
-const ACCESSIBLE_CUSTOMERS_CACHE = new Map<string, Promise<string[]>>();
 
 interface GoogleHierarchyNode {
   id: string;
@@ -580,99 +549,23 @@ export function isGoogleAdsAccessPathError(error: unknown): error is GoogleAdsAc
   return error instanceof GoogleAdsAccessPathError;
 }
 
-export async function fetchGoogleAccountName({
-  customerId,
-  apiVersion,
-  developerToken,
-  accessToken,
-  refreshToken,
-  clientId,
-  clientSecret,
-  loginCustomerId,
-}: GoogleAccountNameInput): Promise<string | null> {
-  const normalizedCustomerId = normalizeGoogleAdsId(customerId);
-  const normalizedLoginCustomerId = normalizeOptionalGoogleAdsId(loginCustomerId);
-  const canRefresh = Boolean(refreshToken && clientId && clientSecret);
-  let activeAccessToken = accessToken;
+export async function fetchGoogleAccountName(input: GoogleAccountNameInput): Promise<string | null> {
+  try {
+    const rows = await reportingClient(input).searchAll<{ customer?: { descriptiveName?: string; descriptive_name?: string } }>(input.customerId, "SELECT customer.descriptive_name FROM customer LIMIT 1", input);
+    return (rows[0]?.customer?.descriptiveName || rows[0]?.customer?.descriptive_name)?.trim() || null;
+  } catch (error) { throw wrapGoogleAdsRequestError(error); }
+}
 
-  if (canRefresh) {
-    activeAccessToken = await refreshGoogleAccessToken({
-      refreshToken: refreshToken!,
-      clientId: clientId!,
-      clientSecret: clientSecret!,
-    });
-  }
-
-  if (!activeAccessToken) {
-    throw new Error(
-      "Missing Google Ads access token. Set GOOGLE_ADS_ACCESS_TOKEN (or GOOGLE_OAUTH_ACCESS_TOKEN), or provide refresh credentials."
-    );
-  }
-
-  const endpoint = `https://googleads.googleapis.com/${apiVersion}/customers/${normalizedCustomerId}/googleAds:search`;
-  const body = {
-    query: "SELECT customer.descriptive_name FROM customer LIMIT 1",
-  };
-
-  await logAccessibleGoogleAdsCustomers({
-    apiVersion,
-    developerToken,
-    accessToken: activeAccessToken,
-    customerId: normalizedCustomerId,
-    loginCustomerId: normalizedLoginCustomerId,
-  });
-  logGoogleAdsRequestRouting(normalizedCustomerId, normalizedLoginCustomerId);
-
-  const firstAttempt = await requestGoogleAdsSearch(
-    endpoint,
-    body,
-    developerToken,
-    activeAccessToken,
-    normalizedLoginCustomerId
-  );
-
-  let parsed = await parseGoogleAdsSearchResponse(firstAttempt);
-
-  if ((parsed.status === 401 || parsed.status === 403) && canRefresh) {
-    activeAccessToken = await refreshGoogleAccessToken({
-      refreshToken: refreshToken!,
-      clientId: clientId!,
-      clientSecret: clientSecret!,
-    });
-    const secondAttempt = await requestGoogleAdsSearch(
-      endpoint,
-      body,
-      developerToken,
-      activeAccessToken,
-      normalizedLoginCustomerId
-    );
-    parsed = await parseGoogleAdsSearchResponse(secondAttempt);
-  }
-
-  if (!parsed.ok) {
-    throw new GoogleAdsRequestError({
-      status: parsed.status,
-      requestId: parsed.requestId,
-      errorCode: parsed.errorCode,
-      errorMessage:
-        parsed.errorMessage || `Google Ads API request failed with status ${parsed.status}.`,
-      category: classifyGoogleAdsFailure(
-        parsed.status,
-        parsed.errorCode,
-        parsed.errorMessage || `Google Ads API request failed with status ${parsed.status}.`
-      ),
-    });
-  }
-
-  const firstResult = parsed.json?.results?.[0];
-  const name = firstResult?.customer?.descriptiveName || firstResult?.customer?.descriptive_name;
-  return name?.trim() || null;
+function reportingClient(input: Pick<GoogleFetchInput, "apiVersion" | "clientId" | "clientSecret" | "refreshToken">) {
+  return new GoogleAdsRestClient({ ...input, project: {
+    id: process.env.GOOGLE_ADS_CLOUD_PROJECT_ID, number: process.env.GOOGLE_ADS_CLOUD_PROJECT_NUMBER,
+    name: process.env.GOOGLE_ADS_CLOUD_PROJECT_NAME, accessLevel: process.env.GOOGLE_ADS_PROJECT_ACCESS_LEVEL,
+  } });
 }
 
 export async function fetchGoogleCampaignRows({
   customerId,
   apiVersion,
-  developerToken,
   accessToken,
   refreshToken,
   clientId,
@@ -686,7 +579,6 @@ export async function fetchGoogleCampaignRows({
   const context = await resolveVerifiedGoogleAdsContext({
     customerId,
     apiVersion,
-    developerToken,
     accessToken,
     refreshToken,
     clientId,
@@ -699,7 +591,6 @@ export async function fetchGoogleCampaignRows({
   const results = await fetchGoogleAdsResultsWithFallback({
     customerId: context.customerId,
     apiVersion,
-    developerToken,
     accessToken,
     refreshToken,
     clientId,
@@ -751,20 +642,20 @@ export interface GoogleOptimizationOverview {
 
 export async function fetchGoogleOptimizationOverview(input: GoogleFetchInput): Promise<GoogleOptimizationOverview> {
   const context = await resolveVerifiedGoogleAdsContext({
-    customerId: input.customerId, apiVersion: input.apiVersion, developerToken: input.developerToken,
+    customerId: input.customerId, apiVersion: input.apiVersion,
     accessToken: input.accessToken, refreshToken: input.refreshToken, clientId: input.clientId,
     clientSecret: input.clientSecret, loginCustomerId: input.loginCustomerId,
     accessPath: input.accessPath ?? null, fallbackLoginCustomerId: input.fallbackLoginCustomerId ?? null,
   });
   const [customerRows, campaignRows] = await Promise.all([
     fetchGoogleAdsResultsWithFallback({
-      customerId: context.customerId, apiVersion: input.apiVersion, developerToken: input.developerToken,
+      customerId: context.customerId, apiVersion: input.apiVersion,
       accessToken: input.accessToken, refreshToken: input.refreshToken, clientId: input.clientId,
       clientSecret: input.clientSecret, loginCustomerId: context.loginCustomerId,
       queries: ["SELECT customer.optimization_score FROM customer LIMIT 1"],
     }),
     fetchGoogleAdsResultsWithFallback({
-      customerId: context.customerId, apiVersion: input.apiVersion, developerToken: input.developerToken,
+      customerId: context.customerId, apiVersion: input.apiVersion,
       accessToken: input.accessToken, refreshToken: input.refreshToken, clientId: input.clientId,
       clientSecret: input.clientSecret, loginCustomerId: context.loginCustomerId,
       queries: [`SELECT campaign.id, campaign.name, campaign.optimization_score, metrics.clicks, metrics.conversions FROM campaign WHERE segments.date DURING LAST_30_DAYS AND campaign.status != 'REMOVED'`],
@@ -810,13 +701,13 @@ export interface GoogleCampaignTypeOverview {
 
 export async function fetchGoogleCampaignTypeOverview(input: GoogleFetchInput): Promise<GoogleCampaignTypeOverview[]> {
   const context = await resolveVerifiedGoogleAdsContext({
-    customerId: input.customerId, apiVersion: input.apiVersion, developerToken: input.developerToken,
+    customerId: input.customerId, apiVersion: input.apiVersion,
     accessToken: input.accessToken, refreshToken: input.refreshToken, clientId: input.clientId,
     clientSecret: input.clientSecret, loginCustomerId: input.loginCustomerId,
     accessPath: input.accessPath ?? null, fallbackLoginCustomerId: input.fallbackLoginCustomerId ?? null,
   });
   const results = await fetchGoogleAdsResultsWithFallback({
-    customerId: context.customerId, apiVersion: input.apiVersion, developerToken: input.developerToken,
+    customerId: context.customerId, apiVersion: input.apiVersion,
     accessToken: input.accessToken, refreshToken: input.refreshToken, clientId: input.clientId,
     clientSecret: input.clientSecret, loginCustomerId: context.loginCustomerId,
     queries: [`SELECT campaign.id, campaign.advertising_channel_type FROM campaign WHERE campaign.status != 'REMOVED'`],
@@ -987,7 +878,6 @@ export async function fetchGooglePerformanceMaxOverview(
   const context = await resolveVerifiedGoogleAdsContext({
     customerId: input.customerId,
     apiVersion: input.apiVersion,
-    developerToken: input.developerToken,
     accessToken: input.accessToken,
     refreshToken: input.refreshToken,
     clientId: input.clientId,
@@ -999,7 +889,6 @@ export async function fetchGooglePerformanceMaxOverview(
   const results = await fetchGoogleAdsResultsWithFallback({
     customerId: context.customerId,
     apiVersion: input.apiVersion,
-    developerToken: input.developerToken,
     accessToken: input.accessToken,
     refreshToken: input.refreshToken,
     clientId: input.clientId,
@@ -1026,7 +915,6 @@ export async function fetchGooglePerformanceMaxPlacementRows(
   const context = await resolveVerifiedGoogleAdsContext({
     customerId: input.customerId,
     apiVersion: input.apiVersion,
-    developerToken: input.developerToken,
     accessToken: input.accessToken,
     refreshToken: input.refreshToken,
     clientId: input.clientId,
@@ -1038,7 +926,6 @@ export async function fetchGooglePerformanceMaxPlacementRows(
   const results = await fetchGoogleAdsResultsWithFallback({
     customerId: context.customerId,
     apiVersion: input.apiVersion,
-    developerToken: input.developerToken,
     accessToken: input.accessToken,
     refreshToken: input.refreshToken,
     clientId: input.clientId,
@@ -1092,7 +979,6 @@ export async function fetchGooglePlacementPerformanceRows(input: GoogleFetchInpu
   const context = await resolveVerifiedGoogleAdsContext({
     customerId: input.customerId,
     apiVersion: input.apiVersion,
-    developerToken: input.developerToken,
     accessToken: input.accessToken,
     refreshToken: input.refreshToken,
     clientId: input.clientId,
@@ -1104,7 +990,6 @@ export async function fetchGooglePlacementPerformanceRows(input: GoogleFetchInpu
   const results = await fetchGoogleAdsResultsWithFallback({
     customerId: context.customerId,
     apiVersion: input.apiVersion,
-    developerToken: input.developerToken,
     accessToken: input.accessToken,
     refreshToken: input.refreshToken,
     clientId: input.clientId,
@@ -1126,7 +1011,7 @@ export async function fetchGooglePlacementPerformanceRows(input: GoogleFetchInpu
         metrics.clicks,
         metrics.cost_micros,
         metrics.conversions,
-        metrics.video_views
+        metrics.video_trueview_views
       FROM detail_placement_view
       WHERE segments.date BETWEEN '${input.startDate}' AND '${input.endDate}'
         AND campaign.status != 'REMOVED'
@@ -1190,7 +1075,7 @@ export async function fetchGooglePlacementPerformanceRows(input: GoogleFetchInpu
     clicks: toNumber(result.metrics?.clicks),
     spend: microsToCurrency(result.metrics?.costMicros),
     conversions: toNumber(result.metrics?.conversions),
-    videoViews: toNumber(result.metrics?.videoViews),
+    videoViews: readGoogleVideoViews(result),
     sourceView: "detail_placement_view",
   }));
 }
@@ -1240,7 +1125,6 @@ export function buildGoogleCampaignRowsQueries(startDate: string, endDate: strin
 export async function fetchGoogleAudienceClickBreakdown({
   customerId,
   apiVersion,
-  developerToken,
   accessToken,
   refreshToken,
   clientId,
@@ -1254,7 +1138,6 @@ export async function fetchGoogleAudienceClickBreakdown({
   const context = await resolveVerifiedGoogleAdsContext({
     customerId,
     apiVersion,
-    developerToken,
     accessToken,
     refreshToken,
     clientId,
@@ -1268,7 +1151,6 @@ export async function fetchGoogleAudienceClickBreakdown({
     fetchGoogleAudienceAgeBreakdown({
       customerId: context.customerId,
       apiVersion,
-      developerToken,
       accessToken,
       refreshToken,
       clientId,
@@ -1280,7 +1162,6 @@ export async function fetchGoogleAudienceClickBreakdown({
     fetchGoogleAudienceGenderBreakdown({
       customerId: context.customerId,
       apiVersion,
-      developerToken,
       accessToken,
       refreshToken,
       clientId,
@@ -1292,7 +1173,6 @@ export async function fetchGoogleAudienceClickBreakdown({
     fetchGoogleAudienceLocationBreakdown({
       customerId: context.customerId,
       apiVersion,
-      developerToken,
       accessToken,
       refreshToken,
       clientId,
@@ -1304,7 +1184,6 @@ export async function fetchGoogleAudienceClickBreakdown({
     fetchGoogleAudienceKeywordBreakdown({
       customerId: context.customerId,
       apiVersion,
-      developerToken,
       accessToken,
       refreshToken,
       clientId,
@@ -1316,7 +1195,6 @@ export async function fetchGoogleAudienceClickBreakdown({
     fetchGoogleAudienceContentBreakdown({
       customerId: context.customerId,
       apiVersion,
-      developerToken,
       accessToken,
       refreshToken,
       clientId,
@@ -1344,7 +1222,6 @@ export async function fetchGoogleAudienceBreakdown(
   const context = await resolveVerifiedGoogleAdsContext({
     customerId: input.customerId,
     apiVersion: input.apiVersion,
-    developerToken: input.developerToken,
     accessToken: input.accessToken,
     refreshToken: input.refreshToken,
     clientId: input.clientId,
@@ -1356,7 +1233,6 @@ export async function fetchGoogleAudienceBreakdown(
   const scopedInput = {
     customerId: context.customerId,
     apiVersion: input.apiVersion,
-    developerToken: input.developerToken,
     accessToken: input.accessToken,
     refreshToken: input.refreshToken,
     clientId: input.clientId,
@@ -1393,7 +1269,6 @@ async function fetchGoogleAudienceAgeBreakdown(
     const results = await fetchGoogleAdsResultsWithFallback({
       customerId: input.customerId,
       apiVersion: input.apiVersion,
-      developerToken: input.developerToken,
       accessToken: input.accessToken,
       refreshToken: input.refreshToken,
       clientId: input.clientId,
@@ -1436,7 +1311,6 @@ async function fetchGoogleAudienceGenderBreakdown(
     const results = await fetchGoogleAdsResultsWithFallback({
       customerId: input.customerId,
       apiVersion: input.apiVersion,
-      developerToken: input.developerToken,
       accessToken: input.accessToken,
       refreshToken: input.refreshToken,
       clientId: input.clientId,
@@ -1530,7 +1404,6 @@ async function fetchGoogleAudienceGeoSegmentBreakdown(
     const results = await fetchGoogleAdsResultsWithFallback({
       customerId: input.customerId,
       apiVersion: input.apiVersion,
-      developerToken: input.developerToken,
       accessToken: input.accessToken,
       refreshToken: input.refreshToken,
       clientId: input.clientId,
@@ -1573,7 +1446,6 @@ async function fetchGoogleTargetLocationBreakdown(
     const results = await fetchGoogleAdsResultsWithFallback({
       customerId: input.customerId,
       apiVersion: input.apiVersion,
-      developerToken: input.developerToken,
       accessToken: input.accessToken,
       refreshToken: input.refreshToken,
       clientId: input.clientId,
@@ -1640,7 +1512,6 @@ async function resolveGoogleAudienceLocationTargets(input: {
     const geoTargets = await fetchGoogleGeoTargetConstantsByResourceName({
       customerId: input.input.customerId,
       apiVersion: input.input.apiVersion,
-      developerToken: input.input.developerToken,
       accessToken: input.input.accessToken,
       refreshToken: input.input.refreshToken,
       clientId: input.input.clientId,
@@ -1672,7 +1543,6 @@ async function fetchGoogleGeoTargetsForResourceNames(input: {
     const geoTargets = await fetchGoogleGeoTargetConstantsByResourceName({
       customerId: input.input.customerId,
       apiVersion: input.input.apiVersion,
-      developerToken: input.input.developerToken,
       accessToken: input.input.accessToken,
       refreshToken: input.input.refreshToken,
       clientId: input.input.clientId,
@@ -1708,7 +1578,6 @@ async function resolveGoogleLocationViewCriteria(input: {
     const criteriaByResourceName = await fetchGoogleCampaignCriteriaByResourceName({
       customerId: input.input.customerId,
       apiVersion: input.input.apiVersion,
-      developerToken: input.input.developerToken,
       accessToken: input.input.accessToken,
       refreshToken: input.input.refreshToken,
       clientId: input.input.clientId,
@@ -2170,7 +2039,6 @@ async function fetchGoogleAudienceKeywordBreakdown(
     const results = await fetchGoogleAdsResultsWithFallback({
       customerId: input.customerId,
       apiVersion: input.apiVersion,
-      developerToken: input.developerToken,
       accessToken: input.accessToken,
       refreshToken: input.refreshToken,
       clientId: input.clientId,
@@ -2202,7 +2070,6 @@ async function fetchGoogleAudienceContentBreakdown(
     const results = await fetchGoogleAdsResultsWithFallback({
       customerId: input.customerId,
       apiVersion: input.apiVersion,
-      developerToken: input.developerToken,
       accessToken: input.accessToken,
       refreshToken: input.refreshToken,
       clientId: input.clientId,
@@ -2219,7 +2086,7 @@ async function fetchGoogleAudienceContentBreakdown(
           result.detailPlacementView?.displayName?.trim() ||
             result.detailPlacementView?.placement?.trim() ||
             result.groupPlacementView?.targetUrl?.trim() ||
-            result.topicView?.topic?.trim(),
+            result.adGroupCriterion?.topic?.path?.join(" > "),
           "Unknown content"
         ),
     });
@@ -2310,7 +2177,7 @@ function buildGoogleAudienceContentQueries(startDate: string, endDate: string): 
     `,
     `
       SELECT
-        topic_view.topic,
+        ad_group_criterion.topic.path,
         metrics.clicks
       FROM topic_view
       WHERE segments.date BETWEEN '${startDate}' AND '${endDate}'
@@ -2395,7 +2262,6 @@ function buildGoogleSourceItems(input: {
 export async function fetchGooglePreviewHierarchy({
   customerId,
   apiVersion,
-  developerToken,
   accessToken,
   refreshToken,
   clientId,
@@ -2409,7 +2275,6 @@ export async function fetchGooglePreviewHierarchy({
   const preview = await fetchGooglePreviewData({
     customerId,
     apiVersion,
-    developerToken,
     accessToken,
     refreshToken,
     clientId,
@@ -2445,7 +2310,6 @@ export async function fetchGooglePreviewData(
   const context = await resolveGooglePreviewAccountContext({
     customerId: input.customerId,
     apiVersion: input.apiVersion,
-    developerToken: input.developerToken,
     accessToken: input.accessToken,
     refreshToken: input.refreshToken,
     clientId: input.clientId,
@@ -2689,7 +2553,6 @@ export async function resolveGooglePreviewAccount(
 export async function fetchGoogleTopKeywordRows({
   customerId,
   apiVersion,
-  developerToken,
   accessToken,
   refreshToken,
   clientId,
@@ -2703,7 +2566,6 @@ export async function fetchGoogleTopKeywordRows({
   const context = await resolveVerifiedGoogleAdsContext({
     customerId,
     apiVersion,
-    developerToken,
     accessToken,
     refreshToken,
     clientId,
@@ -2716,7 +2578,6 @@ export async function fetchGoogleTopKeywordRows({
   const results = await fetchGoogleAdsResultsWithFallback({
     customerId: context.customerId,
     apiVersion,
-    developerToken,
     accessToken,
     refreshToken,
     clientId,
@@ -2732,7 +2593,6 @@ export async function fetchGoogleTopKeywordRows({
           metrics.ctr,
           metrics.average_cpc,
           metrics.conversions,
-          metrics.conversion_rate,
           metrics.cost_micros
         FROM keyword_view
         WHERE campaign.status = 'ENABLED'
@@ -2812,7 +2672,6 @@ export async function fetchGoogleTopKeywordRows({
 export async function fetchGoogleFinalUrlSpendRows({
   customerId,
   apiVersion,
-  developerToken,
   accessToken,
   refreshToken,
   clientId,
@@ -2826,7 +2685,6 @@ export async function fetchGoogleFinalUrlSpendRows({
   const context = await resolveVerifiedGoogleAdsContext({
     customerId,
     apiVersion,
-    developerToken,
     accessToken,
     refreshToken,
     clientId,
@@ -2839,7 +2697,6 @@ export async function fetchGoogleFinalUrlSpendRows({
   const results = await fetchGoogleAdsResultsWithFallback({
     customerId: context.customerId,
     apiVersion,
-    developerToken,
     accessToken,
     refreshToken,
     clientId,
@@ -2873,7 +2730,6 @@ export async function fetchGoogleFinalUrlSpendRows({
   const impressionShareLookup = await fetchGoogleFinalUrlImpressionShareLookup({
     customerId: context.customerId,
     apiVersion,
-    developerToken,
     accessToken,
     refreshToken,
     clientId,
@@ -2973,7 +2829,6 @@ export async function fetchGoogleFinalUrlSpendRows({
 export async function fetchGoogleImageCreativePerformanceRows({
   customerId,
   apiVersion,
-  developerToken,
   accessToken,
   refreshToken,
   clientId,
@@ -2987,7 +2842,6 @@ export async function fetchGoogleImageCreativePerformanceRows({
   const context = await resolveVerifiedGoogleAdsContext({
     customerId,
     apiVersion,
-    developerToken,
     accessToken,
     refreshToken,
     clientId,
@@ -3000,7 +2854,6 @@ export async function fetchGoogleImageCreativePerformanceRows({
   const requestContext = {
     customerId: context.customerId,
     apiVersion,
-    developerToken,
     accessToken,
     refreshToken,
     clientId,
@@ -3046,7 +2899,6 @@ export async function fetchGoogleImageCreativePerformanceRows({
 export async function fetchGoogleVideoCreativePerformanceRows({
   customerId,
   apiVersion,
-  developerToken,
   accessToken,
   refreshToken,
   clientId,
@@ -3060,7 +2912,6 @@ export async function fetchGoogleVideoCreativePerformanceRows({
   const context = await resolveVerifiedGoogleAdsContext({
     customerId,
     apiVersion,
-    developerToken,
     accessToken,
     refreshToken,
     clientId,
@@ -3073,7 +2924,6 @@ export async function fetchGoogleVideoCreativePerformanceRows({
   const requestContext = {
     customerId: context.customerId,
     apiVersion,
-    developerToken,
     accessToken,
     refreshToken,
     clientId,
@@ -3311,14 +3161,8 @@ function buildGooglePerformanceMaxVideoAssetQueries(
 }
 
 function buildGoogleVideoMetricFieldNames(apiVersion: string): string[] {
-  const versionNumber = Number.parseInt(apiVersion.replace(/\D/g, ""), 10);
-  const preferred = Number.isFinite(versionNumber) && versionNumber >= 22
-    ? "metrics.video_trueview_views"
-    : "metrics.video_views";
-  const fallback = preferred === "metrics.video_trueview_views"
-    ? "metrics.video_views"
-    : "metrics.video_trueview_views";
-  return [preferred, fallback];
+  normalizeGoogleAdsApiVersion(apiVersion);
+  return ["metrics.video_trueview_views"];
 }
 
 function collectResponsiveDisplayImageAssetResourceNames(results: GoogleAdsResult[]): string[] {
@@ -3367,7 +3211,6 @@ async function fetchGoogleAssetImageUrls(
     const results = await fetchGoogleAdsResults({
       customerId: input.customerId,
       apiVersion: input.apiVersion,
-      developerToken: input.developerToken,
       accessToken: input.accessToken,
       refreshToken: input.refreshToken,
       clientId: input.clientId,
@@ -3411,7 +3254,6 @@ async function fetchGoogleYoutubeVideoAssetDetails(
     const results = await fetchGoogleAdsResults({
       customerId: input.customerId,
       apiVersion: input.apiVersion,
-      developerToken: input.developerToken,
       accessToken: input.accessToken,
       refreshToken: input.refreshToken,
       clientId: input.clientId,
@@ -3861,7 +3703,6 @@ async function fetchGoogleFinalUrlImpressionShareLookup(
   const adGroupResults = await fetchGoogleAdsResults({
     customerId: input.customerId,
     apiVersion: input.apiVersion,
-    developerToken: input.developerToken,
     accessToken: input.accessToken,
     refreshToken: input.refreshToken,
     clientId: input.clientId,
@@ -3883,7 +3724,6 @@ async function fetchGoogleFinalUrlImpressionShareLookup(
   const campaignResults = await fetchGoogleAdsResults({
     customerId: input.customerId,
     apiVersion: input.apiVersion,
-    developerToken: input.developerToken,
     accessToken: input.accessToken,
     refreshToken: input.refreshToken,
     clientId: input.clientId,
@@ -4013,7 +3853,6 @@ function finalizeWeightedMetric(accumulator: WeightedMetricAccumulator): number 
 export async function fetchGoogleAuctionInsightRows({
   customerId,
   apiVersion,
-  developerToken,
   accessToken,
   refreshToken,
   clientId,
@@ -4027,7 +3866,6 @@ export async function fetchGoogleAuctionInsightRows({
   const context = await resolveVerifiedGoogleAdsContext({
     customerId,
     apiVersion,
-    developerToken,
     accessToken,
     refreshToken,
     clientId,
@@ -4040,7 +3878,6 @@ export async function fetchGoogleAuctionInsightRows({
   const results = await fetchGoogleAdsResultsWithFallback({
     customerId: context.customerId,
     apiVersion,
-    developerToken,
     accessToken,
     refreshToken,
     clientId,
@@ -4219,7 +4056,6 @@ async function runGooglePreviewBlock(
     const results = await fetchGoogleAdsResultsWithFallback({
       customerId: context.customerId,
       apiVersion: credentials.apiVersion,
-      developerToken: credentials.developerToken,
       accessToken: credentials.accessToken,
       refreshToken: credentials.refreshToken,
       clientId: credentials.clientId,
@@ -4306,7 +4142,6 @@ async function runGoogleOptionalPreviewBlock(
     const results = await fetchGoogleAdsResultsWithFallback({
       customerId: context.customerId,
       apiVersion: credentials.apiVersion,
-      developerToken: credentials.developerToken,
       accessToken: credentials.accessToken,
       refreshToken: credentials.refreshToken,
       clientId: credentials.clientId,
@@ -4412,7 +4247,6 @@ async function runGooglePreviewCampaignLocationBlock(
     const criteriaResults = await fetchGoogleAdsResultsWithFallback({
       customerId: context.customerId,
       apiVersion: credentials.apiVersion,
-      developerToken: credentials.developerToken,
       accessToken: credentials.accessToken,
       refreshToken: credentials.refreshToken,
       clientId: credentials.clientId,
@@ -4430,7 +4264,6 @@ async function runGooglePreviewCampaignLocationBlock(
         geoTargetsByResourceName = await fetchGoogleGeoTargetConstantsByResourceName({
           customerId: context.customerId,
           apiVersion: credentials.apiVersion,
-          developerToken: credentials.developerToken,
           accessToken: credentials.accessToken,
           refreshToken: credentials.refreshToken,
           clientId: credentials.clientId,
@@ -4563,7 +4396,6 @@ async function resolveVerifiedGoogleAdsContext(
       const discoveredCandidates = await discoverGoogleAdsRouteCandidates({
         customerId,
         apiVersion: input.apiVersion,
-        developerToken: input.developerToken,
         accessToken: input.accessToken,
         refreshToken: input.refreshToken,
         clientId: input.clientId,
@@ -4635,26 +4467,14 @@ async function resolveVerifiedGoogleAdsContext(
 async function discoverGoogleAdsRouteCandidates(input: {
   customerId: string;
   apiVersion: string;
-  developerToken: string;
   accessToken: string | null;
   refreshToken: string | null;
   clientId: string | null;
   clientSecret: string | null;
 }): Promise<Array<{ loginCustomerId: string | null; resolvedAccessPath: string; fallbackUsed: boolean }>> {
   try {
-    const activeAccessToken = await resolveGoogleAccessToken({
-      accessToken: input.accessToken,
-      refreshToken: input.refreshToken,
-      clientId: input.clientId,
-      clientSecret: input.clientSecret,
-    });
-    const accessibleCustomerIds = await getAccessibleGoogleAdsCustomerIds({
-      apiVersion: input.apiVersion,
-      developerToken: input.developerToken,
-      accessToken: activeAccessToken,
-      customerId: input.customerId,
-      loginCustomerId: null,
-    });
+    const accessible = await reportingClient(input).listAccessibleCustomers();
+    const accessibleCustomerIds = (accessible.resourceNames ?? []).map(name => name.split("/").pop()!).filter(Boolean);
     const discovered: Array<{
       loginCustomerId: string | null;
       resolvedAccessPath: string;
@@ -4725,8 +4545,8 @@ function buildGooglePreviewHierarchyData(input: {
           detailField("Languages", joinDetailValues(languagesByCampaign.get(campaignId))),
           detailField("Serving Status", humanizeEnum(result.campaign?.servingStatus)),
           detailField("Bidding Strategy", humanizeEnum(result.campaign?.biddingStrategyType)),
-          detailField("Start Date", result.campaign?.startDate),
-          detailField("End Date", result.campaign?.endDate),
+          detailField("Start Date", result.campaign?.startDateTime?.slice(0, 10)),
+          detailField("End Date", result.campaign?.endDateTime?.slice(0, 10)),
         ]),
       };
     })
@@ -4877,7 +4697,6 @@ async function verifyDirectGoogleAdsCustomerAccess(
   const results = await fetchGoogleAdsResults({
     customerId: input.customerId,
     apiVersion: input.apiVersion,
-    developerToken: input.developerToken,
     accessToken: input.accessToken,
     refreshToken: input.refreshToken,
     clientId: input.clientId,
@@ -4901,7 +4720,6 @@ async function verifyGoogleAdsCustomerReachableUnderManager(
     const results = await fetchGoogleAdsResults({
       customerId: input.customerId,
       apiVersion: input.apiVersion,
-      developerToken: input.developerToken,
       accessToken: input.accessToken,
       refreshToken: input.refreshToken,
       clientId: input.clientId,
@@ -4926,7 +4744,6 @@ async function verifyGoogleAdsCustomerReachableUnderManager(
   const results = await fetchGoogleAdsResults({
     customerId: input.loginCustomerId,
     apiVersion: input.apiVersion,
-    developerToken: input.developerToken,
     accessToken: input.accessToken,
     refreshToken: input.refreshToken,
     clientId: input.clientId,
@@ -4960,68 +4777,8 @@ async function verifyGoogleAdsCustomerReachableUnderManager(
 async function fetchGoogleAdsResults(
   input: Omit<GoogleFetchInput, "startDate" | "endDate"> & { query: string }
 ): Promise<GoogleAdsResult[]> {
-  const normalizedCustomerId = normalizeGoogleAdsId(input.customerId);
-  const normalizedLoginCustomerId = normalizeOptionalGoogleAdsId(input.loginCustomerId);
-  const body = { query: input.query };
-  const endpoint = `https://googleads.googleapis.com/${input.apiVersion}/customers/${normalizedCustomerId}/googleAds:searchStream`;
-  const canRefresh = Boolean(input.refreshToken && input.clientId && input.clientSecret);
-  const activeAccessToken = await resolveGoogleAccessToken({
-    accessToken: input.accessToken,
-    refreshToken: input.refreshToken,
-    clientId: input.clientId,
-    clientSecret: input.clientSecret,
-  });
-
-  await logAccessibleGoogleAdsCustomers({
-    apiVersion: input.apiVersion,
-    developerToken: input.developerToken,
-    accessToken: activeAccessToken,
-    customerId: normalizedCustomerId,
-    loginCustomerId: normalizedLoginCustomerId,
-  });
-  logGoogleAdsRequestRouting(normalizedCustomerId, normalizedLoginCustomerId);
-
-  const streamBatches = await executeGoogleAdsStreamRequest({
-    endpoint,
-    body,
-    developerToken: input.developerToken,
-    accessToken: activeAccessToken,
-    loginCustomerId: normalizedLoginCustomerId,
-    canRefresh,
-    refreshToken: input.refreshToken,
-    clientId: input.clientId,
-    clientSecret: input.clientSecret,
-  });
-
-  const results: GoogleAdsResult[] = [];
-  streamBatches.forEach((batch) => {
-    results.push(...(batch.results ?? []));
-  });
-
-  return results;
-}
-
-async function resolveGoogleAccessToken(input: {
-  accessToken: string | null;
-  refreshToken: string | null;
-  clientId: string | null;
-  clientSecret: string | null;
-}): Promise<string> {
-  if (input.refreshToken && input.clientId && input.clientSecret) {
-    return refreshGoogleAccessToken({
-      refreshToken: input.refreshToken,
-      clientId: input.clientId,
-      clientSecret: input.clientSecret,
-    });
-  }
-
-  if (input.accessToken) {
-    return input.accessToken;
-  }
-
-  throw new Error(
-    "Missing Google Ads access token. Set GOOGLE_ADS_ACCESS_TOKEN (or GOOGLE_OAUTH_ACCESS_TOKEN), or provide refresh credentials."
-  );
+  try { return await reportingClient(input).searchStream<GoogleAdsResult>(input.customerId, input.query, input); }
+  catch (error) { throw wrapGoogleAdsRequestError(error); }
 }
 
 async function fetchGoogleAdsResultsWithFallback(
@@ -5035,7 +4792,6 @@ async function fetchGoogleAdsResultsWithFallback(
       return await fetchGoogleAdsResults({
         customerId: input.customerId,
         apiVersion: input.apiVersion,
-        developerToken: input.developerToken,
         accessToken: input.accessToken,
         refreshToken: input.refreshToken,
         clientId: input.clientId,
@@ -5073,7 +4829,6 @@ async function fetchGoogleGeoTargetConstantsByResourceName(
     const results = await fetchGoogleAdsResults({
       customerId: input.customerId,
       apiVersion: input.apiVersion,
-      developerToken: input.developerToken,
       accessToken: input.accessToken,
       refreshToken: input.refreshToken,
       clientId: input.clientId,
@@ -5110,7 +4865,6 @@ async function fetchGoogleCampaignCriteriaByResourceName(
     const results = await fetchGoogleAdsResults({
       customerId: input.customerId,
       apiVersion: input.apiVersion,
-      developerToken: input.developerToken,
       accessToken: input.accessToken,
       refreshToken: input.refreshToken,
       clientId: input.clientId,
@@ -5131,329 +4885,13 @@ async function fetchGoogleCampaignCriteriaByResourceName(
   return criteriaByResourceName;
 }
 
-async function executeGoogleAdsStreamRequest(input: {
-  endpoint: string;
-  body: object;
-  developerToken: string;
-  accessToken: string;
-  loginCustomerId: string | null;
-  canRefresh: boolean;
-  refreshToken: string | null;
-  clientId: string | null;
-  clientSecret: string | null;
-}): Promise<GoogleAdsStreamBatch[]> {
-  let accessToken = input.accessToken;
-
-  for (let attempt = 0; attempt <= GOOGLE_ADS_STREAM_RETRIES; attempt += 1) {
-    let response = await requestGoogleAdsStreamWithRetry(
-      input.endpoint,
-      input.body,
-      input.developerToken,
-      accessToken,
-      input.loginCustomerId
-    );
-    let parsed = await parseGoogleResponse(response);
-
-    if ((parsed.status === 401 || parsed.status === 403 || parsed.parseError) && input.canRefresh) {
-      accessToken = await refreshGoogleAccessToken({
-        refreshToken: input.refreshToken!,
-        clientId: input.clientId!,
-        clientSecret: input.clientSecret!,
-      });
-
-      response = await requestGoogleAdsStreamWithRetry(
-        input.endpoint,
-        input.body,
-        input.developerToken,
-        accessToken,
-        input.loginCustomerId
-      );
-      parsed = await parseGoogleResponse(response);
-    }
-
-    if (parsed.parseError) {
-      throw new GoogleAdsRequestError({
-        status: parsed.status,
-        requestId: parsed.requestId,
-        errorCode: parsed.errorCode,
-        errorMessage: `Google Ads API returned non-JSON response (status ${parsed.status}, content-type ${parsed.contentType || "unknown"}). ${parsed.parseError}. Response starts with: ${parsed.textSnippet}`,
-        category: classifyGoogleAdsFailure(
-          parsed.status,
-          parsed.errorCode,
-          parsed.errorMessage ??
-            `Google Ads API returned non-JSON response (status ${parsed.status}).`
-        ),
-      });
-    }
-
-    const topLevelError =
-      parsed.json && !Array.isArray(parsed.json) && "error" in parsed.json
-        ? parsed.json.error?.message
-        : undefined;
-    const streamBatches = Array.isArray(parsed.json) ? parsed.json : [];
-    const streamError = findStreamBatchError(streamBatches);
-    const failureMessage =
-      streamError ??
-      parsed.errorMessage ??
-      topLevelError ??
-      (!parsed.ok
-        ? `Google Ads API request failed with status ${parsed.status}. The customer ID may not be accessible.`
-        : undefined);
-
-    if (!failureMessage) {
-      return streamBatches;
-    }
-
-    if (
-      shouldRetryGoogleFailure(parsed.status, failureMessage) &&
-      attempt < GOOGLE_ADS_STREAM_RETRIES
-    ) {
-      await sleep(getRetryDelayMs(null, attempt + 1));
-      continue;
-    }
-
-    if (isRateLimitError(failureMessage) || parsed.status === 429) {
-      throw new GoogleAdsRequestError({
-        status: parsed.status,
-        requestId: parsed.requestId,
-        errorCode: parsed.errorCode,
-        errorMessage:
-          "Google Ads API rate-limited (HTTP 429 / RESOURCE_EXHAUSTED) after retry attempts. Please wait and retry.",
-        category: "rate-limit",
-      });
-    }
-
-    throw new GoogleAdsRequestError({
-      status: parsed.status,
-      requestId: parsed.requestId,
-      errorCode: parsed.errorCode,
-      errorMessage: failureMessage,
-      category: classifyGoogleAdsFailure(parsed.status, parsed.errorCode, failureMessage),
-    });
-  }
-
-  throw new Error("Google Ads API request failed after retry attempts.");
-}
-
-async function requestGoogleAdsStreamWithRetry(
-  endpoint: string,
-  body: object,
-  developerToken: string,
-  accessToken: string,
-  loginCustomerId: string | null
-): Promise<Response> {
-  let response = await requestGoogleAdsStream(
-    endpoint,
-    body,
-    developerToken,
-    accessToken,
-    loginCustomerId
-  );
-
-  for (let attempt = 1; attempt <= GOOGLE_ADS_MAX_RETRIES; attempt += 1) {
-    if (!shouldRetryResponse(response.status)) {
-      return response;
-    }
-
-    const delayMs = getRetryDelayMs(response.headers.get("retry-after"), attempt);
-    await sleep(delayMs);
-
-    response = await requestGoogleAdsStream(
-      endpoint,
-      body,
-      developerToken,
-      accessToken,
-      loginCustomerId
-    );
-  }
-
-  return response;
-}
-
-async function requestGoogleAdsStream(
-  endpoint: string,
-  body: object,
-  developerToken: string,
-  accessToken: string,
-  loginCustomerId: string | null
-): Promise<Response> {
-  const headers: Record<string, string> = {
-    Authorization: `Bearer ${accessToken}`,
-    "developer-token": developerToken,
-    "Content-Type": "application/json",
-  };
-
-  if (loginCustomerId) {
-    headers["login-customer-id"] = loginCustomerId;
-  }
-
-  return fetch(endpoint, {
-    method: "POST",
-    headers,
-    body: JSON.stringify(body),
-    cache: "no-store",
-  });
-}
-
-async function requestGoogleAdsSearch(
-  endpoint: string,
-  body: object,
-  developerToken: string,
-  accessToken: string,
-  loginCustomerId: string | null
-): Promise<Response> {
-  const headers: Record<string, string> = {
-    Authorization: `Bearer ${accessToken}`,
-    "developer-token": developerToken,
-    "Content-Type": "application/json",
-  };
-
-  if (loginCustomerId) {
-    headers["login-customer-id"] = loginCustomerId;
-  }
-
-  return fetch(endpoint, {
-    method: "POST",
-    headers,
-    body: JSON.stringify(body),
-    cache: "no-store",
-  });
-}
-
-function shouldRetryResponse(status: number): boolean {
-  return status === 429 || status >= 500;
-}
-
-function shouldRetryGoogleFailure(status: number, message: string): boolean {
-  if (shouldRetryResponse(status)) {
-    return true;
-  }
-
-  return /internal_failure|temporar|unavailable|deadline_exceeded|resource_exhausted/i.test(
-    message
-  );
-}
-
-function getRetryDelayMs(retryAfter: string | null, attempt: number): number {
-  const fromHeader = parseRetryAfterMs(retryAfter);
-  if (fromHeader !== null) {
-    return fromHeader;
-  }
-
-  const backoffMs = Math.min(12_000, 1_000 * 2 ** (attempt - 1));
-  const jitterMs = Math.floor(Math.random() * 250);
-  return backoffMs + jitterMs;
-}
-
-function parseRetryAfterMs(retryAfter: string | null): number | null {
-  if (!retryAfter) {
-    return null;
-  }
-
-  const seconds = Number(retryAfter);
-  if (Number.isFinite(seconds) && seconds >= 0) {
-    return Math.max(500, Math.floor(seconds * 1_000));
-  }
-
-  const retryDate = Date.parse(retryAfter);
-  if (Number.isNaN(retryDate)) {
-    return null;
-  }
-
-  return Math.max(500, retryDate - Date.now());
-}
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-function isRateLimitError(message: string | undefined): boolean {
-  if (!message) {
-    return false;
-  }
-  return /resource_exhausted|rate.?limit|too many requests|429/i.test(message);
-}
-
 function isInvalidArgumentError(error: unknown): boolean {
+  if (error instanceof GoogleAdsRequestError && ["invalid-gaql", "unsupported-resource"].includes(error.category)) return true;
   if (!(error instanceof Error)) {
     return false;
   }
   return /invalid argument|field.*(cannot|not).*select|request contains an invalid argument/i.test(
     error.message
-  );
-}
-
-async function logAccessibleGoogleAdsCustomers(input: {
-  apiVersion: string;
-  developerToken: string;
-  accessToken: string;
-  customerId: string;
-  loginCustomerId: string | null;
-}): Promise<void> {
-  try {
-    const accessibleCustomers = await getAccessibleGoogleAdsCustomerIds(input);
-    logGooglePreviewInfo(
-      `[google-routing] accessible_customers=${accessibleCustomers.join(",") || "(none)"} target_customer_id=${input.customerId} login_customer_id=${input.loginCustomerId ?? "(none)"}`
-    );
-  } catch (error) {
-    const message = error instanceof Error ? error.message : "Unable to inspect accessible Google Ads customers.";
-    console.warn(`[google-routing] accessible_customer_check_failed message=${message}`);
-  }
-}
-
-async function getAccessibleGoogleAdsCustomerIds(input: {
-  apiVersion: string;
-  developerToken: string;
-  accessToken: string;
-  customerId: string;
-  loginCustomerId: string | null;
-}): Promise<string[]> {
-  const cacheKey = `${input.apiVersion}:${input.developerToken}:${input.accessToken}`;
-  const cached = ACCESSIBLE_CUSTOMERS_CACHE.get(cacheKey);
-  if (cached) {
-    return cached;
-  }
-
-  const pending = fetchAccessibleGoogleAdsCustomerIds(input);
-  ACCESSIBLE_CUSTOMERS_CACHE.set(cacheKey, pending);
-  return pending;
-}
-
-async function fetchAccessibleGoogleAdsCustomerIds(input: {
-  apiVersion: string;
-  developerToken: string;
-  accessToken: string;
-  customerId: string;
-  loginCustomerId: string | null;
-}): Promise<string[]> {
-  const endpoint = `https://googleads.googleapis.com/${input.apiVersion}/customers:listAccessibleCustomers`;
-  const response = await fetch(endpoint, {
-    method: "GET",
-    headers: {
-      Authorization: `Bearer ${input.accessToken}`,
-      "developer-token": input.developerToken,
-      "Content-Type": "application/json",
-    },
-    cache: "no-store",
-  });
-
-  const rawText = await response.text();
-  if (!response.ok) {
-    throw new Error(
-      `Google Ads accessible customer check failed with status ${response.status}. ${rawText.trim() || "Empty response body."}`
-    );
-  }
-
-  const json = JSON.parse(rawText) as { resourceNames?: string[] };
-  return (json.resourceNames ?? [])
-    .map((resourceName) => resourceName.split("/").pop() ?? "")
-    .map((value) => normalizeOptionalGoogleAdsId(value))
-    .filter((value): value is string => Boolean(value));
-}
-
-function logGoogleAdsRequestRouting(customerId: string, loginCustomerId: string | null) {
-  logGooglePreviewInfo(
-    `[google-routing] target_customer_id=${customerId} access_mode=${loginCustomerId ? "manager" : "direct"} login_customer_id=${loginCustomerId ?? "(none)"}`
   );
 }
 
@@ -5472,211 +4910,6 @@ function normalizeOptionalGoogleAdsId(value: string | null): string | null {
 
   const normalized = value.replace(/\D/g, "");
   return normalized || null;
-}
-
-function findStreamBatchError(streamBatches: GoogleAdsStreamBatch[]): string | undefined {
-  return streamBatches.find((batch) => batch.error?.message)?.error?.message;
-}
-
-async function refreshGoogleAccessToken(input: {
-  refreshToken: string;
-  clientId: string;
-  clientSecret: string;
-}): Promise<string> {
-  const body = new URLSearchParams({
-    grant_type: "refresh_token",
-    refresh_token: input.refreshToken,
-    client_id: input.clientId,
-    client_secret: input.clientSecret,
-  });
-
-  const response = await fetch("https://oauth2.googleapis.com/token", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/x-www-form-urlencoded",
-    },
-    body,
-    cache: "no-store",
-  });
-
-  const rawText = await response.text();
-  let json: {
-    access_token?: string;
-    error?: string;
-    error_description?: string;
-  } = {};
-
-  try {
-    json = JSON.parse(rawText) as {
-      access_token?: string;
-      error?: string;
-      error_description?: string;
-    };
-  } catch {
-    throw new Error(
-      `Google OAuth token refresh returned non-JSON response (status ${response.status}, content-type ${response.headers.get("content-type") || "unknown"}).`
-    );
-  }
-
-  if (!response.ok || !json.access_token) {
-    throw new Error(
-      json.error_description ||
-        json.error ||
-        `Google OAuth token refresh failed with status ${response.status}.`
-    );
-  }
-
-  return json.access_token;
-}
-
-async function parseGoogleResponse(response: Response): Promise<ParsedGoogleResponse> {
-  const rawText = await response.text();
-  const contentType = response.headers.get("content-type") || "";
-  const requestId = response.headers.get("request-id");
-  const textSnippet = JSON.stringify(rawText.slice(0, 120));
-
-  if (!rawText) {
-    return {
-      status: response.status,
-      ok: response.ok,
-      contentType,
-      json: null,
-      textSnippet,
-      parseError: null,
-      requestId,
-      errorCode: null,
-      errorMessage: response.ok
-        ? null
-        : `Google Ads API request failed with status ${response.status}. Empty response body.`,
-    };
-  }
-
-  try {
-    const json = JSON.parse(rawText) as GoogleAdsStreamBatch[] | { error?: { message?: string } };
-    const errorInfo = extractGoogleAdsErrorInfo(json);
-    return {
-      status: response.status,
-      ok: response.ok,
-      contentType,
-      json,
-      textSnippet,
-      parseError: null,
-      requestId,
-      errorCode: errorInfo.errorCode,
-      errorMessage: errorInfo.errorMessage,
-    };
-  } catch (error) {
-    const message = error instanceof Error ? error.message : "Invalid JSON response";
-    return {
-      status: response.status,
-      ok: response.ok,
-      contentType,
-      json: null,
-      textSnippet,
-      parseError: message,
-      requestId,
-      errorCode: null,
-      errorMessage: `Google Ads API returned non-JSON response (status ${response.status}).`,
-    };
-  }
-}
-
-async function parseGoogleAdsSearchResponse(response: Response): Promise<{
-  status: number;
-  ok: boolean;
-  json: GoogleAdsSearchResponse | null;
-  errorMessage: string | null;
-  requestId: string | null;
-  errorCode: string | null;
-}> {
-  const rawText = await response.text();
-  const requestId = response.headers.get("request-id");
-
-  if (!rawText) {
-    return {
-      status: response.status,
-      ok: response.ok,
-      json: null,
-      requestId,
-      errorCode: null,
-      errorMessage: response.ok
-        ? null
-        : `Google Ads API request failed with status ${response.status}. Empty response body.`,
-    };
-  }
-
-  try {
-    const json = JSON.parse(rawText) as GoogleAdsSearchResponse;
-    const errorInfo = extractGoogleAdsErrorInfo(json);
-    if (!response.ok || json.error?.message) {
-      return {
-        status: response.status,
-        ok: false,
-        json,
-        requestId,
-        errorCode: errorInfo.errorCode,
-        errorMessage:
-          errorInfo.errorMessage ??
-          `Google Ads API request failed with status ${response.status}. The customer ID may not be accessible.`,
-      };
-    }
-    return {
-      status: response.status,
-      ok: true,
-      json,
-      requestId,
-      errorCode: null,
-      errorMessage: null,
-    };
-  } catch {
-    return {
-      status: response.status,
-      ok: false,
-      json: null,
-      requestId,
-      errorCode: null,
-      errorMessage: `Google Ads API returned non-JSON response (status ${response.status}).`,
-    };
-  }
-}
-
-function extractGoogleAdsErrorInfo(
-  json: GoogleAdsStreamBatch[] | GoogleAdsSearchResponse | { error?: { message?: string } } | null
-): { errorCode: string | null; errorMessage: string | null } {
-  if (!json || typeof json !== "object") {
-    return { errorCode: null, errorMessage: null };
-  }
-
-  const topLevel = Array.isArray(json) ? undefined : "error" in json ? json.error : undefined;
-  const errorMessage = topLevel?.message ?? findStreamBatchError(Array.isArray(json) ? json : []);
-  const candidate = topLevel as
-    | {
-        details?: Array<{
-          errors?: Array<{
-            errorCode?: Record<string, string | null | undefined>;
-            message?: string;
-          }>;
-        }>;
-      }
-    | undefined;
-
-  const detailErrorCode = candidate?.details
-    ?.flatMap((detail) => detail.errors ?? [])
-    .map((item) => item.errorCode ?? {})
-    .flatMap((errorCodeRecord) => Object.entries(errorCodeRecord))
-    .find(([, value]) => Boolean(value));
-  const detailMessage = candidate?.details
-    ?.flatMap((detail) => detail.errors ?? [])
-    .map((item) => item.message?.trim())
-    .find(Boolean);
-
-  return {
-    errorCode: detailErrorCode ? `${detailErrorCode[0]}:${detailErrorCode[1]}` : null,
-    errorMessage:
-      detailMessage && detailMessage !== errorMessage
-        ? `${errorMessage ?? "Google Ads API request failed."} ${detailMessage}`
-        : errorMessage ?? null,
-  };
 }
 
 function classifyGoogleAdsFailure(
@@ -5712,6 +4945,10 @@ function classifyGoogleAdsFailure(
 }
 
 function wrapGoogleAdsRequestError(error: unknown): Error {
+  if (error instanceof GoogleAdsApiError) {
+    return new GoogleAdsRequestError({ status: error.status, requestId: error.requestId, errorCode: error.errorCode,
+      errorMessage: error.message, category: error.category === "invalid-gaql" ? "invalid-gaql" : classifyGoogleAdsFailure(error.status, error.errorCode, error.message) });
+  }
   if (error instanceof GoogleAdsRequestError) {
     return error;
   }
@@ -5761,8 +4998,8 @@ function buildGooglePreviewCampaignQueries(
         campaign.advertising_channel_type,
         campaign.serving_status,
         campaign.bidding_strategy_type,
-        campaign.start_date,
-        campaign.end_date,
+        campaign.start_date_time,
+        campaign.end_date_time,
         campaign.network_settings.target_google_search,
         campaign.network_settings.target_search_network,
         campaign.network_settings.target_partner_search_network,
