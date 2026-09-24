@@ -61,6 +61,7 @@
     "cf:placements:dev": "cd cloudflare/placement-analysis && doppler run -- npx wrangler dev",
     "cf:placements:types": "cd cloudflare/placement-analysis && npx wrangler types",
     "cf:placements:deploy": "cd cloudflare/placement-analysis && doppler run -- npx wrangler deploy"
+    ,"dev-workflows:test":"npm --prefix cloudflare/digitalbee-dev-workflows test","dev-workflows:typecheck":"npm --prefix cloudflare/digitalbee-dev-workflows run typecheck","dev-workflows:dry-run":"npm --prefix cloudflare/digitalbee-dev-workflows run dry-run"
   },
   "dependencies": {
     "@base-ui/react": "^1.2.0",

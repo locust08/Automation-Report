@@ -1,0 +1,10 @@
+PRAGMA foreign_keys=ON;
+CREATE TABLE dev_delegation_replay(jti TEXT PRIMARY KEY,subject_hash TEXT NOT NULL,expires_at INTEGER NOT NULL,created_at INTEGER NOT NULL);
+CREATE TABLE dev_m03_drafts(id TEXT PRIMARY KEY,subject_hash TEXT NOT NULL,service_id TEXT NOT NULL,platform TEXT NOT NULL,provider_account_id TEXT NOT NULL,mapping_revision TEXT NOT NULL,lock_version INTEGER NOT NULL DEFAULT 0,payload_json TEXT NOT NULL,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL);
+CREATE TABLE dev_m03_revisions(id TEXT PRIMARY KEY,draft_id TEXT NOT NULL REFERENCES dev_m03_drafts(id) ON DELETE CASCADE,revision_number INTEGER NOT NULL,payload_hash TEXT NOT NULL,payload_json TEXT NOT NULL,validation_json TEXT NOT NULL,created_at INTEGER NOT NULL,UNIQUE(draft_id,revision_number));
+CREATE TABLE dev_m04_drafts(id TEXT PRIMARY KEY,subject_hash TEXT NOT NULL,service_id TEXT NOT NULL,platform TEXT NOT NULL,provider_account_id TEXT NOT NULL,mapping_revision TEXT NOT NULL,lock_version INTEGER NOT NULL DEFAULT 0,payload_json TEXT NOT NULL,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL);
+CREATE TABLE dev_m04_revisions(id TEXT PRIMARY KEY,draft_id TEXT NOT NULL REFERENCES dev_m04_drafts(id) ON DELETE CASCADE,revision_number INTEGER NOT NULL,payload_hash TEXT NOT NULL,payload_json TEXT NOT NULL,validation_json TEXT NOT NULL,created_at INTEGER NOT NULL,UNIQUE(draft_id,revision_number));
+CREATE TABLE dev_workflow_audit(id TEXT PRIMARY KEY,module TEXT NOT NULL,action TEXT NOT NULL,subject_hash TEXT NOT NULL,service_id TEXT NOT NULL,request_hash TEXT NOT NULL,outcome TEXT NOT NULL,created_at INTEGER NOT NULL);
+CREATE INDEX dev_delegation_replay_expiry ON dev_delegation_replay(expires_at);
+CREATE INDEX dev_m03_drafts_subject ON dev_m03_drafts(subject_hash,updated_at);
+CREATE INDEX dev_m04_drafts_subject ON dev_m04_drafts(subject_hash,updated_at);

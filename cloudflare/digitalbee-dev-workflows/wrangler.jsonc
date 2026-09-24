@@ -1,0 +1,12 @@
+{
+  "$schema":"node_modules/wrangler/config-schema.json",
+  "name":"digitalbee-dev-workflows",
+  "main":"src/index.ts",
+  "compatibility_date":"2026-09-24",
+  "compatibility_flags":["nodejs_compat"],
+  "workers_dev":false,
+  "preview_urls":false,
+  "vars":{"DEPLOYMENT_TIER":"dev"},
+  "d1_databases":[{"binding":"DB","database_name":"digitalbee-dev-draft-workflows","database_id":"00000000-0000-0000-0000-000000000001","migrations_dir":"migrations"}],
+  "observability":{"enabled":true,"head_sampling_rate":1,"logs":{"invocation_logs":false}}
+}
