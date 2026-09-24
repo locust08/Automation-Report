@@ -10,4 +10,4 @@ The Worker exposes two named private entrypoints and one dedicated D1 binding:
 
 Approval, provider execution, campaign creation, recovery, budget change, activation, scheduling, and Notion writes are absent. The Worker configuration contains no provider or Notion binding.
 
-Local verification passed 28 tests across four files, service TypeScript, Wrangler dry run, root AdsReportingDashboard TypeScript, and root lint with zero errors. The root lint retained 26 existing warnings outside the service boundary. No deployment, live secret installation, provider call, Notion call, or production workflow mutation occurred.
+Local verification passed 28 tests across four files, service TypeScript, Wrangler dry run, root AdsReportingDashboard TypeScript, and root lint with zero errors. The root lint retained existing warnings outside the service boundary. No deployment, live secret installation, provider call, Notion call, or production workflow mutation occurred.
