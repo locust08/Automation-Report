@@ -11,6 +11,7 @@ const eslintConfig = defineConfig([
     ".next/**",
     "out/**",
     "build/**",
+    "cloudflare/digitalbee-dev-workflows/.dry-run/**",
     "next-env.d.ts",
   ]),
 ]);
