@@ -23,6 +23,8 @@ __pycache__/
 *.py[cod]
 **/.venv/
 **/.wrangler/state/v3/d1/
+/.m05-test-pg/
+**/.wrangler-dry-run/
 
 # next.js
 /.next/

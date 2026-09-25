@@ -162,7 +162,9 @@ export async function fetchTikTokReportLevel(
       });
       if (response.requestId) requestIds.push(response.requestId);
       rows.push(...listFrom(response.data));
-      if (page >= totalPages(response.data, page)) break;
+      const expectedPages = totalPages(response.data, page);
+      if (page >= 100 && expectedPages > page) throw new Error("TikTok daily report exceeds the paging limit.");
+      if (page >= expectedPages) break;
     }
   }
   return { rows, requestIds };
