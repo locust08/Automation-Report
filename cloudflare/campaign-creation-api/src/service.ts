@@ -117,7 +117,7 @@ export async function execute(env: Environment, scope: Scope, tool: string, inpu
     const resourcePlan=scope.platform==='Meta'?[{kind:'campaign',status:'PAUSED',objective:metaPreview!.source.objective},
       {kind:'adset',status:'PAUSED',daily_budget:plan.daily_budget,currency:plan.currency,targeting:metaPreview!.adset.targeting,
         optimization_goal:metaPreview!.adset.optimization_goal,regional_regulation_identities:metaPreview!.adset.regional_regulation_identities},
-      {kind:'ad',status:'PAUSED',creative_id:metaPreview!.source.creative_id,final_url:metaPreview!.source.final_url}]
+      {kind:'ad',status:'PAUSED',creative_id:metaPreview!.source.creative_id,final_url:metaPreview!.source.final_url,destination:metaPreview!.source.destination}]
       :buildOperations(scope,planSchema.parse(plan),w.id);
     const display = scope.platform==='Meta'?{
       action:input.action,stage:input.action==='approve'?'approve_revision':'create_paused',revision_hash:w.plan_hash,
@@ -128,7 +128,7 @@ export async function execute(env: Environment, scope: Scope, tool: string, inpu
           age_min:metaPreview!.adset.targeting.age_min,age_max:metaPreview!.adset.targeting.age_max,
           optimization_goal:metaPreview!.adset.optimization_goal}),
         creative_summary:JSON.stringify({source_ad_id:metaPreview!.source.source_ad_id,creative_id:metaPreview!.source.creative_id,
-          page_id:metaPreview!.adset.promoted_object?.page_id??null,final_url:metaPreview!.source.final_url}),
+          page_id:metaPreview!.adset.promoted_object?.page_id??null,final_url:metaPreview!.source.final_url,destination:metaPreview!.source.destination}),
         validation_status:'ready',warnings:[]},provider_objects:[],qa_status:'not_applicable',
       consequences:input.action==='approve'?['Confirm this immutable revision. No Meta resource is created.']:
         ['Create one Meta campaign, ad set and ad with PAUSED status. Activation and scheduling remain unavailable.'],

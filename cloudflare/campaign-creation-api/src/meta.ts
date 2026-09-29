@@ -41,6 +41,14 @@ export class Meta {
     else if(!/^\d+$/.test(String(payload.id??'')))throw new ProviderError('unknown','meta_response');
     return payload;
   }
+  private destination(ad:Record<string,any>){
+    const story=ad.creative?.object_story_spec,form=story?.link_data?.call_to_action?.value?.lead_gen_form_id??story?.video_data?.call_to_action?.value?.lead_gen_form_id;
+    if(ad.campaign?.objective==='OUTCOME_LEADS'&&ad.adset?.destination_type==='ON_AD'&&
+      String(ad.adset?.promoted_object?.page_id)===String(story?.page_id)&&/^\d{1,30}$/.test(String(form??'')))
+      return {kind:'instant_form' as const,page_id:String(story.page_id),form_id:String(form)};
+    try{const url=new URL(story?.link_data?.link);if(url.protocol==='https:'&&!url.username&&!url.password)return {kind:'website' as const,url:url.href};}catch{}
+    return null;
+  }
   async referenceAssets(selectedAdId?:string){
     this.deadline=Date.now()+25_000;this.snapshot=undefined;
     const id=this.scope.platformAccountId;
@@ -66,19 +74,23 @@ export class Meta {
     const fields='id,account_id,name,status,created_time,campaign{id,account_id,objective,special_ad_categories},adset{id,account_id,campaign_id,daily_budget,billing_event,optimization_goal,targeting,bid_strategy,promoted_object,attribution_spec,destination_type,regional_regulation_identities},creative{id,account_id,object_story_spec}';
     const sources=[];
     for(const candidate of candidates.slice(0,20)){
-      const ad=await this.get(String(candidate.id),{fields});
+      const ad=await this.get(String(candidate.id),{fields}),destination=this.destination(ad);
       if(ad.id!==candidate.id||ad.account_id!==id||!['ACTIVE','PAUSED'].includes(ad.status)||
         ad.campaign?.account_id!==id||!['OUTCOME_TRAFFIC','OUTCOME_LEADS'].includes(ad.campaign?.objective)||
         !Array.isArray(ad.campaign?.special_ad_categories)||ad.campaign.special_ad_categories.length!==0||
         ad.adset?.account_id!==id||ad.adset?.campaign_id!==ad.campaign.id||!/^\d+$/.test(String(ad.adset?.daily_budget))||Number(ad.adset.daily_budget)<=0||
         ad.creative?.account_id!==id||!/^\d+$/.test(String(ad.creative.id))||!ad.creative?.object_story_spec?.page_id||
-        !/^https:\/\//.test(String(ad.creative?.object_story_spec?.link_data?.link??''))||
+        !destination||
         ad.campaign.objective==='OUTCOME_LEADS'&&!ad.adset.promoted_object)continue;
       if(!ad.adset.regional_regulation_identities?.universal_beneficiary||!ad.adset.regional_regulation_identities?.universal_payer)continue;
+      if(destination.kind==='instant_form'){
+        const form=await this.get(destination.form_id,{fields:'id,page_id,status'});
+        if(String(form.id)!==destination.form_id||String(form.page_id)!==destination.page_id||form.status!=='ACTIVE')throw new ProviderError('unavailable','meta_form_unavailable');
+      }
       const minimum_daily_budget=await this.minimumBudget(ad.adset,String(ad.campaign.id));
       this.snapshot=structuredClone(ad);
       sources.push({source_ad_id:String(ad.id),source_adset_id:String(ad.adset.id),source_campaign_id:String(ad.campaign.id),objective:ad.campaign.objective,
-        daily_budget:(Number(ad.adset.daily_budget)/100).toFixed(2),source_fingerprint:await digest(ad),creative_id:String(ad.creative.id),final_url:String(ad.creative.object_story_spec.link_data.link),
+        daily_budget:(Number(ad.adset.daily_budget)/100).toFixed(2),source_fingerprint:await digest(ad),creative_id:String(ad.creative.id),final_url:destination.kind==='website'?destination.url:null,destination,
         regional_regulation_identities:ad.adset.regional_regulation_identities,minimum_daily_budget});
       break;
     }
@@ -103,7 +115,7 @@ export class Meta {
     await this.post(`act_${this.scope.platformAccountId}/adsets`,this.adsetFields(adset,plan.source_campaign_id,cents,'M04 validate only'),true);
     await this.post(`act_${this.scope.platformAccountId}/ads`,{name:'M04 validate only',adset_id:plan.source_adset_id,
       creative:JSON.stringify({creative_id:source.creative_id}),status:'PAUSED'},true);
-    const payload={source,adset};
+    const payload={source,adset,creative:this.snapshot!.creative};
     this.checked={key:await digest({plan,workflowId:_workflowId}),at:Date.now(),payload:structuredClone(payload)};
     return payload;
   }
@@ -167,7 +179,7 @@ export class Meta {
     const payload=this.checked!.payload;this.checked=undefined;
     // Queue preflight already validated this exact payload; writes get a separate bounded budget.
     this.deadline=Date.now()+90_000;
-    const {source,adset}=payload,names=this.names(plan,workflowId),cents=Math.round(Number(plan.daily_budget)*100);
+    const {source,adset,creative}=payload,names=this.names(plan,workflowId),cents=Math.round(Number(plan.daily_budget)*100);
     const campaignId=await this.createStep(store,operationId,'campaign',names.campaign,{name:names.campaign,objective:source.objective,
       special_ad_categories:'[]',is_adset_budget_sharing_enabled:'false',status:'PAUSED'});
     await this.checkCampaign(campaignId,names.campaign,source.objective);
@@ -175,7 +187,7 @@ export class Meta {
     await this.checkAdset(adsetId,names.adset,campaignId,cents,adset.regional_regulation_identities);
     const adId=await this.createStep(store,operationId,'ad',names.ad,{name:names.ad,adset_id:adsetId,
       creative:JSON.stringify({creative_id:source.creative_id}),status:'PAUSED'});
-    await this.checkAd(adId,names.ad,adsetId,source.creative_id);
+    await this.checkAd(adId,names.ad,adsetId,source.creative_id,creative.object_story_spec);
     return [campaignId,adsetId,adId];
   }
   private async checkCampaign(id:string,name:string,objective:string){
@@ -192,11 +204,11 @@ export class Meta {
       row.regional_regulation_identities?.universal_payer!==identities.universal_payer)
       throw new ProviderError('unknown','meta_adset_readback');
   }
-  private async checkAd(id:string,name:string,adsetId:string,creativeId:string){
+  private async checkAd(id:string,name:string,adsetId:string,creativeId:string,story:Record<string,any>){
     const row=await this.get(id,{fields:'id,name,account_id,adset_id,status,creative{id,object_story_spec}'});
     if(row.id!==id||row.name!==name||row.account_id!==this.scope.platformAccountId||row.adset_id!==adsetId||
       row.status!=='PAUSED'||row.creative?.id!==creativeId||!row.creative?.object_story_spec?.page_id||
-      !/^https:\/\//.test(String(row.creative?.object_story_spec?.link_data?.link??'')))
+      await digest(row.creative.object_story_spec)!==await digest(story))
       throw new ProviderError('unknown','meta_ad_readback');
   }
   async readback(plan:MetaPlan,workflowId:string,operationId:string,store:Store){
@@ -208,7 +220,7 @@ export class Meta {
       source.creative?.account_id!==this.scope.platformAccountId)throw new ProviderError('unknown','meta_source_changed');
     await this.checkCampaign(campaign.provider_id,names.campaign,source.campaign.objective);
     await this.checkAdset(adset.provider_id,names.adset,campaign.provider_id,Math.round(Number(plan.daily_budget)*100),source.adset.regional_regulation_identities);
-    await this.checkAd(ad.provider_id,names.ad,adset.provider_id,source.creative.id);
+    await this.checkAd(ad.provider_id,names.ad,adset.provider_id,source.creative.id,source.creative.object_story_spec);
     return {platform:'Meta',account_id:this.scope.platformAccountId,campaign_id:campaign.provider_id,adset_id:adset.provider_id,ad_id:ad.provider_id,
       status:'PAUSED',daily_budget:plan.daily_budget,currency:plan.currency,source_ad_id:plan.source_ad_id,creative_id:source.creative.id};
   }
