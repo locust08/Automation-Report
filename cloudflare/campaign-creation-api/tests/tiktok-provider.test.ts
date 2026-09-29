@@ -13,13 +13,13 @@ const group={advertiser_id:scope.platformAccountId,adgroup_id:'2',campaign_id:'1
   pacing:'PACING_MODE_SMOOTH',schedule_type:'SCHEDULE_FROM_NOW',location_ids:['6252001']};
 const campaign={advertiser_id:scope.platformAccountId,campaign_id:'1',campaign_name:'Source campaign',
   campaign_type:'REGULAR_CAMPAIGN',objective_type:'TRAFFIC',operation_status:'ENABLE',budget_optimize_on:false};
-function fixture(options:{floor?:string;currency?:string;missingVideo?:boolean}={}){
+function fixture(options:{floor?:string;currency?:string;missingVideo?:boolean;videoId?:string;identityId?:string}={}){
   const fetcher=vi.fn(async(input:RequestInfo|URL)=>{
     const url=new URL(String(input)),kind=url.pathname.split('/').at(-3),filter=JSON.parse(url.searchParams.get('filtering')??'{}');
     const data=url.pathname.includes('/advertiser/info/')?{list:[{advertiser_id:scope.platformAccountId,currency:'MYR',timezone:'Asia/Kuala_Lumpur',status:'STATUS_ENABLE'}]}:
-      url.pathname.includes('/identity/get/')?{list:[{identity_id:'5'}]}:
-      url.pathname.includes('/file/video/ad/info/')?{list:options.missingVideo?[]:[{video_id:'4'}]}:
-      {list:(kind==='ad'?[ad]:kind==='adgroup'?[group]:[campaign]).filter(row=>{
+      url.pathname.includes('/identity/get/')?{list:[{identity_id:options.identityId??'5'}]}:
+      url.pathname.includes('/file/video/ad/info/')?{list:options.missingVideo?[]:[{video_id:options.videoId??'4'}]}:
+      {list:(kind==='ad'?[{...ad,video_id:options.videoId??'4',identity_id:options.identityId??'5'}]:kind==='adgroup'?[group]:[campaign]).filter(row=>{
         const ids=filter[`${kind}_ids`];return !ids||ids.includes((row as Record<string,unknown>)[`${kind}_id`]);
       }),page_info:{total_page:1}};
     return Response.json({code:0,data});
@@ -97,4 +97,30 @@ it('reconciles an uncertain TikTok write by exact-name readback without a second
     campaign_name:'Exact name',operation_status:'DISABLE'})).toBe('77');
   expect(writes).toBe(1);
   expect(store.confirmProviderStep).toHaveBeenCalledWith('operation','campaign','77');
+});
+
+
+it('verifies provider-authorized opaque video and identity IDs',async()=>{
+ const {provider}=fixture({floor:'20.00',currency:'MYR',videoId:'v10044g50000abc_DEF-123',identityId:'8dacaf47-4321-4123-9234-123456789abc'});
+ const refs=await provider.referenceAssets();
+ expect(refs.sources[0]).toMatchObject({video_id:'v10044g50000abc_DEF-123',identity_id:'8dacaf47-4321-4123-9234-123456789abc',resource_status:'ready'});
+});
+it('does not mark a zero configured budget floor ready',async()=>{
+ expect((await fixture({floor:'0',currency:'MYR'}).provider.referenceAssets()).sources[0].resource_status).toBe('budget_floor_unverified');
+});
+
+
+it('uses the fingerprinted source payload without substituting later targeting or copy',async()=>{
+ const original=fixture({floor:'20.00',currency:'MYR'}).fetcher;let groupReads=0,adReads=0;
+ const fetcher=vi.fn(async(input:RequestInfo|URL)=>{
+  const url=String(input),response=await original(input),body=await response.json() as any;
+  if(url.includes('/ad/get/')&&++adReads>1)body.data.list[0].ad_text='UNAPPROVED';
+  if(url.includes('/adgroup/get/')&&++groupReads>1)body.data.list[0].location_ids=['US'];
+  return Response.json(body);
+ });
+ const refs=await fixture({floor:'20.00',currency:'MYR'}).provider.referenceAssets();
+ const provider=new TikTok({TIKTOK_ACCESS_TOKEN:'synthetic',M04_TIKTOK_MIN_DAILY_BUDGET:'20.00',M04_TIKTOK_BUDGET_CURRENCY:'MYR'},scope,fetcher);
+ const validated=await provider.validate({campaign_type:'tiktok_existing_ad',name:'Test',currency:'MYR',timezone:'Asia/Kuala_Lumpur',daily_budget:'20.00',source_ad_id:'3',source_adgroup_id:'2',source_campaign_id:'1',source_fingerprint:refs.sources[0].source_fingerprint},'wf');
+ expect(validated.ad.ad_text).toBe('Source text');expect(validated.group.location_ids).toEqual(['6252001']);
+ expect(adReads).toBe(1);expect(groupReads).toBe(1);
 });

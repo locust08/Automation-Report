@@ -7,20 +7,25 @@ export const tiktokProviderName=(plan:TikTokPlan,workflowId:string)=>`${plan.nam
 type Kind='campaign'|'adgroup'|'ad';
 const creativeKeys=['ad_format','ad_text','video_id','identity_id','identity_type','landing_page_url','call_to_action','display_name','identity_authorized_bc_id','tiktok_item_id'] as const;
 const groupKeys=['billing_event','optimization_goal','pacing','promotion_type','placement_type','placements','location_ids','age_groups','gender','languages','bid_type','bid_price','pixel_id','schedule_type','schedule_start_time','schedule_end_time'] as const;
+const opaqueId=(value:unknown)=>typeof value==='string'&&/^[A-Za-z0-9_-]{1,256}$/.test(value);
 
 export class TikTok {
+  private deadline=Date.now()+25_000;
+  private snapshot:Record<string,any>|undefined;
+  private checked:{key:string;at:number;payload:Record<string,any>}|undefined;
   constructor(private env:TikTokCredentials,private scope:Scope,private fetcher:typeof fetch=(input,init)=>fetch(input,init)){}
   private async request(path:string,params:Record<string,string>|Record<string,unknown>,write=false){
     if(this.scope.platform!=='TikTok'||!this.env.TIKTOK_ACCESS_TOKEN)throw new ProviderError('unavailable','tiktok_connection');
     const url=new URL(`https://business-api.tiktok.com/open_api/v1.3/${path}/`);
     if(!write)for(const [key,value] of Object.entries(params))url.searchParams.set(key,String(value));
+    const remaining=this.deadline-Date.now();if(remaining<=0)throw new ProviderError('unavailable','tiktok_deadline');
     let response:Response;
     try{response=await this.fetcher(url,{method:write?'POST':'GET',headers:{'Access-Token':this.env.TIKTOK_ACCESS_TOKEN,...(write?{'Content-Type':'application/json'}:{})},
-      ...(write?{body:JSON.stringify(params)}:{}),redirect:'manual',signal:AbortSignal.timeout(10_000)});}
+      ...(write?{body:JSON.stringify(params)}:{}),redirect:'manual',signal:AbortSignal.timeout(Math.min(10_000,remaining))});}
     catch{throw new ProviderError(write?'unknown':'unavailable','tiktok_response');}
     let value:Record<string,any>;
     try{value=await boundedJson(response,262_144);}catch{throw new ProviderError(write?'unknown':'unavailable','tiktok_response');}
-    if(!response.ok||value.code!==0)throw new ProviderError(write?'unknown':'unavailable',`tiktok_${Number(value.code)||'response'}`);
+    if(!response.ok||value.code!==0)throw new ProviderError(write?'unknown':'unavailable',response.status===429||[40100,40101,40102].includes(Number(value.code))?'tiktok_rate_limited':`tiktok_${Number(value.code)||'response'}`);
     return value.data as Record<string,any>;
   }
   private async list(kind:Kind,filter:Record<string,unknown>={}){
@@ -40,19 +45,21 @@ export class TikTok {
     if(rows.length!==1||String(rows[0][`${kind}_id`])!==id)throw new ProviderError('unavailable','tiktok_readback');
     return rows[0];
   }
-  async referenceAssets(){
+  async referenceAssets(selectedAdId?:string){
+    this.deadline=Date.now()+25_000;this.snapshot=undefined;
     const account=await this.request('advertiser/info',{advertiser_ids:JSON.stringify([this.scope.platformAccountId]),
       fields:JSON.stringify(['advertiser_id','name','currency','timezone','status'])});
     if(!Array.isArray(account?.list)||account.list.length!==1||String(account.list[0].advertiser_id)!==this.scope.platformAccountId||
       !/^[A-Z]{3}$/.test(String(account.list[0].currency??''))||!account.list[0].timezone||!['STATUS_ENABLE','ENABLE','STATUS_ACTIVE'].includes(String(account.list[0].status)))
       throw new ProviderError('unavailable','tiktok_account_configuration');
-    const ads=await this.list('ad');
+    try{new Intl.DateTimeFormat('en',{timeZone:account.list[0].timezone});}catch{throw new ProviderError('unavailable','tiktok_account_timezone');}
+    const ads=selectedAdId?[await this.one('ad',selectedAdId)]:await this.list('ad');
     ads.sort((a,b)=>String(b.create_time??'').localeCompare(String(a.create_time??''))||String(b.ad_id??'').localeCompare(String(a.ad_id??'')));
     const sources=[];
-    for(const ad of ads){
+    for(const ad of ads.slice(0,20)){
       if(!/^\d+$/.test(String(ad.ad_id??''))||!/^\d+$/.test(String(ad.adgroup_id??''))||
-        !['ENABLE','DISABLE'].includes(String(ad.operation_status))||!/^\d+$/.test(String(ad.video_id??''))||
-        !/^\d+$/.test(String(ad.identity_id??''))||ad.tiktok_item_id||!/^https:\/\//.test(String(ad.landing_page_url??'')))continue;
+        !['ENABLE','DISABLE'].includes(String(ad.operation_status))||!opaqueId(ad.video_id)||
+        !opaqueId(ad.identity_id)||ad.tiktok_item_id||!/^https:\/\//.test(String(ad.landing_page_url??'')))continue;
       const group=await this.one('adgroup',String(ad.adgroup_id));
       const campaign=await this.one('campaign',String(group.campaign_id));
       if(group.budget_mode!=='BUDGET_MODE_DAY'||Number(group.budget)<=0||group.schedule_type!=='SCHEDULE_FROM_NOW'||
@@ -60,13 +67,14 @@ export class TikTok {
         campaign.budget_optimize_on===true||group.is_smart_plus||campaign.is_smart_plus||!group.billing_event||!group.optimization_goal||
         !group.pacing||!campaign.objective_type||!Array.isArray(group.location_ids)||!group.location_ids.length||
         !ad.ad_text||!ad.call_to_action||!ad.identity_type||!ad.ad_format)continue;
-      const identity=await this.request('identity/get',{advertiser_id:this.scope.platformAccountId,page:'1',page_size:'100'});
+      const identity=await this.request('identity/get',{advertiser_id:this.scope.platformAccountId,identity_type:String(ad.identity_type),...(ad.identity_authorized_bc_id?{identity_authorized_bc_id:String(ad.identity_authorized_bc_id)}:{}),page:'1',page_size:'100'});
       const videos=await this.request('file/video/ad/info',{advertiser_id:this.scope.platformAccountId,video_ids:JSON.stringify([ad.video_id])});
       if(!Array.isArray(identity?.list)||!identity.list.some((row:any)=>String(row.identity_id)===String(ad.identity_id))||
         !Array.isArray(videos?.list)||!videos.list.some((row:any)=>String(row.video_id)===String(ad.video_id)))
         throw new ProviderError('unavailable','tiktok_asset_review');
-      const min=this.env.M04_TIKTOK_BUDGET_CURRENCY===account.list[0].currency&&/^\d{1,5}(\.\d{1,2})?$/.test(this.env.M04_TIKTOK_MIN_DAILY_BUDGET??'')
+      const min=this.env.M04_TIKTOK_BUDGET_CURRENCY===account.list[0].currency&&/^\d{1,5}(\.\d{1,2})?$/.test(this.env.M04_TIKTOK_MIN_DAILY_BUDGET??'')&&Number(this.env.M04_TIKTOK_MIN_DAILY_BUDGET)>0&&Number(this.env.M04_TIKTOK_MIN_DAILY_BUDGET)<=10_000
         ?this.env.M04_TIKTOK_MIN_DAILY_BUDGET!:null;
+      this.snapshot=structuredClone({ad,group,campaign});
       sources.push({source_ad_id:String(ad.ad_id),source_adgroup_id:String(group.adgroup_id),source_campaign_id:String(campaign.campaign_id),
         objective:campaign.objective_type,source_fingerprint:await digest({ad,group,campaign}),video_id:String(ad.video_id),identity_id:String(ad.identity_id),
         final_url:String(ad.landing_page_url),minimum_daily_budget:min,resource_status:min?'ready':'budget_floor_unverified'});
@@ -76,16 +84,20 @@ export class TikTok {
       account_status:account.list[0].status},sources};
   }
   async validate(plan:TikTokPlan,_workflowId:string){
-    const refs=await this.referenceAssets(),source=refs.sources[0];
+    this.checked=undefined;
+    const refs=await this.referenceAssets(plan.source_ad_id),source=refs.sources[0];
     if(!source||source.resource_status!=='ready'||source.source_ad_id!==plan.source_ad_id||source.source_adgroup_id!==plan.source_adgroup_id||
       source.source_campaign_id!==plan.source_campaign_id||source.source_fingerprint!==plan.source_fingerprint||
       source.minimum_daily_budget!==plan.daily_budget||refs.account.currency!==plan.currency||refs.account.timezone_name!==plan.timezone)
       throw new ProviderError('unavailable','tiktok_source_or_budget_changed');
-    const ad=await this.one('ad',plan.source_ad_id),group=await this.one('adgroup',plan.source_adgroup_id),campaign=await this.one('campaign',plan.source_campaign_id);
+    if(!this.snapshot)throw new ProviderError('unavailable','tiktok_source_changed');
+    const {ad,group,campaign}=this.snapshot;
     if(String(ad.adgroup_id)!==plan.source_adgroup_id||String(group.campaign_id)!==plan.source_campaign_id||String(ad.video_id)!==source.video_id||
       String(ad.identity_id)!==source.identity_id||String(ad.landing_page_url)!==source.final_url)
       throw new ProviderError('unavailable','tiktok_source_changed');
-    return {source,ad,group,campaign};
+    const payload={source,ad,group,campaign};
+    this.checked={key:await digest({plan,workflowId:_workflowId}),at:Date.now(),payload:structuredClone(payload)};
+    return payload;
   }
   private names(plan:TikTokPlan,workflowId:string){const campaign=tiktokProviderName(plan,workflowId);return {campaign,adgroup:`${campaign} ad group`,ad:`${campaign} ad`};}
   private startTime(timezone:string){
@@ -111,7 +123,12 @@ export class TikTok {
     await store.confirmProviderStep(operationId,step,id);return id;
   }
   async create(plan:TikTokPlan,workflowId:string,operationId:string,store:Store){
-    const {source,ad,group,campaign}=await this.validate(plan,workflowId),names=this.names(plan,workflowId),account=this.scope.platformAccountId;
+    const key=await digest({plan,workflowId});
+    if(!this.checked||this.checked.key!==key||Date.now()-this.checked.at>25_000)await this.validate(plan,workflowId);
+    const payload=this.checked!.payload;this.checked=undefined;
+    // Queue preflight already validated this exact payload; writes get a separate bounded budget.
+    this.deadline=Date.now()+90_000;
+    const {source,ad,group,campaign}=payload,names=this.names(plan,workflowId),account=this.scope.platformAccountId;
     const campaignId=await this.createStep(store,operationId,'campaign',names.campaign,{advertiser_id:account,campaign_name:names.campaign,
       campaign_type:'REGULAR_CAMPAIGN',objective_type:campaign.objective_type,budget_mode:'BUDGET_MODE_INFINITE',budget_optimize_on:false,operation_status:'DISABLE'});
     await this.checkCampaign(campaignId,names.campaign,campaign.objective_type);
@@ -150,6 +167,7 @@ export class TikTok {
       throw new ProviderError('unknown','tiktok_ad_readback');
   }
   async readback(plan:TikTokPlan,workflowId:string,operationId:string,store:Store){
+    this.deadline=Date.now()+30_000;
     const names=this.names(plan,workflowId),campaign=await store.providerStep(operationId,'campaign'),adgroup=await store.providerStep(operationId,'adset'),ad=await store.providerStep(operationId,'ad');
     if(!campaign?.provider_id||!adgroup?.provider_id||!ad?.provider_id)throw new ProviderError('unknown','tiktok_incomplete');
     const source=await this.one('ad',plan.source_ad_id);

@@ -19,3 +19,8 @@ it('blocks Meta dispatch independently of readiness authentication',async()=>{
 it('accepts account-native currency and timezone in a Meta draft',()=>{
  expect(metaPlanSchema.safeParse({campaign_type:'meta_existing_ad',name:'USD plan',currency:'USD',timezone:'America/New_York',daily_budget:'4.13',source_ad_id:'1',source_campaign_id:'2',source_adset_id:'3',source_fingerprint:'a'.repeat(43)}).success).toBe(true);
 });
+
+it('blocks TikTok dispatch while allowing signed read-only readiness with creation off',async()=>{
+ const env={M04_TIKTOK_CREATION_ENABLED:'false',DIGITALBEE_GRANT_VERIFY_URL:'https://digitalbee.test/v1/internal/grants/verify',DIGITALBEE_GRANT_VERIFY_TOKEN:'t'.repeat(32)} as any;
+ await expect(authorize(env,{platform:'TikTok'} as any,'campaign_gate1_create',async(_input,init)=>Response.json({allowed:true,...JSON.parse(String(init?.body))}))).rejects.toThrow('provider_creation_disabled');
+});

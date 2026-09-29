@@ -44,6 +44,7 @@ export async function authenticate(request: Request, env: AuthEnvironment, tool:
 /** DigitalBee is the current permission authority, checked at every stage and again before dispatch. */
 export async function authorize(env: AuthEnvironment, scope: Scope, tool: string, fetcher?: typeof fetch) {
   if(scope.platform==='Meta'&&['campaign_gate1_create','campaign_action_prepare_gate1'].includes(tool)&&env.M04_META_CREATION_ENABLED!=='true')throw new Error('provider_creation_disabled');
+  if(scope.platform==='TikTok'&&['campaign_gate1_create','campaign_action_prepare_gate1'].includes(tool)&&env.M04_TIKTOK_CREATION_ENABLED!=='true')throw new Error('provider_creation_disabled');
   const url = new URL(env.DIGITALBEE_GRANT_VERIFY_URL);
   if (url.protocol !== 'https:' || url.username || url.password || url.search || url.hash ||
     url.pathname !== '/v1/internal/grants/verify' || env.DIGITALBEE_GRANT_VERIFY_TOKEN?.length < 32)

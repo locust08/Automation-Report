@@ -1,6 +1,6 @@
 import {z} from 'zod';
 export const scopeSchema=z.object({subject:z.string().min(1).max(255),grantRevision:z.number().int().nonnegative(),accountPageId:z.string().uuid(),clientId:z.string().uuid(),platform:z.enum(['Google','Meta','TikTok']),platformAccountId:z.string().regex(/^\d{1,30}$/),connectionRevision:z.string().min(1).max(255),providerRevision:z.string().min(1).max(255),googleLoginCustomerId:z.string().regex(/^\d{10}$/).optional()}).strict().superRefine((value,ctx)=>{
- if(value.platform==='TikTok'&&value.googleLoginCustomerId||value.platform==='Google'&&value.platformAccountId.length!==10||value.platform==='Meta'&&(!/^\d{1,30}$/.test(value.platformAccountId)||value.googleLoginCustomerId))ctx.addIssue({code:'custom',message:'Account identifier does not match platform.'});
+ if(value.platform==='TikTok'&&(value.platformAccountId.length!==19||value.googleLoginCustomerId)||value.platform==='Google'&&value.platformAccountId.length!==10||value.platform==='Meta'&&(!/^\d{1,30}$/.test(value.platformAccountId)||value.googleLoginCustomerId))ctx.addIssue({code:'custom',message:'Account identifier does not match platform.'});
 });
 export type Scope=z.infer<typeof scopeSchema>;
 const resource=(kind:string)=>z.string().regex(new RegExp('^customers/\\d{10}/'+kind+'/\\d{1,20}$'));
@@ -30,4 +30,5 @@ export type Result={outcome:'success'|'partial'|'clarification_required'|'access
 export const result=(outcome:Result['outcome'],extra:Partial<Result>={}):Result=>({outcome,workflow_ref:null,revision_ref:null,validation_issues:[],allowed_next_actions:[],evidence:[],correlation_id:crypto.randomUUID(),caveats:[],receipt_ref:null,...extra});
 export async function digest(value:unknown){const bytes=new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(JSON.stringify(value))));let s='';for(const b of bytes)s+=String.fromCharCode(b);return btoa(s).replaceAll('+','-').replaceAll('/','_').replace(/=+$/,'');}
 export async function boundedJson(message:Request|Response,max=65536){const reader=message.body?.getReader();if(!reader)throw new Error('invalid_request');let size=0;const chunks:Uint8Array[]=[];try{for(;;){const p=await reader.read();if(p.done)break;size+=p.value.length;if(size>max)throw new Error('response_limit');chunks.push(p.value)}}finally{await reader.cancel().catch(()=>{});reader.releaseLock()}const bytes=new Uint8Array(size);let offset=0;for(const c of chunks){bytes.set(c,offset);offset+=c.length}return JSON.parse(new TextDecoder().decode(bytes)) as Record<string,any>;}
+
 

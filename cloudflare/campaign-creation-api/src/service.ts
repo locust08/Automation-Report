@@ -34,7 +34,10 @@ export async function execute(env: Environment, scope: Scope, tool: string, inpu
   if (tool === 'campaign_templates_list') {
     const references=scope.platform==='Meta'?await meta.referenceAssets():scope.platform==='TikTok'?await tiktok.referenceAssets():await new Google(env,scope).referenceAssets();
     await check();
-    return result('success', {data: {templates: [], supported_campaign_types: scope.platform==='Meta'?['meta_existing_ad']:scope.platform==='TikTok'?['tiktok_existing_ad']:['search', 'demand_gen'], brief_schema: z.toJSONSchema(schemaFor(scope.platform)), references,mode: 'real_paused'}});
+    const source='sources' in references?references.sources[0]:undefined;
+    const code=scope.platform==='Google'?null:!source?`${scope.platform.toLowerCase()}_no_eligible_source`:
+      scope.platform==='TikTok'&&'resource_status' in source&&source.resource_status!=='ready'?'tiktok_budget_floor_unverified':null;
+    return result(code?'clarification_required':'success', {validation_issues:code?[campaignBlocker(code)]:[],data: {templates: [], supported_campaign_types: scope.platform==='Meta'?['meta_existing_ad']:scope.platform==='TikTok'?['tiktok_existing_ad']:['search', 'demand_gen'], brief_schema: z.toJSONSchema(schemaFor(scope.platform)), references,mode: 'real_paused'}});
   }
   if(tool==='campaign_workflows_list'){
     const workflows=await store.workflows(scope,backendRev,input.limit??20);
@@ -53,9 +56,9 @@ export async function execute(env: Environment, scope: Scope, tool: string, inpu
         source.source_adset_id!==plan.source_adset_id||source.source_fingerprint!==plan.source_fingerprint||plan.currency!==references.account.currency||plan.timezone!==references.account.timezone_name||plan.daily_budget!==source.minimum_daily_budget)
         throw new Error('stale_revision');
     }else{
-      const source=(await tiktok.referenceAssets()).sources[0],plan=tiktokPlanSchema.parse(parsed.data);
+      const plan=tiktokPlanSchema.parse(parsed.data),references=await tiktok.referenceAssets(plan.source_ad_id),source=references.sources[0];
       if(!source||source.resource_status!=='ready'||source.source_ad_id!==plan.source_ad_id||source.source_campaign_id!==plan.source_campaign_id||
-        source.source_adgroup_id!==plan.source_adgroup_id||source.source_fingerprint!==plan.source_fingerprint)throw new Error('stale_revision');
+        source.source_adgroup_id!==plan.source_adgroup_id||source.source_fingerprint!==plan.source_fingerprint||plan.currency!==references.account.currency||plan.timezone!==references.account.timezone_name||plan.daily_budget!==source.minimum_daily_budget)throw new Error('stale_revision');
     }
     if(Boolean(input.workflow_id)!==Boolean(input.revision_id))throw new Error('invalid_request');
     let w:Workflow;

@@ -13,6 +13,7 @@ export function campaignBlocker(code:string){
   meta_source_changed:'The Meta source, currency, timezone or minimum budget changed. Refresh and validate a new draft.',
   tiktok_source_or_budget_changed:'The TikTok source, currency, timezone or minimum budget changed. Refresh and validate a new draft.',
   meta_budget_floor:'Meta minimum daily budget could not be validated within the supported budget bound.',
+  meta_currency_units_unsupported:'The Meta currency unit scale is not verified for this currency. Creation stays blocked until its provider unit conversion is supported.',
   meta_deadline:'Meta readiness reached its request deadline. Select a source ad or retry later.',
   tiktok_deadline:'TikTok readiness reached its request deadline. Select a source ad or retry later.',
  };
