@@ -131,3 +131,9 @@ it('reports the specific reason a same-account source is not reusable',async()=>
  const refs=await new TikTok({TIKTOK_ACCESS_TOKEN:'synthetic'},scope,fetcher).referenceAssets();
  expect(refs.sources).toEqual([]);expect((refs as any).source_checks).toEqual([{source_ad_id:'3',issues:['spark_ad_requires_review']}]);
 });
+
+it('explicitly requests creative fields needed to judge reusability',async()=>{
+ const {provider,fetcher}=fixture({floor:'20.00',currency:'MYR'});await provider.referenceAssets();
+ const url=new URL(String(fetcher.mock.calls.find(([input])=>String(input).includes('/ad/get/'))![0]));
+ expect(JSON.parse(url.searchParams.get('fields')??'[]')).toEqual(expect.arrayContaining(['video_id','landing_page_url','identity_id','identity_type','tiktok_item_id']));
+});

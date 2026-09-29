@@ -31,7 +31,7 @@ export class TikTok {
   private async list(kind:Kind,filter:Record<string,unknown>={}){
     const rows:Record<string,any>[]=[];let total=1;
     for(let page=1;page<=10;page++){
-      const data=await this.request(`${kind}/get`,{advertiser_id:this.scope.platformAccountId,page:String(page),page_size:'100',filtering:JSON.stringify(filter)});
+      const data=await this.request(`${kind}/get`,{advertiser_id:this.scope.platformAccountId,page:String(page),page_size:'100',filtering:JSON.stringify(filter),...(kind==='ad'?{fields:JSON.stringify(['advertiser_id','ad_id','adgroup_id','ad_name','operation_status','create_time',...creativeKeys])}:{})});
       if(!Array.isArray(data?.list)||data.list.length>100||!Number.isSafeInteger(Number(data.page_info?.total_page)))throw new ProviderError('unavailable','tiktok_coverage');
       total=Number(data.page_info.total_page);
       if(total>10||total<0||page>Math.max(total,1))throw new ProviderError('unavailable','tiktok_coverage');
