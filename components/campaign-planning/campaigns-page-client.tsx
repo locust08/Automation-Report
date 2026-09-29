@@ -23,6 +23,7 @@ import { flattenCampaignDetail } from "@/lib/campaign-planning/campaign-detail-t
 import { CAMPAIGN_EDITING_SECTION_ORDER, EDIT_DRAFT_RESET_LABEL, closeCampaignDetail, selectCampaignDetail, toggleCampaignCreator, toggleCampaignEditor } from "@/lib/campaign-planning/campaign-workspace-view";
 import { hydrateCampaignWizardFromRevision } from "@/lib/campaign-planning/campaign-wizard-payload";
 import { evaluateCampaignProviderReadiness } from "@/lib/campaign-planning/campaign-provider-readiness";
+import { verifyCampaignRevisionReadback } from "@/lib/campaign-planning/campaign-revision-readback";
 import { CAMPAIGN_STATUS_PRESENTATIONS } from "@/lib/campaign-planning/campaign-status-presentation";
 import { mapCampaignIssueToWizardField, validateCampaignSubmission, type CampaignApiValidationIssue, type CampaignWizardIssue } from "@/lib/campaign-planning/campaign-submission-validation";
 import {
@@ -187,7 +188,15 @@ export function CampaignsPageClient({ initialRole }: { initialRole: AuthRole }) 
       });
       const payload = await response.json() as CampaignPlanDetail & { error?: string; issues?: CampaignApiValidationIssue[] };
       if (!response.ok) return { success: false, error: payload.error || "Unable to update the campaign draft.", issues: payload.issues ?? [] };
-      setSelected(payload);
+      const readResponse = await fetch(`/api/campaign-planning/${detail.plan.id}`, { cache: "no-store" });
+      const fresh = await readResponse.json() as CampaignPlanDetail & { error?: string };
+      if (!readResponse.ok) throw new Error(fresh.error || "Unable to read the saved campaign revision.");
+      verifyCampaignRevisionReadback(detail, {
+        revision_id: payload.currentRevision.id,
+        revision_number: payload.currentRevision.revisionNo,
+        payload_hash: payload.currentRevision.payloadHash,
+      }, fresh, campaign.campaign_name, payload.currentRevision.payloadHash);
+      setSelected(fresh);
       await fetch(`/api/campaign-planning/${detail.plan.id}/edit-draft`, { method: "DELETE" }).catch(() => undefined);
       await load();
       return { success: true };

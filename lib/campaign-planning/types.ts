@@ -151,6 +151,8 @@ export type CampaignPlanDetail = LocalSupabaseStage2Meta & {
     providerAccountId: string;
     timezone: string;
     destination: string;
+    approvedRevisionId: number | null;
+    approvedRevisionHash: string | null;
     createdBy: string;
     createdAt: string;
   };

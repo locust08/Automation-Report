@@ -5,6 +5,7 @@ import {
 } from "@/lib/campaign-planning/domain";
 import { evaluateCampaignProviderReadiness } from "@/lib/campaign-planning/campaign-provider-readiness";
 import { prepareCampaignPlanDraft } from "@/lib/campaign-planning/campaign-plan-preparation";
+import { verifyCampaignRevisionReadback } from "@/lib/campaign-planning/campaign-revision-readback";
 import type { CampaignEditDraft, CampaignWizardDraft, CampaignWizardForm } from "@/lib/campaign-planning/campaign-wizard";
 import type {
   CampaignAccountOption,
@@ -114,7 +115,7 @@ export async function getCampaignPlan(planId: number): Promise<CampaignPlanDetai
 
   const config = getLocalSupabaseConfig();
   const planRows = await readRows(config, "m04_ads_campaign_plans", {
-    select: "id,client_id,budget_package_id,ad_account_id,platform,active_revision_id,status,created_by_name,created_at,updated_at,lock_version",
+    select: "id,client_id,budget_package_id,ad_account_id,platform,active_revision_id,approved_revision_id,approved_revision_hash,status,created_by_name,created_at,updated_at,lock_version",
     id: `eq.${planId}`,
     limit: "1",
   });
@@ -204,6 +205,8 @@ export async function getCampaignPlan(planId: number): Promise<CampaignPlanDetai
       providerAccountId: account.providerAccountId,
       timezone: account.timezone,
       destination: currentRevision.destination,
+      approvedRevisionId: planRow.approved_revision_id == null ? null : numberValue(planRow.approved_revision_id, "approved revision id"),
+      approvedRevisionHash: optionalString(planRow.approved_revision_hash) || null,
       createdBy: stringValue(planRow.created_by_name, "draft author"),
       createdAt: stringValue(planRow.created_at, "draft creation time"),
     },
@@ -304,7 +307,7 @@ export async function updateCampaignPlanRevision(
     timezone: current.plan.timezone,
   });
   const config = getLocalSupabaseConfig();
-  await supabaseRequest<JsonObject[]>(config, "rpc/m04_ads_update_campaign_plan_draft", {
+  const rpcRows = await supabaseRequest<JsonObject[]>(config, "rpc/m04_ads_update_campaign_plan_draft", {
     method: "POST",
     body: {
       p_plan_id: planId,
@@ -318,7 +321,22 @@ export async function updateCampaignPlanRevision(
       p_trusted_user_agent: requestContext.userAgent?.trim().slice(0, 1_000) || "m04-crm08-edit",
     },
   });
-  return getCampaignPlan(planId);
+  const write = rpcRows[0];
+  if (!write) throw new CampaignPlanningRepositoryError("CRM08 Supabase did not confirm the revision write.", 502);
+  const readback = await getCampaignPlan(planId);
+  try {
+    verifyCampaignRevisionReadback(current, {
+      revision_id: write.id as number | string,
+      revision_number: Number(write.revision_number),
+      payload_hash: String(write.payload_hash),
+    }, readback, prepared.plan.campaign_name, prepared.payload_hash);
+  } catch (error) {
+    throw new CampaignPlanningRepositoryError(
+      error instanceof Error ? error.message : "M04 revision readback failed.",
+      409,
+    );
+  }
+  return readback;
 }
 
 export async function runMockCampaignWorkflow(planId: number, actorId: string): Promise<CampaignPlanDetail> {
