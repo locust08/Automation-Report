@@ -4,7 +4,7 @@
   "compatibility_flags":["nodejs_compat","global_fetch_strictly_public"],
   "observability":{"enabled":true},
   "services":[{"binding":"DIGITALBEE_AUTHORITY","service":"digitalbee-mcp"}],
-  "vars":{"M04_ENABLED":"true","M04_CONNECTION_REVISION":"m04-google-paused-v1","M04_PILOT_ACCOUNT":"2315114913","M04_PILOT_SERVICE":"2de4fcc4-f701-808d-b48b-c507d8641ce3","M04_PILOT_SUBJECT":"112837436987685558718","DIGITALBEE_GRANT_VERIFY_URL":"https://digitalbee-mcp.easondev.workers.dev/v1/internal/grants/verify"},
+  "vars":{"M04_ENABLED":"true","M04_CONNECTION_REVISION":"m04-google-paused-v1","M04_PILOT_ACCOUNT":"2315114913","M04_PILOT_SERVICE":"2de4fcc4-f701-808d-b48b-c507d8641ce3","M04_PILOT_SUBJECT":"112837436987685558718","M04_META_CREATION_ENABLED":"false","M04_META_PILOT_ACCOUNT":"321606578570386","M04_META_PILOT_SERVICE":"2de4fcc4-f701-80ad-aab2-c4ae709c7f9e","DIGITALBEE_GRANT_VERIFY_URL":"https://digitalbee-mcp.easondev.workers.dev/v1/internal/grants/verify"},
   "d1_databases":[{"binding":"DB","database_name":"digitalbee-m04-campaigns","database_id":"725a3503-b803-47ae-96cc-d02aa61c9870","migrations_dir":"migrations"}],
   "queues":{"producers":[{"binding":"CREATION_QUEUE","queue":"digitalbee-m04-paused-creation"}],"consumers":[{"queue":"digitalbee-m04-paused-creation","max_batch_size":1,"max_retries":3,"dead_letter_queue":"digitalbee-m04-creation-dlq"}]},
   "triggers":{"crons":["* * * * *"]}

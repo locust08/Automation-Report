@@ -1,7 +1,8 @@
-import {digest,mappingDigest, type Scope, type Plan} from './contracts';
+import {digest,mappingDigest, type Scope, type AnyPlan} from './contracts';
 export interface Workflow {id: string; subject: string; service_id: string; account_id: string; permission_revision: number; connection_revision: string; provider_revision: string; scope_hash: string; mapping_hash:string; backend_revision:string; plan_json: string; plan_hash: string; revision_id: string; source_key: string; status: string; version: number; created_at: number; updated_at: number}
 export interface Operation {id: string; workflow_id: string; subject: string; service_id: string; request_hash: string; status: string; result_json: string | null; created_at: number; dispatched_at: number | null; updated_at: number}
 export interface Revision {revision_id:string;workflow_id:string;revision_number:number;plan_json:string;plan_hash:string;save_key:string;created_at:number}
+export interface ProviderStep {status:'started'|'confirmed';provider_id:string|null;provider_name:string}
 export class Store {
   constructor(private db: D1Database) {}
   private primary() {return this.db.withSession('first-primary');}
@@ -12,7 +13,28 @@ export class Store {
   async workflow(id: string, s: Scope) {return this.primary().prepare('SELECT * FROM m04_workflows WHERE id=? AND subject=? AND service_id=?').bind(id, s.subject, s.accountPageId).first<Workflow>();}
   async source(id: string, s: Scope) {return this.primary().prepare('SELECT * FROM m04_workflows WHERE source_key=? AND subject=? AND service_id=?').bind(id, s.subject, s.accountPageId).first<Workflow>();}
   async revisions(id:string){return (await this.primary().prepare('SELECT revision_id,revision_number,plan_hash,plan_json,created_at FROM m04_revisions WHERE workflow_id=? ORDER BY revision_number').bind(id).all<Revision>()).results;}
-  async saveRevision(w:Workflow,s:Scope,p:Plan,key:string,expectedRevision:string){
+  async providerStep(operationId:string,step:'campaign'|'adset'|'ad'){
+    return this.primary().prepare('SELECT status,provider_id,provider_name FROM m04_provider_steps WHERE operation_id=? AND step=?').bind(operationId,step).first<ProviderStep>();
+  }
+  async providerSteps(operationId:string){
+    return (await this.primary().prepare('SELECT step,status,provider_id,provider_name FROM m04_provider_steps WHERE operation_id=? ORDER BY created_at,step').bind(operationId).all<ProviderStep&{step:string}>()).results;
+  }
+  async beginProviderStep(operationId:string,step:'campaign'|'adset'|'ad',providerName:string){
+    const now=Date.now();
+    const inserted=await this.primary().prepare("INSERT INTO m04_provider_steps(operation_id,step,provider_name,status,created_at,updated_at) VALUES(?,?,?,'started',?,?) ON CONFLICT(operation_id,step) DO NOTHING")
+      .bind(operationId,step,providerName,now,now).run();
+    const row=await this.providerStep(operationId,step);
+    if(!row||row.provider_name!==providerName)throw new Error('provider_step_conflict');
+    return {status:row.status,provider_id:row.provider_id,claimed:inserted.meta.changes===1};
+  }
+  async confirmProviderStep(operationId:string,step:'campaign'|'adset'|'ad',providerId:string){
+    if(!/^\d+$/.test(providerId))throw new Error('provider_step_conflict');
+    await this.primary().prepare("UPDATE m04_provider_steps SET status='confirmed',provider_id=?,updated_at=? WHERE operation_id=? AND step=? AND (provider_id IS NULL OR provider_id=?)")
+      .bind(providerId,Date.now(),operationId,step,providerId).run();
+    const row=await this.providerStep(operationId,step);
+    if(!row||row.status!=='confirmed'||row.provider_id!==providerId)throw new Error('provider_step_conflict');
+  }
+  async saveRevision(w:Workflow,s:Scope,p:AnyPlan,key:string,expectedRevision:string){
     const db=this.primary(),planHash=await digest(p),scopeHash=await digest(s);
     if(w.scope_hash!==scopeHash||w.account_id!==s.platformAccountId||w.permission_revision!==s.grantRevision||w.connection_revision!==s.connectionRevision||w.provider_revision!==s.providerRevision)throw new Error('stale_revision');
     const previous=await db.prepare('SELECT * FROM m04_revisions WHERE workflow_id=? AND save_key=?').bind(w.id,key).first<Revision>();
@@ -32,7 +54,7 @@ export class Store {
     if(!updated||updated.revision_id!==revision||updated.plan_hash!==planHash)throw new Error('conflict');
     return updated;
   }
-  async save(s: Scope, p: Plan, key: string, backendRevision:string) {
+  async save(s: Scope, p: AnyPlan, key: string, backendRevision:string) {
     const existing = await this.source(key, s), planHash = await digest(p), scopeHash=await digest(s);
     if (existing) {if (existing.plan_hash !== planHash||existing.scope_hash!==scopeHash||existing.backend_revision!==backendRevision) throw new Error('idempotency_conflict'); return existing;}
     const now = Date.now(), id = crypto.randomUUID(), revision = crypto.randomUUID(), db = this.primary();
