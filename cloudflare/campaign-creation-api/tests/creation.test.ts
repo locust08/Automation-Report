@@ -51,12 +51,29 @@ async function creation(plan: Plan = search) {
   return {...revision, idempotency_key: crypto.randomUUID(), challenge: prepared.challenge!.token, confirmation_hash: prepared.challenge!.confirmation_hash};
 }
 describe('real paused creation boundary', () => {
+  it('lists only current-scope workflows so both interfaces can reopen the same draft',async()=>{
+    const first=await draft(),second=await draft({...search,name:'Second test'});
+    const listed=await call('campaign_workflows_list',{service_id:scope.accountPageId});
+    expect(listed.outcome).toBe('success');
+    expect(listed.data?.workflows).toEqual(expect.arrayContaining([
+      expect.objectContaining({workflow_ref:first.workflow_id,revision_ref:first.revision_id}),
+      expect.objectContaining({workflow_ref:second.workflow_id,revision_ref:second.revision_id}),
+    ]));
+    const other=await call('campaign_workflows_list',{service_id:scope.accountPageId},{...scope,subject:'other'});
+    expect(other.data?.workflows).toEqual([]);
+  });
   it('returns a durable receipt without calling Google creation in the card request',async()=>{
     const input=await creation(),provider=deps.provider(env,scope);
     const outcome=await call('campaign_gate1_create',input);
     expect(outcome).toMatchObject({outcome:'success',receipt_ref:input.idempotency_key,data:{status:'reserved'}});
     expect(provider.create).not.toHaveBeenCalled();
     expect(await store.operation(input.idempotency_key,scope)).toMatchObject({status:'reserved'});
+  });
+  it('keeps native paused readback under the verified receipt during reconciliation',async()=>{
+    const input=await creation();await call('campaign_gate1_create',input);
+    await store.dispatched(input.idempotency_key);
+    const receipt=await call('campaign_operation_get',{service_id:scope.accountPageId,idempotency_key:input.idempotency_key});
+    expect(receipt).toMatchObject({outcome:'success',data:{status:'verified',readback:{campaign:{status:'PAUSED'},ad_group:{status:'PAUSED'}}}});
   });
   it('preserves the signed scope field order when the queue reads a production outbox entry',async()=>{
     // DigitalBee signs and stores this order; Zod's schema lists clientId earlier.

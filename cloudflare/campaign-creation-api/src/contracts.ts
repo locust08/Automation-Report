@@ -16,7 +16,7 @@ export type MetaPlan=z.infer<typeof metaPlanSchema>;
 export type AnyPlan=Plan|MetaPlan;
 export const mappingDigest=(s:Scope)=>digest([s.accountPageId,s.clientId,s.platform,s.platformAccountId,s.googleLoginCustomerId??null]);
 export const endpoints:Record<string,{tool:string;method:string}>={
- 'templates':{tool:'campaign_templates_list',method:'GET'},'workflows/status':{tool:'campaign_workflow_get',method:'GET'},'operations/status':{tool:'campaign_operation_get',method:'GET'},
+ 'templates':{tool:'campaign_templates_list',method:'GET'},'workflows':{tool:'campaign_workflows_list',method:'GET'},'workflows/status':{tool:'campaign_workflow_get',method:'GET'},'operations/status':{tool:'campaign_operation_get',method:'GET'},
  'drafts':{tool:'campaign_draft_save',method:'POST'},'validation':{tool:'campaign_draft_validate',method:'POST'},'actions/prepare':{tool:'campaign_action_prepare',method:'POST'},
  'approvals':{tool:'campaign_revision_approve',method:'POST'},'gates/1':{tool:'campaign_gate1_create',method:'POST'},'recoveries':{tool:'campaign_creation_resume',method:'POST'},'gates/2':{tool:'campaign_gate2_activate',method:'POST'},
 };
