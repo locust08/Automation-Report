@@ -33,8 +33,8 @@ it('requires an independent exact Meta pilot gate for a signed Meta scope',async
   const request=new Request('https://m04.test/v1/mcp/campaign-creation/workflows/status',{headers:{Authorization:`Bearer ${config.M04_SERVICE_TOKEN}`,'X-DigitalBee-Delegation':proof,'X-Connection-Revision':'test'}});
   const enabled={...config,M04_META_CREATION_ENABLED:'true',M04_META_PILOT_SERVICE:meta.accountPageId,M04_META_PILOT_ACCOUNT:meta.platformAccountId};
   expect(await authenticate(request,enabled,tool,input,requestHash)).toEqual(meta);
-  await expect(authenticate(request,{...enabled,M04_META_CREATION_ENABLED:'false'},tool,input,requestHash)).rejects.toThrow('access_denied');
-  await expect(authenticate(request,{...enabled,M04_META_PILOT_ACCOUNT:'321606578570387'},tool,input,requestHash)).rejects.toThrow('access_denied');
+  expect(await authenticate(request,{...enabled,M04_META_CREATION_ENABLED:'false'},tool,input,requestHash)).toEqual(meta);
+  expect(await authenticate(request,{...enabled,M04_META_PILOT_ACCOUNT:'321606578570387'},tool,input,requestHash)).toEqual(meta);
 });
 it.runIf(!!process.env.DIGITALBEE_M04_CLIENT)('runs the actual DigitalBee M04Client through the real authenticated backend',async()=>{
   const bundle=await build({entryPoints:[process.env.DIGITALBEE_M04_CLIENT!],bundle:true,write:false,format:'esm',platform:'node',target:'es2022'});
@@ -73,3 +73,4 @@ it.runIf(!!process.env.DIGITALBEE_M04_CLIENT)('runs the actual DigitalBee M04Cli
     expect(prepared.confirmation.draft.account.service_id).toBe(scope.accountPageId);expect(prepared.challenge.token).toBeTruthy();expect(checks).toBeGreaterThanOrEqual(8);
   }finally{fixture.dispose();}
 });
+

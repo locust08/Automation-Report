@@ -5,6 +5,7 @@ import {Meta,metaProviderName,type MetaCredentials} from './meta';
 import {TikTok,tiktokProviderName,type TikTokCredentials} from './tiktok';
 import {Store, type Workflow} from './store';
 import {z} from 'zod';
+import {campaignBlocker} from './blockers';
 export type Environment = AuthEnvironment & GoogleCredentials & MetaCredentials & TikTokCredentials & {DB:D1Database;CREATION_QUEUE?:Queue<{operationId:string}>};
 export type Provider = Pick<Google, 'validate' | 'create' | 'readback'>;
 export interface Dependencies {authorize: typeof authorize; provider: (env: Environment, scope: Scope) => Provider}
@@ -47,9 +48,9 @@ export async function execute(env: Environment, scope: Scope, tool: string, inpu
     if (!parsed.success) return result('clarification_required', {validation_issues: parsed.error.issues.slice(0, 20).map(issue => ({field: issue.path.join('.'), code: issue.code, message: issue.message.slice(0, 500)}))});
     if(scope.platform==='Google')buildOperations(scope, planSchema.parse(parsed.data), 'validation'); // Reject cross-account asset references before persisting a draft.
     else if(scope.platform==='Meta'){
-      const source=(await meta.referenceAssets()).sources[0],plan=metaPlanSchema.parse(parsed.data);
+      const plan=metaPlanSchema.parse(parsed.data),references=await meta.referenceAssets(plan.source_ad_id),source=references.sources[0];
       if(!source||source.source_ad_id!==plan.source_ad_id||source.source_campaign_id!==plan.source_campaign_id||
-        source.source_adset_id!==plan.source_adset_id||source.source_fingerprint!==plan.source_fingerprint)
+        source.source_adset_id!==plan.source_adset_id||source.source_fingerprint!==plan.source_fingerprint||plan.currency!==references.account.currency||plan.timezone!==references.account.timezone_name||plan.daily_budget!==source.minimum_daily_budget)
         throw new Error('stale_revision');
     }else{
       const source=(await tiktok.referenceAssets()).sources[0],plan=tiktokPlanSchema.parse(parsed.data);
@@ -246,3 +247,4 @@ export async function sweepCreationOutbox(env:Environment){
     await store.markEnqueued(row.operation_id);
   }
 }
+

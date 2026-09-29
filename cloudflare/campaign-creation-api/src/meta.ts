@@ -5,16 +5,19 @@ import {Store} from './store';
 export interface MetaCredentials {META_ACCESS_TOKEN?:string;META_API_VERSION?:string}
 export const metaProviderName=(plan:MetaPlan,workflowId:string)=>`${plan.name.slice(0,100)} [${workflowId}]`;
 export class Meta {
+  private readonly deadline=Date.now()+25_000;
+  private currency='MYR';
+  private signal(){const remaining=this.deadline-Date.now();if(remaining<=0)throw new ProviderError('unavailable','meta_deadline');return AbortSignal.timeout(Math.min(10_000,remaining));}
   constructor(private env:MetaCredentials,private scope:Scope,private fetcher:typeof fetch=(input,init)=>fetch(input,init)){}
   private async get(path:string,params:Record<string,string>={}){
     if(this.scope.platform!=='Meta'||!this.env.META_ACCESS_TOKEN||!/^v\d+\.0$/.test(this.env.META_API_VERSION??''))throw new ProviderError('unavailable','meta_connection');
     const url=new URL(`https://graph.facebook.com/${this.env.META_API_VERSION}/${path}`);
     for(const [key,value] of Object.entries(params))url.searchParams.set(key,value);
     let response:Response;
-    try{response=await this.fetcher(url,{headers:{Authorization:`Bearer ${this.env.META_ACCESS_TOKEN}`},redirect:'manual',signal:AbortSignal.timeout(10_000)});}
+    try{response=await this.fetcher(url,{headers:{Authorization:`Bearer ${this.env.META_ACCESS_TOKEN}`},redirect:'manual',signal:this.signal()});}
     catch{throw new ProviderError('unavailable','meta_response');}
     const body=await boundedJson(response,262_144);
-    if(!response.ok||body.error)throw new ProviderError('unavailable','meta_response');
+    if(!response.ok||body.error)throw new ProviderError('unavailable',response.status===429||[4,17,32,613,80004].includes(Number(body.error?.code))?'meta_rate_limited':'meta_response');
     return body;
   }
   private async post(path:string,values:Record<string,string>,validateOnly=false){
@@ -22,12 +25,13 @@ export class Meta {
     const body=new URLSearchParams(values);
     if(validateOnly)body.set('execution_options',JSON.stringify(['validate_only']));
     let response:Response;
-    try{response=await this.fetcher(`https://graph.facebook.com/${this.env.META_API_VERSION}/${path}`,{method:'POST',headers:{Authorization:`Bearer ${this.env.META_ACCESS_TOKEN}`,'Content-Type':'application/x-www-form-urlencoded'},body,redirect:'manual',signal:AbortSignal.timeout(10_000)});}
+    try{response=await this.fetcher(`https://graph.facebook.com/${this.env.META_API_VERSION}/${path}`,{method:'POST',headers:{Authorization:`Bearer ${this.env.META_ACCESS_TOKEN}`,'Content-Type':'application/x-www-form-urlencoded'},body,redirect:'manual',signal:this.signal()});}
     catch{throw new ProviderError(validateOnly?'unavailable':'unknown','meta_response');}
     let payload:Record<string,any>;
     try{payload=await boundedJson(response,262_144);}catch{throw new ProviderError(validateOnly?'unavailable':'unknown','meta_response');}
     if(!response.ok||payload.error){
-      const floor=payload.error?.error_subcode===1885272&&String(payload.error?.error_user_msg??'').match(/more than MYR\s*([0-9]+(?:\.[0-9]{2})?)/i);
+      if(response.status===429||[4,17,32,613,80004].includes(Number(payload.error?.code)))throw new ProviderError(validateOnly?'unavailable':'unknown','meta_rate_limited');
+      const floor=payload.error?.error_subcode===1885272&&String(payload.error?.error_user_msg??'').match(new RegExp('more than '+this.currency+'\\s*([0-9]+(?:\\.[0-9]{2})?)','i'));
       const code=floor?`meta_budget_floor_${floor[1]}`:payload.error?.error_subcode?`meta_${payload.error.error_subcode}`:'meta_rejected';
       throw new ProviderError(validateOnly?'unavailable':'rejected',code);
     }
@@ -35,13 +39,16 @@ export class Meta {
     else if(!/^\d+$/.test(String(payload.id??'')))throw new ProviderError('unknown','meta_response');
     return payload;
   }
-  async referenceAssets(){
+  async referenceAssets(selectedAdId?:string){
     const id=this.scope.platformAccountId;
     const account=await this.get(`act_${id}`,{fields:'account_id,currency,timezone_name,account_status'});
-    if(account.account_id!==id||account.currency!=='MYR'||account.timezone_name!=='Asia/Kuala_Lumpur'||account.account_status!==1)throw new ProviderError('unavailable','meta_account_configuration');
+    if(account.account_id!==id||!/^[A-Z]{3}$/.test(String(account.currency))||!account.timezone_name||account.account_status!==1)throw new ProviderError('unavailable','meta_account_configuration');
+    try{new Intl.DateTimeFormat('en',{timeZone:account.timezone_name});}catch{throw new ProviderError('unavailable','meta_account_timezone');}
+    this.currency=account.currency;
     const candidates:any[]=[];
     let after:string|undefined;
-    for(let pageNumber=0;pageNumber<4;pageNumber++){
+    if(selectedAdId){if(!/^\d{1,30}$/.test(selectedAdId))throw new ProviderError('unavailable','meta_source_changed');candidates.push({id:selectedAdId});}
+    for(let pageNumber=0;!selectedAdId&&pageNumber<4;pageNumber++){
       const page=await this.get(`act_${id}/ads`,{fields:'id,account_id,status,created_time',limit:'500',...(after?{after}:{})});
       if(!Array.isArray(page.data)||page.data.length>500)throw new ProviderError('unavailable','meta_source_coverage');
       candidates.push(...page.data.filter((ad:any)=>/^\d+$/.test(String(ad.id))&&ad.account_id===id&&['ACTIVE','PAUSED'].includes(ad.status)&&typeof ad.created_time==='string'));
@@ -54,7 +61,7 @@ export class Meta {
     candidates.sort((a:any,b:any)=>String(b.created_time).localeCompare(String(a.created_time))||String(b.id).localeCompare(String(a.id)));
     const fields='id,account_id,name,status,created_time,campaign{id,account_id,objective,special_ad_categories},adset{id,account_id,campaign_id,daily_budget,billing_event,optimization_goal,targeting,bid_strategy,promoted_object,attribution_spec,destination_type,regional_regulation_identities},creative{id,account_id,object_story_spec}';
     const sources=[];
-    for(const candidate of candidates){
+    for(const candidate of candidates.slice(0,20)){
       const ad=await this.get(String(candidate.id),{fields});
       if(ad.id!==candidate.id||ad.account_id!==id||!['ACTIVE','PAUSED'].includes(ad.status)||
         ad.campaign?.account_id!==id||!['OUTCOME_TRAFFIC','OUTCOME_LEADS'].includes(ad.campaign?.objective)||
@@ -73,7 +80,7 @@ export class Meta {
     return {account:{account_id:id,currency:account.currency,timezone_name:account.timezone_name},sources};
   }
   async validate(plan:MetaPlan,_workflowId:string){
-    const references=await this.referenceAssets(),source=references.sources[0];
+    const references=await this.referenceAssets(plan.source_ad_id),source=references.sources[0];
     if(!source||source.source_ad_id!==plan.source_ad_id||source.source_campaign_id!==plan.source_campaign_id||
       source.source_adset_id!==plan.source_adset_id||source.source_fingerprint!==plan.source_fingerprint||
       plan.currency!==references.account.currency||plan.timezone!==references.account.timezone_name||plan.daily_budget!==source.minimum_daily_budget)

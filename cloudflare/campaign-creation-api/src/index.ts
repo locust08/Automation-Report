@@ -3,6 +3,7 @@ import {boundedJson, endpoints, result} from './contracts';
 import {inputs} from './inputs';
 import {execute,processReservedCreation,sweepCreationOutbox,type Environment} from './service';
 import {ProviderError} from './google';
+import {campaignBlocker} from './blockers';
 
 export default {
   async fetch(request: Request, env: Environment): Promise<Response> {
@@ -24,7 +25,7 @@ export default {
         console.warn(JSON.stringify({event:'m04_backend_failure',tool:endpoint.tool,category:diagnostic}));
         if (error instanceof Error && error.message === 'access_denied') throw error;
         output = result(error instanceof Error && ['conflict', 'stale_revision', 'idempotency_conflict'].includes(error.message) ? 'conflict' : 'unavailable',
-          {caveats: ['Request could not be completed. Refresh the draft or reconcile its creation receipt.'],data:{service_error:error instanceof ProviderError?error.code:'request_failed'}});
+          {validation_issues:[campaignBlocker(error instanceof ProviderError?error.code:error instanceof Error?error.message:'request_failed')],caveats: ['Refresh the draft or reconcile its creation receipt before retrying.'],data:{service_error:error instanceof ProviderError?error.code:error instanceof Error&&error.message==='provider_creation_disabled'?error.message:'request_failed'}});
       }
       return Response.json({version: 'm18-m04-v1', scope: {...scope, allowed: true}, request_hash: body.request_hash, result: output},
         {headers: {'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff'}});

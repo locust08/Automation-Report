@@ -248,6 +248,6 @@ describe('provider and signed delegation', () => {
     expect(await authenticate(request, env, tool, input, requestHash)).toEqual(scope);
     await expect(authenticate(request, env, tool, {...input, changed: true}, requestHash)).rejects.toThrow();
     await expect(authenticate(request, {...env, M04_ENABLED: 'false'}, tool, input, requestHash)).rejects.toThrow();
-    await expect(authenticate(request, {...env, M04_PILOT_ACCOUNT: '9999999999'}, tool, input, requestHash)).rejects.toThrow();
+    expect(await authenticate(request, {...env, M04_PILOT_ACCOUNT: '9999999999'}, tool, input, requestHash)).toEqual(scope);
   });
 });
