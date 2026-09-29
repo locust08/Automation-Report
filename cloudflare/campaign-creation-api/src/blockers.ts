@@ -1,6 +1,7 @@
 /** Safe categories only: never return credentials or raw provider error messages. */
 export function campaignBlocker(code:string){
  const messages:Record<string,string>={
+  stale_revision:'The source or saved revision changed. Refresh readiness and save a new immutable draft.',
   provider_creation_disabled:'Provider creation is disabled. Readiness and draft planning remain available.',
   meta_rate_limited:'Meta rate limit reached. Wait before checking readiness again; no automatic retry was sent.',
   tiktok_rate_limited:'TikTok rate limit reached. Wait before checking readiness again; no automatic retry was sent.',
@@ -18,6 +19,6 @@ export function campaignBlocker(code:string){
   meta_deadline:'Meta readiness reached its request deadline. Select a source ad or retry later.',
   tiktok_deadline:'TikTok readiness reached its request deadline. Select a source ad or retry later.',
  };
- const safe=/^(meta|tiktok)_[a-z0-9_]+$/.test(code)||code==='provider_creation_disabled';
+ const safe=/^(meta|tiktok)_[a-z0-9_]+$/.test(code)||['provider_creation_disabled','stale_revision'].includes(code);
  return {field:'readiness',code:safe?code:'request_failed',message:messages[code]??'Provider readiness could not be verified. Review the reported issue before creating a campaign.'};
 }

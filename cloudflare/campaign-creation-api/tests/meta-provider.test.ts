@@ -84,16 +84,19 @@ it.each(['link_data','video_data'])('verifies native Meta lead-form destinations
  const ad=source('66','2026-09-20T00:00:00+0000') as any;
  ad.campaign.objective='OUTCOME_LEADS';ad.adset.destination_type='ON_AD';ad.adset.promoted_object={page_id:'44'};
  ad.creative.object_story_spec={page_id:'44',[kind]:{...(kind==='link_data'?{link:'http://fb.me/'}:{video_id:'77'}),call_to_action:{type:'SIGN_UP',value:{lead_gen_form_id:'88'}}}};
- let foreign=false;
+ let foreign=false,reads=0,thumbnailHash='a'.repeat(32);
  const fetcher=async(input:RequestInfo|URL,init?:RequestInit)=>{
   const edge=new URL(String(input)).pathname.split('/').at(-1);
   if(init?.method==='POST')return Response.json({success:true});
   if(edge===`act_${scope.platformAccountId}`)return Response.json({account_id:scope.platformAccountId,currency:'MYR',timezone_name:'Asia/Kuala_Lumpur',account_status:1});
-  if(edge==='66')return Response.json(ad);
+  if(edge==='66'){if(kind==='video_data')Object.assign(ad.creative.object_story_spec.video_data,{image_hash:thumbnailHash,image_url:'https://www.facebook.com/ads/image/?d='+ ++reads});return Response.json(ad);}
   if(edge==='88')return Response.json({id:'88',page_id:foreign?'99':'44',status:'ACTIVE'});
   throw new Error('unexpected request');
  };
  const provider=new Meta({META_ACCESS_TOKEN:'synthetic',META_API_VERSION:'v25.0'},scope,fetcher);
- expect((await provider.referenceAssets('66')).sources[0]).toMatchObject({final_url:null,destination:{kind:'instant_form',page_id:'44',form_id:'88'}});
+ const first=(await provider.referenceAssets('66')).sources[0];
+ expect(first).toMatchObject({final_url:null,destination:{kind:'instant_form',page_id:'44',form_id:'88'}});
+ expect((await provider.referenceAssets('66')).sources[0].source_fingerprint).toBe(first.source_fingerprint);
+ if(kind==='video_data'){thumbnailHash='b'.repeat(32);expect((await provider.referenceAssets('66')).sources[0].source_fingerprint).not.toBe(first.source_fingerprint);}
  foreign=true;await expect(provider.referenceAssets('66')).rejects.toMatchObject({code:'meta_form_unavailable'});
 });

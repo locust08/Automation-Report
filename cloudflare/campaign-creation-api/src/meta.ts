@@ -2,6 +2,17 @@ import {boundedJson,digest,type Scope,type MetaPlan} from './contracts';
 import {ProviderError} from './google';
 import {Store} from './store';
 
+// Preview URLs are signed afresh by Meta. The image hash, video ID and creative ID
+// bind the asset; a generated thumbnail URL is not a change to the approved creative.
+function stableStory(story:Record<string,any>){
+  const value=structuredClone(story);
+  if(value?.video_data?.image_hash&&value.video_data.video_id)delete value.video_data.image_url;
+  return value;
+}
+function ordered(value:any):any{return Array.isArray(value)?value.map(ordered):value&&typeof value==='object'?Object.fromEntries(Object.keys(value).sort().map(key=>[key,ordered(value[key])])):value;}
+const storyDigest=(story:Record<string,any>)=>digest(ordered(stableStory(story)));
+const sourceDigest=(ad:Record<string,any>)=>digest(ordered({...ad,creative:{...ad.creative,object_story_spec:stableStory(ad.creative.object_story_spec)}}));
+
 export interface MetaCredentials {META_ACCESS_TOKEN?:string;META_API_VERSION?:string}
 export const metaProviderName=(plan:MetaPlan,workflowId:string)=>`${plan.name.slice(0,100)} [${workflowId}]`;
 export class Meta {
@@ -90,7 +101,7 @@ export class Meta {
       const minimum_daily_budget=await this.minimumBudget(ad.adset,String(ad.campaign.id));
       this.snapshot=structuredClone(ad);
       sources.push({source_ad_id:String(ad.id),source_adset_id:String(ad.adset.id),source_campaign_id:String(ad.campaign.id),objective:ad.campaign.objective,
-        daily_budget:(Number(ad.adset.daily_budget)/100).toFixed(2),source_fingerprint:await digest(ad),creative_id:String(ad.creative.id),final_url:destination.kind==='website'?destination.url:null,destination,
+        daily_budget:(Number(ad.adset.daily_budget)/100).toFixed(2),source_fingerprint:await sourceDigest(ad),creative_id:String(ad.creative.id),final_url:destination.kind==='website'?destination.url:null,destination,
         regional_regulation_identities:ad.adset.regional_regulation_identities,minimum_daily_budget});
       break;
     }
@@ -208,7 +219,7 @@ export class Meta {
     const row=await this.get(id,{fields:'id,name,account_id,adset_id,status,creative{id,object_story_spec}'});
     if(row.id!==id||row.name!==name||row.account_id!==this.scope.platformAccountId||row.adset_id!==adsetId||
       row.status!=='PAUSED'||row.creative?.id!==creativeId||!row.creative?.object_story_spec?.page_id||
-      await digest(row.creative.object_story_spec)!==await digest(story))
+      await storyDigest(row.creative.object_story_spec)!==await storyDigest(story))
       throw new ProviderError('unknown','meta_ad_readback');
   }
   async readback(plan:MetaPlan,workflowId:string,operationId:string,store:Store){
