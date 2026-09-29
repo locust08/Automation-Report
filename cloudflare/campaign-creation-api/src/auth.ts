@@ -32,19 +32,15 @@ export async function authenticate(request: Request, env: AuthEnvironment, tool:
   const rawScope=Object.fromEntries(Object.entries(payload).filter(([key])=>key in scopeSchema.shape));
   scopeSchema.parse(rawScope);
   const scope=rawScope as Scope;
-  const pilot=scope.platform==='Google'
-    ?scope.platformAccountId===env.M04_PILOT_ACCOUNT&&scope.accountPageId===env.M04_PILOT_SERVICE
-    :env.M04_META_CREATION_ENABLED==='true'&&env.M04_META_PILOT_ACCOUNT==='321606578570386'&&
-      scope.platformAccountId===env.M04_META_PILOT_ACCOUNT&&scope.accountPageId===env.M04_META_PILOT_SERVICE;
   if (payload.sub !== scope.subject || payload.action !== tool || payload.requestHash !== requestHash ||
     requestHash !== await digest({tool, scope, input}) || scope.connectionRevision !== env.M04_CONNECTION_REVISION ||
-    request.headers.get('X-Connection-Revision') !== scope.connectionRevision || scope.subject !== env.M04_PILOT_SUBJECT ||
-    !pilot)
+    request.headers.get('X-Connection-Revision') !== scope.connectionRevision)
     throw new Error('access_denied');
   return scope;
 }
 /** DigitalBee is the current permission authority, checked at every stage and again before dispatch. */
 export async function authorize(env: AuthEnvironment, scope: Scope, tool: string, fetcher?: typeof fetch) {
+  if(scope.platform==='Meta'&&['campaign_gate1_create','campaign_action_prepare_gate1'].includes(tool)&&env.M04_META_CREATION_ENABLED!=='true')throw new Error('provider_creation_disabled');
   const url = new URL(env.DIGITALBEE_GRANT_VERIFY_URL);
   if (url.protocol !== 'https:' || url.username || url.password || url.search || url.hash ||
     url.pathname !== '/v1/internal/grants/verify' || env.DIGITALBEE_GRANT_VERIFY_TOKEN?.length < 32)

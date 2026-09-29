@@ -4,6 +4,7 @@ import {buildOperations, Google, ProviderError, providerName, type GoogleCredent
 import {Meta,metaProviderName,type MetaCredentials} from './meta';
 import {Store, type Workflow} from './store';
 import {z} from 'zod';
+import {campaignBlocker} from './blockers';
 export type Environment = AuthEnvironment & GoogleCredentials & MetaCredentials & {DB:D1Database;CREATION_QUEUE?:Queue<{operationId:string}>};
 export type Provider = Pick<Google, 'validate' | 'create' | 'readback'>;
 export interface Dependencies {authorize: typeof authorize; provider: (env: Environment, scope: Scope) => Provider}
@@ -30,7 +31,8 @@ export async function execute(env: Environment, scope: Scope, tool: string, inpu
   if (tool === 'campaign_templates_list') {
     const references=scope.platform==='Meta'?await meta.referenceAssets():await new Google(env,scope).referenceAssets();
     await check();
-    return result('success', {data: {templates: [], supported_campaign_types: scope.platform==='Meta'?['meta_existing_ad']:['search', 'demand_gen'], brief_schema: z.toJSONSchema(scope.platform==='Meta'?metaPlanSchema:planSchema), references,mode: 'real_paused'}});
+    const issues=scope.platform==='Meta'&&'sources' in references&&!references.sources.length?[campaignBlocker('meta_no_eligible_source')]:[];
+    return result(issues.length?'clarification_required':'success', {validation_issues:issues,data: {templates: [], supported_campaign_types: scope.platform==='Meta'?['meta_existing_ad']:['search', 'demand_gen'], brief_schema: z.toJSONSchema(scope.platform==='Meta'?metaPlanSchema:planSchema), references,mode: 'real_paused'}});
   }
   if(tool==='campaign_workflows_list'){
     const workflows=await store.workflows(scope,backendRev,input.limit??20);
@@ -44,9 +46,9 @@ export async function execute(env: Environment, scope: Scope, tool: string, inpu
     if (!parsed.success) return result('clarification_required', {validation_issues: parsed.error.issues.slice(0, 20).map(issue => ({field: issue.path.join('.'), code: issue.code, message: issue.message.slice(0, 500)}))});
     if(scope.platform==='Google')buildOperations(scope, planSchema.parse(parsed.data), 'validation'); // Reject cross-account asset references before persisting a draft.
     else {
-      const source=(await meta.referenceAssets()).sources[0],plan=metaPlanSchema.parse(parsed.data);
+      const plan=metaPlanSchema.parse(parsed.data),references=await meta.referenceAssets(plan.source_ad_id),source=references.sources[0];
       if(!source||source.source_ad_id!==plan.source_ad_id||source.source_campaign_id!==plan.source_campaign_id||
-        source.source_adset_id!==plan.source_adset_id||source.source_fingerprint!==plan.source_fingerprint)
+        source.source_adset_id!==plan.source_adset_id||source.source_fingerprint!==plan.source_fingerprint||plan.currency!==references.account.currency||plan.timezone!==references.account.timezone_name||plan.daily_budget!==source.minimum_daily_budget)
         throw new Error('stale_revision');
     }
     if(Boolean(input.workflow_id)!==Boolean(input.revision_id))throw new Error('invalid_request');

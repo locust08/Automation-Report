@@ -53,3 +53,22 @@ it('validates campaign, ad set and reused creative without creation and carries 
   expect(JSON.parse(requests.at(-2)!.body.get('regional_regulation_identities')!)).toEqual({universal_beneficiary:'77',universal_payer:'77'});
   expect(requests.at(-1)!.body.get('status')).toBe('PAUSED');
 });
+
+it('revalidates selected source directly in account currency without rescanning ads',async()=>{
+ const paths:string[]=[];
+ const request=async(input:RequestInfo|URL,init?:RequestInit)=>{
+  const url=new URL(String(input));paths.push(url.pathname);
+  if(init?.method==='POST')return Response.json({success:true});
+  if(url.pathname.endsWith('/act_'+scope.platformAccountId))return Response.json({account_id:scope.platformAccountId,currency:'USD',timezone_name:'America/New_York',account_status:1});
+  if(url.pathname.endsWith('/66'))return Response.json(source('66','2026-09-20T00:00:00+0000'));
+  throw new Error('unexpected scan');
+ };
+ const refs=await new Meta({META_ACCESS_TOKEN:'synthetic',META_API_VERSION:'v25.0'},scope,request).referenceAssets('66');
+ expect(refs.account.currency).toBe('USD');expect(refs.sources[0].source_ad_id).toBe('66');
+ expect(paths.some(path=>path.endsWith('/ads'))).toBe(false);
+});
+it('reports rate limiting without retrying the provider',async()=>{
+ const request=vi.fn(async()=>Response.json({error:{code:4}},{status:429}));
+ await expect(new Meta({META_ACCESS_TOKEN:'synthetic',META_API_VERSION:'v25.0'},scope,request).referenceAssets()).rejects.toMatchObject({code:'meta_rate_limited'});
+ expect(request).toHaveBeenCalledTimes(1);
+});

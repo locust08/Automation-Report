@@ -31,3 +31,6 @@ Install internal `M04_SERVICE_TOKEN`, `M04_DELEGATION_KEY` and `DIGITALBEE_GRANT
 The existing Ava pilot currently has `M04_ENABLED:true`; preserve that deployed setting during this code update. Independent rollback is `M04_ENABLED:false`; preserve durable drafts/audits/receipts. DigitalBee independently disables `M04_REAL_ENABLED` and Google live changes. A code deployment never accepts provider behavior.
 
 The older application's full webpack build currently fails on a pre-existing global selector in `components/reporting/print/monthly-report-print.module.css:558`. It is outside this isolated service and is not included in its deployment bundle.
+
+## Mapped-account readiness repair — 2026-09-29
+Meta readiness and immutable planning now use current DigitalBee account grants instead of fixed pilot IDs. Provider creation remains independently default-off and rechecks live write grants, campaign roles, mapping and connection revisions before dispatch. Readiness failures include actionable safe categories. Selected-source validation avoids repeated full ad scans; discovery examines at most 20 candidates within a 25-second provider deadline and never retries rate limits automatically. Meta currency/timezone come from the account; budget validation remains required. Separate approval and paused-creation challenges and durable receipts are unchanged.

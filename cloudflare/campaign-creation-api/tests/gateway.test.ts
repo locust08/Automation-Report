@@ -26,15 +26,15 @@ it('verifies the facade serialization order without accepting altered scope or b
   expect(await authenticate(request,config,tool,input,requestHash)).toEqual(scope);
   await expect(authenticate(request,config,tool,{...input,workflow_id:crypto.randomUUID()},requestHash)).rejects.toThrow();
 });
-it('requires an independent exact Meta pilot gate for a signed Meta scope',async()=>{
+it('authenticates signed Meta readiness independently of provider creation gates',async()=>{
   const meta:Scope={...scope,platform:'Meta',platformAccountId:'321606578570386',accountPageId:'2de4fcc4-f701-80ad-aab2-c4ae709c7f9e',googleLoginCustomerId:undefined};
   const tool='campaign_workflow_get',input={service_id:meta.accountPageId,workflow_id:crypto.randomUUID()},requestHash=await digest({tool,scope:meta,input});
   const proof=await new SignJWT({...meta,action:tool,requestHash}).setProtectedHeader({alg:'HS256'}).setIssuer('digitalbee').setAudience('https://m04.test').setSubject(meta.subject).setIssuedAt().setExpirationTime('30s').setJti(crypto.randomUUID()).sign(new TextEncoder().encode(config.M04_DELEGATION_KEY));
   const request=new Request('https://m04.test/v1/mcp/campaign-creation/workflows/status',{headers:{Authorization:`Bearer ${config.M04_SERVICE_TOKEN}`,'X-DigitalBee-Delegation':proof,'X-Connection-Revision':'test'}});
   const enabled={...config,M04_META_CREATION_ENABLED:'true',M04_META_PILOT_SERVICE:meta.accountPageId,M04_META_PILOT_ACCOUNT:meta.platformAccountId};
   expect(await authenticate(request,enabled,tool,input,requestHash)).toEqual(meta);
-  await expect(authenticate(request,{...enabled,M04_META_CREATION_ENABLED:'false'},tool,input,requestHash)).rejects.toThrow('access_denied');
-  await expect(authenticate(request,{...enabled,M04_META_PILOT_ACCOUNT:'321606578570387'},tool,input,requestHash)).rejects.toThrow('access_denied');
+  expect(await authenticate(request,{...enabled,M04_META_CREATION_ENABLED:'false'},tool,input,requestHash)).toEqual(meta);
+  expect(await authenticate(request,{...enabled,M04_META_PILOT_ACCOUNT:'321606578570387'},tool,input,requestHash)).toEqual(meta);
 });
 it.runIf(!!process.env.DIGITALBEE_M04_CLIENT)('runs the actual DigitalBee M04Client through the real authenticated backend',async()=>{
   const bundle=await build({entryPoints:[process.env.DIGITALBEE_M04_CLIENT!],bundle:true,write:false,format:'esm',platform:'node',target:'es2022'});
