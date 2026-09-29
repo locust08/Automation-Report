@@ -180,7 +180,7 @@ export class Google {
     if (campaigns.length !== 1) throw new ProviderError('unknown', 'creation_readback');
     const row = campaigns[0], campaign = row.campaign, budget = row.campaignBudget;
     if (!/^\d+$/.test(String(campaign.id)) || campaign.status !== 'PAUSED' || campaign.advertisingChannelType !== (plan.campaign_type === 'search' ? 'SEARCH' : 'DEMAND_GEN') ||
-      campaign.biddingStrategyType !== (plan.campaign_type === 'search' ? 'MAXIMIZE_CLICKS' : 'MAXIMIZE_CONVERSIONS') ||
+      campaign.biddingStrategyType !== (plan.campaign_type === 'search' ? 'TARGET_SPEND' : 'MAXIMIZE_CONVERSIONS') ||
       campaign.containsEuPoliticalAdvertising !== 'DOES_NOT_CONTAIN_EU_POLITICAL_ADVERTISING' ||
       campaign.campaignBudget !== budget.resourceName || budget.explicitlyShared !== false || String(budget.referenceCount) !== '1' ||
       budget.period !== 'DAILY' || BigInt(budget.amountMicros) !== BigInt(Math.round(Number(plan.daily_budget) * 1e6)))
@@ -215,10 +215,11 @@ export class Google {
       if (devices.some(row => row.campaignCriterion.negative || row.campaignCriterion.bidModifier !== undefined && Number(row.campaignCriterion.bidModifier) !== 1))
         throw new ProviderError('unknown', 'targeting_readback');
       const targeting = allTargeting.filter(row => row.campaignCriterion.type !== 'DEVICE');
+      const uniqueKeywords=[...new Set(plan.keywords)];
       if (!equal(targeting.filter(row => row.campaignCriterion.type === 'LOCATION' && !row.campaignCriterion.negative).map(row => row.campaignCriterion.location.geoTargetConstant), plan.locations) ||
         !equal(targeting.filter(row => row.campaignCriterion.type === 'LANGUAGE' && !row.campaignCriterion.negative).map(row => row.campaignCriterion.language.languageConstant), plan.languages) ||
-        criteria.length !== plan.keywords.length || criteria.some(row => row.adGroupCriterion.keyword?.matchType !== 'EXACT') ||
-        !equal(criteria.map(row => row.adGroupCriterion.keyword?.text), plan.keywords) || targeting.length !== plan.locations.length + plan.languages.length)
+        criteria.length !== uniqueKeywords.length || criteria.some(row => row.adGroupCriterion.keyword?.matchType !== 'EXACT') ||
+        !equal(criteria.map(row => row.adGroupCriterion.keyword?.text), uniqueKeywords) || targeting.length !== plan.locations.length + plan.languages.length)
         throw new ProviderError('unknown', 'targeting_readback');
       const network = campaign.networkSettings;
       if (!network?.targetGoogleSearch || network.targetSearchNetwork || network.targetContentNetwork || network.targetPartnerSearchNetwork)
