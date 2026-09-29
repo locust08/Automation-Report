@@ -35,6 +35,12 @@ export async function execute(env: Environment, scope: Scope, tool: string, inpu
     await check();
     return result('success', {data: {templates: [], supported_campaign_types: scope.platform==='Meta'?['meta_existing_ad']:scope.platform==='TikTok'?['tiktok_existing_ad']:['search', 'demand_gen'], brief_schema: z.toJSONSchema(schemaFor(scope.platform)), references,mode: 'real_paused'}});
   }
+  if(tool==='campaign_workflows_list'){
+    const workflows=await store.workflows(scope,backendRev,input.limit??20);
+    await check();
+    return result('success',{data:{workflows:workflows.map(w=>({workflow_ref:w.id,revision_ref:w.revision_id,
+      status:w.status,name:JSON.parse(w.plan_json).name,updated_at:new Date(w.updated_at).toISOString()})),provider_action:false}});
+  }
   if (tool === 'campaign_draft_save') {
     if (input.source.kind !== 'brief') return result('clarification_required', {validation_issues: [{field: 'source', code: 'unsupported_source', message: 'Provide a campaign brief.'}]});
     const parsed = schemaFor(scope.platform).safeParse(input.source.fields);
@@ -78,7 +84,7 @@ export async function execute(env: Environment, scope: Scope, tool: string, inpu
           :await google.readback(planSchema.parse(JSON.parse(w.plan_json)), w.id);
         await check();
         await store.finish(w, operation.id, 'verified', data);
-        return result('success', {...reference(w), receipt_ref: operation.id, data: {...data, status: 'verified', provider_action: false}});
+        return result('success', {...reference(w), receipt_ref: operation.id, data: {status:'verified',readback:data,provider_action:false}});
       } catch { /* Never repeat an uncertain provider mutation. */ }
     }
     await check();

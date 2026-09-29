@@ -11,6 +11,10 @@ export class Store {
       .bind(crypto.randomUUID(), w.id, w.subject, action, outcome, Date.now());
   }
   async workflow(id: string, s: Scope) {return this.primary().prepare('SELECT * FROM m04_workflows WHERE id=? AND subject=? AND service_id=?').bind(id, s.subject, s.accountPageId).first<Workflow>();}
+  async workflows(s:Scope,backendRevision:string,limit:number){
+    return (await this.primary().prepare('SELECT * FROM m04_workflows WHERE subject=? AND service_id=? AND scope_hash=? AND backend_revision=? ORDER BY updated_at DESC,id DESC LIMIT ?')
+      .bind(s.subject,s.accountPageId,await digest(s),backendRevision,limit).all<Workflow>()).results;
+  }
   async source(id: string, s: Scope) {return this.primary().prepare('SELECT * FROM m04_workflows WHERE source_key=? AND subject=? AND service_id=?').bind(id, s.subject, s.accountPageId).first<Workflow>();}
   async revisions(id:string){return (await this.primary().prepare('SELECT revision_id,revision_number,plan_hash,plan_json,created_at FROM m04_revisions WHERE workflow_id=? ORDER BY revision_number').bind(id).all<Revision>()).results;}
   async providerStep(operationId:string,step:'campaign'|'adset'|'ad'){
