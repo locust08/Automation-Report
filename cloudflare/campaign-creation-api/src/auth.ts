@@ -7,6 +7,9 @@ export interface AuthEnvironment {
   M04_PILOT_ACCOUNT: string;
   M04_PILOT_SERVICE: string;
   M04_PILOT_SUBJECT: string;
+  M04_META_CREATION_ENABLED?:string;
+  M04_META_PILOT_ACCOUNT?:string;
+  M04_META_PILOT_SERVICE?:string;
   M04_SERVICE_TOKEN: string;
   M04_DELEGATION_KEY: string;
   DIGITALBEE_GRANT_VERIFY_URL: string;
@@ -29,10 +32,14 @@ export async function authenticate(request: Request, env: AuthEnvironment, tool:
   const rawScope=Object.fromEntries(Object.entries(payload).filter(([key])=>key in scopeSchema.shape));
   scopeSchema.parse(rawScope);
   const scope=rawScope as Scope;
+  const pilot=scope.platform==='Google'
+    ?scope.platformAccountId===env.M04_PILOT_ACCOUNT&&scope.accountPageId===env.M04_PILOT_SERVICE
+    :env.M04_META_CREATION_ENABLED==='true'&&env.M04_META_PILOT_ACCOUNT==='321606578570386'&&
+      scope.platformAccountId===env.M04_META_PILOT_ACCOUNT&&scope.accountPageId===env.M04_META_PILOT_SERVICE;
   if (payload.sub !== scope.subject || payload.action !== tool || payload.requestHash !== requestHash ||
     requestHash !== await digest({tool, scope, input}) || scope.connectionRevision !== env.M04_CONNECTION_REVISION ||
     request.headers.get('X-Connection-Revision') !== scope.connectionRevision || scope.subject !== env.M04_PILOT_SUBJECT ||
-    scope.platformAccountId !== env.M04_PILOT_ACCOUNT || scope.accountPageId !== env.M04_PILOT_SERVICE)
+    !pilot)
     throw new Error('access_denied');
   return scope;
 }

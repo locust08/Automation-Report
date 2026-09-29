@@ -1,8 +1,10 @@
-# M04 paused Google campaign service
+# M04 paused campaign service
 
 This isolated service is the Automation Report project's real M04 authority for the existing `m18-m04-v1` contract. It owns immutable drafts, approvals, one-shot operations, audit records and creation receipts in its own D1. DigitalBee calls authenticated HTTPS routes and never binds or queries this database. The existing dashboard's demo workflows are unchanged and cannot substitute for a real failure.
 
-The current pilot is Ava (`ava@locus-t.com.my`), service `2de4fcc4-f701-808d-b48b-c507d8641ce3`, Google `2315114913`, MYR, Asia/Kuala_Lumpur. Search and Demand Gen multi-asset image ads are the only accepted creation candidates. This does not cover Demand Gen video, carousel, product feeds, other platforms, serving activation or scheduling.
+The current Google pilot is Ava (`ava@locus-t.com.my`), service `2de4fcc4-f701-808d-b48b-c507d8641ce3`, Google `2315114913`, MYR, Asia/Kuala_Lumpur. Search and Demand Gen multi-asset image ads are its accepted creation candidates. This does not cover Demand Gen video, carousel, product feeds, serving activation or scheduling.
+
+The independent Meta LOCUS-T pilot uses service `2de4fcc4-f701-80ad-aab2-c4ae709c7f9e`, account `321606578570386` and `M04_META_CREATION_ENABLED:false` by default. It selects the newest eligible same-account ad, reuses its objective, targeting, creative, Page and advertiser/payer identities, and asks Meta's validate-only endpoint for the lowest accepted daily budget. A saved Meta revision binds the source fingerprint and exact amount. Campaign, ad set and ad each use native `PAUSED` status. Each provider write has a durable intent and object ID in `0004_provider_steps.sql`; uncertain writes reconcile by exact name and account, with no blind retry. Creation receipts verify ownership, budget, creative and statuses at every level. The M04 Worker requires `META_ACCESS_TOKEN` and `META_API_VERSION` only when this account's gate is enabled. Neither secret is checked into source.
 
 Every call requires a service bearer token, a 30-second signed delegation bound to actor, account mapping, permission/provider/connection revisions, action and exact body, and a current DigitalBee grant-verifier decision. M18 roles and write grants remain owned by DigitalBee. Preparation returns the exact resource plan and five-minute challenge. Only the private confirmation widget can use that challenge.
 
@@ -19,6 +21,8 @@ Run `npm test`, `npm run typecheck` and `npm run dry-run`. For the actual cross-
 The local reference script uses existing Doppler Google OAuth credentials through aliases; it never creates provider resources. Run it from the existing Automation Report primary checkout so Doppler uses its configured login. `--validate --reuse-search-targeting --demand-budget=25` validates the user-approved paused test candidates. Private reference evidence is ignored by Git. Validation evidence is not a creation receipt or connected ChatGPT acceptance.
 
 ## Deploy and rollback
+
+Apply `0004_provider_steps.sql` to the dedicated M04 D1 before enabling the Meta gate. Its schema is additive and leaves Google workflows untouched. Keep both DigitalBee and M04 Meta creation gates false during a code-only deployment. After credential installation and a fresh read-only account/asset preflight, turn on only this exact account's two gates. The user must then make separate planning and paused-creation clicks in the card. Receipt reads never submit another creation request.
 
 The dedicated `digitalbee-m04-campaigns` database is provisioned and its initial migration is applied. Apply `0002_immutable_revisions.sql` and then `0003_creation_outbox.sql` before deploying this Worker. Provision `digitalbee-m04-paused-creation` and `digitalbee-m04-creation-dlq` Queues, then deploy the producer, consumer and one-minute sweep trigger together. For a new environment, provision its own database and apply all three migrations only there. Never migrate DigitalBee permissions or the existing reporting database using this SQL. Deploy this Worker only; do not deploy the older whole dashboard checkout over the primary application's unrelated work.
 
