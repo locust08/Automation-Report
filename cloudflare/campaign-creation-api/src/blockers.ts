@@ -10,6 +10,7 @@ export function campaignBlocker(code:string){
   tiktok_no_eligible_source:'No supported same-account TikTok source ad was found. Select a reusable non-Spark video ad.',
   tiktok_asset_review:'The selected TikTok video or identity could not be verified for this advertiser. Select authorized assets.',
   tiktok_budget_floor_unverified:'Verify the minimum daily budget for this advertiser and currency before creation.',
+  meta_form_unavailable:'The source Meta lead form is not active or does not belong to the verified Page. Choose an active same-Page form.',
   meta_source_changed:'The Meta source, currency, timezone or minimum budget changed. Refresh and validate a new draft.',
   tiktok_source_or_budget_changed:'The TikTok source, currency, timezone or minimum budget changed. Refresh and validate a new draft.',
   meta_budget_floor:'Meta minimum daily budget could not be validated within the supported budget bound.',

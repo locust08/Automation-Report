@@ -124,3 +124,10 @@ it('uses the fingerprinted source payload without substituting later targeting o
  expect(validated.ad.ad_text).toBe('Source text');expect(validated.group.location_ids).toEqual(['6252001']);
  expect(adReads).toBe(1);expect(groupReads).toBe(1);
 });
+
+it('reports the specific reason a same-account source is not reusable',async()=>{
+ const base=fixture().fetcher;
+ const fetcher=async(input:RequestInfo|URL)=>{const response=await base(input),body=await response.json() as any;if(String(input).includes('/ad/get/'))body.data.list[0].tiktok_item_id='123';return Response.json(body);};
+ const refs=await new TikTok({TIKTOK_ACCESS_TOKEN:'synthetic'},scope,fetcher).referenceAssets();
+ expect(refs.sources).toEqual([]);expect((refs as any).source_checks).toEqual([{source_ad_id:'3',issues:['spark_ad_requires_review']}]);
+});

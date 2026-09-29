@@ -55,18 +55,25 @@ export class TikTok {
     try{new Intl.DateTimeFormat('en',{timeZone:account.list[0].timezone});}catch{throw new ProviderError('unavailable','tiktok_account_timezone');}
     const ads=selectedAdId?[await this.one('ad',selectedAdId)]:await this.list('ad');
     ads.sort((a,b)=>String(b.create_time??'').localeCompare(String(a.create_time??''))||String(b.ad_id??'').localeCompare(String(a.ad_id??'')));
-    const sources=[];
+    const sources=[];const source_checks:Array<{source_ad_id:string;issues:string[]}>=[];
     for(const ad of ads.slice(0,20)){
-      if(!/^\d+$/.test(String(ad.ad_id??''))||!/^\d+$/.test(String(ad.adgroup_id??''))||
-        !['ENABLE','DISABLE'].includes(String(ad.operation_status))||!opaqueId(ad.video_id)||
-        !opaqueId(ad.identity_id)||ad.tiktok_item_id||!/^https:\/\//.test(String(ad.landing_page_url??'')))continue;
+      const issues:string[]=[];
+      if(!/^\d+$/.test(String(ad.ad_id??''))||!/^\d+$/.test(String(ad.adgroup_id??'')))issues.push('invalid_resource_id');
+      if(!['ENABLE','DISABLE'].includes(String(ad.operation_status)))issues.push('unsupported_ad_status');
+      if(!opaqueId(ad.video_id))issues.push('missing_video_id');
+      if(!opaqueId(ad.identity_id))issues.push('missing_identity_id');
+      if(ad.tiktok_item_id)issues.push('spark_ad_requires_review');
+      if(!/^https:\/\//.test(String(ad.landing_page_url??'')))issues.push('missing_https_destination');
+      if(issues.length){source_checks.push({source_ad_id:String(ad.ad_id),issues});continue;}
       const group=await this.one('adgroup',String(ad.adgroup_id));
       const campaign=await this.one('campaign',String(group.campaign_id));
-      if(group.budget_mode!=='BUDGET_MODE_DAY'||Number(group.budget)<=0||group.schedule_type!=='SCHEDULE_FROM_NOW'||
-        campaign.campaign_type!=='REGULAR_CAMPAIGN'||
-        campaign.budget_optimize_on===true||group.is_smart_plus||campaign.is_smart_plus||!group.billing_event||!group.optimization_goal||
-        !group.pacing||!campaign.objective_type||!Array.isArray(group.location_ids)||!group.location_ids.length||
-        !ad.ad_text||!ad.call_to_action||!ad.identity_type||!ad.ad_format)continue;
+      if(group.budget_mode!=='BUDGET_MODE_DAY'||Number(group.budget)<=0)issues.push('daily_adgroup_budget_required');
+      if(group.schedule_type!=='SCHEDULE_FROM_NOW')issues.push('unsupported_source_schedule');
+      if(campaign.campaign_type!=='REGULAR_CAMPAIGN'||campaign.budget_optimize_on===true||group.is_smart_plus||campaign.is_smart_plus)issues.push('unsupported_campaign_automation');
+      if(!group.billing_event||!group.optimization_goal||!group.pacing||!campaign.objective_type)issues.push('incomplete_optimization_settings');
+      if(!Array.isArray(group.location_ids)||!group.location_ids.length)issues.push('missing_location_targeting');
+      if(!ad.ad_text||!ad.call_to_action||!ad.identity_type||!ad.ad_format)issues.push('incomplete_creative_settings');
+      if(issues.length){source_checks.push({source_ad_id:String(ad.ad_id),issues});continue;}
       const identity=await this.request('identity/get',{advertiser_id:this.scope.platformAccountId,identity_type:String(ad.identity_type),...(ad.identity_authorized_bc_id?{identity_authorized_bc_id:String(ad.identity_authorized_bc_id)}:{}),page:'1',page_size:'100'});
       const videos=await this.request('file/video/ad/info',{advertiser_id:this.scope.platformAccountId,video_ids:JSON.stringify([ad.video_id])});
       if(!Array.isArray(identity?.list)||!identity.list.some((row:any)=>String(row.identity_id)===String(ad.identity_id))||
@@ -81,7 +88,7 @@ export class TikTok {
       break;
     }
     return {account:{account_id:this.scope.platformAccountId,currency:account.list[0].currency,timezone_name:account.list[0].timezone,
-      account_status:account.list[0].status},sources};
+      account_status:account.list[0].status},sources,source_checks};
   }
   async validate(plan:TikTokPlan,_workflowId:string){
     this.checked=undefined;
