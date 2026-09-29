@@ -40,7 +40,7 @@ it('validates campaign, ad set and reused creative without creation and carries 
     if(url.pathname.endsWith('/act_'+scope.platformAccountId))return Response.json({account_id:scope.platformAccountId,currency:'MYR',timezone_name:'Asia/Kuala_Lumpur',account_status:1});
     if(url.pathname.endsWith('/ads'))return Response.json({data:[{id:'66',account_id:scope.platformAccountId,status:'ACTIVE',created_time:'2026-09-20T00:00:00+0000'}]});
     if(url.pathname.endsWith('/66'))return Response.json(source('66','2026-09-20T00:00:00+0000'));
-    if(url.pathname.endsWith('/22'))return Response.json(source('66','2026-09-20T00:00:00+0000').adset);
+    if(url.pathname.endsWith('/22'))return Response.json({...source('66','2026-09-20T00:00:00+0000').adset,targeting:{geo_locations:{countries:['US']}}});
     throw new Error('unexpected read');
   });
   const meta=new Meta({META_ACCESS_TOKEN:'synthetic',META_API_VERSION:'v25.0'},scope,request);
@@ -50,6 +50,7 @@ it('validates campaign, ad set and reused creative without creation and carries 
   expect(requests.filter(value=>value.body.get('name')==='M04 validate only').map(value=>value.url.split('/').at(-1))).toEqual(['campaigns','adsets','ads']);
   expect(requests.every(value=>value.body.get('execution_options')==='["validate_only"]')).toBe(true);
   expect(requests.at(-2)!.body.get('daily_budget')).toBe('413');
+  expect(JSON.parse(requests.at(-2)!.body.get('targeting')!)).toEqual({geo_locations:{countries:['MY']}});
   expect(JSON.parse(requests.at(-2)!.body.get('regional_regulation_identities')!)).toEqual({universal_beneficiary:'77',universal_payer:'77'});
   expect(requests.at(-1)!.body.get('status')).toBe('PAUSED');
 });
@@ -70,5 +71,11 @@ it('revalidates selected source directly in account currency without rescanning 
 it('reports rate limiting without retrying the provider',async()=>{
  const request=vi.fn(async()=>Response.json({error:{code:4}},{status:429}));
  await expect(new Meta({META_ACCESS_TOKEN:'synthetic',META_API_VERSION:'v25.0'},scope,request).referenceAssets()).rejects.toMatchObject({code:'meta_rate_limited'});
+ expect(request).toHaveBeenCalledTimes(1);
+});
+
+it('fails closed for an unverified Meta currency unit scale',async()=>{
+ const request=vi.fn(async()=>Response.json({account_id:scope.platformAccountId,currency:'JPY',timezone_name:'Asia/Tokyo',account_status:1}));
+ await expect(new Meta({META_ACCESS_TOKEN:'synthetic',META_API_VERSION:'v25.0'},scope,request).referenceAssets()).rejects.toMatchObject({code:'meta_currency_units_unsupported'});
  expect(request).toHaveBeenCalledTimes(1);
 });

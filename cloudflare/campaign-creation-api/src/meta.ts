@@ -5,7 +5,9 @@ import {Store} from './store';
 export interface MetaCredentials {META_ACCESS_TOKEN?:string;META_API_VERSION?:string}
 export const metaProviderName=(plan:MetaPlan,workflowId:string)=>`${plan.name.slice(0,100)} [${workflowId}]`;
 export class Meta {
-  private readonly deadline=Date.now()+25_000;
+  private deadline=Date.now()+25_000;
+  private snapshot:Record<string,any>|undefined;
+  private checked:{key:string;at:number;payload:Record<string,any>}|undefined;
   private currency='MYR';
   private signal(){const remaining=this.deadline-Date.now();if(remaining<=0)throw new ProviderError('unavailable','meta_deadline');return AbortSignal.timeout(Math.min(10_000,remaining));}
   constructor(private env:MetaCredentials,private scope:Scope,private fetcher:typeof fetch=(input,init)=>fetch(input,init)){}
@@ -40,11 +42,13 @@ export class Meta {
     return payload;
   }
   async referenceAssets(selectedAdId?:string){
+    this.deadline=Date.now()+25_000;this.snapshot=undefined;
     const id=this.scope.platformAccountId;
     const account=await this.get(`act_${id}`,{fields:'account_id,currency,timezone_name,account_status'});
     if(account.account_id!==id||!/^[A-Z]{3}$/.test(String(account.currency))||!account.timezone_name||account.account_status!==1)throw new ProviderError('unavailable','meta_account_configuration');
     try{new Intl.DateTimeFormat('en',{timeZone:account.timezone_name});}catch{throw new ProviderError('unavailable','meta_account_timezone');}
     this.currency=account.currency;
+    if(!['MYR','USD','EUR','GBP','SGD','AUD','CAD','NZD','HKD'].includes(this.currency))throw new ProviderError('unavailable','meta_currency_units_unsupported');
     const candidates:any[]=[];
     let after:string|undefined;
     if(selectedAdId){if(!/^\d{1,30}$/.test(selectedAdId))throw new ProviderError('unavailable','meta_source_changed');candidates.push({id:selectedAdId});}
@@ -72,6 +76,7 @@ export class Meta {
         ad.campaign.objective==='OUTCOME_LEADS'&&!ad.adset.promoted_object)continue;
       if(!ad.adset.regional_regulation_identities?.universal_beneficiary||!ad.adset.regional_regulation_identities?.universal_payer)continue;
       const minimum_daily_budget=await this.minimumBudget(ad.adset,String(ad.campaign.id));
+      this.snapshot=structuredClone(ad);
       sources.push({source_ad_id:String(ad.id),source_adset_id:String(ad.adset.id),source_campaign_id:String(ad.campaign.id),objective:ad.campaign.objective,
         daily_budget:(Number(ad.adset.daily_budget)/100).toFixed(2),source_fingerprint:await digest(ad),creative_id:String(ad.creative.id),final_url:String(ad.creative.object_story_spec.link_data.link),
         regional_regulation_identities:ad.adset.regional_regulation_identities,minimum_daily_budget});
@@ -80,12 +85,14 @@ export class Meta {
     return {account:{account_id:id,currency:account.currency,timezone_name:account.timezone_name},sources};
   }
   async validate(plan:MetaPlan,_workflowId:string){
+    this.checked=undefined;
     const references=await this.referenceAssets(plan.source_ad_id),source=references.sources[0];
     if(!source||source.source_ad_id!==plan.source_ad_id||source.source_campaign_id!==plan.source_campaign_id||
       source.source_adset_id!==plan.source_adset_id||source.source_fingerprint!==plan.source_fingerprint||
       plan.currency!==references.account.currency||plan.timezone!==references.account.timezone_name||plan.daily_budget!==source.minimum_daily_budget)
       throw new ProviderError('unavailable','meta_source_changed');
-    const adset=await this.get(plan.source_adset_id,{fields:'id,account_id,campaign_id,daily_budget,billing_event,optimization_goal,bid_strategy,destination_type,promoted_object,attribution_spec,targeting,regional_regulation_identities'});
+    const adset=this.snapshot?.adset;
+    if(!adset)throw new ProviderError('unavailable','meta_source_changed');
     if(adset.id!==plan.source_adset_id||adset.account_id!==this.scope.platformAccountId||adset.campaign_id!==plan.source_campaign_id||
       !adset.targeting||!adset.regional_regulation_identities?.universal_beneficiary||!adset.regional_regulation_identities?.universal_payer)
       throw new ProviderError('unavailable','meta_source_changed');
@@ -96,7 +103,9 @@ export class Meta {
     await this.post(`act_${this.scope.platformAccountId}/adsets`,this.adsetFields(adset,plan.source_campaign_id,cents,'M04 validate only'),true);
     await this.post(`act_${this.scope.platformAccountId}/ads`,{name:'M04 validate only',adset_id:plan.source_adset_id,
       creative:JSON.stringify({creative_id:source.creative_id}),status:'PAUSED'},true);
-    return {source,adset};
+    const payload={source,adset};
+    this.checked={key:await digest({plan,workflowId:_workflowId}),at:Date.now(),payload:structuredClone(payload)};
+    return payload;
   }
   private adsetFields(adset:Record<string,any>,campaignId:string,cents:number,name:string){
     const fields:Record<string,string>={name,campaign_id:campaignId,daily_budget:String(cents),status:'PAUSED',
@@ -153,7 +162,12 @@ export class Meta {
     return id;
   }
   async create(plan:MetaPlan,workflowId:string,operationId:string,store:Store){
-    const {source,adset}=await this.validate(plan,workflowId),names=this.names(plan,workflowId),cents=Math.round(Number(plan.daily_budget)*100);
+    const key=await digest({plan,workflowId});
+    if(!this.checked||this.checked.key!==key||Date.now()-this.checked.at>25_000)await this.validate(plan,workflowId);
+    const payload=this.checked!.payload;this.checked=undefined;
+    // Queue preflight already validated this exact payload; writes get a separate bounded budget.
+    this.deadline=Date.now()+90_000;
+    const {source,adset}=payload,names=this.names(plan,workflowId),cents=Math.round(Number(plan.daily_budget)*100);
     const campaignId=await this.createStep(store,operationId,'campaign',names.campaign,{name:names.campaign,objective:source.objective,
       special_ad_categories:'[]',is_adset_budget_sharing_enabled:'false',status:'PAUSED'});
     await this.checkCampaign(campaignId,names.campaign,source.objective);
@@ -186,6 +200,7 @@ export class Meta {
       throw new ProviderError('unknown','meta_ad_readback');
   }
   async readback(plan:MetaPlan,workflowId:string,operationId:string,store:Store){
+    this.deadline=Date.now()+30_000;
     const names=this.names(plan,workflowId),campaign=await store.providerStep(operationId,'campaign'),adset=await store.providerStep(operationId,'adset'),ad=await store.providerStep(operationId,'ad');
     if(!campaign?.provider_id||!adset?.provider_id||!ad?.provider_id)throw new ProviderError('unknown','meta_incomplete');
     const source=await this.get(plan.source_ad_id,{fields:'id,account_id,creative{id,account_id,object_story_spec},campaign{id,objective},adset{id,regional_regulation_identities}'});

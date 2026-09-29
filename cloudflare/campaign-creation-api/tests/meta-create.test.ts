@@ -12,7 +12,9 @@ const source={id:'66',account_id:scope.platformAccountId,name:'Existing',status:
 
 it('creates one paused object at each Meta level, records IDs and verifies ownership, budget, identity and creative',async()=>{
   const fixture=await database(),store=new Store(fixture.db),writes:Array<{edge:string;body:URLSearchParams}>=[];
+  let clock=Date.now();const now=vi.spyOn(Date,'now').mockImplementation(()=>clock);
   const request=vi.fn(async(input:RequestInfo|URL,init?:RequestInit)=>{
+    clock+=1400;
     const url=new URL(String(input)),edge=url.pathname.split('/').at(-1)!;
     if(init?.method==='POST'){
       const body=new URLSearchParams(String(init.body));
@@ -37,6 +39,8 @@ it('creates one paused object at each Meta level, records IDs and verifies owner
     const plan:MetaPlan={campaign_type:'meta_existing_ad',name:'Paused test',currency:'MYR',timezone:'Asia/Kuala_Lumpur',daily_budget:selected.minimum_daily_budget,
       source_ad_id:'66',source_campaign_id:'11',source_adset_id:'22',source_fingerprint:selected.source_fingerprint};
     const operation=crypto.randomUUID(),workflow=crypto.randomUUID();
+    const validate=vi.spyOn(meta,'validate');
+    await meta.validate(plan,workflow);
     expect(await meta.create(plan,workflow,operation,store)).toEqual(['101','102','103']);
     expect(writes.map(row=>[row.edge,row.body.get('status')])).toEqual([['campaigns','PAUSED'],['adsets','PAUSED'],['ads','PAUSED']]);
     expect(writes[0].body.get('is_adset_budget_sharing_enabled')).toBe('false');
@@ -44,7 +48,8 @@ it('creates one paused object at each Meta level, records IDs and verifies owner
     expect((await store.providerStep(operation,'ad'))?.provider_id).toBe('103');
     expect(await meta.readback(plan,workflow,operation,store)).toMatchObject({campaign_id:'101',adset_id:'102',ad_id:'103',status:'PAUSED',daily_budget:'4.13'});
     expect(writes).toHaveLength(3);
-  }finally{fixture.dispose();}
+    expect(validate).toHaveBeenCalledTimes(1);
+  }finally{now.mockRestore();fixture.dispose();}
 });
 
 it('reconciles an uncertain campaign write by exact account and name without sending it again',async()=>{
