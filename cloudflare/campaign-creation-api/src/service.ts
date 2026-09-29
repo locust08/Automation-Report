@@ -1,9 +1,9 @@
 import {authorize, type AuthEnvironment} from './auth';
-import {digest,mappingDigest, planSchema, result, type Result, type Scope} from './contracts';
+import {digest,mappingDigest, planSchema, scopeSchema, result, type Result, type Scope} from './contracts';
 import {buildOperations, Google, ProviderError, providerName, type GoogleCredentials} from './google';
 import {Store, type Workflow} from './store';
 import {z} from 'zod';
-export type Environment = AuthEnvironment & GoogleCredentials & {DB:D1Database};
+export type Environment = AuthEnvironment & GoogleCredentials & {DB:D1Database;CREATION_QUEUE?:Queue<{operationId:string}>};
 export type Provider = Pick<Google, 'validate' | 'create' | 'readback'>;
 export interface Dependencies {authorize: typeof authorize; provider: (env: Environment, scope: Scope) => Provider}
 const defaults: Dependencies = {authorize, provider: (env, scope) => new Google(env, scope)};
@@ -92,8 +92,7 @@ export async function execute(env: Environment, scope: Scope, tool: string, inpu
   }
   if (tool === 'campaign_action_prepare') {
     if (w.status !== (input.action === 'approve' ? 'validated' : 'approved')) throw new Error('conflict');
-    await google.validate(plan, w.id);
-    await check();
+    // The saved immutable revision already passed validateOnly. The creation worker validates again before dispatch.
     const display = {
       action: input.action, stage: input.action === 'approve' ? 'approve_revision' : 'create_paused', revision_hash: w.plan_hash,
       draft: {name: providerName(plan, w.id), platform: 'Google', account: {service_id: scope.accountPageId, label: scope.platformAccountId},
@@ -123,31 +122,53 @@ export async function execute(env: Environment, scope: Scope, tool: string, inpu
       if (existing.workflow_id !== w.id || existing.request_hash !== requestHash) throw new Error('idempotency_conflict');
       return result(existing.status === 'verified' ? 'success' : 'unknown', {...reference(w), receipt_ref: existing.id, data: {status: existing.status, duplicate_submission: true}});
     }
-    // Only the atomic challenge claim can select a provider dispatch. Validate-only first, then reauthorize.
-    await google.validate(plan, w.id);
-    await check();
-    await store.reserve(w, input, requestHash);
-    await check();
-    await store.dispatched(input.idempotency_key);
-    let providerResources: string[];
-    try { providerResources = await google.create(plan, w.id); }
-    catch (error) {
-      const status = error instanceof ProviderError && error.outcome === 'rejected' ? 'rejected' : 'unknown';
-      await store.finish(w, input.idempotency_key, status, {provider_action: status === 'unknown' ? 'unknown' : false});
-      return result(status === 'unknown' ? 'unknown' : 'unavailable', {...reference(w), receipt_ref: input.idempotency_key, allowed_next_actions: ['campaign_operation_get'], caveats: ['Creation was not verified. Reconcile this receipt; do not resubmit.']});
-    }
-    let readback;
-    try {
-      readback = await google.readback(plan, w.id);
-      await store.finish(w, input.idempotency_key, 'verified', {...readback, provider_resources: providerResources});
-    } catch {
-      await store.finish(w, input.idempotency_key, 'unknown', {provider_resources: providerResources, provider_action: 'accepted', verification: 'pending'});
-      // Do not expose provider data if authorization changed during execution.
-      await check();
-      return result('unknown', {...reference(w), receipt_ref: input.idempotency_key, allowed_next_actions: ['campaign_operation_get'], caveats: ['Paused creation readback is pending. No automatic retry.']});
-    }
-    await check();
-    return result('success', {...reference(w), receipt_ref: input.idempotency_key, data: {...readback, provider_resources: providerResources, status: 'verified'}});
+    if(!env.CREATION_QUEUE)throw new Error('unavailable');
+    await store.reserve(w, input, requestHash, scope);
+    try{await env.CREATION_QUEUE.send({operationId:input.idempotency_key});await store.markEnqueued(input.idempotency_key);}
+    catch(error){console.warn(JSON.stringify({event:'m04_queue_publish_failure',operation_id:input.idempotency_key}));}
+    return result('success', {...reference(w), receipt_ref: input.idempotency_key, allowed_next_actions:['campaign_operation_get'],data:{status:'reserved',provider_action:false}});
   }
   return result('unavailable');
+}
+
+/** A queue redelivery may reconcile a dispatched operation, but can never send another mutation. */
+export async function processReservedCreation(env:Environment,operationId:string,deps:Dependencies=defaults):Promise<void>{
+  const store=new Store(env.DB),outbox=await store.outbox(operationId);
+  if(!outbox)throw new Error('outbox_missing');
+  const scope=scopeSchema.parse(JSON.parse(outbox.scope_json)),operation=await store.operation(operationId,scope);
+  if(!operation)return;
+  const w=await store.workflow(operation.workflow_id,scope);
+  if(!w)return;
+  const plan=planSchema.parse(JSON.parse(w.plan_json)),google=deps.provider(env,scope);
+  const readback=async()=>{try{const data=await google.readback(plan,w.id);await store.finish(w,operationId,'verified',{...data,provider_action:true});}catch{/* A dispatched mutation is never repeated. */}};
+  if(['verified','rejected'].includes(operation.status))return;
+  if(['dispatched','unknown'].includes(operation.status)){await readback();return;}
+  if(operation.status!=='reserved')return;
+  try{
+    await deps.authorize(env,scope,'campaign_gate1_create');
+    const backendRevision=await digest([env.GOOGLE_ADS_CONNECTION_REVISION,env.GOOGLE_ADS_CLIENT_ID,env.GOOGLE_ADS_CLIENT_SECRET,env.GOOGLE_ADS_REFRESH_TOKEN,env.GOOGLE_ADS_DEVELOPER_TOKEN]);
+    await sameScope(w,scope,backendRevision);
+    await google.validate(plan,w.id);
+    await deps.authorize(env,scope,'campaign_gate1_create');
+  }catch(error){await store.rejectReserved(w,operationId,error instanceof ProviderError?error.code:'preflight_unavailable');return;}
+  try{await store.dispatched(operationId);}catch{await readback();return;}
+  let resources:string[];
+  try{resources=await google.create(plan,w.id);}
+  catch(error){
+    const status=error instanceof ProviderError&&error.outcome==='rejected'?'rejected':'unknown';
+    await store.finish(w,operationId,status,{provider_action:status==='unknown'?'unknown':false,reason:error instanceof ProviderError?error.code:'google_response'});
+    if(status==='unknown')await readback();
+    return;
+  }
+  try{const data=await google.readback(plan,w.id);await store.finish(w,operationId,'verified',{...data,provider_resources:resources,provider_action:true});}
+  catch{await store.finish(w,operationId,'unknown',{provider_resources:resources,provider_action:'accepted',verification:'pending'});}
+}
+
+export async function sweepCreationOutbox(env:Environment){
+  if(!env.CREATION_QUEUE)throw new Error('queue_unavailable');
+  const store=new Store(env.DB);
+  for(const row of await store.pendingOutbox()){
+    await env.CREATION_QUEUE.send({operationId:row.operation_id});
+    await store.markEnqueued(row.operation_id);
+  }
 }

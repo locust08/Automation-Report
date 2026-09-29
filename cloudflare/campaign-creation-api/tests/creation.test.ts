@@ -3,7 +3,7 @@ import {SignJWT} from 'jose';
 import {authenticate} from '../src/auth';
 import {digest, planSchema, type Plan, type Scope} from '../src/contracts';
 import {buildOperations, Google, ProviderError} from '../src/google';
-import {execute, type Dependencies, type Environment} from '../src/service';
+import {execute,processReservedCreation,sweepCreationOutbox, type Dependencies, type Environment} from '../src/service';
 import {Store} from '../src/store';
 import {database} from './db';
 
@@ -26,13 +26,15 @@ beforeEach(async () => {
   env = {DB: fixture.db, M04_ENABLED: 'true', M04_CONNECTION_REVISION: scope.connectionRevision,
     M04_PILOT_ACCOUNT: scope.platformAccountId, M04_PILOT_SERVICE: scope.accountPageId, M04_PILOT_SUBJECT: scope.subject,
     M04_SERVICE_TOKEN: 't'.repeat(32), M04_DELEGATION_KEY: 'k'.repeat(32), DIGITALBEE_GRANT_VERIFY_URL: 'https://digitalbee.test/v1/internal/grants/verify', DIGITALBEE_GRANT_VERIFY_TOKEN: 'v'.repeat(32),
-    GOOGLE_ADS_CLIENT_ID: 'synthetic', GOOGLE_ADS_CLIENT_SECRET: 'synthetic', GOOGLE_ADS_REFRESH_TOKEN: 'synthetic'};
+    GOOGLE_ADS_CLIENT_ID: 'synthetic', GOOGLE_ADS_CLIENT_SECRET: 'synthetic', GOOGLE_ADS_REFRESH_TOKEN: 'synthetic',
+    CREATION_QUEUE:{send:vi.fn().mockResolvedValue(undefined)} as unknown as Queue<{operationId:string}>};
   const provider = {validate: vi.fn().mockResolvedValue(undefined), create: vi.fn().mockResolvedValue(['customers/2315114913/campaigns/99']),
     readback: vi.fn().mockResolvedValue({campaign: {id: '99', status: 'PAUSED'}, ad_group: {id: '100', status: 'PAUSED'}})};
   deps = {authorize: vi.fn().mockResolvedValue(undefined), provider: () => provider};
 });
 afterEach(() => {vi.restoreAllMocks(); fixture.dispose();});
 const call = (tool: string, input: Record<string, any>, s = scope) => execute(env, s, tool, input, 'request-hash', deps);
+const process=(id:string)=>processReservedCreation(env,id,deps);
 async function draft(plan: Plan = search) {
   const result = await call('campaign_draft_save', {service_id: scope.accountPageId, idempotency_key: crypto.randomUUID(), source: {kind: 'brief', fields: plan}});
   return {service_id: scope.accountPageId, workflow_id: result.workflow_ref!, revision_id: result.revision_ref!};
@@ -49,6 +51,41 @@ async function creation(plan: Plan = search) {
   return {...revision, idempotency_key: crypto.randomUUID(), challenge: prepared.challenge!.token, confirmation_hash: prepared.challenge!.confirmation_hash};
 }
 describe('real paused creation boundary', () => {
+  it('returns a durable receipt without calling Google creation in the card request',async()=>{
+    const input=await creation(),provider=deps.provider(env,scope);
+    const outcome=await call('campaign_gate1_create',input);
+    expect(outcome).toMatchObject({outcome:'success',receipt_ref:input.idempotency_key,data:{status:'reserved'}});
+    expect(provider.create).not.toHaveBeenCalled();
+    expect(await store.operation(input.idempotency_key,scope)).toMatchObject({status:'reserved'});
+  });
+  it('returns the receipt while a slow provider preflight is still pending in the queue',async()=>{
+    const input=await creation(),provider=deps.provider(env,scope);
+    let release!:()=>void;
+    vi.mocked(provider.validate).mockImplementationOnce(()=>new Promise<void>(resolve=>{release=resolve;}));
+    const receipt=await call('campaign_gate1_create',input);
+    expect(receipt).toMatchObject({outcome:'success',data:{status:'reserved'}});
+    const processing=process(input.idempotency_key);
+    await vi.waitFor(()=>expect(provider.validate).toHaveBeenCalledTimes(2));
+    expect((await store.operation(input.idempotency_key,scope))?.status).toBe('reserved');
+    expect(provider.create).not.toHaveBeenCalled();
+    release();await processing;
+    expect((await store.operation(input.idempotency_key,scope))?.status).toBe('verified');
+  });
+  it('does not repeat Google validation while preparing the paused-creation card',async()=>{
+    const revision=await approved(),provider=deps.provider(env,scope),prior=vi.mocked(provider.validate).mock.calls.length;
+    const prepared=await call('campaign_action_prepare',{...revision,idempotency_key:crypto.randomUUID(),action:'gate1'});
+    expect(prepared.challenge?.action).toBe('gate1');expect(provider.validate).toHaveBeenCalledTimes(prior);
+  });
+  it('recovers a failed queue publication from the durable outbox',async()=>{
+    const input=await creation(),send=vi.mocked(env.CREATION_QUEUE!.send);
+    send.mockRejectedValueOnce(new Error('queue unavailable'));
+    expect((await call('campaign_gate1_create',input)).data?.status).toBe('reserved');
+    expect((await store.outbox(input.idempotency_key))?.enqueued_at).toBeNull();
+    await sweepCreationOutbox(env);
+    expect(send).toHaveBeenCalledTimes(2);
+    await process(input.idempotency_key);
+    expect((await store.operation(input.idempotency_key,scope))?.status).toBe('verified');
+  });
   it('appends an immutable revision to the same workflow and clears earlier approval',async()=>{
     const original=await approved(),key=crypto.randomUUID(),edited={...search,name:search.name+' — Card Edit'};
     const save={...original,idempotency_key:key,source:{kind:'brief',fields:edited}};
@@ -63,7 +100,7 @@ describe('real paused creation boundary', () => {
     expect((await store.revisions(original.workflow_id)).map(r=>r.revision_id)).toEqual([original.revision_id,first.revision_ref]);
   });
   it('allows authorized receipt reads after write revocation but rejects account mapping drift',async()=>{
-    const input=await creation();await call('campaign_gate1_create',input);
+    const input=await creation();await call('campaign_gate1_create',input);await process(input.idempotency_key);
     const read={service_id:scope.accountPageId,idempotency_key:input.idempotency_key};
     expect((await call('campaign_operation_get',read,{...scope,grantRevision:2,providerRevision:'rotated'})).outcome).toBe('success');
     expect((await call('campaign_workflow_get',{service_id:scope.accountPageId,workflow_id:input.workflow_id},{...scope,grantRevision:2})).receipt_ref).toBe(input.idempotency_key);
@@ -72,8 +109,10 @@ describe('real paused creation boundary', () => {
   });
   it.each([search, demand])('validates and creates %s once with a provider receipt', async plan => {
     const input = await creation(plan), provider = deps.provider(env, scope);
-    expect((await call('campaign_gate1_create', input)).data?.status).toBe('verified');
+    expect((await call('campaign_gate1_create', input)).data?.status).toBe('reserved');
+    await process(input.idempotency_key);
     expect((await call('campaign_gate1_create', input)).data?.duplicate_submission).toBe(true);
+    await process(input.idempotency_key);
     expect(provider.create).toHaveBeenCalledTimes(1);
     expect(provider.validate).toHaveBeenCalled();
     expect(await store.operation(input.idempotency_key, scope)).toMatchObject({status: 'verified'});
@@ -81,6 +120,7 @@ describe('real paused creation boundary', () => {
   it('claims concurrent submissions once', async () => {
     const input = await creation();
     await Promise.allSettled([call('campaign_gate1_create', input), call('campaign_gate1_create', input)]);
+    await Promise.allSettled([process(input.idempotency_key),process(input.idempotency_key)]);
     expect(deps.provider(env, scope).create).toHaveBeenCalledTimes(1);
   });
   it.each(['actor', 'grant', 'provider', 'revision', 'token', 'confirmation', 'expiry'])('rejects %s drift before provider dispatch', async mode => {
@@ -103,27 +143,32 @@ describe('real paused creation boundary', () => {
     expect(await store.operation(input.idempotency_key, scope)).toBeNull();
   });
   it('checks revoked permission immediately before dispatch', async () => {
-    const input = await creation(); vi.mocked(deps.authorize).mockReset().mockResolvedValueOnce(undefined).mockResolvedValueOnce(undefined).mockRejectedValueOnce(new Error('access_denied'));
-    await expect(call('campaign_gate1_create', input)).rejects.toThrow('access_denied');
+    const input = await creation();await call('campaign_gate1_create',input);
+    vi.mocked(deps.authorize).mockReset().mockRejectedValue(new Error('access_denied'));
+    await process(input.idempotency_key);
+    expect((await store.operation(input.idempotency_key,scope))?.status).toBe('rejected');
     expect(deps.provider(env, scope).create).not.toHaveBeenCalled();
   });
-  it('retains a receipt but discloses no provider data after revocation', async () => {
-    const input = await creation();
-    vi.mocked(deps.authorize).mockReset().mockResolvedValueOnce(undefined).mockResolvedValueOnce(undefined).mockResolvedValueOnce(undefined).mockRejectedValueOnce(new Error('access_denied'));
-    await expect(call('campaign_gate1_create', input)).rejects.toThrow('access_denied');
-    expect((await store.operation(input.idempotency_key, scope))?.status).toBe('verified');
+  it('records a failed preflight without dispatching creation', async () => {
+    const input = await creation();await call('campaign_gate1_create',input);
+    vi.mocked(deps.provider(env,scope).validate).mockRejectedValueOnce(new ProviderError('unavailable','google_response'));
+    await process(input.idempotency_key);
+    expect((await store.operation(input.idempotency_key,scope))?.status).toBe('rejected');
+    expect(deps.provider(env,scope).create).not.toHaveBeenCalled();
   });
   it('reconciles an uncertain response with reads without duplicating creation', async () => {
     const input = await creation(), provider = deps.provider(env, scope);
     vi.mocked(provider.create).mockRejectedValueOnce(new ProviderError('unknown', 'lost_response'));
-    expect((await call('campaign_gate1_create', input)).outcome).toBe('unknown');
-    expect((await call('campaign_gate1_create', input)).outcome).toBe('unknown');
+    expect((await call('campaign_gate1_create', input)).data?.status).toBe('reserved');
+    await process(input.idempotency_key);
+    await process(input.idempotency_key);
+    expect((await call('campaign_gate1_create', input)).data?.duplicate_submission).toBe(true);
     expect((await call('campaign_operation_get', {service_id: scope.accountPageId, idempotency_key: input.idempotency_key})).outcome).toBe('success');
     expect(provider.create).toHaveBeenCalledTimes(1);
   });
   it('never substitutes a demo after a real rejection', async () => {
     const input = await creation(); vi.mocked(deps.provider(env, scope).create).mockRejectedValueOnce(new ProviderError('rejected', 'validation'));
-    expect((await call('campaign_gate1_create', input)).outcome).toBe('unavailable');
+    await call('campaign_gate1_create',input);await process(input.idempotency_key);
     expect((await store.operation(input.idempotency_key, scope))?.status).toBe('rejected');
   });
   it('keeps activation, scheduling and resume unavailable', async () => {
@@ -131,7 +176,7 @@ describe('real paused creation boundary', () => {
     expect(deps.provider(env, scope).create).not.toHaveBeenCalled();
   });
   it('keeps revisions and receipt identity immutable', async () => {
-    const input = await creation(); await call('campaign_gate1_create', input);
+    const input = await creation(); await call('campaign_gate1_create', input);await process(input.idempotency_key);
     await expect(fixture.db.prepare('UPDATE m04_workflows SET plan_hash=? WHERE id=?').bind('changed', input.workflow_id).run()).rejects.toThrow('Immutable');
     await expect(fixture.db.prepare('UPDATE m04_operations SET subject=? WHERE id=?').bind('other', input.idempotency_key).run()).rejects.toThrow('Immutable');
     await expect(store.finish((await store.workflow(input.workflow_id, scope))!, input.idempotency_key, 'unknown', {})).rejects.toThrow();

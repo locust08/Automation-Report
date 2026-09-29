@@ -4,6 +4,7 @@ export async function database() {
   const sqlite = new DatabaseSync(':memory:');
   sqlite.exec(await readFile(new URL('../migrations/0001_paused_campaigns.sql', import.meta.url), 'utf8'));
   sqlite.exec(await readFile(new URL('../migrations/0002_immutable_revisions.sql', import.meta.url), 'utf8'));
+  sqlite.exec(await readFile(new URL('../migrations/0003_creation_outbox.sql', import.meta.url), 'utf8'));
   class Statement {
     values: any[] = [];
     constructor(readonly sql: string) {}

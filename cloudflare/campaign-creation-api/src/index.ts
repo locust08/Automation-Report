@@ -1,7 +1,7 @@
 import {authenticate} from './auth';
 import {boundedJson, endpoints, result} from './contracts';
 import {inputs} from './inputs';
-import {execute, type Environment} from './service';
+import {execute,processReservedCreation,sweepCreationOutbox,type Environment} from './service';
 import {ProviderError} from './google';
 
 export default {
@@ -33,4 +33,12 @@ export default {
       return Response.json({error: 'access_denied_or_invalid_request'}, {status: 403, headers: {'Cache-Control': 'no-store'}});
     }
   },
+  async queue(batch:MessageBatch<{operationId:string}>,env:Environment):Promise<void>{
+    for(const message of batch.messages){
+      if(!/^[0-9a-f]{8}-[0-9a-f-]{27,}$/.test(message.body?.operationId??'')){message.ack();continue;}
+      await processReservedCreation(env,message.body.operationId);
+      message.ack();
+    }
+  },
+  async scheduled(_event:ScheduledEvent,env:Environment):Promise<void>{await sweepCreationOutbox(env);},
 };
