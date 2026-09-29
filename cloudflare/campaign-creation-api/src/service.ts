@@ -135,7 +135,9 @@ export async function execute(env: Environment, scope: Scope, tool: string, inpu
 export async function processReservedCreation(env:Environment,operationId:string,deps:Dependencies=defaults):Promise<void>{
   const store=new Store(env.DB),outbox=await store.outbox(operationId);
   if(!outbox)throw new Error('outbox_missing');
-  const scope=scopeSchema.parse(JSON.parse(outbox.scope_json)),operation=await store.operation(operationId,scope);
+  const storedScope:unknown=JSON.parse(outbox.scope_json);
+  scopeSchema.parse(storedScope); // Validate without reordering keys used by the saved scope hash.
+  const scope=storedScope as Scope,operation=await store.operation(operationId,scope);
   if(!operation)return;
   const w=await store.workflow(operation.workflow_id,scope);
   if(!w)return;

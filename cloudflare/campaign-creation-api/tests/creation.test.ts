@@ -58,6 +58,26 @@ describe('real paused creation boundary', () => {
     expect(provider.create).not.toHaveBeenCalled();
     expect(await store.operation(input.idempotency_key,scope)).toMatchObject({status:'reserved'});
   });
+  it('preserves the signed scope field order when the queue reads a production outbox entry',async()=>{
+    // DigitalBee signs and stores this order; Zod's schema lists clientId earlier.
+    const liveScope:Scope={subject:scope.subject,grantRevision:scope.grantRevision,accountPageId:scope.accountPageId,
+      platform:scope.platform,platformAccountId:scope.platformAccountId,connectionRevision:scope.connectionRevision,
+      clientId:scope.clientId,providerRevision:scope.providerRevision,googleLoginCustomerId:scope.googleLoginCustomerId};
+    const saved=await call('campaign_draft_save',{service_id:liveScope.accountPageId,idempotency_key:crypto.randomUUID(),
+      source:{kind:'brief',fields:search}},liveScope);
+    const revision={service_id:liveScope.accountPageId,workflow_id:saved.workflow_ref!,revision_id:saved.revision_ref!};
+    await call('campaign_draft_validate',{...revision,idempotency_key:crypto.randomUUID()},liveScope);
+    const approval=await call('campaign_action_prepare',{...revision,idempotency_key:crypto.randomUUID(),action:'approve'},liveScope);
+    await call('campaign_revision_approve',{...revision,idempotency_key:crypto.randomUUID(),challenge:approval.challenge!.token,
+      confirmation_hash:approval.challenge!.confirmation_hash},liveScope);
+    const prepared=await call('campaign_action_prepare',{...revision,idempotency_key:crypto.randomUUID(),action:'gate1'},liveScope);
+    const input={...revision,idempotency_key:crypto.randomUUID(),challenge:prepared.challenge!.token,
+      confirmation_hash:prepared.challenge!.confirmation_hash};
+    expect((await call('campaign_gate1_create',input,liveScope)).data?.status).toBe('reserved');
+    await process(input.idempotency_key);
+    expect((await store.operation(input.idempotency_key,liveScope))?.status).toBe('verified');
+    expect(deps.provider(env,liveScope).create).toHaveBeenCalledTimes(1);
+  });
   it('returns the receipt while a slow provider preflight is still pending in the queue',async()=>{
     const input=await creation(),provider=deps.provider(env,scope);
     let release!:()=>void;
