@@ -38,3 +38,28 @@ it.each(['enabled_keyword','excluded_demographic','device_bid','unexpected_targe
   if(drift==='unexpected_target')targetCriteria.push({campaignCriterion:{type:'USER_LIST',negative:false,bidModifier:1}});
   await expect(google.readback(plan,crypto.randomUUID())).rejects.toThrow('targeting_readback');
 });
+
+function demandFixture(){
+  const {google}=fixture();
+  const demand={...plan,campaign_type:'demand_gen' as const,business_name:'Test',landscape_images:[prefix+'/assets/1'],square_images:[prefix+'/assets/2'],logos:[prefix+'/assets/3'],audience:prefix+'/audiences/4'};
+  const lists=[{adGroupCriterion:{type:'USER_LIST',status:'ENABLED',negative:false,userList:{userList:prefix+'/userLists/5'}}},{adGroupCriterion:{type:'USER_LIST',status:'ENABLED',negative:true,userList:{userList:prefix+'/userLists/6'}}}];
+  const original=vi.mocked(google.query).getMockImplementation()!;
+  vi.mocked(google.query).mockImplementation(async query=>{
+    if(query.includes('FROM audience WHERE'))return [{audience:{resourceName:demand.audience,dimensions:[{audienceSegments:{segments:[{userList:{userList:prefix+'/userLists/5'}}]}}],exclusionDimension:{exclusions:[{userList:{userList:prefix+'/userLists/6'}}]}}}];
+    if(query.includes('FROM ad_group_criterion WHERE'))return [...lists,...demand.locations.map(id=>({adGroupCriterion:{type:'LOCATION',status:'PAUSED',location:{geoTargetConstant:id}}})),...demand.languages.map(id=>({adGroupCriterion:{type:'LANGUAGE',status:'PAUSED',language:{languageConstant:id}}})),{adGroupCriterion:{type:'AUDIENCE',status:'PAUSED',audience:{audience:demand.audience}}}];
+    if(query.includes('FROM ad_group_ad WHERE'))return [{adGroupAd:{status:'PAUSED',ad:{type:'DEMAND_GEN_MULTI_ASSET_AD',finalUrls:[demand.final_url],demandGenMultiAssetAd:{headlines:demand.headlines.map(text=>({text})),descriptions:demand.descriptions.map(text=>({text})),businessName:demand.business_name,marketingImages:demand.landscape_images.map(asset=>({asset})),squareMarketingImages:demand.square_images.map(asset=>({asset})),logoImages:demand.logos.map(asset=>({asset}))}}}}];
+    const rows=await original(query);if(query.includes('FROM campaign WHERE')){rows[0].campaign.advertisingChannelType='DEMAND_GEN';rows[0].campaign.biddingStrategyType='MAXIMIZE_CONVERSIONS';}return rows;
+  });
+  return {google,demand,lists};
+}
+it('verifies Demand Gen derived user lists only against the exact audience inclusions and exclusions',async()=>{
+  const {google,demand}=demandFixture();expect((await google.readback(demand,crypto.randomUUID())).campaign.status).toBe('PAUSED');
+});
+it.each(['unknown_list','wrong_exclusion','missing_list','bid'])('rejects Demand Gen derived audience %s drift',async mode=>{
+  const {google,demand,lists}=demandFixture();
+  if(mode==='unknown_list')lists[0].adGroupCriterion.userList.userList=prefix+'/userLists/99';
+  if(mode==='wrong_exclusion')lists[1].adGroupCriterion.negative=false;
+  if(mode==='missing_list')lists.pop();
+  if(mode==='bid')Object.assign(lists[0].adGroupCriterion,{bidModifier:2});
+  await expect(google.readback(demand,crypto.randomUUID())).rejects.toThrow('targeting_readback');
+});

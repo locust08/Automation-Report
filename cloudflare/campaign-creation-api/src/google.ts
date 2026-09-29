@@ -199,7 +199,7 @@ export class Google {
     if (!creative || !equal((creative.headlines ?? []).map((v: Json) => v.text), plan.headlines) ||
       !equal((creative.descriptions ?? []).map((v: Json) => v.text), plan.descriptions) || !equal(ad.finalUrls, [plan.final_url]))
       throw new ProviderError('unknown', 'creative_readback');
-    const allCriteria = await this.query(`SELECT ad_group_criterion.status,ad_group_criterion.type,ad_group_criterion.negative,ad_group_criterion.bid_modifier,ad_group_criterion.keyword.text,ad_group_criterion.keyword.match_type,ad_group_criterion.location.geo_target_constant,ad_group_criterion.language.language_constant,ad_group_criterion.audience.audience FROM ad_group_criterion WHERE ad_group.id = ${group.id} AND ad_group_criterion.status != 'REMOVED'`);
+    const allCriteria = await this.query(`SELECT ad_group_criterion.resource_name,ad_group_criterion.criterion_id,ad_group_criterion.user_list.user_list,ad_group_criterion.status,ad_group_criterion.type,ad_group_criterion.negative,ad_group_criterion.bid_modifier,ad_group_criterion.keyword.text,ad_group_criterion.keyword.match_type,ad_group_criterion.location.geo_target_constant,ad_group_criterion.language.language_constant,ad_group_criterion.audience.audience FROM ad_group_criterion WHERE ad_group.id = ${group.id} AND ad_group_criterion.status != 'REMOVED'`);
     // Google adds demographic defaults. These stay non-serving under the paused group,
     // campaign and ad; explicitly created keywords/location/language/audience must be paused.
     const defaultTypes = new Set(['GENDER', 'PARENTAL_STATUS', 'AGE_RANGE', 'INCOME_RANGE']);
@@ -207,7 +207,21 @@ export class Google {
     if (defaults.some(row => row.adGroupCriterion.negative || !['ENABLED', 'PAUSED'].includes(row.adGroupCriterion.status) ||
       row.adGroupCriterion.bidModifier !== undefined && Number(row.adGroupCriterion.bidModifier) !== 1))
       throw new ProviderError('unknown', 'targeting_readback');
-    const criteria = allCriteria.filter(row => !defaultTypes.has(row.adGroupCriterion.type));
+    // Google expands a Demand Gen Audience into derived USER_LIST criteria, including
+    // exclusions. Accept only the exact current audience members, never arbitrary extras.
+    const derived = plan.campaign_type === 'demand_gen' ? allCriteria.filter(row => row.adGroupCriterion.type === 'USER_LIST') : [];
+    if(plan.campaign_type === 'demand_gen' && derived.length){
+      const audiences=await this.query(`SELECT audience.resource_name,audience.dimensions,audience.exclusion_dimension FROM audience WHERE audience.resource_name = '${plan.audience}'`);
+      const audience=audiences[0]?.audience;
+      if(audiences.length!==1||audience?.resourceName!==plan.audience)throw new ProviderError('unknown','targeting_readback');
+      const included=(audience.dimensions??[]).flatMap((dimension:Json)=>dimension.audienceSegments?.segments??[]);
+      const excluded=audience.exclusionDimension?.exclusions??[];
+      if((audience.dimensions??[]).some((dimension:Json)=>!dimension.audienceSegments)||[...included,...excluded].some((segment:Json)=>!segment.userList?.userList))throw new ProviderError('unknown','targeting_readback');
+      const expected=[...included.map((segment:Json)=>'include:'+segment.userList.userList),...excluded.map((segment:Json)=>'exclude:'+segment.userList.userList)];
+      const actual=derived.map(row=>{const criterion=row.adGroupCriterion;return (criterion.negative?'exclude:':'include:')+criterion.userList?.userList;});
+      if(!equal(actual,[...new Set(expected)])||derived.some(row=>!['ENABLED','PAUSED'].includes(row.adGroupCriterion.status)||row.adGroupCriterion.bidModifier!==undefined&&Number(row.adGroupCriterion.bidModifier)!==1))throw new ProviderError('unknown','targeting_readback');
+    }
+    const criteria = allCriteria.filter(row => !defaultTypes.has(row.adGroupCriterion.type)&&!derived.includes(row));
     if (criteria.some(row => row.adGroupCriterion.status !== 'PAUSED' || row.adGroupCriterion.negative)) throw new ProviderError('unknown', 'targeting_readback');
     if (plan.campaign_type === 'search') {
       const allTargeting = await this.query(`SELECT campaign_criterion.type,campaign_criterion.negative,campaign_criterion.bid_modifier,campaign_criterion.location.geo_target_constant,campaign_criterion.language.language_constant FROM campaign_criterion WHERE campaign.id = ${campaign.id}`);
