@@ -39,7 +39,7 @@ it('binds the newest same-account source and only displays an explicitly verifie
 });
 
 it('stops for review if the newest source video cannot be reused',async()=>{
-  await expect(fixture({floor:'20.00',currency:'MYR',missingVideo:true}).provider.referenceAssets()).rejects.toMatchObject({code:'tiktok_asset_review'});
+  await expect(fixture({floor:'20.00',currency:'MYR',missingVideo:true}).provider.referenceAssets('3')).rejects.toMatchObject({code:'tiktok_asset_review'});
 });
 
 it('rejects a stale source fingerprint or a changed budget before any write',async()=>{

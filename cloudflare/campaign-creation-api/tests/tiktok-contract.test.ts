@@ -1,5 +1,12 @@
 import {expect,it} from 'vitest';
 import {scopeSchema,tiktokPlanSchema} from '../src/contracts';
+import {inputs} from '../src/inputs';
+
+it('accepts exact-source readiness selection separately from continuation',()=>{
+ const input={service_id:'3e44fcc4-f701-8034-b219-c996dbdedbe6',source_ad_id:'1866968855581937'};
+ expect(inputs.campaign_templates_list.parse(input)).toMatchObject(input);
+ expect(inputs.campaign_templates_list.safeParse({...input,cursor:'cursor'}).success).toBe(false);
+});
 
 it('accepts only the exact-length TikTok account scope without Google routing',()=>{
   const scope={subject:'ava',grantRevision:1,accountPageId:'3e44fcc4-f701-8034-b219-c996dbdedbe6',clientId:'12345678-1234-4234-8234-123456789def',platform:'TikTok',platformAccountId:'7647057541075271700',connectionRevision:'m04',providerRevision:'tiktok'};

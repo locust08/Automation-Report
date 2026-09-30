@@ -32,10 +32,12 @@ export async function execute(env: Environment, scope: Scope, tool: string, inpu
     tool === 'campaign_action_prepare' && !['approve', 'gate1'].includes(input.action))
     return result('locked', {caveats: ['Activation, scheduling and mutation retries are not accepted. Use operation status to reconcile.']});
   if (tool === 'campaign_templates_list') {
-    const references=scope.platform==='Meta'?await meta.referenceAssets():scope.platform==='TikTok'?await tiktok.referenceAssets():await new Google(env,scope).referenceAssets();
+    if(scope.platform!=='TikTok'&&(input.cursor||input.source_ad_id))throw new Error('invalid_request');
+    const references=scope.platform==='Meta'?await meta.referenceAssets():scope.platform==='TikTok'?await tiktok.referenceAssets(input.source_ad_id,{limit:input.limit,cursor:input.cursor}):await new Google(env,scope).referenceAssets();
     await check();
     const source='sources' in references?references.sources[0]:undefined;
-    const code=scope.platform==='Google'?null:!source?`${scope.platform.toLowerCase()}_no_eligible_source`:
+    const unresolved=scope.platform==='TikTok'&&'discovery' in references&&references.discovery.unresolved_source_ad_id?references.source_checks.at(-1)?.issues[0]:undefined;
+    const code=scope.platform==='Google'?null:!source?(unresolved??(scope.platform==='TikTok'&&'discovery' in references&&!references.discovery.complete?'tiktok_discovery_incomplete':`${scope.platform.toLowerCase()}_no_eligible_source`)):
       scope.platform==='TikTok'&&'resource_status' in source&&source.resource_status!=='ready'?'tiktok_budget_floor_unverified':null;
     return result(code?'clarification_required':'success', {validation_issues:code?[campaignBlocker(code)]:[],data: {templates: [], supported_campaign_types: scope.platform==='Meta'?['meta_existing_ad']:scope.platform==='TikTok'?['tiktok_existing_ad']:['search', 'demand_gen'], brief_schema: z.toJSONSchema(schemaFor(scope.platform)), references,mode: 'real_paused'}});
   }

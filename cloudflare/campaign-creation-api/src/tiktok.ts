@@ -1,8 +1,10 @@
 import {boundedJson,digest,type Scope,type TikTokPlan} from './contracts';
 import {ProviderError} from './google';
 import {Store} from './store';
+import {SignJWT,jwtVerify} from 'jose';
 
 export interface TikTokCredentials {TIKTOK_ACCESS_TOKEN?:string;M04_TIKTOK_MIN_DAILY_BUDGET?:string;M04_TIKTOK_BUDGET_CURRENCY?:string}
+export interface TikTokDiscoveryOptions {limit?:number;cursor?:string}
 export const tiktokProviderName=(plan:TikTokPlan,workflowId:string)=>`${plan.name.slice(0,80)} [${workflowId}]`;
 type Kind='campaign'|'adgroup'|'ad';
 const creativeKeys=['ad_format','ad_text','video_id','identity_id','identity_type','landing_page_url','call_to_action','display_name','identity_authorized_bc_id','tiktok_item_id'] as const;
@@ -45,8 +47,19 @@ export class TikTok {
     if(rows.length!==1||String(rows[0][`${kind}_id`])!==id)throw new ProviderError('unavailable','tiktok_readback');
     return rows[0];
   }
-  async referenceAssets(selectedAdId?:string){
+  private async cursorKey(){return new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(`tiktok-discovery-v1:${this.env.TIKTOK_ACCESS_TOKEN}`)));}
+  private async readCursor(cursor:string){
+    try{
+      const {payload}=await jwtVerify(cursor,await this.cursorKey(),{algorithms:['HS256'],issuer:'m04-tiktok-discovery',audience:await digest(this.scope),requiredClaims:['exp','iat'],maxTokenAge:'15m'});
+      if(!Number.isSafeInteger(payload.offset)||Number(payload.offset)<0||typeof payload.catalog!=='string')throw new Error();
+      return {offset:Number(payload.offset),catalog:payload.catalog};
+    }catch{throw new ProviderError('unavailable','tiktok_discovery_cursor');}
+  }
+  async referenceAssets(selectedAdId?:string,options:TikTokDiscoveryOptions={}){
     this.deadline=Date.now()+25_000;this.snapshot=undefined;
+    if(selectedAdId&&options.cursor)throw new ProviderError('unavailable','tiktok_discovery_cursor');
+    const continuation=options.cursor?await this.readCursor(options.cursor):undefined;
+    const limit=options.limit??20;if(!Number.isSafeInteger(limit)||limit<1||limit>50)throw new ProviderError('unavailable','tiktok_discovery_cursor');
     const account=await this.request('advertiser/info',{advertiser_ids:JSON.stringify([this.scope.platformAccountId]),
       fields:JSON.stringify(['advertiser_id','name','currency','timezone','status'])});
     if(!Array.isArray(account?.list)||account.list.length!==1||String(account.list[0].advertiser_id)!==this.scope.platformAccountId||
@@ -54,17 +67,27 @@ export class TikTok {
       throw new ProviderError('unavailable','tiktok_account_configuration');
     try{new Intl.DateTimeFormat('en',{timeZone:account.list[0].timezone});}catch{throw new ProviderError('unavailable','tiktok_account_timezone');}
     const ads=selectedAdId?[await this.one('ad',selectedAdId)]:await this.list('ad');
-    ads.sort((a,b)=>String(b.create_time??'').localeCompare(String(a.create_time??''))||String(b.ad_id??'').localeCompare(String(a.ad_id??'')));
+    ads.sort((a,b)=>String(b.create_time??'').localeCompare(String(a.create_time??''))||String(b.ad_id??'').padStart(30,'0').localeCompare(String(a.ad_id??'').padStart(30,'0')));
+    const catalog=await digest(ads),offset=continuation?.offset??0;
+    if(continuation&&(continuation.catalog!==catalog||offset>=ads.length))throw new ProviderError('unavailable','tiktok_discovery_changed');
     const sources=[];const source_checks:Array<{source_ad_id:string;issues:string[]}>=[];
-    for(const ad of ads.slice(0,20)){
+    const source_diagnostics:Array<{source_ad_id:string;name:string;ad_format:string;returned_creative_fields:string[]}>=[];
+    let scanned=offset;let unresolved_source_ad_id:string|null=null;
+    for(const ad of ads.slice(offset,offset+limit)){
+      // Stop between candidates while retaining enough time to sign a continuation.
+      if(!selectedAdId&&scanned>offset&&Date.now()>this.deadline-8_000)break;
+      scanned++;
+      source_diagnostics.push({source_ad_id:String(ad.ad_id),name:String(ad.ad_name??'').slice(0,200),ad_format:String(ad.ad_format??'').slice(0,100),returned_creative_fields:creativeKeys.filter(key=>ad[key]!=null)});
       const issues:string[]=[];
       if(!/^\d+$/.test(String(ad.ad_id??''))||!/^\d+$/.test(String(ad.adgroup_id??'')))issues.push('invalid_resource_id');
       if(!['ENABLE','DISABLE'].includes(String(ad.operation_status)))issues.push('unsupported_ad_status');
+      if(ad.ad_format!=='SINGLE_VIDEO')issues.push('unsupported_ad_format');
       if(!opaqueId(ad.video_id))issues.push('missing_video_id');
       if(!opaqueId(ad.identity_id))issues.push('missing_identity_id');
       if(ad.tiktok_item_id)issues.push('spark_ad_requires_review');
       if(!/^https:\/\//.test(String(ad.landing_page_url??'')))issues.push('missing_https_destination');
       if(issues.length){source_checks.push({source_ad_id:String(ad.ad_id),issues});continue;}
+      try{
       const group=await this.one('adgroup',String(ad.adgroup_id));
       const campaign=await this.one('campaign',String(group.campaign_id));
       if(group.budget_mode!=='BUDGET_MODE_DAY'||Number(group.budget)<=0)issues.push('daily_adgroup_budget_required');
@@ -76,9 +99,15 @@ export class TikTok {
       if(issues.length){source_checks.push({source_ad_id:String(ad.ad_id),issues});continue;}
       const identity=await this.request('identity/get',{advertiser_id:this.scope.platformAccountId,identity_type:String(ad.identity_type),...(ad.identity_authorized_bc_id?{identity_authorized_bc_id:String(ad.identity_authorized_bc_id)}:{}),page:'1',page_size:'100'});
       const videos=await this.request('file/video/ad/info',{advertiser_id:this.scope.platformAccountId,video_ids:JSON.stringify([ad.video_id])});
-      if(!Array.isArray(identity?.list)||!identity.list.some((row:any)=>String(row.identity_id)===String(ad.identity_id))||
-        !Array.isArray(videos?.list)||!videos.list.some((row:any)=>String(row.video_id)===String(ad.video_id)))
-        throw new ProviderError('unavailable','tiktok_asset_review');
+      const identityFound=Array.isArray(identity?.list)&&identity.list.some((row:any)=>String(row.identity_id)===String(ad.identity_id));
+      const pages=identity?.page_info?.total_page;
+      const negativeIdentityComplete=(typeof pages==='number'&&Number.isSafeInteger(pages)&&pages>=0&&pages<=1)||(typeof pages==='string'&&/^[01]$/.test(pages));
+      if(!Array.isArray(identity?.list)||!Array.isArray(videos?.list)||(!identityFound&&!negativeIdentityComplete))
+        throw new ProviderError('unavailable','tiktok_asset_coverage');
+      if(!identityFound||!videos.list.some((row:any)=>String(row.video_id)===String(ad.video_id))){
+        if(selectedAdId)throw new ProviderError('unavailable','tiktok_asset_review');
+        source_checks.push({source_ad_id:String(ad.ad_id),issues:['tiktok_asset_review']});continue;
+      }
       const min=this.env.M04_TIKTOK_BUDGET_CURRENCY===account.list[0].currency&&/^\d{1,5}(\.\d{1,2})?$/.test(this.env.M04_TIKTOK_MIN_DAILY_BUDGET??'')&&Number(this.env.M04_TIKTOK_MIN_DAILY_BUDGET)>0&&Number(this.env.M04_TIKTOK_MIN_DAILY_BUDGET)<=10_000
         ?this.env.M04_TIKTOK_MIN_DAILY_BUDGET!:null;
       this.snapshot=structuredClone({ad,group,campaign});
@@ -86,9 +115,18 @@ export class TikTok {
         objective:campaign.objective_type,source_fingerprint:await digest({ad,group,campaign}),video_id:String(ad.video_id),identity_id:String(ad.identity_id),
         final_url:String(ad.landing_page_url),minimum_daily_budget:min,resource_status:min?'ready':'budget_floor_unverified'});
       break;
+      }catch(error){
+        if(selectedAdId||!(error instanceof ProviderError)||!['tiktok_deadline','tiktok_response','tiktok_asset_coverage'].includes(error.code))throw error;
+        // Preserve only definitively checked candidates. Do not skip the unresolved
+        // newer source or automatically loop a continuation that made no progress.
+        scanned--;unresolved_source_ad_id=String(ad.ad_id);
+        source_checks.push({source_ad_id:String(ad.ad_id),issues:[error.code]});break;
+      }
     }
+    const complete=!!selectedAdId||sources.length>0||scanned===ads.length;
+    const next_cursor=complete?null:await new SignJWT({offset:scanned,catalog}).setProtectedHeader({alg:'HS256',typ:'JWT'}).setIssuer('m04-tiktok-discovery').setAudience(await digest(this.scope)).setIssuedAt().setExpirationTime('15m').sign(await this.cursorKey());
     return {account:{account_id:this.scope.platformAccountId,currency:account.list[0].currency,timezone_name:account.list[0].timezone,
-      account_status:account.list[0].status},sources,source_checks};
+      account_status:account.list[0].status},sources,source_checks,source_diagnostics,discovery:{complete,scanned,total:ads.length,next_cursor,unresolved_source_ad_id,automatic_continuation_allowed:!unresolved_source_ad_id}};
   }
   async validate(plan:TikTokPlan,_workflowId:string){
     this.checked=undefined;
