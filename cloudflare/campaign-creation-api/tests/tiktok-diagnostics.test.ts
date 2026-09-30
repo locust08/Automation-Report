@@ -24,6 +24,12 @@ it('retains native error evidence separately from an empty successful reconcilia
   await expect((f.provider as any).createStep(f.store,'op','campaign','Name',{})).rejects.toMatchObject({outcome:'unknown'});
   expect(f.save.mock.calls.map(c=>c[1])).toEqual([expect.objectContaining({phase:'creation',native_code:40000,classification:'native_error'}),expect.objectContaining({phase:'reconciliation',native_code:0,classification:'success'})]);
 });
+it('retains successful creation evidence when subsequent native readback fails',async()=>{
+ const f=setup(vi.fn(async(_input,init)=>init?.method==='POST'?native():native(40000,'READ_FAILURE')));
+ await (f.provider as any).createStep(f.store,'op','campaign','Name',{});
+ await expect((f.provider as any).one('campaign','77')).rejects.toMatchObject({code:'tiktok_40000'});
+ expect(f.save.mock.calls.map(call=>call[1])).toEqual([expect.objectContaining({phase:'creation',classification:'success',provider_request_id:'20260930_REQ_1'}),expect.objectContaining({phase:'reconciliation',classification:'native_error',provider_request_id:'READ_FAILURE'})]);
+});
 it.each([
  ['timeout',()=>{throw new DOMException('synthetic-secret','TimeoutError');}],
  ['transport_error',()=>{throw new Error('synthetic-secret');}],
@@ -61,8 +67,10 @@ it('retains creation observations and only ten latest reconciliation observation
   const d:any={endpoint:'campaign/create',step:'campaign',phase:'creation',timestamp:now,duration_ms:1,http_status:200,native_code:40000,provider_request_id:'FIRST',classification:'native_error',recognized_fields:[]};
   await (store as any).appendTikTokDiagnostic('op',d);
   for(let i=0;i<15;i++)await (store as any).appendTikTokDiagnostic('op',{...d,endpoint:'campaign/get',phase:'reconciliation',provider_request_id:'READ_'+i});
+  await store.beginProviderStep('op','adset','Group');
+  await store.appendTikTokDiagnostic('op',{...d,step:'adset',endpoint:'adgroup/get',phase:'reconciliation',provider_request_id:'GROUP_READ'});
   const rows=await (store as any).tikTokDiagnostics('op',scope);
-  expect(rows).toHaveLength(11);expect(rows[0].provider_request_id).toBe('FIRST');expect(rows[1].provider_request_id).toBe('READ_5');
+  expect(rows).toHaveLength(12);expect(rows[0].provider_request_id).toBe('FIRST');expect(rows[1].provider_request_id).toBe('READ_5');expect(rows.at(-1).provider_request_id).toBe('GROUP_READ');
   expect(await (store as any).tikTokDiagnostics('op',{...scope,subject:'other'})).toEqual([]);
   expect(await (store as any).tikTokDiagnostics('op',{...scope,accountPageId:'other'})).toEqual([]);
   expect(await (store as any).tikTokDiagnostics('op',{...scope,platformAccountId:'other'})).toEqual([]);
