@@ -14,24 +14,70 @@ const group={advertiser_id:scope.platformAccountId,adgroup_id:'2',campaign_id:'1
 const campaign={advertiser_id:scope.platformAccountId,campaign_id:'1',campaign_name:'Source campaign',
   campaign_type:'REGULAR_CAMPAIGN',objective_type:'TRAFFIC',operation_status:'ENABLE',budget_optimize_on:false};
 const budgetEvidence=(floor:string|undefined)=>JSON.stringify({advertiser_id:scope.platformAccountId,currency:'MYR',minimum_daily_budget:floor,budget_mode:group.budget_mode,objective:campaign.objective_type,optimization_goal:group.optimization_goal,billing_event:group.billing_event});
-function fixture(options:{floor?:string;currency?:string;missingVideo?:boolean;videoId?:string;identityId?:string;unverified?:boolean;evidence?:string}={}){
+function fixture(options:{floor?:string;currency?:string;missingVideo?:boolean;videoId?:string;identityId?:string;unverified?:boolean;evidence?:string;accountId?:string;nativeCurrency?:string}={}){
+  const selectedScope={...scope,platformAccountId:options.accountId??scope.platformAccountId};
   const fetcher=vi.fn(async(input:RequestInfo|URL)=>{
     const url=new URL(String(input)),kind=url.pathname.split('/').at(-3),filter=JSON.parse(url.searchParams.get('filtering')??'{}');
-    const data=url.pathname.includes('/advertiser/info/')?{list:[{advertiser_id:scope.platformAccountId,currency:'MYR',timezone:'Asia/Kuala_Lumpur',status:'STATUS_ENABLE'}]}:
+    const data=url.pathname.includes('/advertiser/info/')?{list:[{advertiser_id:selectedScope.platformAccountId,currency:options.nativeCurrency??'MYR',timezone:'Asia/Kuala_Lumpur',status:'STATUS_ENABLE'}]}:
       url.pathname.includes('/identity/get/')?{list:[{identity_id:options.identityId??'5'}]}:
       url.pathname.includes('/file/video/ad/info/')?{list:options.missingVideo?[]:[{video_id:options.videoId??'4'}]}:
-      {list:(kind==='ad'?[{...ad,video_id:options.videoId??'4',identity_id:options.identityId??'5'}]:kind==='adgroup'?[group]:[campaign]).filter(row=>{
+      {list:(kind==='ad'?[{...ad,video_id:options.videoId??'4',identity_id:options.identityId??'5'}]:kind==='adgroup'?[group]:[campaign]).map(row=>({...row,advertiser_id:selectedScope.platformAccountId})).filter(row=>{
         const ids=filter[`${kind}_ids`];return !ids||ids.includes((row as Record<string,unknown>)[`${kind}_id`]);
       }),page_info:{total_page:1}};
     return Response.json({code:0,data});
   });
   return {provider:new TikTok({TIKTOK_ACCESS_TOKEN:'synthetic',M04_TIKTOK_MIN_DAILY_BUDGET:options.floor,
-    M04_TIKTOK_BUDGET_CURRENCY:options.currency,M04_TIKTOK_BUDGET_EVIDENCE:options.unverified?undefined:options.evidence??budgetEvidence(options.floor)},scope,fetcher),fetcher};
+    M04_TIKTOK_BUDGET_CURRENCY:options.currency,M04_TIKTOK_BUDGET_EVIDENCE:options.unverified?undefined:options.evidence??budgetEvidence(options.floor)},selectedScope,fetcher),fetcher};
 }
+
+it('selects independently verified budget evidence for each advertiser without a shared currency floor',async()=>{
+  const first={...JSON.parse(budgetEvidence('20.00'))};
+  const second={...first,advertiser_id:'7777777777777777777',currency:'USD',minimum_daily_budget:'25.00'};
+  const evidence=JSON.stringify([first,second]);
+  expect((await fixture({evidence}).provider.referenceAssets('3')).sources[0]).toMatchObject({resource_status:'ready',minimum_daily_budget:'20.00'});
+  expect((await fixture({evidence,accountId:second.advertiser_id,nativeCurrency:'USD'}).provider.referenceAssets('3')).sources[0]).toMatchObject({resource_status:'ready',minimum_daily_budget:'25.00'});
+});
+
+it('does not borrow another advertiser budget proof or fall back from an ambiguous registry',async()=>{
+  const proof=JSON.parse(budgetEvidence('20.00'));
+  for(const rows of [[{...proof,advertiser_id:'7777777777777777777'}],[proof,{...proof,minimum_daily_budget:'21.00'}]]){
+    const source=(await fixture({evidence:JSON.stringify(rows),floor:'20.00',currency:'MYR'}).provider.referenceAssets('3')).sources[0];
+    expect(source.resource_status).toBe('budget_floor_unverified');
+    expect(source.minimum_daily_budget).toBeNull();
+  }
+});
+
+it.each([{currency:'USD'},{budget_mode:'BUDGET_MODE_DYNAMIC_DAILY_BUDGET'},{objective:'WEB_CONVERSIONS'},{promotion_type:'APP'},{optimization_goal:'CONVERT'},{billing_event:'OCPM'},{minimum_daily_budget:'0'},{minimum_daily_budget:'10000.01'}])('rejects account registry budget mismatch or invalid minimum: %j',async(changed)=>{
+  const proof={...JSON.parse(budgetEvidence('20.00')),...changed};
+  expect((await fixture({evidence:JSON.stringify([proof])}).provider.referenceAssets('3')).sources[0].resource_status).toBe('budget_floor_unverified');
+});
 
 it('does not infer a non-Spark native budget minimum from currency alone',async()=>{
  const f=fixture({floor:'20.00',currency:'MYR',unverified:true});
  expect((await f.provider.referenceAssets('3')).sources[0].resource_status).toBe('budget_floor_unverified');
+});
+
+it('finds a non-Spark identity on a later native page instead of blocking an eligible account',async()=>{
+  const base=fixture().fetcher,pages:number[]=[];
+  const fetcher=vi.fn(async(input:RequestInfo|URL)=>{
+    const url=new URL(String(input));
+    if(url.pathname.includes('/identity/get/')){
+      const page=Number(url.searchParams.get('page'));pages.push(page);
+      return Response.json({code:0,data:{identity_list:[{identity_id:page===2?'5':'other'}],page_info:{total_page:2}}});
+    }
+    return base(input);
+  });
+  const provider=new TikTok({TIKTOK_ACCESS_TOKEN:'synthetic',M04_TIKTOK_MIN_DAILY_BUDGET:'20.00',M04_TIKTOK_BUDGET_CURRENCY:'MYR',M04_TIKTOK_BUDGET_EVIDENCE:budgetEvidence('20.00')},scope,fetcher);
+  expect((await provider.referenceAssets('3')).sources[0].resource_status).toBe('ready');
+  expect(pages).toEqual([1,2]);
+});
+it.each([[3,2],[2,3]])('rejects changing identity totals as non-Spark absence proof: %j',async(first,second)=>{
+ const base=fixture().fetcher;
+ const fetcher=async(input:RequestInfo|URL)=>{
+   const url=new URL(String(input)),page=Number(url.searchParams.get('page'));
+   return url.pathname.includes('/identity/get/')?Response.json({code:0,data:{identity_list:[{identity_id:`unrelated-${page}`}],page_info:{total_page:page===1?first:second}}}):base(input);
+ };
+ await expect(new TikTok({TIKTOK_ACCESS_TOKEN:'synthetic'},scope,fetcher).referenceAssets('3')).rejects.toMatchObject({code:'tiktok_asset_coverage'});
 });
 it.each([{advertiser_id:'other'},{budget_mode:'BUDGET_MODE_DYNAMIC_DAILY_BUDGET'},{objective:'WEB_CONVERSIONS'},{optimization_goal:'CONVERT'},{billing_event:'OCPM'},{minimum_daily_budget:'21.00'}])('rejects mismatched non-Spark budget evidence: %j',async(changed)=>{
  const evidence=JSON.stringify({...JSON.parse(budgetEvidence('20.00')),...changed});

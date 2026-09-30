@@ -98,7 +98,7 @@ export class TikTok {
     const mapping=this.sparkIdentityMapping(sourceAd);
     const ad=mapping?{...sourceAd,identity_id:mapping.identity_id,identity_type:'BC_AUTH_TT',identity_authorized_bc_id:mapping.identity_authorized_bc_id}:sourceAd;
     const params={advertiser_id:this.scope.platformAccountId,identity_id:String(ad.identity_id),identity_type:String(ad.identity_type),...(ad.identity_type==='BC_AUTH_TT'?{identity_authorized_bc_id:String(ad.identity_authorized_bc_id)}:{})};
-    let identity:Record<string,any>|undefined;
+    let identity:Record<string,any>|undefined,expectedPages:number|undefined;const seenIdentities=new Set<string>();
     for(let page=1;page<=10;page++){
       const {identity_id,...listParams}=params;
       const data=await this.request('identity/get',{...listParams,page:String(page),page_size:'100'});
@@ -123,7 +123,12 @@ export class TikTok {
         }
         throw new ProviderError('unavailable','tiktok_asset_coverage_identity_pages_missing');
       }
-      if(!['number','string'].includes(typeof data.page_info.total_page)||!Number.isSafeInteger(total)||total<0||total>10||page>Math.max(total,1)||total===0&&rows.length>0)throw new ProviderError('unavailable','tiktok_asset_coverage');
+      if(!(typeof data.page_info.total_page==='number'||typeof data.page_info.total_page==='string'&&/^\d+$/.test(data.page_info.total_page))||!Number.isSafeInteger(total)||total<0||total>10||page>Math.max(total,1)||total===0&&rows.length>0||total>1&&rows.length===0&&page>=total)throw new ProviderError('unavailable','tiktok_asset_coverage');
+      if(expectedPages!==undefined&&total!==expectedPages)throw new ProviderError('unavailable','tiktok_asset_coverage');
+      expectedPages=total;
+      const before=seenIdentities.size;
+      for(const row of rows){if(!opaqueId(row?.identity_id))throw new ProviderError('unavailable','tiktok_asset_coverage');seenIdentities.add(String(row.identity_id));}
+      if(page>1&&seenIdentities.size===before)throw new ProviderError('unavailable','tiktok_asset_coverage');
       if(page>=total)break;
     }
     if(!identity)return {issue:'spark_identity_not_linked'};
@@ -205,25 +210,42 @@ export class TikTok {
         if(authorized.issue){source_checks.push({source_ad_id:String(ad.ad_id),issues:[authorized.issue]});continue;}
         sparkAuthorization=authorized.authorization;
       }else{
-      const identity=await this.request('identity/get',{advertiser_id:this.scope.platformAccountId,identity_type:String(ad.identity_type),...(ad.identity_authorized_bc_id?{identity_authorized_bc_id:String(ad.identity_authorized_bc_id)}:{}),page:'1',page_size:'100'});
+      let identityFound=false,expectedPages:number|undefined;const seenIdentities=new Set<string>();
+      for(let page=1;page<=10;page++){
+        const identity=await this.request('identity/get',{advertiser_id:this.scope.platformAccountId,identity_type:String(ad.identity_type),...(ad.identity_authorized_bc_id?{identity_authorized_bc_id:String(ad.identity_authorized_bc_id)}:{}),page:String(page),page_size:'100'});
+        const identities=identity?.identity_list??identity?.list,pages=identity?.page_info?.total_page;
+        if(!Array.isArray(identities)||identities.length>100)throw new ProviderError('unavailable','tiktok_asset_coverage');
+        identityFound=identities.some((row:any)=>String(row.identity_id)===String(ad.identity_id));
+        if(identityFound)break;
+        const total=Number(pages);
+        if(pages==null||!(typeof pages==='number'||typeof pages==='string'&&/^\d+$/.test(pages))||!Number.isSafeInteger(total)||total<0||total>10||page>Math.max(total,1)||total===0&&identities.length>0||total>1&&identities.length===0&&page>=total)
+          throw new ProviderError('unavailable','tiktok_asset_coverage');
+        if(expectedPages!==undefined&&total!==expectedPages)throw new ProviderError('unavailable','tiktok_asset_coverage');
+        expectedPages=total;
+        const before=seenIdentities.size;
+        for(const row of identities){if(!opaqueId(row?.identity_id))throw new ProviderError('unavailable','tiktok_asset_coverage');seenIdentities.add(String(row.identity_id));}
+        if(page>1&&seenIdentities.size===before)throw new ProviderError('unavailable','tiktok_asset_coverage');
+        if(page>=total)break;
+      }
       const videos=await this.request('file/video/ad/info',{advertiser_id:this.scope.platformAccountId,video_ids:JSON.stringify([ad.video_id])});
-      const identities=identity?.identity_list??identity?.list;
-      const identityFound=Array.isArray(identities)&&identities.some((row:any)=>String(row.identity_id)===String(ad.identity_id));
-      const pages=identity?.page_info?.total_page;
-      const negativeIdentityComplete=((typeof pages==='number'&&Number.isSafeInteger(pages)&&pages>=0&&pages<=1)||(typeof pages==='string'&&/^[01]$/.test(pages)))&&!(Number(pages)===0&&identities?.length>0);
-      if(!Array.isArray(identities)||!Array.isArray(videos?.list)||(!identityFound&&!negativeIdentityComplete))
-        throw new ProviderError('unavailable','tiktok_asset_coverage');
+      if(!Array.isArray(videos?.list))throw new ProviderError('unavailable','tiktok_asset_coverage');
       if(!identityFound||!videos.list.some((row:any)=>String(row.video_id)===String(ad.video_id))){
         if(selectedAdId)throw new ProviderError('unavailable','tiktok_asset_review');
         source_checks.push({source_ad_id:String(ad.ad_id),issues:['tiktok_asset_review']});continue;
       }
       }
       let evidence:any;try{evidence=JSON.parse(this.env.M04_TIKTOK_BUDGET_EVIDENCE??'null');}catch{}
-      const evidenceMatches=evidence?.advertiser_id===this.scope.platformAccountId&&evidence.currency===account.list[0].currency&&
-        evidence.minimum_daily_budget===this.env.M04_TIKTOK_MIN_DAILY_BUDGET&&evidence.budget_mode===group.budget_mode&&evidence.objective===campaign.objective_type&&
-        evidence.optimization_goal===group.optimization_goal&&evidence.billing_event===group.billing_event&&evidence.promotion_type===group.promotion_type;
-      const min=evidenceMatches&&this.env.M04_TIKTOK_BUDGET_CURRENCY===account.list[0].currency&&/^\d{1,5}(\.\d{1,2})?$/.test(this.env.M04_TIKTOK_MIN_DAILY_BUDGET??'')&&Number(this.env.M04_TIKTOK_MIN_DAILY_BUDGET)>0&&Number(this.env.M04_TIKTOK_MIN_DAILY_BUDGET)<=10_000
-        ?this.env.M04_TIKTOK_MIN_DAILY_BUDGET!:null;
+      // A registry supports several advertisers/settings without applying one
+      // account's native minimum to every account. Preserve the legacy proof.
+      const registry=Array.isArray(evidence);
+      const proofs=registry?(evidence.length<=500?evidence:[]):[evidence];
+      const matching=proofs.filter((proof:any)=>proof&&typeof proof==='object'&&!Array.isArray(proof)&&
+        proof.advertiser_id===this.scope.platformAccountId&&proof.currency===account.list[0].currency&&
+        proof.budget_mode===group.budget_mode&&proof.objective===campaign.objective_type&&
+        proof.optimization_goal===group.optimization_goal&&proof.billing_event===group.billing_event&&proof.promotion_type===group.promotion_type);
+      const floor=matching.length===1?matching[0].minimum_daily_budget:undefined;
+      const legacyMatches=registry||floor===this.env.M04_TIKTOK_MIN_DAILY_BUDGET&&this.env.M04_TIKTOK_BUDGET_CURRENCY===account.list[0].currency;
+      const min=legacyMatches&&typeof floor==='string'&&/^\d{1,5}(\.\d{1,2})?$/.test(floor)&&Number(floor)>0&&Number(floor)<=10_000?floor:null;
       this.snapshot=structuredClone({ad,group,campaign,...(sparkAuthorization?{sparkAuthorization}:{})});
       const creative=this.sparkCreative(ad,sparkAuthorization);
       sources.push({source_ad_id:String(ad.ad_id),source_adgroup_id:String(group.adgroup_id),source_campaign_id:String(campaign.campaign_id),

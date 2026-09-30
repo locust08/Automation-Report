@@ -7,6 +7,19 @@ it('does not infer absence from nonempty zero-page identity defaults',async()=>{
  await expect(new TikTok(f.env,scope,fetcher).referenceAssets('3')).rejects.toMatchObject({code:'tiktok_asset_coverage'});
  expect(f.writes).toEqual([]);
 });
+it.each([{identity_list:[],page_info:{total_page:''}},{identity_list:[],page_info:{total_page:2}},{identity_list:[{identity_id:'unrelated',identity_type:'TT_USER'}],page_info:{total_page:2}}])('does not skip a newer Spark source on contradictory or repeated identity pages',async(data)=>{
+ const f=fixture(),fetcher=async(input:RequestInfo|URL,init?:RequestInit)=>String(input).includes('/identity/get/')?Response.json({code:0,data}):f.fetcher(input,init);
+ await expect(new TikTok(f.env,scope,fetcher).referenceAssets('3')).rejects.toMatchObject({code:'tiktok_asset_coverage'});
+ expect(f.writes).toEqual([]);
+});
+it.each([[3,2],[2,3]])('rejects changing identity totals as Spark absence proof: %j',async(first,second)=>{
+ const f=fixture(),fetcher=async(input:RequestInfo|URL,init?:RequestInit)=>{
+  const url=new URL(String(input)),page=Number(url.searchParams.get('page'));
+  return url.pathname.includes('/identity/get/')?Response.json({code:0,data:{identity_list:[{identity_id:`unrelated-${page}`,identity_type:'TT_USER'}],page_info:{total_page:page===1?first:second}}}):f.fetcher(input,init);
+ };
+ await expect(new TikTok(f.env,scope,fetcher).referenceAssets('3')).rejects.toMatchObject({code:'tiktok_asset_coverage'});
+ expect(f.writes).toEqual([]);
+});
 function fixture(){
  const ad:any={advertiser_id:scope.platformAccountId,ad_id:'3',adgroup_id:'2',ad_name:'Spark source',operation_status:'DISABLE',ad_format:'SINGLE_VIDEO',identity_type:'TT_USER',identity_id:'identity',tiktok_item_id:'7647120342162361620',video_id:'source-video',ad_text:'Existing post',call_to_action_id:'portfolio',landing_page_url:'https://example.com/'};
  const group:any={advertiser_id:scope.platformAccountId,adgroup_id:'2',campaign_id:'1',operation_status:'DISABLE',budget_mode:'BUDGET_MODE_DYNAMIC_DAILY_BUDGET',budget:56,schedule_type:'SCHEDULE_START_END',billing_event:'CPC',optimization_goal:'CLICK',pacing:'PACING_MODE_SMOOTH',promotion_type:'WEBSITE',location_ids:['MY']};
