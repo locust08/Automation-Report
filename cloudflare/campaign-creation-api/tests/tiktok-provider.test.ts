@@ -141,6 +141,19 @@ it('creates all three native objects off and verifies their ownership, budget an
   expect(await provider.readback(plan,'wf','operation',store as any)).toMatchObject({campaign_id:'11',adgroup_id:'12',ad_id:'13',status:'DISABLE'});
 });
 
+it('preserves the native error code when an uncertain create cannot be reconciled without replaying it',async()=>{
+  let writes=0;
+  const fetcher=vi.fn(async(_input:RequestInfo|URL,init?:RequestInit)=>{
+    if(init?.method==='POST'){writes++;return Response.json({code:40000,message:'private provider text must not escape'});}
+    return Response.json({code:0,data:{list:[],page_info:{total_page:1}}});
+  });
+  const store={beginProviderStep:async()=>({provider_id:null,claimed:true}),confirmProviderStep:vi.fn(async()=>{})};
+  const provider=new TikTok({TIKTOK_ACCESS_TOKEN:'synthetic'},scope,fetcher);
+  await expect((provider as any).createStep(store,'operation','campaign','Exact name',{})).rejects.toMatchObject({outcome:'unknown',code:'tiktok_reconcile_after_tiktok_40000'});
+  expect(writes).toBe(1);
+  expect(store.confirmProviderStep).not.toHaveBeenCalled();
+});
+
 it('reconciles an uncertain TikTok write by exact-name readback without a second create call',async()=>{
   let writes=0;
   const fetcher=vi.fn(async(input:RequestInfo|URL,init?:RequestInit)=>{

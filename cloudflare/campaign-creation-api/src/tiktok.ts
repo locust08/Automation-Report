@@ -298,12 +298,21 @@ export class TikTok {
   }
   private async createStep(store:Store,operationId:string,step:'campaign'|'adset'|'ad',name:string,body:Record<string,unknown>){
     const row=await store.beginProviderStep(operationId,step,name);if(row.provider_id)return row.provider_id;
-    const recover=async()=>{await this.reconcile(store,operationId,step,name);throw new ProviderError('unknown','tiktok_incomplete');};
+    const recover=async(original?:ProviderError)=>{
+      try{await this.reconcile(store,operationId,step,name);}
+      catch(error){
+        // Keep the bounded, sanitized native failure when readback cannot
+        // resolve it. Never expose provider messages or permit another write.
+        if(original&&error instanceof ProviderError)throw new ProviderError('unknown',`${error.code}_after_${original.code}`);
+        throw error;
+      }
+      throw new ProviderError('unknown','tiktok_incomplete');
+    };
     if(!row.claimed)return recover();
     const kind:Kind=step==='adset'?'adgroup':step;
     let id:string;
     try{const data=await this.request(`${kind}/create`,kind==='ad'?body:{...body,request_id:`${operationId}-${step}`},true);id=String(data?.[`${kind}_id`]??data?.ad_ids?.[0]??'');}
-    catch(error){if(error instanceof ProviderError&&error.outcome==='unknown')return recover();throw error;}
+    catch(error){if(error instanceof ProviderError&&error.outcome==='unknown')return recover(error);throw error;}
     if(!/^\d+$/.test(id))return recover();
     await store.confirmProviderStep(operationId,step,id);return id;
   }
