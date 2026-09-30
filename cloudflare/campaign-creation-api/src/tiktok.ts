@@ -42,7 +42,7 @@ export class TikTok {
     let value:Record<string,any>;
     try{value=await boundedJson(response,262_144);}catch{throw new ProviderError(write?'unknown':'unavailable','tiktok_response');}
     if(!response.ok||value.code!==0){
-      const authorizationEndpoint=['identity/info','identity/video/info'].includes(path);
+      const authorizationEndpoint=['identity/get','identity/info','identity/video/info'].includes(path);
       // Expose only our fixed endpoint and documented field names, never raw
       // provider error messages (which can echo arbitrary input or credentials).
       const fields=authorizationEndpoint?['advertiser_id','identity_id','identity_type','identity_authorized_bc_id','item_id'].filter(field=>new RegExp(`\\b${field}\\b`).test(String(value.message??''))).join('_'):'';
@@ -77,8 +77,18 @@ export class TikTok {
     }catch{throw new ProviderError('unavailable','tiktok_discovery_cursor');}
   }
   private async authorizeSpark(ad:Record<string,any>){
-    const params={advertiser_id:this.scope.platformAccountId,identity_id:String(ad.identity_id),identity_type:String(ad.identity_type),...(ad.identity_authorized_bc_id?{identity_authorized_bc_id:String(ad.identity_authorized_bc_id)}:{})};
-    const identity=(await this.request('identity/info',params))?.identity_info;
+    const params={advertiser_id:this.scope.platformAccountId,identity_id:String(ad.identity_id),identity_type:String(ad.identity_type),...(ad.identity_type==='BC_AUTH_TT'?{identity_authorized_bc_id:String(ad.identity_authorized_bc_id)}:{})};
+    let identity:Record<string,any>|undefined;
+    for(let page=1;page<=10;page++){
+      const {identity_id,...listParams}=params;
+      const data=await this.request('identity/get',{...listParams,page:String(page),page_size:'100'});
+      const rows=data?.identity_list??data?.list,total=Number(data?.page_info?.total_page);
+      if(!Array.isArray(rows)||rows.length>100||!Number.isSafeInteger(total)||total<0||total>10||page>Math.max(total,1))throw new ProviderError('unavailable','tiktok_asset_coverage');
+      identity=rows.find((row:any)=>String(row.identity_id)===identity_id&&row.identity_type===ad.identity_type&&
+        (ad.identity_type!=='BC_AUTH_TT'||String(row.identity_authorized_bc_id)===String(ad.identity_authorized_bc_id)));
+      if(identity||page>=total)break;
+    }
+    if(!identity)return {issue:'spark_identity_not_linked'};
     if(!identity||String(identity.identity_id)!==ad.identity_id||identity.identity_type!==ad.identity_type||identity.is_gpppa!==false||
       (ad.identity_type!=='AUTH_CODE'&&(identity.available_status!=='AVAILABLE'||identity.can_pull_video!==true)))return {issue:'spark_identity_unavailable'};
     const post=(await this.request('identity/video/info',{...params,item_id:String(ad.tiktok_item_id)}))?.video_detail;
@@ -154,10 +164,11 @@ export class TikTok {
       }else{
       const identity=await this.request('identity/get',{advertiser_id:this.scope.platformAccountId,identity_type:String(ad.identity_type),...(ad.identity_authorized_bc_id?{identity_authorized_bc_id:String(ad.identity_authorized_bc_id)}:{}),page:'1',page_size:'100'});
       const videos=await this.request('file/video/ad/info',{advertiser_id:this.scope.platformAccountId,video_ids:JSON.stringify([ad.video_id])});
-      const identityFound=Array.isArray(identity?.list)&&identity.list.some((row:any)=>String(row.identity_id)===String(ad.identity_id));
+      const identities=identity?.identity_list??identity?.list;
+      const identityFound=Array.isArray(identities)&&identities.some((row:any)=>String(row.identity_id)===String(ad.identity_id));
       const pages=identity?.page_info?.total_page;
       const negativeIdentityComplete=(typeof pages==='number'&&Number.isSafeInteger(pages)&&pages>=0&&pages<=1)||(typeof pages==='string'&&/^[01]$/.test(pages));
-      if(!Array.isArray(identity?.list)||!Array.isArray(videos?.list)||(!identityFound&&!negativeIdentityComplete))
+      if(!Array.isArray(identities)||!Array.isArray(videos?.list)||(!identityFound&&!negativeIdentityComplete))
         throw new ProviderError('unavailable','tiktok_asset_coverage');
       if(!identityFound||!videos.list.some((row:any)=>String(row.video_id)===String(ad.video_id))){
         if(selectedAdId)throw new ProviderError('unavailable','tiktok_asset_review');
@@ -284,6 +295,14 @@ export class TikTok {
   async readback(plan:TikTokPlan,workflowId:string,operationId:string,store:Store){
     this.deadline=Date.now()+30_000;
     const names=this.names(plan,workflowId),campaign=await store.providerStep(operationId,'campaign'),adgroup=await store.providerStep(operationId,'adset'),ad=await store.providerStep(operationId,'ad');
+    // A lost response can precede provider visibility. Reconcile only persisted
+    // begun steps; a receipt read must never dispatch or create untouched steps.
+    for(const [step,row,name] of [['campaign',campaign,names.campaign],['adset',adgroup,names.adgroup],['ad',ad,names.ad]] as const){
+      if(row&&!row.provider_id){
+        if(row.provider_name!==name)throw new ProviderError('unknown','tiktok_reconcile');
+        row.provider_id=await this.reconcile(store,operationId,step,row.provider_name);
+      }
+    }
     if(!campaign?.provider_id||!adgroup?.provider_id||!ad?.provider_id)throw new ProviderError('unknown','tiktok_incomplete');
     const source=await this.one('ad',plan.source_ad_id);
     if(String(source.adgroup_id)!==plan.source_adgroup_id)throw new ProviderError('unknown','tiktok_source_changed');
