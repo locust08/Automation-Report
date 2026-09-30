@@ -84,11 +84,15 @@ export class TikTok {
       const data=await this.request('identity/get',{...listParams,page:String(page),page_size:'100'});
       const rows=data?.identity_list??data?.list,total=Number(data?.page_info?.total_page);
       if(!Array.isArray(rows))throw new ProviderError('unavailable','tiktok_asset_coverage_identity_rows');
-      if(data?.page_info?.total_page==null)throw new ProviderError('unavailable','tiktok_asset_coverage_identity_pages_missing');
-      if(rows.length>100||!Number.isSafeInteger(total)||total<0||total>10||page>Math.max(total,1))throw new ProviderError('unavailable','tiktok_asset_coverage');
+      if(rows.length>100)throw new ProviderError('unavailable','tiktok_asset_coverage');
       identity=rows.find((row:any)=>String(row.identity_id)===identity_id&&row.identity_type===ad.identity_type&&
         (ad.identity_type!=='BC_AUTH_TT'||String(row.identity_authorized_bc_id)===String(ad.identity_authorized_bc_id)));
-      if(identity||page>=total)break;
+      // An exact current permission row proves access even when TikTok omits
+      // pagination. Missing pagination can never prove that an identity is absent.
+      if(identity)break;
+      if(data?.page_info?.total_page==null)throw new ProviderError('unavailable','tiktok_asset_coverage_identity_pages_missing');
+      if(!['number','string'].includes(typeof data.page_info.total_page)||!Number.isSafeInteger(total)||total<0||total>10||page>Math.max(total,1))throw new ProviderError('unavailable','tiktok_asset_coverage');
+      if(page>=total)break;
     }
     if(!identity)return {issue:'spark_identity_not_linked'};
     if(!identity||String(identity.identity_id)!==ad.identity_id||identity.identity_type!==ad.identity_type||identity.is_gpppa!==false||

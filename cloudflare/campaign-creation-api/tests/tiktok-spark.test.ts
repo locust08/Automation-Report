@@ -64,6 +64,9 @@ it('uses documented v1.3 identity lists and finds an authorized identity beyond 
 it('fails closed when current identity discovery is incomplete or the source identity is no longer linked',async()=>{
  for(const total of [11,1]){const f=fixture(),fetcher=async(input:RequestInfo|URL,init?:RequestInit)=>String(input).includes('/identity/get/')?Response.json({code:0,data:{identity_list:[],page_info:{total_page:total}}}):String(input).includes('/identity/info/')?Response.json({code:40000}):f.fetcher(input,init);const task=new TikTok(f.env,scope,fetcher).referenceAssets('3');if(total===11)await expect(task).rejects.toMatchObject({code:'tiktok_asset_coverage'});else expect((await task).source_checks[0].issues).toContain('spark_identity_not_linked');}
 });
+it('accepts exact positive identity authorization without inferring complete negative coverage from missing pagination',async()=>{
+ for(const present of [true,false]){const f=fixture(),fetcher=async(input:RequestInfo|URL,init?:RequestInit)=>String(input).includes('/identity/get/')?Response.json({code:0,data:{identity_list:present?[f.identity]:[]}}):f.fetcher(input,init),task=new TikTok(f.env,scope,fetcher).referenceAssets('3');if(present)expect((await task).sources[0].resource_status).toBe('ready');else await expect(task).rejects.toMatchObject({code:'tiktok_asset_coverage_identity_pages_missing'});}
+});
 it('reconciles delayed visibility only for a persisted begun step without creating later objects',async()=>{
  const f=fixture(),source=(await f.provider.referenceAssets('3')).sources[0],plan={campaign_type:'tiktok_existing_ad' as const,name:'Spark test',currency:'MYR',timezone:'Asia/Singapore',daily_budget:'20.00',source_ad_id:'3',source_adgroup_id:'2',source_campaign_id:'1',source_fingerprint:source.source_fingerprint};
  const name='Spark test [wf]';f.rows.campaign.push({...f.campaign,campaign_id:'99',campaign_name:name});
