@@ -41,7 +41,14 @@ export class TikTok {
     catch{throw new ProviderError(write?'unknown':'unavailable','tiktok_response');}
     let value:Record<string,any>;
     try{value=await boundedJson(response,262_144);}catch{throw new ProviderError(write?'unknown':'unavailable','tiktok_response');}
-    if(!response.ok||value.code!==0)throw new ProviderError(write?'unknown':'unavailable',response.status===429||[40100,40101,40102].includes(Number(value.code))?'tiktok_rate_limited':`tiktok_${Number(value.code)||'response'}`);
+    if(!response.ok||value.code!==0){
+      const authorizationEndpoint=['identity/info','identity/video/info'].includes(path);
+      // Expose only our fixed endpoint and documented field names, never raw
+      // provider error messages (which can echo arbitrary input or credentials).
+      const fields=authorizationEndpoint?['advertiser_id','identity_id','identity_type','identity_authorized_bc_id','item_id'].filter(field=>new RegExp(`\\b${field}\\b`).test(String(value.message??''))).join('_'):'';
+      throw new ProviderError(write?'unknown':'unavailable',response.status===429||[40100,40101,40102].includes(Number(value.code))?'tiktok_rate_limited':
+        `tiktok_${authorizationEndpoint?path.replaceAll('/','_')+'_':''}${Number(value.code)||'response'}${fields?'_'+fields:''}`);
+    }
     return value.data as Record<string,any>;
   }
   private async list(kind:Kind,filter:Record<string,unknown>={}){
