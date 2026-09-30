@@ -3,7 +3,7 @@ import {ProviderError} from './google';
 import {Store} from './store';
 import {SignJWT,jwtVerify} from 'jose';
 
-export interface TikTokCredentials {TIKTOK_ACCESS_TOKEN?:string;M04_TIKTOK_MIN_DAILY_BUDGET?:string;M04_TIKTOK_BUDGET_CURRENCY?:string;M04_TIKTOK_BUDGET_EVIDENCE?:string}
+export interface TikTokCredentials {TIKTOK_ACCESS_TOKEN?:string;M04_TIKTOK_MIN_DAILY_BUDGET?:string;M04_TIKTOK_BUDGET_CURRENCY?:string;M04_TIKTOK_BUDGET_EVIDENCE?:string;M04_TIKTOK_EXISTING_BC_ID?:string}
 export interface TikTokDiscoveryOptions {limit?:number;cursor?:string}
 export const tiktokProviderName=(plan:TikTokPlan,workflowId:string)=>`${plan.name.slice(0,80)} [${workflowId}]`;
 type Kind='campaign'|'adgroup'|'ad';
@@ -90,7 +90,19 @@ export class TikTok {
       // An exact current permission row proves access even when TikTok omits
       // pagination. Missing pagination can never prove that an identity is absent.
       if(identity)break;
-      if(data?.page_info?.total_page==null)throw new ProviderError('unavailable','tiktok_asset_coverage_identity_pages_missing');
+      if(data?.page_info?.total_page==null){
+        if(ad.identity_type==='TT_USER'&&/^\d+$/.test(this.env.M04_TIKTOK_EXISTING_BC_ID??'')){
+          // Diagnose an already-linked Business Center identity only. Do not
+          // substitute a different identity or change creative authorization.
+          const bc=await this.request('identity/get',{advertiser_id:this.scope.platformAccountId,identity_type:'BC_AUTH_TT',identity_authorized_bc_id:this.env.M04_TIKTOK_EXISTING_BC_ID!,page:'1',page_size:'100'});
+          const bcRows=bc?.identity_list??bc?.list;
+          if(Array.isArray(bcRows)){
+            const exact=bcRows.find((row:any)=>String(row.identity_id)===identity_id&&row.identity_type==='BC_AUTH_TT'&&String(row.identity_authorized_bc_id)===this.env.M04_TIKTOK_EXISTING_BC_ID);
+            if(exact)throw new ProviderError('unavailable',exact.available_status==='AVAILABLE'&&exact.can_pull_video===true&&exact.is_gpppa===false?'tiktok_spark_existing_bc_identity_requires_mapping':'tiktok_spark_existing_bc_identity_unavailable');
+          }
+        }
+        throw new ProviderError('unavailable','tiktok_asset_coverage_identity_pages_missing');
+      }
       if(!['number','string'].includes(typeof data.page_info.total_page)||!Number.isSafeInteger(total)||total<0||total>10||page>Math.max(total,1))throw new ProviderError('unavailable','tiktok_asset_coverage');
       if(page>=total)break;
     }

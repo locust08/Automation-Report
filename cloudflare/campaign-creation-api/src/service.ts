@@ -13,7 +13,7 @@ const defaults: Dependencies = {authorize, provider: (env, scope) => new Google(
 const reference = (w: Workflow) => ({workflow_ref: w.id, revision_ref: w.revision_id});
 const backendRevision=(env:Environment,scope:Scope)=>scope.platform==='Meta'
   ?digest([env.META_API_VERSION,env.META_ACCESS_TOKEN])
-  :scope.platform==='TikTok'?digest([env.TIKTOK_ACCESS_TOKEN,env.M04_TIKTOK_MIN_DAILY_BUDGET,env.M04_TIKTOK_BUDGET_CURRENCY,env.M04_TIKTOK_BUDGET_EVIDENCE])
+  :scope.platform==='TikTok'?digest([env.TIKTOK_ACCESS_TOKEN,env.M04_TIKTOK_MIN_DAILY_BUDGET,env.M04_TIKTOK_BUDGET_CURRENCY,env.M04_TIKTOK_BUDGET_EVIDENCE,env.M04_TIKTOK_EXISTING_BC_ID])
   :digest([env.GOOGLE_ADS_CONNECTION_REVISION,env.GOOGLE_ADS_CLIENT_ID,env.GOOGLE_ADS_CLIENT_SECRET,env.GOOGLE_ADS_REFRESH_TOKEN,env.GOOGLE_ADS_DEVELOPER_TOKEN]);
 const schemaFor=(platform:Scope['platform'])=>platform==='Meta'?metaPlanSchema:platform==='TikTok'?tiktokPlanSchema:planSchema;
 async function sameScope(w: Workflow, s: Scope, backendRevision:string) {

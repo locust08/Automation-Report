@@ -72,6 +72,9 @@ it('retains discovery progress at an unresolved identity with missing native pag
  const fetcher=async(input:RequestInfo|URL,init?:RequestInit)=>String(input).includes('/identity/get/')?Response.json({code:0,data:{identity_list:[]}}):f.fetcher(input,init);
  const refs=await new TikTok(f.env,scope,fetcher).referenceAssets();expect(refs.discovery).toMatchObject({scanned:1,complete:false,unresolved_source_ad_id:'3',automatic_continuation_allowed:false});expect(refs.discovery.next_cursor).toBeTruthy();
 });
+it('diagnoses only the exact already-linked Business Center identity without substituting creative identity',async()=>{
+ for(const id of ['identity','different']){const f=fixture();f.env.M04_TIKTOK_EXISTING_BC_ID='7179390283606507521';const fetcher=async(input:RequestInfo|URL,init?:RequestInit)=>{const url=new URL(String(input));return url.pathname.includes('/identity/get/')?Response.json({code:0,data:{identity_list:url.searchParams.get('identity_type')==='BC_AUTH_TT'?[{...f.identity,identity_id:id,identity_type:'BC_AUTH_TT',identity_authorized_bc_id:f.env.M04_TIKTOK_EXISTING_BC_ID}]:[]}}):f.fetcher(input,init);};await expect(new TikTok(f.env,scope,fetcher).referenceAssets('3')).rejects.toMatchObject({code:id==='identity'?'tiktok_spark_existing_bc_identity_requires_mapping':'tiktok_asset_coverage_identity_pages_missing'});expect(f.writes).toEqual([]);}
+});
 it('reconciles delayed visibility only for a persisted begun step without creating later objects',async()=>{
  const f=fixture(),source=(await f.provider.referenceAssets('3')).sources[0],plan={campaign_type:'tiktok_existing_ad' as const,name:'Spark test',currency:'MYR',timezone:'Asia/Singapore',daily_budget:'20.00',source_ad_id:'3',source_adgroup_id:'2',source_campaign_id:'1',source_fingerprint:source.source_fingerprint};
  const name='Spark test [wf]';f.rows.campaign.push({...f.campaign,campaign_id:'99',campaign_name:name});
