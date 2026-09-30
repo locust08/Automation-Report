@@ -112,7 +112,7 @@ it('creates all three native objects off and verifies their ownership, budget an
   const steps=new Map<string,{provider_id:string|null;claimed:boolean}>();
   const store={beginProviderStep:async(_operation:string,step:string)=>{const row=steps.get(step)??{provider_id:null,claimed:true};steps.set(step,row);return row;},
     confirmProviderStep:async(_operation:string,step:string,id:string)=>{steps.set(step,{provider_id:id,claimed:false});},
-    providerStep:async(_operation:string,step:string)=>steps.get(step)};
+    providerStep:async(_operation:string,step:string)=>steps.get(step),appendTikTokDiagnostic:vi.fn(async()=>{})};
   const fetcher=vi.fn(async(input:RequestInfo|URL,init?:RequestInit)=>{
     const url=new URL(String(input)),kind=url.pathname.split('/').at(-3) as 'ad'|'adgroup'|'campaign';
     if(init?.method==='POST'){
@@ -147,7 +147,7 @@ it('preserves the native error code when an uncertain create cannot be reconcile
     if(init?.method==='POST'){writes++;return Response.json({code:40000,message:'private provider text must not escape'});}
     return Response.json({code:0,data:{list:[],page_info:{total_page:1}}});
   });
-  const store={beginProviderStep:async()=>({provider_id:null,claimed:true}),confirmProviderStep:vi.fn(async()=>{})};
+  const store={beginProviderStep:async()=>({provider_id:null,claimed:true}),confirmProviderStep:vi.fn(async()=>{}),appendTikTokDiagnostic:vi.fn(async()=>{})};
   const provider=new TikTok({TIKTOK_ACCESS_TOKEN:'synthetic'},scope,fetcher);
   await expect((provider as any).createStep(store,'operation','campaign','Exact name',{})).rejects.toMatchObject({outcome:'unknown',code:'tiktok_reconcile_after_tiktok_40000'});
   expect(writes).toBe(1);
@@ -160,7 +160,7 @@ it('reconciles an uncertain TikTok write by exact-name readback without a second
     if(init?.method==='POST'){writes++;throw new Error('timeout after provider acceptance');}
     return Response.json({code:0,data:{list:[{advertiser_id:scope.platformAccountId,campaign_id:'77',campaign_name:'Exact name'}],page_info:{total_page:1}}});
   });
-  const store={beginProviderStep:async()=>({provider_id:null,claimed:true}),confirmProviderStep:vi.fn(async()=>{})};
+  const store={beginProviderStep:async()=>({provider_id:null,claimed:true}),confirmProviderStep:vi.fn(async()=>{}),appendTikTokDiagnostic:vi.fn(async()=>{})};
   const provider=new TikTok({TIKTOK_ACCESS_TOKEN:'synthetic'},scope,fetcher);
   await expect((provider as any).createStep(store,'operation','campaign','Exact name',{advertiser_id:scope.platformAccountId,
     campaign_name:'Exact name',operation_status:'DISABLE'})).rejects.toMatchObject({outcome:'unknown',code:'tiktok_incomplete'});

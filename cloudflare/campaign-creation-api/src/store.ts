@@ -1,10 +1,23 @@
 import {digest,mappingDigest, type Scope, type AnyPlan} from './contracts';
+import {tikTokDiagnosticSchema,type TikTokDiagnostic} from './tiktok-diagnostics';
 export interface Workflow {id: string; subject: string; service_id: string; account_id: string; permission_revision: number; connection_revision: string; provider_revision: string; scope_hash: string; mapping_hash:string; backend_revision:string; plan_json: string; plan_hash: string; revision_id: string; source_key: string; status: string; version: number; created_at: number; updated_at: number}
 export interface Operation {id: string; workflow_id: string; subject: string; service_id: string; request_hash: string; status: string; result_json: string | null; created_at: number; dispatched_at: number | null; updated_at: number}
 export interface Revision {revision_id:string;workflow_id:string;revision_number:number;plan_json:string;plan_hash:string;save_key:string;created_at:number}
 export interface ProviderStep {status:'started'|'confirmed';provider_id:string|null;provider_name:string}
 export class Store {
   constructor(private db: D1Database) {}
+  async appendTikTokDiagnostic(operationId:string,value:TikTokDiagnostic){
+    const d=tikTokDiagnosticSchema.parse(value),db=this.primary();
+    await db.batch([
+      db.prepare('INSERT INTO m04_tiktok_diagnostics(operation_id,step,phase,diagnostic_json) VALUES(?,?,?,?)').bind(operationId,d.step,d.phase,JSON.stringify(d)),
+      db.prepare("DELETE FROM m04_tiktok_diagnostics WHERE operation_id=? AND step=? AND phase='reconciliation' AND sequence NOT IN (SELECT sequence FROM m04_tiktok_diagnostics WHERE operation_id=? AND step=? AND phase='reconciliation' ORDER BY sequence DESC LIMIT 10)").bind(operationId,d.step,operationId,d.step),
+    ]);
+  }
+  async tikTokDiagnostics(operationId:string,scope:Scope){
+    const rows=await this.primary().prepare('SELECT d.diagnostic_json FROM m04_tiktok_diagnostics d JOIN m04_operations o ON o.id=d.operation_id JOIN m04_workflows w ON w.id=o.workflow_id WHERE o.id=? AND o.subject=? AND o.service_id=? AND w.account_id=? ORDER BY d.sequence')
+      .bind(operationId,scope.subject,scope.accountPageId,scope.platformAccountId).all<{diagnostic_json:string}>();
+    return rows.results.map(row=>tikTokDiagnosticSchema.parse(JSON.parse(row.diagnostic_json)));
+  }
   private primary() {return this.db.withSession('first-primary');}
   private auditStatement(db: D1DatabaseSession, w: Pick<Workflow, 'id' | 'subject'>, action: string, outcome: string) {
     return db.prepare('INSERT INTO m04_audit(id,workflow_id,subject,action,outcome,at) VALUES(?,?,?,?,?,?)')

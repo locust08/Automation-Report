@@ -2,6 +2,7 @@ import {boundedJson,digest,type Scope,type TikTokPlan} from './contracts';
 import {ProviderError} from './google';
 import {Store} from './store';
 import {SignJWT,jwtVerify} from 'jose';
+import {diagnosticFields,tikTokDiagnosticSchema,type TikTokDiagnostic} from './tiktok-diagnostics';
 
 export interface TikTokCredentials {TIKTOK_ACCESS_TOKEN?:string;M04_TIKTOK_MIN_DAILY_BUDGET?:string;M04_TIKTOK_BUDGET_CURRENCY?:string;M04_TIKTOK_BUDGET_EVIDENCE?:string;M04_TIKTOK_EXISTING_BC_ID?:string;M04_TIKTOK_SPARK_IDENTITY_MAPPINGS?:string}
 export interface TikTokDiscoveryOptions {limit?:number;cursor?:string}
@@ -29,19 +30,37 @@ export class TikTok {
   private deadline=Date.now()+25_000;
   private snapshot:Record<string,any>|undefined;
   private checked:{key:string;at:number;payload:Record<string,any>}|undefined;
+  private diagnosticOperation:{store:Store;operationId:string}|undefined;
   constructor(private env:TikTokCredentials,private scope:Scope,private fetcher:typeof fetch=(input,init)=>fetch(input,init)){}
   private async request(path:string,params:Record<string,string>|Record<string,unknown>,write=false){
     if(this.scope.platform!=='TikTok'||!this.env.TIKTOK_ACCESS_TOKEN)throw new ProviderError('unavailable','tiktok_connection');
     const url=new URL(`https://business-api.tiktok.com/open_api/v1.3/${path}/`);
     if(!write)for(const [key,value] of Object.entries(params))url.searchParams.set(key,String(value));
     const remaining=this.deadline-Date.now();if(remaining<=0)throw new ProviderError('unavailable','tiktok_deadline');
+    const started=Date.now(),step=path.startsWith('campaign/')?'campaign':path.startsWith('adgroup/')?'adset':path.startsWith('ad/')?'ad':null;
+    const capture=async(classification:TikTokDiagnostic['classification'],response?:Response,value?:Record<string,any>)=>{
+      if(!this.diagnosticOperation||!step||!tikTokDiagnosticSchema.shape.endpoint.safeParse(path).success)return true;
+      const requestId=value?.request_id;
+      const diagnostic:TikTokDiagnostic={endpoint:path as TikTokDiagnostic['endpoint'],step,phase:write?'creation':'reconciliation',timestamp:started,duration_ms:Math.max(0,Date.now()-started),
+        http_status:response?.status&&response.status>=100&&response.status<=599?response.status:null,
+        native_code:typeof value?.code==='number'&&Number.isSafeInteger(value.code)?value.code:null,
+        provider_request_id:typeof requestId==='string'&&/^[A-Za-z0-9_-]{1,256}$/.test(requestId)&&!requestId.includes(this.env.TIKTOK_ACCESS_TOKEN!)?requestId:null,
+        classification,recognized_fields:classification==='native_error'&&typeof value?.message==='string'?diagnosticFields.filter(field=>new RegExp(`\\b${field}\\b`).test(value.message)):[]};
+      try{await this.diagnosticOperation.store.appendTikTokDiagnostic(this.diagnosticOperation.operationId,diagnostic);return true;}
+      catch{
+        console.warn(JSON.stringify({event:'m04_tiktok_diagnostic_persistence_failure',operation_id:/^[a-f0-9-]{36}$/i.test(this.diagnosticOperation.operationId)?this.diagnosticOperation.operationId:null,diagnostic}));
+        return false;
+      }
+    };
     let response:Response;
     try{response=await this.fetcher(url,{method:write?'POST':'GET',headers:{'Access-Token':this.env.TIKTOK_ACCESS_TOKEN,...(write?{'Content-Type':'application/json'}:{})},
       ...(write?{body:JSON.stringify(params)}:{}),redirect:'manual',signal:AbortSignal.timeout(Math.min(10_000,remaining))});}
-    catch{throw new ProviderError(write?'unknown':'unavailable','tiktok_response');}
+    catch(error){await capture(error instanceof Error&&['TimeoutError','AbortError'].includes(error.name)?'timeout':'transport_error');throw new ProviderError(write?'unknown':'unavailable','tiktok_response');}
     let value:Record<string,any>;
-    try{value=await boundedJson(response,262_144);}catch{throw new ProviderError(write?'unknown':'unavailable','tiktok_response');}
+    try{value=await boundedJson(response,262_144);if(!value||typeof value!=='object'||Array.isArray(value))throw new Error('invalid_response');}
+    catch(error){await capture(error instanceof Error&&error.message==='response_limit'?'oversized_response':error instanceof Error&&['TimeoutError','AbortError'].includes(error.name)?'timeout':error instanceof SyntaxError||error instanceof Error&&['invalid_response','invalid_request'].includes(error.message)?'invalid_json':'transport_error',response);throw new ProviderError(write?'unknown':'unavailable','tiktok_response');}
     if(!response.ok||value.code!==0){
+      await capture(!response.ok?'http_error':'native_error',response,value);
       const authorizationEndpoint=['identity/get','identity/info','identity/video/info'].includes(path);
       // Expose only our fixed endpoint and documented field names, never raw
       // provider error messages (which can echo arbitrary input or credentials).
@@ -49,6 +68,7 @@ export class TikTok {
       throw new ProviderError(write?'unknown':'unavailable',response.status===429||[40100,40101,40102].includes(Number(value.code))?'tiktok_rate_limited':
         `tiktok_${authorizationEndpoint?path.replaceAll('/','_')+'_':''}${Number(value.code)||'response'}${fields?'_'+fields:''}`);
     }
+    if(!await capture('success',response,value))throw new ProviderError(write?'unknown':'unavailable','tiktok_diagnostics_unavailable');
     return value.data as Record<string,any>;
   }
   private async list(kind:Kind,filter:Record<string,unknown>={}){
@@ -298,6 +318,7 @@ export class TikTok {
   }
   private async createStep(store:Store,operationId:string,step:'campaign'|'adset'|'ad',name:string,body:Record<string,unknown>){
     const row=await store.beginProviderStep(operationId,step,name);if(row.provider_id)return row.provider_id;
+    this.diagnosticOperation={store,operationId};
     const recover=async(original?:ProviderError)=>{
       try{await this.reconcile(store,operationId,step,name);}
       catch(error){
@@ -371,6 +392,7 @@ export class TikTok {
   }
   async readback(plan:TikTokPlan,workflowId:string,operationId:string,store:Store){
     this.deadline=Date.now()+30_000;
+    this.diagnosticOperation={store,operationId};
     const names=this.names(plan,workflowId),campaign=await store.providerStep(operationId,'campaign'),adgroup=await store.providerStep(operationId,'adset'),ad=await store.providerStep(operationId,'ad');
     // A lost response can precede provider visibility. Reconcile only persisted
     // begun steps; a receipt read must never dispatch or create untouched steps.

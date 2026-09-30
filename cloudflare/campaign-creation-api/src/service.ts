@@ -82,6 +82,13 @@ export async function execute(env: Environment, scope: Scope, tool: string, inpu
     const w = await store.workflow(operation.workflow_id, scope);
     if (!w) throw new Error('access_denied');
     if(w.mapping_hash!==await mappingDigest(scope))throw new Error('access_denied');
+    const diagnostics=async(status:string)=>{
+      if(scope.platform!=='TikTok')return {};
+      try{
+        const observations=await store.tikTokDiagnostics(operation.id,scope);
+        return {diagnostics:{available:true,original_response_available:observations.some(d=>d.phase==='creation'),reconciliation_outcome:status==='verified'?'verified':status==='rejected'?'not_required':'unresolved',observations}};
+      }catch{return {diagnostics:{available:false,original_response_available:null,reconciliation_outcome:'unresolved',observations:[]}};}
+    };
     if (['dispatched', 'unknown'].includes(operation.status)) {
       try {
         const data = scope.platform==='Meta'
@@ -90,12 +97,12 @@ export async function execute(env: Environment, scope: Scope, tool: string, inpu
           :await google.readback(planSchema.parse(JSON.parse(w.plan_json)), w.id);
         await check();
         await store.finish(w, operation.id, 'verified', data);
-        return result('success', {...reference(w), receipt_ref: operation.id, data: {status:'verified',readback:data,provider_action:false}});
+        return result('success', {...reference(w), receipt_ref: operation.id, data: {status:'verified',readback:data,provider_action:false,...await diagnostics('verified')}});
       } catch { /* Never repeat an uncertain provider mutation. */ }
     }
     await check();
     return result(operation.status === 'verified' ? 'success' : operation.status === 'rejected' ? 'unavailable' : 'unknown',
-      {...reference(w), receipt_ref: operation.id, data: {status: operation.status, readback: operation.result_json ? JSON.parse(operation.result_json) : null},
+      {...reference(w), receipt_ref: operation.id, data: {status: operation.status, readback: operation.result_json ? JSON.parse(operation.result_json) : null,...await diagnostics(operation.status)},
         caveats: operation.status === 'verified' ? [] : ['No automatic creation retry.']});
   }
   const w = await store.workflow(input.workflow_id, scope);

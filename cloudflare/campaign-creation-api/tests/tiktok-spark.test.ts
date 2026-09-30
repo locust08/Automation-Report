@@ -27,7 +27,7 @@ function fixture(){
  const identity:any={identity_id:'identity',identity_type:'TT_USER',available_status:'AVAILABLE',is_gpppa:false,can_pull_video:true};
  const post:any={item_id:ad.tiktok_item_id,item_type:'VIDEO',status:'ITEM_STATUS_HESITATE_RECOMMEND',text:'Existing post',video_info:{signature:'stable-content',width:720,height:1280,url:'https://example.com/signed-preview'}};
  const rows:any={ad:[ad],adgroup:[group],campaign:[campaign]},writes:any[]=[],steps=new Map();
- const store:any={beginProviderStep:async(_o:string,s:string)=>{const row=steps.get(s)??{provider_id:null,claimed:true};steps.set(s,row);return row;},confirmProviderStep:async(_o:string,s:string,id:string)=>steps.set(s,{provider_id:id,claimed:false}),providerStep:async(_o:string,s:string)=>steps.get(s)};
+ const store:any={beginProviderStep:async(_o:string,s:string)=>{const row=steps.get(s)??{provider_id:null,claimed:true};steps.set(s,row);return row;},confirmProviderStep:async(_o:string,s:string,id:string)=>steps.set(s,{provider_id:id,claimed:false}),providerStep:async(_o:string,s:string)=>steps.get(s),appendTikTokDiagnostic:vi.fn(async()=>{})};
  const env:any={TIKTOK_ACCESS_TOKEN:'synthetic',M04_TIKTOK_MIN_DAILY_BUDGET:'20.00',M04_TIKTOK_BUDGET_CURRENCY:'MYR',M04_TIKTOK_BUDGET_EVIDENCE:JSON.stringify({advertiser_id:scope.platformAccountId,currency:'MYR',minimum_daily_budget:'20.00',budget_mode:group.budget_mode,objective:campaign.objective_type,optimization_goal:group.optimization_goal,billing_event:group.billing_event,promotion_type:group.promotion_type})};
  const fetcher=vi.fn(async(input:RequestInfo|URL,init?:RequestInit)=>{
   const url=new URL(String(input)),kind=url.pathname.split('/').at(-3)!;
@@ -107,7 +107,7 @@ it('diagnoses only the exact already-linked Business Center identity without sub
 it('reconciles delayed visibility only for a persisted begun step without creating later objects',async()=>{
  const f=fixture(),source=(await f.provider.referenceAssets('3')).sources[0],plan={campaign_type:'tiktok_existing_ad' as const,name:'Spark test',currency:'MYR',timezone:'Asia/Singapore',daily_budget:'20.00',source_ad_id:'3',source_adgroup_id:'2',source_campaign_id:'1',source_fingerprint:source.source_fingerprint};
  const name='Spark test [wf]';f.rows.campaign.push({...f.campaign,campaign_id:'99',campaign_name:name});
- const stored:any={status:'started',provider_id:null,provider_name:name};const store:any={providerStep:async(_o:string,step:string)=>step==='campaign'?stored:null,confirmProviderStep:vi.fn(async(_o:string,_s:string,id:string)=>{stored.provider_id=id;stored.status='confirmed';})};
+ const stored:any={status:'started',provider_id:null,provider_name:name};const store:any={appendTikTokDiagnostic:vi.fn(async()=>{}),providerStep:async(_o:string,step:string)=>step==='campaign'?stored:null,confirmProviderStep:vi.fn(async(_o:string,_s:string,id:string)=>{stored.provider_id=id;stored.status='confirmed';})};
  await expect(f.provider.readback(plan,'wf','op',store)).rejects.toMatchObject({code:'tiktok_incomplete'});expect(store.confirmProviderStep).toHaveBeenCalledWith('op','campaign','99');expect(f.writes).toEqual([]);
 });
 
