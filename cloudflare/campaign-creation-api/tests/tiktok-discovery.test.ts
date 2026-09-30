@@ -88,3 +88,8 @@ it('binds continuation to documented source values rather than JSON object key o
  const fetcher=async(input:RequestInfo|URL)=>{const response=await f.fetcher(input),body=await response.json() as any;if(String(input).includes('/ad/get/'))body.data.list=body.data.list.map((ad:any)=>Object.fromEntries(Object.entries(ad).reverse()));return Response.json(body);};
  await expect(new TikTok(f.env,scope,fetcher).referenceAssets(undefined,{cursor:first.discovery.next_cursor!})).resolves.toMatchObject({discovery:{complete:true},sources:[{source_ad_id:f.ads[1].ad_id}]});
 });
+
+it('exposes only bounded native identity types and numeric Spark reference diagnostics',async()=>{
+ const f=fixture(1);Object.assign(f.ads[0],{tiktok_item_id:'0'});let refs=await f.provider.referenceAssets();expect(refs.source_diagnostics[0]).toMatchObject({identity_type:'CUSTOMIZED_USER',tiktok_item_id:'0'});
+ Object.assign(f.ads[0],{identity_type:f.env.TIKTOK_ACCESS_TOKEN,tiktok_item_id:f.env.TIKTOK_ACCESS_TOKEN});refs=await f.provider.referenceAssets();expect(refs.source_diagnostics[0]).toMatchObject({identity_type:null,tiktok_item_id:null});expect(JSON.stringify(refs.source_diagnostics)).not.toContain(f.env.TIKTOK_ACCESS_TOKEN);
+});

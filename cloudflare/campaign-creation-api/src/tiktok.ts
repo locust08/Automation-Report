@@ -74,13 +74,13 @@ export class TikTok {
     const catalog=await digest(canonical(ads)),offset=continuation?.offset??0;
     if(continuation&&(continuation.catalog!==catalog||offset>=ads.length))throw new ProviderError('unavailable','tiktok_discovery_changed');
     const sources=[];const source_checks:Array<{source_ad_id:string;issues:string[]}>=[];
-    const source_diagnostics:Array<{source_ad_id:string;name:string;ad_format:string;returned_creative_fields:string[]}>=[];
+    const source_diagnostics:Array<{source_ad_id:string;name:string;ad_format:string;identity_type:string|null;tiktok_item_id:string|null;returned_creative_fields:string[]}>=[];
     let scanned=offset;let unresolved_source_ad_id:string|null=null;
     for(const ad of ads.slice(offset,offset+limit)){
       // Stop between candidates while retaining enough time to sign a continuation.
       if(!selectedAdId&&scanned>offset&&Date.now()>this.deadline-8_000)break;
       scanned++;
-      source_diagnostics.push({source_ad_id:String(ad.ad_id),name:String(ad.ad_name??'').slice(0,200),ad_format:String(ad.ad_format??'').slice(0,100),returned_creative_fields:creativeKeys.filter(key=>ad[key]!=null)});
+      source_diagnostics.push({source_ad_id:String(ad.ad_id),name:String(ad.ad_name??'').slice(0,200),ad_format:String(ad.ad_format??'').slice(0,100),identity_type:['CUSTOMIZED_USER','AUTH_CODE','TT_USER','BC_AUTH_TT'].includes(ad.identity_type)?ad.identity_type:null,tiktok_item_id:/^\d{1,30}$/.test(String(ad.tiktok_item_id??''))?String(ad.tiktok_item_id):null,returned_creative_fields:creativeKeys.filter(key=>ad[key]!=null)});
       const issues:string[]=[];
       if(!/^\d+$/.test(String(ad.ad_id??''))||!/^\d+$/.test(String(ad.adgroup_id??'')))issues.push('invalid_resource_id');
       if(!['ENABLE','DISABLE'].includes(String(ad.operation_status)))issues.push('unsupported_ad_status');
