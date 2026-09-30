@@ -82,3 +82,9 @@ it.each([{},{list:[],page_info:{total_page:2}},{list:[],page_info:{total_page:nu
  const f=fixture(1),fetcher=async(input:RequestInfo|URL)=>String(input).includes('/identity/get/')?Response.json({code:0,data}):f.fetcher(input);
  const refs=await new TikTok(f.env,scope,fetcher).referenceAssets();expect(refs.discovery.complete).toBe(false);expect(refs.discovery.scanned).toBe(0);expect(refs.discovery.unresolved_source_ad_id).toBe(f.ads[0].ad_id);expect(refs.source_checks[0].issues).toContain('tiktok_asset_coverage');
 });
+
+it('binds continuation to documented source values rather than JSON object key order',async()=>{
+ const f=fixture(2),first=await f.provider.referenceAssets(undefined,{limit:1});
+ const fetcher=async(input:RequestInfo|URL)=>{const response=await f.fetcher(input),body=await response.json() as any;if(String(input).includes('/ad/get/'))body.data.list=body.data.list.map((ad:any)=>Object.fromEntries(Object.entries(ad).reverse()));return Response.json(body);};
+ await expect(new TikTok(f.env,scope,fetcher).referenceAssets(undefined,{cursor:first.discovery.next_cursor!})).resolves.toMatchObject({discovery:{complete:true},sources:[{source_ad_id:f.ads[1].ad_id}]});
+});

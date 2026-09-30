@@ -10,6 +10,9 @@ type Kind='campaign'|'adgroup'|'ad';
 const creativeKeys=['ad_format','ad_text','video_id','identity_id','identity_type','landing_page_url','call_to_action','display_name','identity_authorized_bc_id','tiktok_item_id'] as const;
 const groupKeys=['billing_event','optimization_goal','pacing','promotion_type','placement_type','placements','location_ids','age_groups','gender','languages','bid_type','bid_price','pixel_id','schedule_type','schedule_start_time','schedule_end_time'] as const;
 const opaqueId=(value:unknown)=>typeof value==='string'&&/^[A-Za-z0-9_-]{1,256}$/.test(value);
+// Provider JSON object order is not a source revision. Preserve every value and
+// array order while making source and catalog fingerprints deterministic.
+function canonical(value:any):any{return Array.isArray(value)?value.map(canonical):value&&typeof value==='object'?Object.fromEntries(Object.keys(value).sort().map(key=>[key,canonical(value[key])])):value;}
 
 export class TikTok {
   private deadline=Date.now()+25_000;
@@ -68,7 +71,7 @@ export class TikTok {
     try{new Intl.DateTimeFormat('en',{timeZone:account.list[0].timezone});}catch{throw new ProviderError('unavailable','tiktok_account_timezone');}
     const ads=selectedAdId?[await this.one('ad',selectedAdId)]:await this.list('ad');
     ads.sort((a,b)=>String(b.create_time??'').localeCompare(String(a.create_time??''))||String(b.ad_id??'').padStart(30,'0').localeCompare(String(a.ad_id??'').padStart(30,'0')));
-    const catalog=await digest(ads),offset=continuation?.offset??0;
+    const catalog=await digest(canonical(ads)),offset=continuation?.offset??0;
     if(continuation&&(continuation.catalog!==catalog||offset>=ads.length))throw new ProviderError('unavailable','tiktok_discovery_changed');
     const sources=[];const source_checks:Array<{source_ad_id:string;issues:string[]}>=[];
     const source_diagnostics:Array<{source_ad_id:string;name:string;ad_format:string;returned_creative_fields:string[]}>=[];
@@ -112,7 +115,7 @@ export class TikTok {
         ?this.env.M04_TIKTOK_MIN_DAILY_BUDGET!:null;
       this.snapshot=structuredClone({ad,group,campaign});
       sources.push({source_ad_id:String(ad.ad_id),source_adgroup_id:String(group.adgroup_id),source_campaign_id:String(campaign.campaign_id),
-        objective:campaign.objective_type,source_fingerprint:await digest({ad,group,campaign}),video_id:String(ad.video_id),identity_id:String(ad.identity_id),
+        objective:campaign.objective_type,source_fingerprint:await digest(canonical({ad,group,campaign})),video_id:String(ad.video_id),identity_id:String(ad.identity_id),
         final_url:String(ad.landing_page_url),minimum_daily_budget:min,resource_status:min?'ready':'budget_floor_unverified'});
       break;
       }catch(error){
