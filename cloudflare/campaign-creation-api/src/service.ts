@@ -13,7 +13,7 @@ const defaults: Dependencies = {authorize, provider: (env, scope) => new Google(
 const reference = (w: Workflow) => ({workflow_ref: w.id, revision_ref: w.revision_id});
 const backendRevision=(env:Environment,scope:Scope)=>scope.platform==='Meta'
   ?digest([env.META_API_VERSION,env.META_ACCESS_TOKEN])
-  :scope.platform==='TikTok'?digest([env.TIKTOK_ACCESS_TOKEN,env.M04_TIKTOK_MIN_DAILY_BUDGET,env.M04_TIKTOK_BUDGET_CURRENCY])
+  :scope.platform==='TikTok'?digest([env.TIKTOK_ACCESS_TOKEN,env.M04_TIKTOK_MIN_DAILY_BUDGET,env.M04_TIKTOK_BUDGET_CURRENCY,env.M04_TIKTOK_BUDGET_EVIDENCE])
   :digest([env.GOOGLE_ADS_CONNECTION_REVISION,env.GOOGLE_ADS_CLIENT_ID,env.GOOGLE_ADS_CLIENT_SECRET,env.GOOGLE_ADS_REFRESH_TOKEN,env.GOOGLE_ADS_DEVELOPER_TOKEN]);
 const schemaFor=(platform:Scope['platform'])=>platform==='Meta'?metaPlanSchema:platform==='TikTok'?tiktokPlanSchema:planSchema;
 async function sameScope(w: Workflow, s: Scope, backendRevision:string) {
@@ -158,7 +158,8 @@ export async function execute(env: Environment, scope: Scope, tool: string, inpu
         targeting_summary:JSON.stringify({location_ids:tiktokPreview!.group.location_ids,age_groups:tiktokPreview!.group.age_groups,
           optimization_goal:tiktokPreview!.group.optimization_goal}),
         creative_summary:JSON.stringify({source_ad_id:tiktokPreview!.source.source_ad_id,video_id:tiktokPreview!.source.video_id,
-          identity_id:tiktokPreview!.source.identity_id,final_url:tiktokPreview!.source.final_url}),
+          identity_id:tiktokPreview!.source.identity_id,identity_type:tiktokPreview!.source.identity_type,tiktok_item_id:'tiktok_item_id' in tiktokPreview!.source?tiktokPreview!.source.tiktok_item_id:undefined,
+          creative_mode:tiktokPreview!.source.creative_mode,source_fingerprint:tiktokPreview!.source.source_fingerprint,final_url:tiktokPreview!.source.final_url}),
         validation_status:'ready',warnings:[]},provider_objects:[],qa_status:'not_applicable',
       consequences:input.action==='approve'?['Confirm this immutable revision. No TikTok resource is created.']:
         ['Create one TikTok campaign, ad group and ad with DISABLE status. Activation and scheduling remain unavailable.'],
