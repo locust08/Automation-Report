@@ -44,7 +44,10 @@ export async function authenticate(request: Request, env: AuthEnvironment, tool:
 /** DigitalBee is the current permission authority, checked at every stage and again before dispatch. */
 export async function authorize(env: AuthEnvironment, scope: Scope, tool: string, fetcher?: typeof fetch) {
   if(scope.platform==='Meta'&&['campaign_gate1_create','campaign_action_prepare_gate1'].includes(tool)&&env.M04_META_CREATION_ENABLED!=='true')throw new Error('provider_creation_disabled');
-  if(scope.platform==='TikTok'&&['campaign_gate1_create','campaign_action_prepare_gate1'].includes(tool)&&env.M04_TIKTOK_CREATION_ENABLED!=='true')throw new Error('provider_creation_disabled');
+  if(scope.platform==='TikTok'&&['campaign_gate1_create','campaign_action_prepare_gate1'].includes(tool)&&
+    (env.M04_TIKTOK_CREATION_ENABLED!=='true'||env.M04_TIKTOK_PILOT_ACCOUNT!=='7647057541075271700'||
+    env.M04_TIKTOK_PILOT_SERVICE!=='3e44fcc4-f701-8034-b219-c996dbdedbe6'||scope.platformAccountId!==env.M04_TIKTOK_PILOT_ACCOUNT||
+    scope.accountPageId!==env.M04_TIKTOK_PILOT_SERVICE||!env.M04_PILOT_SUBJECT||scope.subject!==env.M04_PILOT_SUBJECT))throw new Error('provider_creation_disabled');
   const url = new URL(env.DIGITALBEE_GRANT_VERIFY_URL);
   if (url.protocol !== 'https:' || url.username || url.password || url.search || url.hash ||
     url.pathname !== '/v1/internal/grants/verify' || env.DIGITALBEE_GRANT_VERIFY_TOKEN?.length < 32)

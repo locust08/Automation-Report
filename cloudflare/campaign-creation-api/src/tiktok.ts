@@ -3,7 +3,7 @@ import {ProviderError} from './google';
 import {Store} from './store';
 import {SignJWT,jwtVerify} from 'jose';
 
-export interface TikTokCredentials {TIKTOK_ACCESS_TOKEN?:string;M04_TIKTOK_MIN_DAILY_BUDGET?:string;M04_TIKTOK_BUDGET_CURRENCY?:string;M04_TIKTOK_BUDGET_EVIDENCE?:string;M04_TIKTOK_EXISTING_BC_ID?:string}
+export interface TikTokCredentials {TIKTOK_ACCESS_TOKEN?:string;M04_TIKTOK_MIN_DAILY_BUDGET?:string;M04_TIKTOK_BUDGET_CURRENCY?:string;M04_TIKTOK_BUDGET_EVIDENCE?:string;M04_TIKTOK_EXISTING_BC_ID?:string;M04_TIKTOK_SPARK_IDENTITY_MAPPINGS?:string}
 export interface TikTokDiscoveryOptions {limit?:number;cursor?:string}
 export const tiktokProviderName=(plan:TikTokPlan,workflowId:string)=>`${plan.name.slice(0,80)} [${workflowId}]`;
 type Kind='campaign'|'adgroup'|'ad';
@@ -76,7 +76,27 @@ export class TikTok {
       return {offset:Number(payload.offset),catalog:payload.catalog};
     }catch{throw new ProviderError('unavailable','tiktok_discovery_cursor');}
   }
-  private async authorizeSpark(ad:Record<string,any>){
+  private sparkIdentityMapping(ad:Record<string,any>){
+    if(!this.env.M04_TIKTOK_SPARK_IDENTITY_MAPPINGS)return undefined;
+    let rows:any;
+    try{rows=JSON.parse(this.env.M04_TIKTOK_SPARK_IDENTITY_MAPPINGS);}catch{throw new ProviderError('unavailable','tiktok_spark_identity_mapping_invalid');}
+    if(!Array.isArray(rows)||rows.length>50||rows.some(row=>!row||typeof row!=='object'||
+      !['advertiser_id','source_ad_id','tiktok_item_id','identity_authorized_bc_id'].every(key=>typeof row[key]==='string'&&/^[1-9]\d{0,29}$/.test(row[key]))||
+      !opaqueId(row.source_identity_id)||!opaqueId(row.identity_id)))throw new ProviderError('unavailable','tiktok_spark_identity_mapping_invalid');
+    const matches=rows.filter(row=>row.advertiser_id===this.scope.platformAccountId&&row.source_ad_id===String(ad.ad_id)&&
+      ad.identity_type==='TT_USER'&&row.source_identity_id===ad.identity_id&&row.tiktok_item_id===ad.tiktok_item_id);
+    if(matches.length>1)throw new ProviderError('unavailable','tiktok_spark_identity_mapping_invalid');
+    return matches[0] as {advertiser_id:string;source_ad_id:string;source_identity_id:string;tiktok_item_id:string;identity_id:string;identity_authorized_bc_id:string}|undefined;
+  }
+  private sparkCreative(ad:Record<string,any>,authorization?:Record<string,any>){
+    return authorization?{...ad,identity_id:authorization.identity_id,identity_type:authorization.identity_type,
+      ...(authorization.identity_authorized_bc_id?{identity_authorized_bc_id:authorization.identity_authorized_bc_id}:{})}:ad;
+  }
+  private async authorizeSpark(sourceAd:Record<string,any>){
+    // An explicit exact-source/post mapping selects an already-authorized identity.
+    // Configuration alone is insufficient: re-read its native permissions and post.
+    const mapping=this.sparkIdentityMapping(sourceAd);
+    const ad=mapping?{...sourceAd,identity_id:mapping.identity_id,identity_type:'BC_AUTH_TT',identity_authorized_bc_id:mapping.identity_authorized_bc_id}:sourceAd;
     const params={advertiser_id:this.scope.platformAccountId,identity_id:String(ad.identity_id),identity_type:String(ad.identity_type),...(ad.identity_type==='BC_AUTH_TT'?{identity_authorized_bc_id:String(ad.identity_authorized_bc_id)}:{})};
     let identity:Record<string,any>|undefined;
     for(let page=1;page<=10;page++){
@@ -103,15 +123,19 @@ export class TikTok {
         }
         throw new ProviderError('unavailable','tiktok_asset_coverage_identity_pages_missing');
       }
-      if(!['number','string'].includes(typeof data.page_info.total_page)||!Number.isSafeInteger(total)||total<0||total>10||page>Math.max(total,1))throw new ProviderError('unavailable','tiktok_asset_coverage');
+      if(!['number','string'].includes(typeof data.page_info.total_page)||!Number.isSafeInteger(total)||total<0||total>10||page>Math.max(total,1)||total===0&&rows.length>0)throw new ProviderError('unavailable','tiktok_asset_coverage');
       if(page>=total)break;
     }
     if(!identity)return {issue:'spark_identity_not_linked'};
     if(!identity||String(identity.identity_id)!==ad.identity_id||identity.identity_type!==ad.identity_type||identity.is_gpppa!==false||
       (ad.identity_type!=='AUTH_CODE'&&(identity.available_status!=='AVAILABLE'||identity.can_pull_video!==true)))return {issue:'spark_identity_unavailable'};
     const post=(await this.request('identity/video/info',{...params,item_id:String(ad.tiktok_item_id)}))?.video_detail;
+    const carousel=post?.carousel_info;
+    const emptyCarousel=carousel==null||post?.item_type==='VIDEO'&&typeof carousel==='object'&&!Array.isArray(carousel)&&
+      Object.keys(carousel).every(key=>['image_info','music_info'].includes(key))&&Array.isArray(carousel.image_info)&&carousel.image_info.length===0&&
+      carousel.music_info!=null&&typeof carousel.music_info==='object'&&!Array.isArray(carousel.music_info)&&Object.keys(carousel.music_info).length===0;
     if(!post||String(post.item_id)!==ad.tiktok_item_id||post.status!=='ITEM_STATUS_HESITATE_RECOMMEND'||
-      (post.item_type!=null&&post.item_type!=='VIDEO')||!post.video_info||post.carousel_info||typeof post.text!=='string'||
+      (post.item_type!=null&&post.item_type!=='VIDEO')||!post.video_info||!emptyCarousel||typeof post.text!=='string'||
       typeof post.video_info.signature!=='string'||!post.video_info.signature)return {issue:'spark_post_unavailable'};
     let auth:Record<string,unknown>|undefined;
     if(ad.identity_type==='AUTH_CODE'){
@@ -124,7 +148,8 @@ export class TikTok {
     // Signed preview URLs rotate. Bind only documented authorization and stable content.
     return {authorization:{identity_id:identity.identity_id,identity_type:identity.identity_type,available_status:identity.available_status,
       is_gpppa:identity.is_gpppa,can_pull_video:identity.can_pull_video,item_id:post.item_id,status:post.status,text:post.text,
-      signature:post.video_info.signature,...(auth?{auth_info:auth}:{})}};
+      signature:post.video_info.signature,...(ad.identity_type==='BC_AUTH_TT'?{identity_authorized_bc_id:ad.identity_authorized_bc_id}:{}),
+      ...(mapping?{identity_mapping:mapping,source_identity_id:sourceAd.identity_id,source_identity_type:sourceAd.identity_type}:{}),...(auth?{auth_info:auth}:{})}};
   }
   async referenceAssets(selectedAdId?:string,options:TikTokDiscoveryOptions={}){
     this.deadline=Date.now()+25_000;this.snapshot=undefined;
@@ -185,7 +210,7 @@ export class TikTok {
       const identities=identity?.identity_list??identity?.list;
       const identityFound=Array.isArray(identities)&&identities.some((row:any)=>String(row.identity_id)===String(ad.identity_id));
       const pages=identity?.page_info?.total_page;
-      const negativeIdentityComplete=(typeof pages==='number'&&Number.isSafeInteger(pages)&&pages>=0&&pages<=1)||(typeof pages==='string'&&/^[01]$/.test(pages));
+      const negativeIdentityComplete=((typeof pages==='number'&&Number.isSafeInteger(pages)&&pages>=0&&pages<=1)||(typeof pages==='string'&&/^[01]$/.test(pages)))&&!(Number(pages)===0&&identities?.length>0);
       if(!Array.isArray(identities)||!Array.isArray(videos?.list)||(!identityFound&&!negativeIdentityComplete))
         throw new ProviderError('unavailable','tiktok_asset_coverage');
       if(!identityFound||!videos.list.some((row:any)=>String(row.video_id)===String(ad.video_id))){
@@ -197,11 +222,13 @@ export class TikTok {
       const evidenceMatches=evidence?.advertiser_id===this.scope.platformAccountId&&evidence.currency===account.list[0].currency&&
         evidence.minimum_daily_budget===this.env.M04_TIKTOK_MIN_DAILY_BUDGET&&evidence.budget_mode===group.budget_mode&&evidence.objective===campaign.objective_type&&
         evidence.optimization_goal===group.optimization_goal&&evidence.billing_event===group.billing_event&&evidence.promotion_type===group.promotion_type;
-      const min=(!spark||evidenceMatches)&&this.env.M04_TIKTOK_BUDGET_CURRENCY===account.list[0].currency&&/^\d{1,5}(\.\d{1,2})?$/.test(this.env.M04_TIKTOK_MIN_DAILY_BUDGET??'')&&Number(this.env.M04_TIKTOK_MIN_DAILY_BUDGET)>0&&Number(this.env.M04_TIKTOK_MIN_DAILY_BUDGET)<=10_000
+      const min=evidenceMatches&&this.env.M04_TIKTOK_BUDGET_CURRENCY===account.list[0].currency&&/^\d{1,5}(\.\d{1,2})?$/.test(this.env.M04_TIKTOK_MIN_DAILY_BUDGET??'')&&Number(this.env.M04_TIKTOK_MIN_DAILY_BUDGET)>0&&Number(this.env.M04_TIKTOK_MIN_DAILY_BUDGET)<=10_000
         ?this.env.M04_TIKTOK_MIN_DAILY_BUDGET!:null;
       this.snapshot=structuredClone({ad,group,campaign,...(sparkAuthorization?{sparkAuthorization}:{})});
+      const creative=this.sparkCreative(ad,sparkAuthorization);
       sources.push({source_ad_id:String(ad.ad_id),source_adgroup_id:String(group.adgroup_id),source_campaign_id:String(campaign.campaign_id),
-        objective:campaign.objective_type,budget_mode:group.budget_mode,budget_settings:{promotion_type:group.promotion_type,billing_event:group.billing_event,optimization_goal:group.optimization_goal},source_fingerprint:await digest(canonical(this.snapshot)),video_id:ad.video_id==null?null:String(ad.video_id),identity_id:String(ad.identity_id),identity_type:ad.identity_type,
+        objective:campaign.objective_type,budget_mode:group.budget_mode,budget_settings:{promotion_type:group.promotion_type,billing_event:group.billing_event,optimization_goal:group.optimization_goal},source_fingerprint:await digest(canonical(this.snapshot)),video_id:ad.video_id==null?null:String(ad.video_id),identity_id:String(creative.identity_id),identity_type:creative.identity_type,
+        ...(sparkAuthorization?.identity_mapping?{identity_authorized_bc_id:creative.identity_authorized_bc_id,source_identity_id:ad.identity_id,source_identity_type:ad.identity_type}:{}),
         ...(spark?{tiktok_item_id:String(ad.tiktok_item_id),creative_mode:'existing_spark_post'}:{creative_mode:'existing_video'}),
         final_url:String(ad.landing_page_url),minimum_daily_budget:min,resource_status:min?'ready':'budget_floor_unverified'});
       break;
@@ -228,7 +255,7 @@ export class TikTok {
     if(!this.snapshot)throw new ProviderError('unavailable','tiktok_source_changed');
     const {ad,group,campaign,sparkAuthorization}=this.snapshot;
     if(String(ad.adgroup_id)!==plan.source_adgroup_id||String(group.campaign_id)!==plan.source_campaign_id||(!sparkPost(ad)&&String(ad.video_id)!==source.video_id)||
-      String(ad.identity_id)!==source.identity_id||String(ad.landing_page_url)!==source.final_url)
+      String(this.sparkCreative(ad,sparkAuthorization).identity_id)!==source.identity_id||String(ad.landing_page_url)!==source.final_url)
       throw new ProviderError('unavailable','tiktok_source_changed');
     const payload={source,ad,group,campaign,sparkAuthorization};
     this.checked={key:await digest({plan,workflowId:_workflowId}),at:Date.now(),payload:structuredClone(payload)};
@@ -249,12 +276,13 @@ export class TikTok {
   }
   private async createStep(store:Store,operationId:string,step:'campaign'|'adset'|'ad',name:string,body:Record<string,unknown>){
     const row=await store.beginProviderStep(operationId,step,name);if(row.provider_id)return row.provider_id;
-    if(!row.claimed)return this.reconcile(store,operationId,step,name);
+    const recover=async()=>{await this.reconcile(store,operationId,step,name);throw new ProviderError('unknown','tiktok_incomplete');};
+    if(!row.claimed)return recover();
     const kind:Kind=step==='adset'?'adgroup':step;
     let id:string;
     try{const data=await this.request(`${kind}/create`,kind==='ad'?body:{...body,request_id:`${operationId}-${step}`},true);id=String(data?.[`${kind}_id`]??data?.ad_ids?.[0]??'');}
-    catch(error){if(error instanceof ProviderError&&error.outcome==='unknown')return this.reconcile(store,operationId,step,name);throw error;}
-    if(!/^\d+$/.test(id))return this.reconcile(store,operationId,step,name);
+    catch(error){if(error instanceof ProviderError&&error.outcome==='unknown')return recover();throw error;}
+    if(!/^\d+$/.test(id))return recover();
     await store.confirmProviderStep(operationId,step,id);return id;
   }
   async create(plan:TikTokPlan,workflowId:string,operationId:string,store:Store){
@@ -263,7 +291,7 @@ export class TikTok {
     const payload=this.checked!.payload;this.checked=undefined;
     // Queue preflight already validated this exact payload; writes get a separate bounded budget.
     this.deadline=Date.now()+90_000;
-    const {source,ad,group,campaign}=payload,names=this.names(plan,workflowId),account=this.scope.platformAccountId;
+    const {source,group,campaign}=payload,ad=this.sparkCreative(payload.ad,payload.sparkAuthorization),names=this.names(plan,workflowId),account=this.scope.platformAccountId;
     const campaignId=await this.createStep(store,operationId,'campaign',names.campaign,{advertiser_id:account,campaign_name:names.campaign,
       campaign_type:'REGULAR_CAMPAIGN',objective_type:campaign.objective_type,budget_mode:'BUDGET_MODE_INFINITE',budget_optimize_on:false,operation_status:'DISABLE'});
     await this.checkCampaign(campaignId,names.campaign,campaign.objective_type);
@@ -330,8 +358,10 @@ export class TikTok {
       throw new ProviderError('unknown','tiktok_source_changed');
     await this.checkCampaign(campaign.provider_id,names.campaign,sourceCampaign.objective_type);
     await this.checkAdgroup(adgroup.provider_id,names.adgroup,campaign.provider_id,Number(plan.daily_budget),sourceGroup);
-    await this.checkAd(ad.provider_id,names.ad,adgroup.provider_id,{...source,video_id:String(source.video_id),final_url:String(source.landing_page_url),ad_text:authorized?.authorization?.text??source.ad_text});
+    const creative=this.sparkCreative(source,authorized?.authorization);
+    await this.checkAd(ad.provider_id,names.ad,adgroup.provider_id,{...creative,video_id:String(source.video_id),final_url:String(source.landing_page_url),ad_text:authorized?.authorization?.text??source.ad_text});
     return {platform:'TikTok',account_id:this.scope.platformAccountId,campaign_id:campaign.provider_id,adgroup_id:adgroup.provider_id,
-      ad_id:ad.provider_id,status:'DISABLE',daily_budget:plan.daily_budget,currency:plan.currency,source_ad_id:plan.source_ad_id,source_fingerprint:plan.source_fingerprint,...(sparkPost(source)?{tiktok_item_id:source.tiktok_item_id,identity_type:source.identity_type,identity_id:source.identity_id}:{})};
+      ad_id:ad.provider_id,status:'DISABLE',daily_budget:plan.daily_budget,currency:plan.currency,source_ad_id:plan.source_ad_id,source_fingerprint:plan.source_fingerprint,...(sparkPost(source)?{tiktok_item_id:source.tiktok_item_id,identity_type:creative.identity_type,identity_id:creative.identity_id,
+        ...(authorized?.authorization?.identity_mapping?{identity_authorized_bc_id:creative.identity_authorized_bc_id,source_identity_id:source.identity_id,source_identity_type:source.identity_type}:{})}:{})};
   }
 }

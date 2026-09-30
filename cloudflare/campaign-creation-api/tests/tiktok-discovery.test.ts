@@ -15,7 +15,7 @@ function fixture(count=25){
    url.pathname.includes('/identity/get/')?{list:[{identity_id:'identity'}]}:{list:[{video_id:'video'}]};
   return Response.json({code:0,data});
  });
- const env={TIKTOK_ACCESS_TOKEN:'synthetic-token',M04_TIKTOK_MIN_DAILY_BUDGET:'100.00',M04_TIKTOK_BUDGET_CURRENCY:'MYR'};
+ const env={TIKTOK_ACCESS_TOKEN:'synthetic-token',M04_TIKTOK_MIN_DAILY_BUDGET:'100.00',M04_TIKTOK_BUDGET_CURRENCY:'MYR',M04_TIKTOK_BUDGET_EVIDENCE:JSON.stringify({advertiser_id:scope.platformAccountId,currency:'MYR',minimum_daily_budget:'100.00',budget_mode:'BUDGET_MODE_DAY',objective:'TRAFFIC',optimization_goal:'CLICK',billing_event:'CPC'})};
  return {ads,fetcher,env,provider:new TikTok(env,scope,fetcher)};
 }
 it('resumes beyond twenty rejected sources without declaring that discovery is complete',async()=>{
@@ -78,7 +78,7 @@ it('retains completed progress and the unresolved candidate when provider reads 
  const fetcher=async(input:RequestInfo|URL)=>{const result=await f.fetcher(input);if(/adgroup\/get|campaign\/get|identity\/get/.test(String(input)))now+=9_000;return result;};
  try{const refs=await new TikTok(f.env,scope,fetcher).referenceAssets();expect(refs.discovery).toMatchObject({complete:false,scanned:1,unresolved_source_ad_id:f.ads[1].ad_id});expect(refs.discovery.next_cursor).toEqual(expect.any(String));expect(refs.source_checks.at(-1)?.issues).toContain('tiktok_deadline');}finally{clock.mockRestore();}
 });
-it.each([{},{list:[],page_info:{total_page:2}},{list:[],page_info:{total_page:null}},{list:[],page_info:{total_page:-1}},{list:[],page_info:{total_page:''}},{list:[],page_info:{total_page:false}}])('does not classify malformed or incomplete identities as no eligible source',async(data)=>{
+it.each([{list:[{identity_id:'unrelated'}],page_info:{total_page:0}},{},{list:[],page_info:{total_page:2}},{list:[],page_info:{total_page:null}},{list:[],page_info:{total_page:-1}},{list:[],page_info:{total_page:''}},{list:[],page_info:{total_page:false}}])('does not classify malformed or incomplete identities as no eligible source',async(data)=>{
  const f=fixture(1),fetcher=async(input:RequestInfo|URL)=>String(input).includes('/identity/get/')?Response.json({code:0,data}):f.fetcher(input);
  const refs=await new TikTok(f.env,scope,fetcher).referenceAssets();expect(refs.discovery.complete).toBe(false);expect(refs.discovery.scanned).toBe(0);expect(refs.discovery.unresolved_source_ad_id).toBe(f.ads[0].ad_id);expect(refs.source_checks[0].issues).toContain('tiktok_asset_coverage');
 });

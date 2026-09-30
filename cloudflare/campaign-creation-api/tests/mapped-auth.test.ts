@@ -2,6 +2,14 @@ import {expect,it} from 'vitest';
 import {SignJWT} from 'jose';
 import {authenticate,authorize} from '../src/auth';
 import {digest,metaPlanSchema} from '../src/contracts';
+it('limits enabled TikTok creation to the exact Falcon pilot while retaining mapped reads',async()=>{
+ const env={M04_TIKTOK_CREATION_ENABLED:'true',M04_TIKTOK_PILOT_ACCOUNT:'7647057541075271700',M04_TIKTOK_PILOT_SERVICE:'3e44fcc4-f701-8034-b219-c996dbdedbe6',M04_PILOT_SUBJECT:'ava',DIGITALBEE_GRANT_VERIFY_URL:'https://digitalbee.test/v1/internal/grants/verify',DIGITALBEE_GRANT_VERIFY_TOKEN:'t'.repeat(32)} as any;
+ const scope={platform:'TikTok',subject:'ava',accountPageId:env.M04_TIKTOK_PILOT_SERVICE,platformAccountId:env.M04_TIKTOK_PILOT_ACCOUNT} as any;
+ const fetcher=async(_input:RequestInfo|URL,init?:RequestInit)=>Response.json({allowed:true,...JSON.parse(String(init?.body))});
+ await expect(authorize(env,scope,'campaign_gate1_create',fetcher)).resolves.toBeUndefined();
+ for(const changed of [{subject:'other'},{accountPageId:'other'},{platformAccountId:'123'}])for(const tool of ['campaign_gate1_create','campaign_action_prepare_gate1'])await expect(authorize(env,{...scope,...changed},tool,fetcher)).rejects.toThrow('provider_creation_disabled');
+ await expect(authorize(env,{...scope,subject:'other'},'campaign_templates_list',fetcher)).resolves.toBeUndefined();
+});
 
 it('authenticates mapped non-pilot readiness with provider creation off',async()=>{
  const scope={subject:'another-employee',grantRevision:4,accountPageId:'12345678-1234-4234-8234-123456789abc',clientId:'12345678-1234-4234-8234-123456789def',platform:'Meta',platformAccountId:'1234567890123456',connectionRevision:'r1',providerRevision:'p1'};

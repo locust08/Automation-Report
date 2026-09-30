@@ -5,6 +5,7 @@ import {digest, planSchema, type Plan, type Scope} from '../src/contracts';
 import {buildOperations, Google, ProviderError} from '../src/google';
 import {execute,processReservedCreation,sweepCreationOutbox, type Dependencies, type Environment} from '../src/service';
 import {Store} from '../src/store';
+import {TikTok} from '../src/tiktok';
 import {database} from './db';
 
 const scope: Scope = {subject: 'actor', grantRevision: 1, accountPageId: '00000000-0000-4000-8000-000000000001',
@@ -34,6 +35,22 @@ beforeEach(async () => {
 });
 afterEach(() => {vi.restoreAllMocks(); fixture.dispose();});
 const call = (tool: string, input: Record<string, any>, s = scope) => execute(env, s, tool, input, 'request-hash', deps);
+it('shows original and authorized Spark identities in confirmation and retires revisions when mapping changes',async()=>{
+ const tiktokScope={...scope,platform:'TikTok' as const,platformAccountId:'7647057541075271700'};
+ env.M04_TIKTOK_SPARK_IDENTITY_MAPPINGS='[]';
+ const plan={name:'Mapped Spark',campaign_type:'tiktok_existing_ad',currency:'MYR',timezone:'Asia/Singapore',daily_budget:'20.00',source_ad_id:'3',source_adgroup_id:'2',source_campaign_id:'1',source_fingerprint:'f'.repeat(43)};
+ const source={source_ad_id:'3',source_fingerprint:plan.source_fingerprint,objective:'TRAFFIC',video_id:null,identity_id:'authorized',identity_type:'BC_AUTH_TT',identity_authorized_bc_id:'7179390283606507521',source_identity_id:'original',source_identity_type:'TT_USER',tiktok_item_id:'7647120342162361620',creative_mode:'existing_spark_post',final_url:'https://example.com/'};
+ vi.spyOn(TikTok.prototype,'validate').mockResolvedValue({source,ad:{},group:{},campaign:{}} as any);
+ vi.spyOn(TikTok.prototype,'referenceAssets').mockResolvedValue({account:{currency:'MYR',timezone_name:'Asia/Singapore'},sources:[{...source,source_adgroup_id:'2',source_campaign_id:'1',minimum_daily_budget:'20.00',resource_status:'ready'}]} as any);
+ const saved=await call('campaign_draft_save',{service_id:scope.accountPageId,idempotency_key:crypto.randomUUID(),source:{kind:'brief',fields:plan}},tiktokScope);
+ const revision={service_id:scope.accountPageId,workflow_id:saved.workflow_ref!,revision_id:saved.revision_ref!};
+ await call('campaign_draft_validate',{...revision,idempotency_key:crypto.randomUUID()},tiktokScope);
+ const prepared=await call('campaign_action_prepare',{...revision,idempotency_key:crypto.randomUUID(),action:'approve'},tiktokScope);
+ expect(JSON.parse((prepared.confirmation!.draft as {creative_summary:string}).creative_summary)).toMatchObject({identity_id:'authorized',identity_authorized_bc_id:'7179390283606507521',source_identity_id:'original',source_identity_type:'TT_USER'});
+ expect((prepared.data!.resource_plan as Array<unknown>)[2]).toMatchObject({identity_id:'authorized',identity_authorized_bc_id:'7179390283606507521',source_identity_id:'original'});
+ env.M04_TIKTOK_SPARK_IDENTITY_MAPPINGS='[{"changed":true}]';
+ await expect(call('campaign_action_prepare',{...revision,idempotency_key:crypto.randomUUID(),action:'approve'},tiktokScope)).rejects.toThrow('stale_revision');
+});
 const process=(id:string)=>processReservedCreation(env,id,deps);
 async function draft(plan: Plan = search) {
   const result = await call('campaign_draft_save', {service_id: scope.accountPageId, idempotency_key: crypto.randomUUID(), source: {kind: 'brief', fields: plan}});

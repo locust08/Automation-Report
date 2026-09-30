@@ -2,6 +2,11 @@ import {expect,it,vi} from 'vitest';
 import {TikTok} from '../src/tiktok';
 import type {Scope} from '../src/contracts';
 const scope={subject:'ava',grantRevision:1,accountPageId:'service',clientId:'client',platform:'TikTok',platformAccountId:'7647057541075271700',connectionRevision:'test',providerRevision:'test'} as Scope;
+it('does not infer absence from nonempty zero-page identity defaults',async()=>{
+ const f=fixture(),fetcher=async(input:RequestInfo|URL,init?:RequestInit)=>String(input).includes('/identity/get/')?Response.json({code:0,data:{identity_list:[{identity_id:'unrelated',identity_type:'TT_USER'}],page_info:{page:0,page_size:0,total_number:0,total_page:0}}}):f.fetcher(input,init);
+ await expect(new TikTok(f.env,scope,fetcher).referenceAssets('3')).rejects.toMatchObject({code:'tiktok_asset_coverage'});
+ expect(f.writes).toEqual([]);
+});
 function fixture(){
  const ad:any={advertiser_id:scope.platformAccountId,ad_id:'3',adgroup_id:'2',ad_name:'Spark source',operation_status:'DISABLE',ad_format:'SINGLE_VIDEO',identity_type:'TT_USER',identity_id:'identity',tiktok_item_id:'7647120342162361620',video_id:'source-video',ad_text:'Existing post',call_to_action_id:'portfolio',landing_page_url:'https://example.com/'};
  const group:any={advertiser_id:scope.platformAccountId,adgroup_id:'2',campaign_id:'1',operation_status:'DISABLE',budget_mode:'BUDGET_MODE_DYNAMIC_DAILY_BUDGET',budget:56,schedule_type:'SCHEDULE_START_END',billing_event:'CPC',optimization_goal:'CLICK',pacing:'PACING_MODE_SMOOTH',promotion_type:'WEBSITE',location_ids:['MY']};
@@ -20,6 +25,17 @@ function fixture(){
  });
  return {ad,group,campaign,identity,post,env,fetcher,writes,rows,store,provider:new TikTok(env,scope,fetcher)};
 }
+it.each(['campaign','adgroup','ad'])('persists a recovered %s but stops subsequent writes after a lost response',async(lostKind)=>{
+ const f=fixture(),fetcher=async(input:RequestInfo|URL,init?:RequestInit)=>{const response=await f.fetcher(input,init);if(init?.method==='POST'&&new URL(String(input)).pathname.includes(`/${lostKind}/create/`))throw new Error('lost response');return response;};
+ const provider=new TikTok(f.env,scope,fetcher),source=(await provider.referenceAssets('3')).sources[0];
+ const plan={campaign_type:'tiktok_existing_ad' as const,name:'Lost test',currency:'MYR',timezone:'Asia/Singapore',daily_budget:'20.00',source_ad_id:'3',source_adgroup_id:'2',source_campaign_id:'1',source_fingerprint:source.source_fingerprint};
+ await expect(provider.create(plan,'wf','op',f.store)).rejects.toMatchObject({outcome:'unknown',code:'tiktok_incomplete'});
+ const count=['campaign','adgroup','ad'].indexOf(lostKind)+1;
+ expect(f.writes).toHaveLength(count);expect((await f.store.providerStep('op',lostKind==='adgroup'?'adset':lostKind)).provider_id).toBe(String(10+count));
+ if(count<3)await expect(provider.readback(plan,'wf','op',f.store)).rejects.toMatchObject({outcome:'unknown'});
+ else expect(await provider.readback(plan,'wf','op',f.store)).toMatchObject({status:'DISABLE'});
+ expect(f.writes).toHaveLength(count);
+});
 it('authorizes an existing Spark video post and binds stable post content while ignoring expiring preview URLs',async()=>{
  const f=fixture(),first=await f.provider.referenceAssets('3');expect(first.sources[0]).toMatchObject({resource_status:'ready',tiktok_item_id:f.ad.tiktok_item_id,identity_type:'TT_USER',budget_mode:f.group.budget_mode});
  f.post.video_info.url='https://example.com/new-preview';expect((await f.provider.referenceAssets('3')).sources[0].source_fingerprint).toBe(first.sources[0].source_fingerprint);
@@ -80,4 +96,50 @@ it('reconciles delayed visibility only for a persisted begun step without creati
  const name='Spark test [wf]';f.rows.campaign.push({...f.campaign,campaign_id:'99',campaign_name:name});
  const stored:any={status:'started',provider_id:null,provider_name:name};const store:any={providerStep:async(_o:string,step:string)=>step==='campaign'?stored:null,confirmProviderStep:vi.fn(async(_o:string,_s:string,id:string)=>{stored.provider_id=id;stored.status='confirmed';})};
  await expect(f.provider.readback(plan,'wf','op',store)).rejects.toMatchObject({code:'tiktok_incomplete'});expect(store.confirmProviderStep).toHaveBeenCalledWith('op','campaign','99');expect(f.writes).toEqual([]);
+});
+
+function mappedFixture(){
+ const f=fixture(),mapping={advertiser_id:scope.platformAccountId,source_ad_id:f.ad.ad_id,source_identity_id:f.ad.identity_id,tiktok_item_id:f.ad.tiktok_item_id,identity_id:'authorized-bc-identity',identity_authorized_bc_id:'7179390283606507521'};
+ f.env.M04_TIKTOK_SPARK_IDENTITY_MAPPINGS=JSON.stringify([mapping]);
+ Object.assign(f.identity,{identity_id:mapping.identity_id,identity_type:'BC_AUTH_TT',identity_authorized_bc_id:mapping.identity_authorized_bc_id});
+ const fetcher=async(input:RequestInfo|URL,init?:RequestInit)=>{
+  const url=new URL(String(input));
+  if(url.pathname.includes('/identity/get/')&&url.searchParams.get('identity_type')==='TT_USER')return Response.json({code:0,data:{identity_list:[],page_info:{}}});
+  if(url.pathname.includes('/identity/video/info/')&&(url.searchParams.get('identity_id')!==mapping.identity_id||url.searchParams.get('identity_type')!=='BC_AUTH_TT'||url.searchParams.get('identity_authorized_bc_id')!==mapping.identity_authorized_bc_id))return Response.json({code:40000});
+  return f.fetcher(input,init);
+ };
+ return {...f,mapping,provider:new TikTok(f.env,scope,fetcher)};
+}
+it('binds an explicit exact-post BC mapping to live identity and post proof and keeps the original source intact',async()=>{
+ const f=mappedFixture(),original=structuredClone(f.ad),refs=await f.provider.referenceAssets('3');
+ expect(refs.sources[0]).toMatchObject({resource_status:'ready',identity_id:f.mapping.identity_id,identity_type:'BC_AUTH_TT',identity_authorized_bc_id:f.mapping.identity_authorized_bc_id,source_identity_id:'identity',source_identity_type:'TT_USER'});
+ expect(f.ad).toEqual(original);expect(f.writes).toEqual([]);
+ f.post.video_info.signature='changed';expect((await f.provider.referenceAssets('3')).sources[0].source_fingerprint).not.toBe(refs.sources[0].source_fingerprint);
+});
+it.each(['advertiser_id','source_ad_id','source_identity_id','tiktok_item_id'])('never applies a BC mapping to a different %s',async(key)=>{
+ const f=mappedFixture();f.env.M04_TIKTOK_SPARK_IDENTITY_MAPPINGS=JSON.stringify([{...f.mapping,[key]:'999'}]);
+ await expect(f.provider.referenceAssets('3')).rejects.toMatchObject({code:'tiktok_asset_coverage_identity_pages_missing'});expect(f.writes).toEqual([]);
+});
+it('rejects mapped identity permission or exact post failure before writing',async()=>{
+ for(const mutate of [(f:ReturnType<typeof mappedFixture>)=>f.identity.can_pull_video=false,(f:ReturnType<typeof mappedFixture>)=>f.post.item_id='other']){
+  const f=mappedFixture();mutate(f);expect((await f.provider.referenceAssets('3')).sources).toEqual([]);expect(f.writes).toEqual([]);
+ }
+});
+it('accepts native empty carousel defaults on a signed VIDEO post but rejects populated or unknown carousel content',async()=>{
+ const f=mappedFixture();f.post.carousel_info={image_info:[],music_info:{}};
+ expect((await f.provider.referenceAssets('3')).sources[0].resource_status).toBe('ready');
+ for(const carousel of [{image_info:[{image_id:'photo'}],music_info:{}},{image_info:[],music_info:{music_id:'music'}},{image_info:[],music_info:{},other:'unknown'}]){
+  f.post.carousel_info=carousel;expect((await f.provider.referenceAssets('3')).source_checks[0].issues).toContain('spark_post_unavailable');
+ }
+ expect(f.writes).toEqual([]);
+});
+it('creates and reads back the exact authorized mapped Spark identity without editing the source',async()=>{
+ const f=mappedFixture(),original=structuredClone(f.ad),source=(await f.provider.referenceAssets('3')).sources[0];
+ const plan={campaign_type:'tiktok_existing_ad' as const,name:'Mapped Spark test',currency:'MYR',timezone:'Asia/Singapore',daily_budget:'20.00',source_ad_id:'3',source_adgroup_id:'2',source_campaign_id:'1',source_fingerprint:source.source_fingerprint};
+ await f.provider.create(plan,'wf','op',f.store);
+ expect(f.writes[2].body.creatives[0]).toMatchObject({identity_id:f.mapping.identity_id,identity_type:'BC_AUTH_TT',identity_authorized_bc_id:f.mapping.identity_authorized_bc_id,tiktok_item_id:f.ad.tiktok_item_id,operation_status:'DISABLE'});
+ expect(f.writes[2].body.creatives[0]).not.toHaveProperty('ad_text');expect(f.ad).toEqual(original);
+ expect(await f.provider.readback(plan,'wf','op',f.store)).toMatchObject({identity_id:f.mapping.identity_id,identity_type:'BC_AUTH_TT',identity_authorized_bc_id:f.mapping.identity_authorized_bc_id,source_identity_id:'identity'});
+ f.env.M04_TIKTOK_SPARK_IDENTITY_MAPPINGS=JSON.stringify([{...f.mapping,identity_id:'different'}]);
+ await expect(f.provider.validate(plan,'wf')).rejects.toBeDefined();expect(f.writes).toHaveLength(3);
 });
