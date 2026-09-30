@@ -8,7 +8,7 @@ export function campaignBlocker(code:string){
   meta_connection:'Connect the Meta advertising account before checking campaign readiness.',
   tiktok_connection:'Connect the TikTok advertiser before checking campaign readiness.',
   meta_no_eligible_source:'No supported same-account Meta source ad was found in the bounded scan. Select an eligible existing ad.',
-  tiktok_no_eligible_source:'No supported same-account TikTok source ad was found. Select a reusable non-Spark video ad.',
+  tiktok_no_eligible_source:'No supported same-account TikTok source ad was found. Select a reusable video or currently authorized existing Spark video post and review the source diagnostics.',
   tiktok_discovery_incomplete:'More TikTok sources remain. Continue readiness with references.discovery.next_cursor before concluding that no eligible source exists.',
   tiktok_discovery_cursor:'The TikTok discovery cursor is invalid, expired or belongs to another scope. Restart readiness.',
   tiktok_discovery_changed:'The TikTok source catalog changed during discovery. Restart readiness.',

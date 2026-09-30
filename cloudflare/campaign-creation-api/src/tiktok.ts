@@ -12,7 +12,9 @@ const sparkKeys=['ad_format','identity_id','identity_type','identity_authorized_
 const sparkPost=(ad:Record<string,any>)=>typeof ad.tiktok_item_id==='string'&&/^[1-9]\d{0,29}$/.test(ad.tiktok_item_id);
 const inactive=(value:unknown)=>value==null||value===false||value===0||['','0','OFF','UNSET','NONE','DISABLE','DISABLED'].includes(String(value))||Array.isArray(value)&&value.length===0;
 const groupMetadata=['advertiser_id','campaign_id','campaign_name','adgroup_id','adgroup_name','operation_status','secondary_status','create_time','modify_time','is_aco','is_new_structure','is_smart_plus','budget','budget_mode','schedule_type','schedule_start_time','schedule_end_time'];
-const unsupportedGroupSettings=(group:Record<string,any>)=>Object.keys(group).filter(key=>!groupMetadata.includes(key)&&!(groupKeys as readonly string[]).includes(key)&&!inactive(group[key]));
+const unsupportedGroupSettings=(group:Record<string,any>)=>Object.keys(group).filter(key=>!groupMetadata.includes(key)&&!(groupKeys as readonly string[]).includes(key)&&!inactive(group[key])&&
+  !(key==='campaign_automation_type'&&group[key]==='MANUAL')&&!(key==='ios14_quota_type'&&group[key]==='UNOCCUPIED')&&
+  !(key==='creative_material_mode'&&group[key]==='CUSTOM')&&!(key==='bid_display_mode'&&group.optimization_goal==='CLICK'&&group[key]==='CPMV'));
 function httpsDestination(value:unknown){try{const url=new URL(String(value));return url.protocol==='https:'&&!!url.hostname&&!url.username&&!url.password;}catch{return false;}}
 // Documented classic adgroup/create fields. Preserve targeting, exclusions and
 // optimization rather than accepting a source then silently dropping its settings.
@@ -129,7 +131,8 @@ export class TikTok {
       const campaign=await this.one('campaign',String(group.campaign_id));
       if(!['BUDGET_MODE_DAY','BUDGET_MODE_DYNAMIC_DAILY_BUDGET'].includes(group.budget_mode)||Number(group.budget)<=0)issues.push('daily_adgroup_budget_required');
       if(!['SCHEDULE_FROM_NOW','SCHEDULE_START_END'].includes(group.schedule_type))issues.push('unsupported_source_schedule');
-      if(campaign.campaign_type!=='REGULAR_CAMPAIGN'||campaign.budget_optimize_on===true||group.is_smart_plus||campaign.is_smart_plus||group.is_aco===true||ad.is_aco===true)issues.push('unsupported_campaign_automation');
+      if(campaign.campaign_type!=='REGULAR_CAMPAIGN'||campaign.budget_optimize_on===true||group.is_smart_plus||campaign.is_smart_plus||group.is_aco===true||ad.is_aco===true||
+        group.is_smart_performance_campaign===true||group.campaign_automation_type!=null&&group.campaign_automation_type!=='MANUAL'||group.creative_material_mode!=null&&group.creative_material_mode!=='CUSTOM')issues.push('unsupported_campaign_automation');
       if(!group.billing_event||!group.optimization_goal||!group.pacing||!campaign.objective_type)issues.push('incomplete_optimization_settings');
       if(!Array.isArray(group.location_ids)||!group.location_ids.length)issues.push('missing_location_targeting');
       const unsupported=unsupportedGroupSettings(group);
@@ -231,6 +234,7 @@ export class TikTok {
     const groupBody:Record<string,unknown>={advertiser_id:account,campaign_id:campaignId,adgroup_name:names.adgroup,budget_mode:'BUDGET_MODE_DAY',
       budget:Number(plan.daily_budget),operation_status:'DISABLE'};
     groupBody.budget_mode=group.budget_mode;
+    if(group.creative_material_mode==='CUSTOM')groupBody.creative_material_mode='CUSTOM';
     for(const key of groupKeys)if(group[key]!=null)groupBody[key]=group[key];
     if(!['CONVERT','VALUE'].includes(String(group.optimization_goal))){delete groupBody.pixel_id;delete groupBody.optimization_event;}
     // TikTok requires a current start timestamp even for an off ad group. There is no activation path.
@@ -256,7 +260,7 @@ export class TikTok {
       !(key==='pixel_id'||key==='optimization_event')&&JSON.stringify(canonical(row[key]))!==JSON.stringify(canonical(source[key])))||
       ['CONVERT','VALUE'].includes(source.optimization_goal)&&['pixel_id','optimization_event'].some(key=>source[key]!=null&&String(row[key])!==String(source[key]));
     if(row.adgroup_name!==name||String(row.campaign_id)!==campaignId||row.operation_status!=='DISABLE'||row.budget_mode!==source.budget_mode||Number(row.budget)!==budget||
-      mismatch||row.schedule_type!=='SCHEDULE_FROM_NOW'||
+      mismatch||row.schedule_type!=='SCHEDULE_FROM_NOW'||source.creative_material_mode==='CUSTOM'&&row.creative_material_mode!=='CUSTOM'||
       row.optimization_goal!==source.optimization_goal||JSON.stringify(row.location_ids)!==JSON.stringify(source.location_ids)||
       JSON.stringify(row.age_groups??[])!==JSON.stringify(source.age_groups??[])||row.gender!==source.gender)
       throw new ProviderError('unknown','tiktok_adgroup_readback');
