@@ -208,7 +208,26 @@ describe('real paused creation boundary', () => {
     vi.mocked(deps.provider(env,scope).validate).mockRejectedValueOnce(new ProviderError('unavailable','google_response'));
     await process(input.idempotency_key);
     expect((await store.operation(input.idempotency_key,scope))?.status).toBe('rejected');
+    expect(JSON.parse((await store.operation(input.idempotency_key,scope))!.result_json!)).toMatchObject({preflight:{stage:'provider_readiness',category:'unavailable',provider_action:false}});
     expect(deps.provider(env,scope).create).not.toHaveBeenCalled();
+  });
+  it('probes current preflight through receipt reads without changing the operation or posting',async()=>{
+    const input=await creation();await call('campaign_gate1_create',input);
+    const before=await store.operation(input.idempotency_key,scope);
+    const output=await call('campaign_operation_get',{service_id:scope.accountPageId,idempotency_key:input.idempotency_key,diagnose_preflight:true});
+    expect(output.data?.preflight_probe).toMatchObject({historical_evidence:false,authorization_action:'campaign_preflight_check'});
+    expect(await store.operation(input.idempotency_key,scope)).toEqual(before);
+    expect(deps.provider(env,scope).create).not.toHaveBeenCalled();
+  });
+  it.each(['authorization_before','authorization_after'] as const)('retains %s and never exposes arbitrary exceptions',async stage=>{
+    const input=await creation();await call('campaign_gate1_create',input);
+    vi.mocked(deps.authorize).mockReset();
+    if(stage==='authorization_after')vi.mocked(deps.authorize).mockResolvedValueOnce(undefined);
+    vi.mocked(deps.authorize).mockRejectedValue(new Error('SECRET arbitrary payload'));
+    await process(input.idempotency_key);
+    const stored=(await store.operation(input.idempotency_key,scope))!.result_json!;
+    expect(JSON.parse(stored)).toMatchObject({preflight:{stage,category:'unavailable'}});
+    expect(stored).not.toContain('SECRET');expect(deps.provider(env,scope).create).not.toHaveBeenCalled();
   });
   it('reconciles an uncertain response with reads without duplicating creation', async () => {
     const input = await creation(), provider = deps.provider(env, scope);

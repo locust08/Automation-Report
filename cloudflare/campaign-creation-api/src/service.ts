@@ -6,6 +6,7 @@ import {TikTok,tiktokProviderName,type TikTokCredentials} from './tiktok';
 import {Store, type Workflow} from './store';
 import {z} from 'zod';
 import {campaignBlocker} from './blockers';
+import {preflightObservation,type PreflightStage} from './preflight';
 export type Environment = AuthEnvironment & GoogleCredentials & MetaCredentials & TikTokCredentials & {DB:D1Database;CREATION_QUEUE?:Queue<{operationId:string}>};
 export type Provider = Pick<Google, 'validate' | 'create' | 'readback'>;
 export interface Dependencies {authorize: typeof authorize; provider: (env: Environment, scope: Scope) => Provider}
@@ -82,6 +83,22 @@ export async function execute(env: Environment, scope: Scope, tool: string, inpu
     const w = await store.workflow(operation.workflow_id, scope);
     if (!w) throw new Error('access_denied');
     if(w.mapping_hash!==await mappingDigest(scope))throw new Error('access_denied');
+    if(input.diagnose_preflight===true){
+      // A present-time read probe never changes historical receipts or sends creation.
+      const observations:Array<Record<string,unknown>>=[];
+      const probe=async(stage:PreflightStage,fn:()=>Promise<unknown>)=>{
+        try{await fn();observations.push({...preflightObservation(stage,null),category:'passed'});return true;}
+        catch(error){observations.push(preflightObservation(stage,error));return false;}
+      };
+      const permitted=await probe('authorization_before',()=>deps.authorize(env,scope,'campaign_preflight_check'));
+      if(permitted){
+        const matched=await probe('scope_revision',()=>sameScope(w,scope,backendRev));
+        if(matched)await probe('provider_readiness',()=>scope.platform==='TikTok'?tiktok.validate(tiktokPlanSchema.parse(JSON.parse(w.plan_json)),w.id):scope.platform==='Meta'?meta.validate(metaPlanSchema.parse(JSON.parse(w.plan_json)),w.id):google.validate(planSchema.parse(JSON.parse(w.plan_json)),w.id));
+        await probe('authorization_after',()=>deps.authorize(env,scope,'campaign_preflight_check'));
+      }
+      await check(); // Account read ownership remains authoritative even when launcher readiness fails.
+      return result('success',{...reference(w),receipt_ref:operation.id,data:{status:operation.status,provider_action:false,preflight_probe:{observations,authorization_action:'campaign_preflight_check',creation_activation:scope.platform==='TikTok'?env.M04_TIKTOK_CREATION_ENABLED==='true':scope.platform==='Meta'?env.M04_META_CREATION_ENABLED==='true':env.M04_ENABLED==='true',historical_evidence:false}}});
+    }
     const diagnostics=async(status:string)=>{
       if(scope.platform!=='TikTok')return {};
       try{
@@ -231,14 +248,23 @@ export async function processReservedCreation(env:Environment,operationId:string
   if(['verified','rejected'].includes(operation.status))return;
   if(['dispatched','unknown'].includes(operation.status)){await readback();return;}
   if(operation.status!=='reserved')return;
+  let stage:PreflightStage='authorization_before';
   try{
     await deps.authorize(env,scope,'campaign_gate1_create');
+    stage='scope_revision';
     await sameScope(w,scope,await backendRevision(env,scope));
+    stage='provider_readiness';
     if(scope.platform==='Meta')await meta.validate(metaPlanSchema.parse(plan),w.id);
     else if(scope.platform==='TikTok')await tiktok.validate(tiktokPlanSchema.parse(plan),w.id);
     else await google.validate(planSchema.parse(plan),w.id);
+    stage='authorization_after';
     await deps.authorize(env,scope,'campaign_gate1_create');
-  }catch(error){await store.rejectReserved(w,operationId,error instanceof ProviderError?error.code:'preflight_unavailable');return;}
+  }catch(error){
+    const observation=preflightObservation(stage,error);
+    try{await store.rejectReserved(w,operationId,error instanceof ProviderError?error.code:'preflight_unavailable',observation);}
+    catch(storageError){console.warn(JSON.stringify({event:'m04_preflight_persistence_failure',operation_id:operationId,...observation}));throw storageError;}
+    return;
+  }
   try{await store.dispatched(operationId);}catch{await readback();return;}
   let resources:string[];
   try{resources=scope.platform==='Meta'?await meta.create(metaPlanSchema.parse(plan),w.id,operationId,store):scope.platform==='TikTok'?await tiktok.create(tiktokPlanSchema.parse(plan),w.id,operationId,store):await google.create(planSchema.parse(plan),w.id);}

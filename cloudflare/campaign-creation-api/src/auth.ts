@@ -1,5 +1,6 @@
 import {jwtVerify} from 'jose';
 import {boundedJson, digest, scopeSchema, type Scope} from './contracts';
+import {AuthorityError} from './preflight';
 
 export interface AuthEnvironment {
   M04_ENABLED: string;
@@ -61,7 +62,13 @@ export async function authorize(env: AuthEnvironment, scope: Scope, tool: string
   }catch(error){
     console.warn(JSON.stringify({event:'m04_backend_failure',tool,category:'grant_transport'}));throw error;
   }
-  if(!response.ok){await response.body?.cancel();throw new Error('access_denied');}
+  if(!response.ok){
+    try{
+      const value=await boundedJson(response,8192),d=value.diagnostic as Record<string,unknown>|undefined;
+      if(d&&['configuration','runtime_controls','employee_grants','mapping_resolve','mapping_validate','provider_revision','authorization_recheck'].includes(String(d.stage))&&['timeout','denied_or_unavailable'].includes(String(d.category))&&typeof d.correlation_id==='string'&&/^[0-9a-f-]{36}$/i.test(d.correlation_id))throw new AuthorityError({stage:String(d.stage),category:String(d.category),correlation_id:d.correlation_id});
+    }catch(error){if(error instanceof AuthorityError)throw error;}
+    throw new Error('access_denied');
+  }
   const decision = await boundedJson(response, 8192);
   if (!response.ok || decision.allowed !== true || Object.entries(input).some(([key, value]) => decision[key] !== value))
     throw new Error('access_denied');

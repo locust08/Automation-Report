@@ -132,9 +132,9 @@ export class Store {
   async outbox(id:string){return this.primary().prepare('SELECT operation_id,scope_json,enqueued_at FROM m04_creation_outbox WHERE operation_id=?').bind(id).first<{operation_id:string;scope_json:string;enqueued_at:number|null}>();}
   async pendingOutbox(now=Date.now()){return (await this.primary().prepare("SELECT b.operation_id FROM m04_creation_outbox b JOIN m04_operations o ON o.id=b.operation_id WHERE o.status='reserved' AND (b.enqueued_at IS NULL OR b.enqueued_at<?) ORDER BY b.created_at LIMIT 50").bind(now-60000).all<{operation_id:string}>()).results;}
   async markEnqueued(id:string){await this.primary().prepare('UPDATE m04_creation_outbox SET enqueued_at=? WHERE operation_id=?').bind(Date.now(),id).run();}
-  async rejectReserved(w:Workflow,id:string,reason:string){const db=this.primary(),guard=crypto.randomUUID();await db.batch([
+  async rejectReserved(w:Workflow,id:string,reason:string,preflight?:ReturnType<typeof import('./preflight').preflightObservation>){const db=this.primary(),guard=crypto.randomUUID();await db.batch([
     db.prepare("INSERT INTO m04_guard(id,valid) VALUES(?,CASE WHEN EXISTS(SELECT 1 FROM m04_operations WHERE id=? AND workflow_id=? AND status='reserved') THEN 1 ELSE 0 END)").bind(guard,id,w.id),
-    db.prepare("UPDATE m04_operations SET status='rejected',result_json=?,updated_at=? WHERE id=?").bind(JSON.stringify({provider_action:false,reason}),Date.now(),id),
+    db.prepare("UPDATE m04_operations SET status='rejected',result_json=?,updated_at=? WHERE id=?").bind(JSON.stringify({provider_action:false,reason,...(preflight?{preflight}:{})}),Date.now(),id),
     db.prepare("UPDATE m04_workflows SET status='rejected',version=version+1,updated_at=? WHERE id=?").bind(Date.now(),w.id),
     this.auditStatement(db,w,'gate1','rejected'),db.prepare('DELETE FROM m04_guard WHERE id=?').bind(guard),
   ]);}

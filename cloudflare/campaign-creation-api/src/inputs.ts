@@ -7,7 +7,7 @@ export const inputs: Record<string, z.ZodType> = {
   campaign_templates_list: z.object({...service, limit: z.number().int().min(1).max(50).default(20), cursor: z.string().min(1).max(8192).optional(),source_ad_id:z.string().regex(/^\d{1,30}$/).optional()}).strict().refine(value=>!(value.cursor&&value.source_ad_id),'Select a source or continue discovery, not both.'),
   campaign_workflows_list: z.object({...service, limit:z.number().int().min(1).max(50).default(20)}).strict(),
   campaign_workflow_get: z.object({...service, workflow_id: z.uuid()}).strict(),
-  campaign_operation_get: z.object({...service, idempotency_key: z.uuid()}).strict(),
+  campaign_operation_get: z.object({...service, idempotency_key: z.uuid(),diagnose_preflight:z.boolean().optional()}).strict(),
   campaign_draft_save: z.object({...mutation, workflow_id: z.uuid().optional(), revision_id: z.uuid().optional(), source: z.discriminatedUnion('kind', [
     z.object({kind: z.literal('brief'), fields}).strict(),
     z.object({kind: z.literal('template'), template_id: z.string().min(1).max(200), overrides: fields}).strict(),
