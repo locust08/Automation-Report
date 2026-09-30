@@ -67,6 +67,11 @@ it('fails closed when current identity discovery is incomplete or the source ide
 it('accepts exact positive identity authorization without inferring complete negative coverage from missing pagination',async()=>{
  for(const present of [true,false]){const f=fixture(),fetcher=async(input:RequestInfo|URL,init?:RequestInit)=>String(input).includes('/identity/get/')?Response.json({code:0,data:{identity_list:present?[f.identity]:[]}}):f.fetcher(input,init),task=new TikTok(f.env,scope,fetcher).referenceAssets('3');if(present)expect((await task).sources[0].resource_status).toBe('ready');else await expect(task).rejects.toMatchObject({code:'tiktok_asset_coverage_identity_pages_missing'});}
 });
+it('retains discovery progress at an unresolved identity with missing native pagination',async()=>{
+ const f=fixture();f.rows.ad.unshift({...f.ad,ad_id:'4',ad_format:'SINGLE_IMAGE'});
+ const fetcher=async(input:RequestInfo|URL,init?:RequestInit)=>String(input).includes('/identity/get/')?Response.json({code:0,data:{identity_list:[]}}):f.fetcher(input,init);
+ const refs=await new TikTok(f.env,scope,fetcher).referenceAssets();expect(refs.discovery).toMatchObject({scanned:1,complete:false,unresolved_source_ad_id:'3',automatic_continuation_allowed:false});expect(refs.discovery.next_cursor).toBeTruthy();
+});
 it('reconciles delayed visibility only for a persisted begun step without creating later objects',async()=>{
  const f=fixture(),source=(await f.provider.referenceAssets('3')).sources[0],plan={campaign_type:'tiktok_existing_ad' as const,name:'Spark test',currency:'MYR',timezone:'Asia/Singapore',daily_budget:'20.00',source_ad_id:'3',source_adgroup_id:'2',source_campaign_id:'1',source_fingerprint:source.source_fingerprint};
  const name='Spark test [wf]';f.rows.campaign.push({...f.campaign,campaign_id:'99',campaign_name:name});

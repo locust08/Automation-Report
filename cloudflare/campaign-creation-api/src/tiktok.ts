@@ -194,7 +194,7 @@ export class TikTok {
         final_url:String(ad.landing_page_url),minimum_daily_budget:min,resource_status:min?'ready':'budget_floor_unverified'});
       break;
       }catch(error){
-        if(selectedAdId||!(error instanceof ProviderError)||!['tiktok_deadline','tiktok_response','tiktok_asset_coverage'].includes(error.code))throw error;
+        if(selectedAdId||!(error instanceof ProviderError)||!(['tiktok_deadline','tiktok_response','tiktok_asset_coverage'].includes(error.code)||error.code.startsWith('tiktok_asset_coverage_identity_')))throw error;
         // Preserve only definitively checked candidates. Do not skip the unresolved
         // newer source or automatically loop a continuation that made no progress.
         scanned--;unresolved_source_ad_id=String(ad.ad_id);
