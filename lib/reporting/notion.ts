@@ -1,3 +1,4 @@
+import { fetchNotionRead } from "./notion-read-request";
 import { normalizeGoogleAccountId } from "@/lib/reporting/env";
 import {
   formatGoogleAdsCustomerId,
@@ -306,7 +307,7 @@ async function fetchGoogleAdAccountRecords(
         `[notion] query database_id=${config.databaseId} data_source_id=${dataSourceId} endpoint=${endpoint}`
       );
       logNotionRequest("POST", endpoint, config.databaseId, config.hasToken);
-      const response: Response = await fetch(endpoint, {
+      const response: Response = await fetchNotionRead(endpoint, {
         method: "POST",
         headers: {
           Authorization: `Bearer ${config.notionAccessToken}`,
@@ -392,7 +393,7 @@ async function resolveNotionDataSourceId(
     console.info(`[notion] resolving_data_source database_id=${config.databaseId} endpoint=${endpoint}`);
   }
 
-  const response = await fetch(endpoint, {
+  const response = await fetchNotionRead(endpoint, {
     method: "GET",
     headers: {
       Authorization: `Bearer ${config.notionAccessToken}`,
@@ -521,7 +522,7 @@ export async function queryNotionDatabasePages(input: {
 
   do {
     const endpoint = `${NOTION_API_BASE_URL}/data_sources/${dataSourceId}/query`;
-    const response: Response = await fetch(endpoint, {
+    const response: Response = await fetchNotionRead(endpoint, {
       method: "POST",
       headers: {
         Authorization: `Bearer ${notionConfig.notionAccessToken}`,
