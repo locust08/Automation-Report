@@ -7,14 +7,14 @@ const browser = await chromium.launch({ channel: "chrome", headless: true });
 const page = await browser.newPage({ viewport: { width: 1920, height: 1080 } });
 page.setDefaultNavigationTimeout(120000);
 page.on("pageerror", (error) => console.error("UI error:", error.message));
-const values = { impressions: 100, clicks: 10, spend: 5, conversions: 2, ctr: 10, cpc: .5, cpm: 50 };
+const values = { impressions: 100, views: 100, clicks: 10, spend: 5, conversions: 2, ctr: 10, cpc: .5, cpm: 50 };
 const demand = { account: { id: "1234567890", name: "Fixture Google", currency: "MYR", timezone: "Asia/Kuala_Lumpur" }, startDate: "2026-09-01", endDate: "2026-09-30", campaigns: [{ id: "1", name: "Demand A" }, { id: "2", name: "Demand B" }], campaignId: "1", inMarket: [{ id: "i", name: "Furniture", metrics: values }], affinity: [{ id: "a", name: "Home enthusiasts", metrics: values }], cells: ["In-feed", "In-stream", "Shorts"].flatMap((format) => ["Desktop", "Mobile", "Tablet", "TV"].map((device) => ({ format, device, metrics: values }))), unmapped: [], unresolved: [], warnings: [], complete: true };
 const dateRange = { startDate: "2026-09-01", endDate: "2026-09-30", previousStartDate: "2026-08-01", previousEndDate: "2026-08-31", currentLabel: "September 2026", previousLabel: "August 2026" };
 demand.inMarket.push(...Array.from({ length: 11 }, (_, index) => ({ id: `i${index}`, name: `Interest ${String(index).padStart(2, "0")}`, metrics: values })));
-const campaign = { id: "c", platform: "meta", campaignType: "Lead", campaignName: "Fixture campaign", resultActionType: "lead", resultLabel: "Lead", impressions: 1000, clicks: 100, spend: 50, results: 20, ctr: 10, cpm: 50, costPerResult: 2.5, conversions: 20, avgCpc: .5, youtubeEarnedLikes: 0, youtubeEarnedShares: 0 };
+const campaign = { id: "c", platform: "meta", campaignType: "Lead", campaignName: "Fixture campaign", resultActionType: "lead", resultLabel: "Lead", impressions: 1000, videoViews: 500, clicks: 100, spend: 50, results: 20, ctr: 10, cpm: 50, costPerResult: 2.5, conversions: 20, avgCpc: .5, youtubeEarnedLikes: 0, youtubeEarnedShares: 0 };
 const overall = { companyName: "Fixture", dateRange, accountIds: { metaAccountId: "96906550", googleAccountId: null, metaAccountIds: ["96906550"], googleAccountIds: [] }, summaries: [], campaignGroups: [{ id: "meta-lead", platform: "meta", campaignType: "Lead", rows: [campaign], totals: campaign }], warnings: [], diagnostics: [], audienceClickBreakdown: { age: [], gender: [], location: { country: [], region: [], city: [] } } };
-const performance = { resultLabel: "Lead", results: 2, impressions: 100, clicks: 10, spend: 5, ctr: 10, cpm: 50, cpc: .5, costPerResult: 2.5, landingPageViews: 0, linkClicks: 0 };
-let demandRequests = 0, failHierarchy = false;
+const performance = { resultLabel: "Lead", results: 2, impressions: 100, videoViews: 50, clicks: 10, spend: 5, ctr: 10, cpm: 50, cpc: .5, costPerResult: 2.5, landingPageViews: 0, linkClicks: 0 };
+let demandRequests = 0, failHierarchy = false, partialHierarchy = true;
 const requests = [];
 await page.route("**/api/**", async (route) => {
   const url = new URL(route.request().url()); requests.push(url);
@@ -24,7 +24,7 @@ await page.route("**/api/**", async (route) => {
   else if (url.pathname === "/api/reporting/demand-gen") { demandRequests++; data = { ...demand, campaignId: url.searchParams.get("campaignId") }; }
   else if (url.pathname.includes("/ad-groups") || url.pathname.includes("/ads")) {
     if (failHierarchy) return route.fulfill({ status: 503, json: { error: "Fixture retry failure" } });
-    data = { ...overall, sections: [{ platform: "meta", campaigns: [{ id: "c", name: "Fixture campaign", status: "Paused", details: [], children: [{ id: "s", name: "Historical set", status: "Paused", details: [], performance, ads: [{ id: "a", name: "Historical ad", status: "Paused", details: [], performance: { ...performance, spend: 3, results: 1 } }] }] }] }], warnings: url.pathname.includes("/ad-groups") ? ["Fixture partial coverage"] : [] };
+    data = { ...overall, sections: [{ platform: "meta", campaigns: [{ id: "c", name: "Fixture campaign", status: "Paused", details: [], children: [{ id: "s", name: "Historical set", status: "Paused", details: [], performance, ads: [{ id: "a", name: "Historical ad", status: "Paused", details: [], performance: { ...performance, spend: 3, results: 1 } }] }] }] }], warnings: partialHierarchy ? ["Fixture partial coverage"] : [] };
   } else if (url.pathname.includes("/api/reports/") || url.pathname === "/api/reporting") data = url.searchParams.get("googleAccountId") ? { ...overall, accountIds: { metaAccountId: null, metaAccountIds: [], googleAccountId: "1234567890", googleAccountIds: ["1234567890"] }, campaignGroups: [{ ...overall.campaignGroups[0], id: "google-search", platform: "google", campaignType: "Search", rows: [{ ...campaign, platform: "google", campaignType: "Search", campaignName: "Google campaign only" }] }] } : overall;
   else if (url.pathname.endsWith("/final-url-performance")) data = { section: { rows: [{ id: "url", campaign: "Demand Gen campaign with a readable name", finalUrl: "https://example.com/landing-page?utm_source=google&utm_campaign=demand-gen", spend: 2007.59, impressions: 289568, clicks: 21237, conversions: 1256, ctr: 7.33, cpc: .09, cpa: 1.60, conversionRate: 5.92 }], otherRow: null, totalUrlCount: 1 }, warnings: [] };
   else if (url.pathname.includes("/advanced") || url.pathname === "/api/reporting/advanced") return route.fulfill({ status: 503, json: { error: "Fixture analysis unavailable" } });
@@ -45,7 +45,7 @@ try {
   await inMarket.getByText("Page 2 of 2", { exact: true }).waitFor();
   await inMarket.getByRole("button", { name: "Previous", exact: true }).click();
   await inMarket.getByRole("button", { name: /^Audience/ }).click();
-  await page.getByRole("button", { name: "Ranked chart", exact: true }).first().click();
+  assert.equal(await page.getByRole("button", { name: "Ranked chart", exact: true }).count(), 0, "audience charts stay beside their tables");
   await page.getByRole("combobox", { name: "Metric", exact: true }).click();
   await page.getByRole("option", { name: "CTR (%)", exact: true }).click();
   assert.equal(demandRequests, before, "presentation changes must not refetch");
@@ -72,17 +72,17 @@ try {
   assert.equal(await page.getByRole("button", { name: /Expand .* hierarchy/ }).count(), 0, "Meta Monthly Performance is campaign-only");
   await page.getByRole("button", { name: "Navigation", exact: true }).click();
   await page.getByRole("menuitem", { name: "Campaign Breakdown", exact: true }).click();
-  await page.getByRole("button", { name: "Expand Fixture campaign hierarchy" }).first().click();
-  await page.getByRole("button", { name: "Historical set" }).first().waitFor();
-  await page.getByRole("button", { name: "Historical set" }).first().click();
+  await page.getByRole("button", { name: "Expand Fixture campaign" }).first().click();
+  await page.getByRole("button", { name: "Expand Historical set" }).first().waitFor();
+  await page.getByRole("button", { name: "Expand Historical set" }).first().click();
   await page.getByText("Historical ad", { exact: true }).filter({ visible: true }).first().waitFor();
-  const setTable = page.getByRole("region", { name: "Ad Sets performance table", exact: true }).filter({ visible: true }).first();
-  const adTable = page.getByRole("region", { name: "Ads performance table", exact: true }).filter({ visible: true }).first();
-  assert.equal(await setTable.locator(":scope > table > thead th").count(), 9);
-  assert.equal(await adTable.locator(":scope > table > thead th").count(), 9);
-  assert.equal(await adTable.getByRole("row").last().getByRole("cell").count(), 9, "ad name and metrics share one row");
+  const setTable = page.getByRole("region", { name: "Performance table", exact: true }).filter({ visible: true }).nth(1);
+  const adTable = page.getByRole("region", { name: "Performance table", exact: true }).filter({ visible: true }).nth(2);
+  assert.equal(await setTable.locator(":scope > table > thead th").count(), 10);
+  assert.equal(await adTable.locator(":scope > table > thead th").count(), 10);
+  assert.equal(await adTable.getByRole("row").last().getByRole("cell").count(), 10, "ad name and metrics share one row");
   await page.setViewportSize({ width: 390, height: 844 });
-  const mobileTable = page.getByRole("region", { name: "Ad Sets performance table", exact: true }).filter({ visible: true }).first();
+  const mobileTable = page.getByRole("region", { name: "Performance table", exact: true }).filter({ visible: true }).nth(1);
   assert.ok(await mobileTable.evaluate((element) => element.scrollWidth > element.clientWidth), "small screens scroll instead of stacking metrics");
   await mobileTable.evaluate((element) => { element.scrollLeft = 400; });
   const nameCell = mobileTable.locator(":scope > table > tbody > tr > td").first();
@@ -92,9 +92,9 @@ try {
   await page.setViewportSize({ width: 1920, height: 1080 });
   assert.equal(await page.getByRole("heading", { name: "Demand Gen Analysis" }).count(), 0);
   failHierarchy = true;
-  await page.getByRole("button", { name: "Retry ad sets" }).first().click();
-  await page.getByText("Fixture retry failure", { exact: true }).waitFor();
-  assert.ok(await page.getByRole("button", { name: "Historical set" }).first().isVisible(), "retry failure must retain children");
+  await page.getByRole("button", { name: "Retry ad sets/groups" }).first().click();
+  await page.getByText(/Incomplete coverage: Fixture retry failure/).waitFor();
+  assert.ok(await page.getByRole("button", { name: "Collapse Historical set" }).first().isVisible(), "retry failure must retain children");
   const width = await page.locator('[data-report-capture-root="true"] > div').first().evaluate((element) => element.getBoundingClientRect().width);
   assert.ok(width > 1440, `Overall width ${width}`);
   await page.screenshot({ path: "tmp/meta-hierarchy-desktop.png", fullPage: true });
@@ -120,16 +120,16 @@ try {
   assert.equal(await page.getByRole("menuitem", { name: "Demand Gen Analysis", exact: true }).count(), 1);
   await page.keyboard.press("Escape");
   assert.equal(requests.slice(googleHierarchyRequests).filter((url) => url.pathname.includes("/api/reports/") || url.pathname.includes("/ad-groups")).length, 0);
-  failHierarchy = false;
+  failHierarchy = false; partialHierarchy = false;
   await page.goto(`${base}/overall?tiktokAccountId=1234&platform=tiktok&startDate=2026-09-01&endDate=2026-09-30`);
   await page.getByText("Fixture campaign", { exact: true }).filter({ visible: true }).first().waitFor();
   assert.equal(await page.getByRole("button", { name: /Expand .* hierarchy/ }).count(), 0, "TikTok Monthly Performance is campaign-only");
   await page.goto(`${base}/campaign-breakdown?tiktokAccountId=1234&platform=tiktok&startDate=2026-09-01&endDate=2026-09-30`);
-  await page.getByRole("button", { name: "Expand Fixture campaign hierarchy" }).first().click();
-  await page.getByRole("button", { name: "Historical set" }).first().click();
+  await page.getByRole("button", { name: "Expand Fixture campaign" }).first().click();
+  await page.getByRole("button", { name: "Expand Historical set" }).first().click();
   await page.getByText("Historical ad", { exact: true }).filter({ visible: true }).first().waitFor();
   await page.goto(`${base}/campaign-breakdown?metaAccountId=96906550&platform=meta&startDate=2026-08-01&endDate=2026-08-31`);
-  await page.getByRole("button", { name: "Expand Fixture campaign hierarchy" }).first().waitFor();
+  await page.getByRole("button", { name: "Expand Fixture campaign" }).first().waitFor();
   assert.equal(await page.getByText("Historical ad", { exact: true }).count(), 0, "date changes discard expanded child data");
   console.log("Browser QA passed: Google campaign-only desktop/mobile,  independent Demand Gen, sorting/pagination, shared metrics without refetch, mobile layout, Meta return navigation, historical children, retained retry data, wider Overall, preserved capture width and PDF render.");
 } catch (error) {

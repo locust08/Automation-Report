@@ -1,3 +1,4 @@
+import { cachedReportPage } from "./report-page-cache";
 import { buildDateRange } from "@/lib/reporting/date";
 import { fetchGoogleDemandGen } from "@/lib/reporting/google";
 import { resolveDemandGenWithCache } from "@/lib/reporting/demand-gen-cache";
@@ -709,7 +710,14 @@ export async function getOverallSummaryStage(
   };
 }
 
-export async function getOverallCampaignPerformanceStage(
+export async function getOverallCampaignPerformanceStage(input: OverallInput): Promise<OverallCampaignPerformanceStagePayload> {
+  const credentials = getCredentials();
+  const context = await resolveReportAccountContext(input, credentials);
+  const { cacheRefreshKey, ...scope } = input;
+  return cachedReportPage({ scope, accounts: context.resolvedAccountIds, routing: context.googleManagerContext, identity: [credentials.metaAccessToken, credentials.googleRefreshToken, credentials.googleAdsApiVersion] }, () => getOverallCampaignPerformanceStageUncached(input), Boolean(cacheRefreshKey));
+}
+
+async function getOverallCampaignPerformanceStageUncached(
   input: OverallInput
 ): Promise<OverallCampaignPerformanceStagePayload> {
   const performance = await getOverallPerformanceStageData(input);
@@ -1115,6 +1123,13 @@ function finalizeOverallStageWarnings(
 
 export async function getPreviewReport(input: OverallInput): Promise<PreviewReportPayload> {
   const credentials = getCredentials();
+  const context = await resolveReportAccountContext(input, credentials);
+  const { cacheRefreshKey, ...scope } = input;
+  return cachedReportPage({ scope, accounts: context.resolvedAccountIds, routing: context.googleManagerContext, identity: [credentials.metaAccessToken, credentials.googleRefreshToken, credentials.googleAdsApiVersion] }, () => getPreviewReportUncached(input), Boolean(cacheRefreshKey));
+}
+
+async function getPreviewReportUncached(input: OverallInput): Promise<PreviewReportPayload> {
+  const credentials = getCredentials();
   const dateRange = buildDateRange(input.startDate, input.endDate);
   const warnings: string[] = [];
   const previewStage = input.previewStage ?? "full";
@@ -1414,7 +1429,7 @@ export async function getTopKeywordsReport(input: OverallInput): Promise<TopKeyw
   };
 }
 
-export async function getDemandGenReport(input: OverallInput, campaignId: string | null) {
+export async function getDemandGenReport(input: OverallInput, campaignId: string | string[] | null) {
   const credentials = getCredentials();
   const dates = buildDateRange(input.startDate, input.endDate);
   const { resolvedAccountIds, googleManagerContext } = await resolveReportAccountContext(input, credentials);
@@ -1422,8 +1437,8 @@ export async function getDemandGenReport(input: OverallInput, campaignId: string
   const customerId = resolvedAccountIds.googleAccountIds[0];
   const loginCustomerId = resolveLoginCustomerIdForAccount(customerId, googleManagerContext.loginCustomerIdByAccount);
   const accessPath = googleManagerContext.accessPathByAccount[customerId];
-  const cacheKey = JSON.stringify({ customerId, campaignId, startDate: dates.startDate, endDate: dates.endDate, loginCustomerId, accessPath, apiVersion: credentials.googleAdsApiVersion, fallbackLoginCustomerId: credentials.googleLoginCustomerId });
-  const payload = await resolveDemandGenWithCache(cacheKey, () => fetchGoogleDemandGen({ customerId, apiVersion: credentials.googleAdsApiVersion, accessToken: credentials.googleAccessToken, refreshToken: credentials.googleRefreshToken, clientId: credentials.googleClientId, clientSecret: credentials.googleClientSecret, loginCustomerId, accessPath, fallbackLoginCustomerId: credentials.googleLoginCustomerId, startDate: dates.startDate, endDate: dates.endDate }, campaignId));
+  const cacheKey = JSON.stringify({ schemaVersion: 2, customerId, campaignId: Array.isArray(campaignId) ? [...new Set(campaignId)].sort() : campaignId, startDate: dates.startDate, endDate: dates.endDate, loginCustomerId, accessPath, apiVersion: credentials.googleAdsApiVersion, fallbackLoginCustomerId: credentials.googleLoginCustomerId });
+  const payload = await resolveDemandGenWithCache(cacheKey, () => fetchGoogleDemandGen({ customerId, apiVersion: credentials.googleAdsApiVersion, accessToken: credentials.googleAccessToken, refreshToken: credentials.googleRefreshToken, clientId: credentials.googleClientId, clientSecret: credentials.googleClientSecret, loginCustomerId, accessPath, fallbackLoginCustomerId: credentials.googleLoginCustomerId, startDate: dates.startDate, endDate: dates.endDate }, campaignId), Boolean(input.cacheRefreshKey));
   payload.warnings.unshift(...googleManagerContext.messages);
   return payload;
 }
@@ -1885,6 +1900,7 @@ async function tryFetchTikTokForAccounts(
         campaignType: "TikTok Auction",
         campaignName: row.name,
         impressions: row.impressions,
+        videoViews: row.videoViews ?? null,
         clicks: row.clicks,
         ctr: row.ctr,
         cpm: row.cpm,

@@ -10,7 +10,7 @@ export async function GET(request: Request) {
   const params = new URL(request.url).searchParams;
   const context = parseRequestContext(params);
   try {
-    return NextResponse.json(await getDemandGenReport({ ...context, accountId: null, metaAccountId: null, tiktokAccountId: null, googleAccountId: context.googleAccountId ?? context.accountId }, params.get("campaignId")), { headers: { "Cache-Control": "no-store" } });
+    return NextResponse.json(await getDemandGenReport({ ...context, accountId: null, metaAccountId: null, tiktokAccountId: null, googleAccountId: context.googleAccountId ?? context.accountId, cacheRefreshKey: params.get("refresh") ?? params.get("cacheRefresh") }, params.getAll("campaignId").length ? params.getAll("campaignId") : null), { headers: { "Cache-Control": "no-store" } });
   } catch (error) {
     return buildReportingErrorResponse(error, "Unable to load Demand Gen analysis.");
   }

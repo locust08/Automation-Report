@@ -64,7 +64,7 @@ type InFlightQueryValue = {
 const queryResponseCache = new Map<string, CachedQueryValue<unknown>>();
 const inFlightQueries = new Map<string, InFlightQueryValue>();
 const MAX_QUERY_CACHE_ENTRIES = 100;
-const OVERALL_STAGE_QUERY_CACHE_TTL_MS = 2 * 60 * 1000;
+const OVERALL_STAGE_QUERY_CACHE_TTL_MS = 5 * 60 * 1000;
 
 function extractErrorMessage(
   payload: ReportingErrorPayload | null | undefined,
@@ -232,6 +232,8 @@ function getFreshCachedQuery<T>(
 }
 
 function setCachedQuery<T>(queryKey: string, value: CachedQueryValue<T>) {
+  const payload = value.data as { complete?: boolean; warnings?: string[] } | null;
+  if (payload?.complete === false || payload?.warnings?.some((warning) => /unavailable|failed|incomplete|partial/i.test(warning))) return;
   queryResponseCache.delete(queryKey);
   queryResponseCache.set(queryKey, value as CachedQueryValue<unknown>);
   while (queryResponseCache.size > MAX_QUERY_CACHE_ENTRIES) {

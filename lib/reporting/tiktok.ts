@@ -22,6 +22,7 @@ export interface TikTokReportingClient {
 }
 
 export interface NormalizedTikTokReportRow {
+  videoViews?: number | null;
   id: string;
   name: string;
   impressions: number;
@@ -102,6 +103,7 @@ export function normalizeTikTokReportRows(
     const current = totals.get(id) ?? {
       id,
       name: names.get(id) ?? id,
+      videoViews: 0 as number | null,
       impressions: 0,
       clicks: 0,
       engagements: 0,
@@ -110,6 +112,8 @@ export function normalizeTikTokReportRows(
       conversions: 0,
     };
     const clicks = finiteMetric(row, "clicks");
+    const videoViews = optionalFiniteMetric(row, "video_play_actions");
+    current.videoViews = current.videoViews == null || videoViews == null ? null : current.videoViews + videoViews;
     current.impressions += finiteMetric(row, "impressions");
     current.clicks += clicks;
     current.engagements += optionalFiniteMetric(row, "engagements") ?? clicks;
@@ -149,7 +153,7 @@ export async function fetchTikTokReportLevel(
         report_type: "BASIC",
         data_level: config.dataLevel,
         dimensions: input.dimensions ?? [config.dimension],
-        metrics: input.metrics ?? ["spend", "impressions", "clicks", "engagements", "result", "reach"],
+        metrics: input.metrics ?? ["spend", "impressions", "clicks", "engagements", "result", "reach", "video_play_actions"],
         filtering: input.filtering,
         start_date: window.startDate,
         end_date: window.endDate,
@@ -329,6 +333,7 @@ export function resolveTikTokCampaignResultRows(input: {
 function previewPerformance(row: NormalizedTikTokReportRow | undefined): PreviewPerformanceSummary | null {
   if (!row) return null;
   return {
+    videoViews: row.videoViews ?? null,
     resultLabel: row.resultLabel ?? "Results",
     results: row.conversions,
     spend: row.spend,

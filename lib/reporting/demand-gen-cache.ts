@@ -4,7 +4,8 @@ import { readThroughMemoryCache, type MemoryCacheEntry } from "./memory-cache";
 const cache = new Map<string, MemoryCacheEntry<DemandGenPayload>>();
 const TTL_MS = 15 * 60 * 1000;
 
-export async function resolveDemandGenWithCache(key: string, load: () => Promise<DemandGenPayload>) {
+export async function resolveDemandGenWithCache(key: string, load: () => Promise<DemandGenPayload>, refresh = false) {
+  if (refresh) cache.delete(key);
   const payload = await readThroughMemoryCache(cache, key, load, { ttlMs: TTL_MS, maxEntries: 100 });
   // Partial snapshots must remain retrievable on retry rather than becoming sticky failures.
   if (!payload.complete) cache.delete(key);

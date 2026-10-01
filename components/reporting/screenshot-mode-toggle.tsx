@@ -131,9 +131,10 @@ const REPORT_EXPORT_CAPTURE_STYLE = `
 interface ReportDownloadButtonProps {
   fileNamePrefix?: string;
   compact?: boolean;
+  disabled?: boolean;
 }
 
-export function ReportDownloadButton({ fileNamePrefix, compact = false }: ReportDownloadButtonProps) {
+export function ReportDownloadButton({ fileNamePrefix, compact = false, disabled = false }: ReportDownloadButtonProps) {
   const { screenshotMode, setScreenshotMode } = useScreenshotMode();
   const [queuedFormat, setQueuedFormat] = useState<DownloadFormat | null>(null);
   const [downloadingFormat, setDownloadingFormat] = useState<DownloadFormat | null>(null);
@@ -292,7 +293,7 @@ export function ReportDownloadButton({ fileNamePrefix, compact = false }: Report
                   ? "h-8 w-auto px-2 text-[11px] shadow-none"
                   : "h-10 w-full px-4 text-sm shadow-sm sm:min-w-[148px] sm:w-auto"
               )}
-              disabled={isBusy}
+              disabled={isBusy || disabled}
             >
               {isBusy ? (
                 <LoaderCircleIcon
@@ -527,7 +528,18 @@ async function captureReportPng(root: HTMLElement, format: DownloadFormat): Prom
   try {
     await waitForReportCaptureReady(root);
 
-    return captureElementPng(root, format);
+    const standalone = root.querySelector("[data-standalone-report]");
+    const tables = standalone ? Array.from(root.querySelectorAll<HTMLElement>("[data-report-full-width-table]")) : [];
+    const styles = [...tables, ...(standalone ? [root, root.firstElementChild as HTMLElement] : [])].filter(Boolean).map((element) => ({ element, value: element.getAttribute("style") }));
+    try {
+      if (standalone && tables.length) {
+        root.style.width = `${Math.max(root.scrollWidth, ...tables.map((element) => element.scrollWidth + 180))}px`;
+        root.style.maxWidth = "none"; root.style.overflow = "visible";
+        const shell = root.firstElementChild as HTMLElement; shell.style.maxWidth = "none"; shell.style.width = "100%";
+      }
+      tables.forEach((element) => { element.style.overflow = "visible"; element.style.width = `${element.scrollWidth}px`; });
+      return await captureElementPng(root, format);
+    } finally { styles.forEach(({ element, value }) => value == null ? element.removeAttribute("style") : element.setAttribute("style", value)); }
   } finally {
     exportStyle.remove();
   }
@@ -579,6 +591,15 @@ function getAdvancedExportElements(root: HTMLElement): HTMLElement[] {
 }
 
 async function waitForReportCaptureReady(root: HTMLElement): Promise<void> {
+  if (root.querySelector("[data-standalone-report]")) {
+    const deadline = Date.now() + 120000;
+    while (root.dataset.reportReady !== "true") {
+      const error = root.querySelector<HTMLElement>("[data-export-error]")?.dataset.exportError;
+      if (error) throw new Error(error);
+      if (Date.now() > deadline) throw new Error("Report preparation is incomplete. Retry the missing data before downloading.");
+      await waitFor(100);
+    }
+  }
   await waitForAnimationFrame();
   await waitForAnimationFrame();
   await Promise.race([document.fonts.ready, waitFor(EXPORT_READY_TIMEOUT_MS)]);

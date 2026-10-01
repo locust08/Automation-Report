@@ -1,7 +1,7 @@
 // Semantics ported from DigitalBee's structured-reporting/demand-gen collector.
-export const demandMetrics = ["impressions", "clicks", "spend", "conversions", "ctr", "cpc", "cpm"] as const;
+export const demandMetrics = ["views", "clicks", "spend", "conversions", "ctr", "cpc", "cpm"] as const;
 export type DemandMetric = typeof demandMetrics[number];
-export type DemandValues = Record<DemandMetric, number | null>;
+export type DemandValues = Record<DemandMetric | "impressions", number | null>;
 export type DemandNativeRow = {
   metrics?: Record<string, unknown>;
   segments?: { adFormatType?: string; device?: string };
@@ -10,12 +10,14 @@ export type DemandNativeRow = {
 export interface DemandAudienceRow { id: string; name: string; metrics: DemandValues }
 export const demandFormats = ["In-feed", "In-stream", "Shorts"] as const;
 export const demandDevices = ["Desktop", "Mobile", "Tablet", "TV"] as const;
-export interface DemandCell { format: string; device: string; metrics: DemandValues }
+export interface DemandCell { observed?: boolean; format: string; device: string; metrics: DemandValues }
 export interface DemandGenPayload {
   account: { id: string; name: string; currency: string; timezone: string };
   startDate: string; endDate: string;
   campaigns: { id: string; name: string }[];
   campaignId: string | null;
+  campaignIds?: string[];
+  totals?: DemandValues;
   inMarket: DemandAudienceRow[]; affinity: DemandAudienceRow[];
   cells: DemandCell[]; unmapped: DemandCell[];
   unresolved: DemandAudienceRow[];
@@ -32,7 +34,7 @@ export function aggregateDemandMetrics(rows: DemandNativeRow[]): DemandValues {
   const impressions = sum("impressions"), clicks = sum("clicks"), conversions = sum("conversions"), micros = sum("costMicros");
   const spend = micros === null ? null : micros / 1e6;
   const ratio = (a: number | null, b: number | null, scale = 1) => a === null || b === null || b === 0 ? null : a / b * scale;
-  return { impressions, clicks, conversions, spend, ctr: ratio(clicks, impressions, 100), cpc: ratio(spend, clicks), cpm: ratio(spend, impressions, 1000) };
+  return { impressions, views: sum("videoTrueviewViews"), clicks, conversions, spend, ctr: ratio(clicks, impressions, 100), cpc: ratio(spend, clicks), cpm: ratio(spend, impressions, 1000) };
 }
 
 export function buildDemandMatrix(rows: DemandNativeRow[]) {
@@ -45,7 +47,7 @@ export function buildDemandMatrix(rows: DemandNativeRow[]) {
     const key = `${format}|${device}`;
     groups.set(key, [...(groups.get(key) ?? []), row]);
   }
-  const cells = demandFormats.flatMap((format) => demandDevices.map((device) => ({ format, device, metrics: aggregateDemandMetrics(groups.get(`${format}|${device}`) ?? []) })));
+  const cells = demandFormats.flatMap((format) => demandDevices.map((device) => ({ format, device, observed: Boolean(groups.get(`${format}|${device}`)?.length), metrics: aggregateDemandMetrics(groups.get(`${format}|${device}`) ?? []) })));
   const unmapped = [...groups].filter(([key]) => !cells.some((cell) => key === `${cell.format}|${cell.device}`)).map(([key, data]) => ({ format: key.split("|")[0], device: key.split("|")[1], metrics: aggregateDemandMetrics(data) }));
   return { cells, unmapped };
 }
@@ -87,4 +89,11 @@ export async function readDemandPages<T>(read: (token?: string) => Promise<{ res
     tokens.add(token);
   }
   return { rows, complete: false, reason: "Pagination limit or repeated continuation token; coverage is partial." };
+}
+
+export function sumDemandValues(values: DemandValues[]): DemandValues {
+  return aggregateDemandMetrics(values.map((v) => ({ metrics: { impressions: v.impressions, videoTrueviewViews: v.views, clicks: v.clicks, costMicros: v.spend == null ? null : v.spend * 1e6, conversions: v.conversions } })));
+}
+export function demandShare(value: number | null | undefined, total: number | null | undefined): number | null {
+  return value == null || total == null || total <= 0 ? null : value / total * 100;
 }

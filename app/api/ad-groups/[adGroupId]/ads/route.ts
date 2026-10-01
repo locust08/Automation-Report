@@ -24,6 +24,7 @@ export async function GET(
     const payload = await load({
       accountId: context.accountId,
       ...getPreviewExplicitAccountIds(context),
+      cacheRefreshKey: searchParams.get("refresh") ?? searchParams.get("cacheRefresh"),
       startDate: context.startDate,
       endDate: context.endDate,
       diagnosticsMode: searchParams.get("diagnostics") === "1",
@@ -46,7 +47,8 @@ export async function GET(
         campaignId: searchParams.get("campaignId")?.trim() || null,
         adGroupId: decodeURIComponent(routeParams.adGroupId),
         adId: null,
-      })
+      }),
+      { headers: { "Cache-Control": "no-store" } }
     );
   } catch (error) {
     return buildReportingErrorResponse(error, "Unexpected error while loading ads.");

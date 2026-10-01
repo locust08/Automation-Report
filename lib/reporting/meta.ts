@@ -621,6 +621,7 @@ export async function fetchMetaCampaignRows({
     row.costPerResult =
       resultMetric.costPerResult ?? (resultMetric.value > 0 ? spend / resultMetric.value : 0);
     row.avgCpc = clicks > 0 ? spend / clicks : 0;
+    row.videoViews = item.actions?.find((action) => action.action_type === "video_view") ? toNumber(item.actions.find((action) => action.action_type === "video_view")!.value) : null;
     row.conversions = resultMetric.value;
 
     if (hasReportableCampaignSpend(row)) {
@@ -2110,6 +2111,7 @@ function buildPerformanceMap(
   const performanceByAdId = new Map<
     string,
     {
+      videoViews: number | null;
       resultLabel: string;
       results: number;
       spend: number;
@@ -2146,6 +2148,7 @@ function buildPerformanceMap(
       optimizationGoal: row.optimization_goal,
     });
     const current = performanceByAdId.get(entityId) ?? {
+      videoViews: 0 as number | null,
       resultLabel: resultMetric.label,
       results: 0,
       spend: 0,
@@ -2185,6 +2188,8 @@ function buildPerformanceMap(
       current.resultCostTotal += resultMetric.costPerResult * resultMetric.value;
       current.hasNativeResultCost = true;
     }
+    const videoView = row.actions?.find((action) => action.action_type === "video_view");
+    current.videoViews = current.videoViews == null || !videoView ? null : current.videoViews + toNumber(videoView.value);
     current.spend += toNumber(row.spend);
     current.impressions += toNumber(row.impressions);
     current.clicks += toNumber(row.clicks);
@@ -2552,6 +2557,7 @@ function buildVisiblePreviewAdSets(ads: MetaAdRow[], adSets: MetaAdSetRow[]): Me
 }
 
 function finalizePerformanceSummary(input: {
+  videoViews?: number | null;
   resultsAvailable?: boolean;
   unavailableMetrics?: string[];
   resultLabel: string;
@@ -2564,6 +2570,7 @@ function finalizePerformanceSummary(input: {
   costPerResult?: number;
 }): PreviewPerformanceSummary {
   return {
+    videoViews: input.videoViews ?? null,
     resultsAvailable: input.resultsAvailable,
     unavailableMetrics: input.unavailableMetrics,
     resultLabel: input.resultLabel || "Results",
