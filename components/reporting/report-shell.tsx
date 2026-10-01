@@ -180,18 +180,14 @@ export function ReportShell({
                   ? "grid gap-3 text-white lg:grid-cols-[minmax(0,1fr)_minmax(260px,360px)] lg:items-start lg:gap-x-6"
                   : headerControlLayout === "wide"
                   ? "grid gap-5 text-white lg:grid-cols-[minmax(430px,0.8fr)_minmax(0,1.2fr)] lg:items-start lg:gap-x-8"
-                  : "grid gap-4 text-white md:grid-cols-[minmax(0,1fr)_auto] md:items-start md:gap-x-8"
+                  : "grid gap-4 text-white lg:grid-cols-[minmax(0,1fr)_minmax(260px,360px)] lg:items-start lg:gap-x-6"
               }
               data-report-export-header-grid="true"
             >
               <div className="min-w-0 space-y-3">
                 <h1
                   aria-label={titleLoading ? "Loading report title" : undefined}
-                  className={
-                    compactResponsive
-                      ? "max-w-[32ch] break-words text-[clamp(1.75rem,3.2vw,2.5rem)] font-semibold leading-[1.08] tracking-tight [overflow-wrap:normal]"
-                      : `${headerControlLayout === "wide" ? "lg:text-4xl lg:[overflow-wrap:normal]" : "md:text-6xl"} break-words text-3xl font-semibold leading-tight tracking-tight [overflow-wrap:anywhere] sm:text-4xl`
-                  }
+                  className="max-w-[40ch] break-words text-[clamp(1.5rem,2.4vw,2.5rem)] font-semibold leading-[1.15] tracking-tight"
                   data-report-export-title="true"
                 >
                   {titleLoading ? (
@@ -209,7 +205,7 @@ export function ReportShell({
                       ? "flex w-full max-w-[360px] items-start lg:justify-self-end"
                       : headerControlLayout === "wide"
                       ? "flex w-full items-start lg:w-full lg:max-w-[920px] lg:justify-self-end"
-                      : "flex w-full items-start md:w-auto md:max-w-[420px] md:justify-self-end"
+                      : "flex w-full max-w-[360px] items-start lg:justify-self-end"
                   }
                   data-report-export-date-control="true"
                 >
@@ -217,7 +213,7 @@ export function ReportShell({
                 </div>
               ) : (
                 <div
-                  className="w-full rounded-2xl bg-[#dfdfdf] px-4 py-3 text-center text-base font-semibold text-[#5f5f5f] sm:w-auto sm:px-6 sm:text-lg md:justify-self-end"
+                  className="w-full rounded-2xl bg-[#dfdfdf] px-4 py-3 text-center text-base font-semibold text-[#5f5f5f] sm:w-auto sm:px-6 sm:text-base lg:justify-self-end"
                   data-report-export-date-control="true"
                 >
                   {dateLabel}
