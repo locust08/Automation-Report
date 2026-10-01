@@ -236,6 +236,8 @@ interface MetaVideoRow {
     data?: Array<{
       uri?: string;
       is_preferred?: boolean;
+      width?: number;
+      height?: number;
     }>;
   };
 }
@@ -1524,6 +1526,8 @@ async function fetchMetaCreativeChunk(input: {
   const params = new URLSearchParams({
     access_token: input.accessToken,
     ids: input.creativeIds.join(","),
+    thumbnail_width: "600",
+    thumbnail_height: "600",
     fields: input.fields.join(","),
   });
   const response = await fetch(`${META_GRAPH_API_BASE_URL}/?${params.toString()}`, {
@@ -1592,7 +1596,7 @@ async function enrichMetaVideoCreativeAssets(
     asset.videoPermalinkUrl = videoPermalinkUrl;
     asset.videoUrl = videoSourceUrl || videoPermalinkUrl;
     asset.posterUrl = posterUrl;
-    asset.imageUrl = asset.imageUrl || posterUrl;
+    asset.imageUrl = posterUrl || asset.imageUrl;
     asset.thumbnailUrl = asset.thumbnailUrl || posterUrl;
     asset.mediaWarning = videoSourceUrl
       ? null
@@ -1611,7 +1615,7 @@ async function fetchMetaVideoDetailsCollection(input: {
     const params = new URLSearchParams({
       access_token: input.accessToken,
       ids: chunk.join(","),
-      fields: "id,source,permalink_url,picture,thumbnails{uri,is_preferred}",
+      fields: "id,source,permalink_url,picture,thumbnails{uri,is_preferred,width,height}",
     });
     const response = await fetch(`${META_GRAPH_API_BASE_URL}/?${params.toString()}`, {
       cache: "no-store",
@@ -1650,9 +1654,8 @@ async function fetchMetaVideoDetailsCollection(input: {
 }
 
 function pickMetaVideoPosterUrl(video: MetaVideoRow | undefined, fallback: string | null): string | null {
-  const preferred = video?.thumbnails?.data?.find((thumbnail) => thumbnail.is_preferred && thumbnail.uri?.trim());
-  const first = video?.thumbnails?.data?.find((thumbnail) => thumbnail.uri?.trim());
-  return preferred?.uri?.trim() || first?.uri?.trim() || video?.picture?.trim() || fallback;
+  const thumbnails = (video?.thumbnails?.data ?? []).filter((thumbnail) => thumbnail.uri?.trim()).sort((a, b) => (b.width ?? 0) * (b.height ?? 0) - (a.width ?? 0) * (a.height ?? 0) || Number(Boolean(b.is_preferred)) - Number(Boolean(a.is_preferred)));
+  return thumbnails[0]?.uri?.trim() || video?.picture?.trim() || fallback;
 }
 
 async function fetchMetaPreviewLinks(input: {

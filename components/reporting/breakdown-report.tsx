@@ -151,7 +151,7 @@ function MetricRow({ name, row, toggle, open, href, creative, showCreative }: { 
   return <tr className="border-b"><td className="sticky left-0 z-10 bg-white px-4 py-4 text-left font-medium">{toggle ? <button className="flex items-start gap-2 text-left text-[#9f0019]" aria-label={`${open ? "Collapse" : "Expand"} ${name}`} aria-expanded={open} onClick={toggle}><span data-report-export-exclude="true">{open ? "⌄" : "›"}</span>{name}</button> : name}</td>{showCreative ? <td className="px-3 py-3"><CreativeImage ad={creative} /></td> : null}{valueMetrics.map((metric) => { const value = performanceValue(row, metric); return <td key={metric} className="px-3 py-4 text-right tabular-nums">{value === null ? "—" : value.toLocaleString(undefined, { maximumFractionDigits: 2 })}</td>; })}<td className="px-3 py-4 text-center" data-report-export-exclude="true">{href ? <a className="text-[#9f0019] hover:underline" href={href} target="_blank" rel="noopener noreferrer">View ↗</a> : "—"}</td></tr>;
 }
 function CreativeImage({ ad }: { ad?: PreviewAdNode }) {
-  const source = ad?.creative?.imageUrl || ad?.creative?.thumbnailUrl || ad?.creative?.posterUrl || ad?.images?.[0]?.url;
+  const source = ad?.creative?.posterUrl || ad?.creative?.imageUrl || ad?.creative?.thumbnailUrl || ad?.images?.[0]?.url;
   const [failed, setFailed] = useState(false);
   if (!source || failed) return <span className="text-neutral-500">—</span>;
   // Provider creatives must retain their native URL; video ads use a poster image.
