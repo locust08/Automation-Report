@@ -1,5 +1,6 @@
 import { buildDateRange } from "@/lib/reporting/date";
 import { fetchGoogleDemandGen } from "@/lib/reporting/google";
+import { resolveDemandGenWithCache } from "@/lib/reporting/demand-gen-cache";
 
 import {
   filterRowsByCampaignScope,
@@ -1419,7 +1420,10 @@ export async function getDemandGenReport(input: OverallInput, campaignId: string
   const { resolvedAccountIds, googleManagerContext } = await resolveReportAccountContext(input, credentials);
   if (resolvedAccountIds.googleAccountIds.length !== 1) throw new Error("Select one Google Ads account for Demand Gen analysis.");
   const customerId = resolvedAccountIds.googleAccountIds[0];
-  const payload = await fetchGoogleDemandGen({ customerId, apiVersion: credentials.googleAdsApiVersion, accessToken: credentials.googleAccessToken, refreshToken: credentials.googleRefreshToken, clientId: credentials.googleClientId, clientSecret: credentials.googleClientSecret, loginCustomerId: resolveLoginCustomerIdForAccount(customerId, googleManagerContext.loginCustomerIdByAccount), accessPath: googleManagerContext.accessPathByAccount[customerId], fallbackLoginCustomerId: credentials.googleLoginCustomerId, startDate: dates.startDate, endDate: dates.endDate }, campaignId);
+  const loginCustomerId = resolveLoginCustomerIdForAccount(customerId, googleManagerContext.loginCustomerIdByAccount);
+  const accessPath = googleManagerContext.accessPathByAccount[customerId];
+  const cacheKey = JSON.stringify({ customerId, campaignId, startDate: dates.startDate, endDate: dates.endDate, loginCustomerId, accessPath, apiVersion: credentials.googleAdsApiVersion, fallbackLoginCustomerId: credentials.googleLoginCustomerId });
+  const payload = await resolveDemandGenWithCache(cacheKey, () => fetchGoogleDemandGen({ customerId, apiVersion: credentials.googleAdsApiVersion, accessToken: credentials.googleAccessToken, refreshToken: credentials.googleRefreshToken, clientId: credentials.googleClientId, clientSecret: credentials.googleClientSecret, loginCustomerId, accessPath, fallbackLoginCustomerId: credentials.googleLoginCustomerId, startDate: dates.startDate, endDate: dates.endDate }, campaignId));
   payload.warnings.unshift(...googleManagerContext.messages);
   return payload;
 }

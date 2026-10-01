@@ -20,3 +20,5 @@ Reference: `C:/Users/User/.codex/worktrees/meta-render-fix/MCPS/digitalbee-mcp/s
 No deployment, provider writes, email sends, database migrations, or changes to unrelated working-tree files.
 
 Meta child layout refinement: ad sets and ads render in separate bordered tables following the campaign columns. Names stay fixed while metrics scroll horizontally on narrow screens; expanded content uses the campaign box width. Desktop, mobile, and capture fixture checks pass.
+
+Demand Gen uses a bounded 15-minute server memory cache keyed by account, campaign, dates, API version, and Google access routing. Concurrent identical requests share retrieval; partial responses and errors remain immediately retryable. HTTP responses stay no-store. The cache is per server instance and clears on restart.
