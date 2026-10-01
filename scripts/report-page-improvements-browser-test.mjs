@@ -153,6 +153,54 @@ try {
   await page.screenshot({ path: "tmp/breakdown-improvements-mobile.png", fullPage: true });
   await downloadPdf("breakdown-improvements-mobile");
   assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), "mobile layout restores after export");
+  overall.companyName = "VTAR Education and Professional Training Centre";
+  for (const route of ["overall", "campaign-breakdown", "demand-gen"]) {
+    for (const width of [390, 782, 1440, 1920]) {
+      await page.setViewportSize({ width, height: 1080 });
+      const account = route === "demand-gen" ? "googleAccountId=1234567890&platform=google" : "metaAccountId=96906550&platform=meta";
+      await page.goto(`${base}/${route}?${account}&startDate=2026-09-01&endDate=2026-09-30`);
+      await page.waitForFunction(() => document.querySelector('[data-report-export-title="true"]:not([aria-label])'));
+      const typography = await page.evaluate(() => {
+        const size = (element) => element ? parseFloat(getComputedStyle(element).fontSize) : null;
+        const title = document.querySelector('[data-report-export-title="true"]');
+        const date = document.querySelector('[data-report-export-date-control="true"]');
+        return { root: size(document.documentElement), title: size(title), titleHeight: title.getBoundingClientRect().height,
+          section: size(document.querySelector('h2')), table: size(document.querySelector('td')),
+          nav: size(document.querySelector('nav a')), input: size(document.querySelector('input:not([type="checkbox"])')),
+          titleBottom: title.getBoundingClientRect().bottom, dateTop: date?.getBoundingClientRect().top,
+          overflow: document.documentElement.scrollWidth > innerWidth };
+      });
+      assert.equal(typography.root, 16);
+      assert.equal(typography.title, width < 768 ? 24 : 32);
+      assert.equal(typography.nav, 14);
+      if (typography.section !== null) assert.equal(typography.section, width < 768 ? 20 : 24);
+      if (typography.table !== null) assert.equal(typography.table, width < 768 ? 13 : 14);
+      if (typography.input !== null) assert.equal(typography.input, width < 768 ? 16 : 14);
+      assert.equal(typography.overflow, false);
+      assert.ok(typography.titleHeight < 180, "long company titles wrap within a sensible height");
+      if (width < 1024 && typography.dateTop !== undefined) assert.ok(typography.dateTop >= typography.titleBottom);
+      if (width === 390) {
+        const targets = await page.locator('nav a:visible, nav button:visible').evaluateAll((elements) => elements.map((element) => element.getBoundingClientRect().height));
+        assert.ok(targets.every((height) => height >= 44), "mobile navigation retains touch targets");
+        await page.screenshot({ path: `tmp/font-${route}-mobile.png`, fullPage: true });
+        const datePicker = page.getByRole("button", { name: "Open date range picker", exact: true }).first();
+        await datePicker.click();
+        await page.locator('[data-slot="calendar"]:visible').waitFor();
+        assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), "mobile date picker fits the viewport");
+        assert.ok(await page.locator('[data-slot="calendar"]:visible button').evaluateAll((elements) => elements.every((element) => element.getBoundingClientRect().height >= 44)), "calendar retains mobile touch targets");
+        await datePicker.click();
+      }
+    }
+  }
+  await page.goto(`${base}/overall?metaAccountId=96906550&platform=meta&startDate=2026-09-01&endDate=2026-09-30`);
+  await page.getByRole("heading", { name: "Campaign Breakdown", exact: true }).waitFor();
+  await downloadPdf("overall-font-standardizing");
+  await page.goto(base);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.getByRole("heading", { level: 1 }).waitFor();
+  assert.equal(await page.getByRole("heading", { level: 1 }).evaluate((element) => parseFloat(getComputedStyle(element).fontSize)), 24);
+  assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), "home dashboard remains mobile friendly");
+  console.log("Font QA passed: global scale, long titles, mobile controls, home dashboard, and Overall PDF.");
   console.log("Improvement QA passed: multi-select, shares/totals, side-by-side charts, no presentation refetch, filtering unopened branches with retained ancestors, views, native PDF downloads, preserved state, mobile scrolling.");
 } catch (error) { console.log((await page.locator("body").innerText()).slice(0, 6500)); throw error; }
 finally { await browser.close(); }

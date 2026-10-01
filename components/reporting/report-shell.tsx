@@ -159,6 +159,7 @@ export function ReportShell({
     <main
       className="flex min-h-screen flex-col overflow-x-clip bg-[#f0f0f0] text-[#111]"
       data-report-capture-root="true"
+      data-report-typography={screenshotMode ? "capture" : "screen"}
       data-report-ready={reportReady ? "true" : undefined}
     >
       <div className={`${REPORT_PAGE_FRAME_CLASS} ${wideContent && !screenshotMode ? "!max-w-[1920px]" : ""} ${screenshotMode ? "!min-h-0 !flex-none" : ""}`}>
@@ -187,7 +188,7 @@ export function ReportShell({
               <div className="min-w-0 space-y-3">
                 <h1
                   aria-label={titleLoading ? "Loading report title" : undefined}
-                  className="max-w-[40ch] break-words text-[clamp(1.5rem,2.4vw,2.5rem)] font-semibold leading-[1.15] tracking-tight"
+                  className="app-text-title max-w-[40ch] break-words font-semibold tracking-tight"
                   data-report-export-title="true"
                 >
                   {titleLoading ? (
