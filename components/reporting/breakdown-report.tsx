@@ -132,10 +132,10 @@ export function BreakdownReport({ groups, queryString, nameFilter, onNameFilter,
       if (!rows.length) return null;
       return <div key={group.id} className="rounded-xl border bg-white"><h3 className="rounded-t-xl bg-[#f0adad] px-4 py-3 font-semibold">{group.platform === "meta" ? "Meta" : "TikTok"} · {group.campaignType}</h3>
         <PerformanceTable>{rows.map((campaign) => { const key = `c:${campaign.id}`; const children = matchingChildren(campaign); return <tbody key={campaign.id}>
-          <MetricRow name={campaign.campaignName} row={campaign} toggle={() => void toggle(key, campaign)} open={expanded(key)} href={previewLink(queryString, campaign.id)} />
+          <MetricRow name={campaign.campaignName} row={campaign} toggle={() => void toggle(key, campaign)} open={expanded(key)} href={adsManagerLink(queryString, campaign.id)} />
           {expanded(key) ? <tr><td colSpan={10} className="bg-neutral-50 p-3">{status(key, campaign)}{children.length ? <div className="rounded-xl border bg-white"><h4 className="bg-red-50 px-4 py-3 font-semibold">{campaign.platform === "meta" ? "Ad Sets" : "Ad Groups"}</h4><PerformanceTable>{children.map((child) => { const gkey = `g:${campaign.id}:${child.id}`; const ads = childAds(campaign, child).filter((ad) => matchesValueFilter(ad.performance, filter)); return <tbody key={child.id}>
-            <MetricRow name={child.name} row={child.performance} toggle={() => void toggle(gkey, campaign, child.id)} open={expanded(gkey)} href={previewLink(queryString, campaign.id, child.id)} />
-            {expanded(gkey) ? <tr><td colSpan={10} className="bg-neutral-50 p-3">{status(gkey, campaign, child.id)}{ads.length ? <div className="rounded-xl border bg-white"><h5 className="bg-red-50 px-4 py-3 font-semibold">Ads</h5><PerformanceTable creative><tbody>{ads.map((ad) => <MetricRow key={ad.id} name={ad.name} row={ad.performance} creative={ad} showCreative href={previewLink(queryString, campaign.id, child.id, ad.id)} />)}<MetricRow showCreative name="Ads total" row={levelTotals(ads.map((ad) => ad.performance))} /></tbody></PerformanceTable></div> : null}</td></tr> : null}
+            <MetricRow name={child.name} row={child.performance} toggle={() => void toggle(gkey, campaign, child.id)} open={expanded(gkey)} href={adsManagerLink(queryString, campaign.id, child.id)} />
+            {expanded(gkey) ? <tr><td colSpan={10} className="bg-neutral-50 p-3">{status(gkey, campaign, child.id)}{ads.length ? <div className="rounded-xl border bg-white"><h5 className="bg-red-50 px-4 py-3 font-semibold">Ads</h5><PerformanceTable creative><tbody>{ads.map((ad) => <MetricRow key={ad.id} name={ad.name} row={ad.performance} creative={ad} showCreative href={adsManagerLink(queryString, campaign.id, child.id, ad.id)} />)}<MetricRow showCreative name="Ads total" row={levelTotals(ads.map((ad) => ad.performance))} /></tbody></PerformanceTable></div> : null}</td></tr> : null}
           </tbody>; })}<tbody><MetricRow name="Ad sets/groups total" row={levelTotals(children.map((child) => child.performance))} /></tbody></PerformanceTable></div> : null}</td></tr> : null}
         </tbody>; })}<tbody><MetricRow name="Campaign total" row={levelTotals(rows)} /></tbody></PerformanceTable>
       </div>;
@@ -158,6 +158,25 @@ function CreativeImage({ ad }: { ad?: PreviewAdNode }) {
   // eslint-disable-next-line @next/next/no-img-element
   return <img src={source} alt={`${ad?.name ?? "Ad"} creative`} className="h-24 w-32 rounded-md object-contain bg-neutral-50" onError={() => setFailed(true)} />;
 }
-function previewLink(query: string, campaignId: string, groupId?: string, adId?: string) {
-  const params = new URLSearchParams(query); params.set("campaignId", campaignId); if (groupId) params.set("adGroupId", groupId); if (adId) params.set("adId", adId); return `/preview?${params}`;
+function adsManagerLink(query: string, campaignId: string, groupId?: string, adId?: string) {
+  const params = new URLSearchParams(query);
+  if (params.get("platform") === "meta") {
+    const accountId = (params.get("metaAccountId") || params.get("accountId") || "").replace(/^act_/, "");
+    if (/^\d+$/.test(accountId)) {
+      const target = new URLSearchParams({ act: accountId, selected_campaign_ids: campaignId });
+      if (groupId) target.set("selected_adset_ids", groupId);
+      if (adId) target.set("selected_ad_ids", adId);
+      return `https://www.facebook.com/adsmanager/manage/${adId ? "ads" : groupId ? "adsets" : "campaigns"}?${target}`;
+    }
+  }
+  if (params.get("platform") === "tiktok") {
+    const accountId = params.get("tiktokAccountId") || params.get("accountId") || "";
+    if (/^\d+$/.test(accountId)) {
+      const target = new URLSearchParams({ aadvid: accountId, campaign_id: campaignId });
+      if (groupId) target.set("adgroup_id", groupId);
+      if (adId) target.set("ad_id", adId);
+      return `https://ads.tiktok.com/i18n/perf/${adId ? "ad" : groupId ? "adgroup" : "campaign"}?${target}`;
+    }
+  }
+  params.set("campaignId", campaignId); if (groupId) params.set("adGroupId", groupId); if (adId) params.set("adId", adId); return `/preview?${params}`;
 }

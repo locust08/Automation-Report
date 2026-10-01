@@ -82,6 +82,10 @@ try {
   await page.getByRole("button", { name: "Apply value filter", exact: true }).click();
   await page.getByText("Historical ad", { exact: true }).waitFor();
   await page.getByRole("img", { name: "Historical ad creative", exact: true }).waitFor();
+  const links = await page.getByRole("link", { name: "View ↗", exact: true }).evaluateAll((items) => items.map((item) => item.href));
+  assert.ok(links.some((link) => link.includes("/manage/campaigns?") && link.includes("selected_campaign_ids=c")));
+  assert.ok(links.some((link) => link.includes("/manage/adsets?") && link.includes("selected_adset_ids=s")));
+  assert.ok(links.some((link) => link.includes("/manage/ads?") && link.includes("selected_ad_ids=a")));
   const campaignRow = page.getByRole("row").filter({ has: page.getByRole("button", { name: "Collapse Fixture campaign", exact: true }) });
   assert.ok((await campaignRow.innerText()).includes("50"), "ancestor retains its own spend");
   assert.ok((await page.getByRole("row").filter({ has: page.getByText("Historical ad", { exact: true }) }).last().innerText()).includes("3"));
