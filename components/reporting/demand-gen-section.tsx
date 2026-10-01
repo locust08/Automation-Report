@@ -1,5 +1,6 @@
 "use client";
 
+import { AdvancedLoadingPanel } from "./advanced-loading-panel";
 import { useState } from "react";
 import { useReportSectionQuery } from "./use-report-data";
 import { filterRowsByCampaignName, type CampaignNameFilter } from "@/lib/reporting/campaign-name-filter";
@@ -36,7 +37,7 @@ function DemandGenScope({ queryString, campaignNameFilter }: { queryString: stri
         <label className="flex items-center gap-2 text-sm">Metric<select className={control} value={metric} onChange={(event) => setMetric(event.target.value as DemandMetric)}>{demandMetrics.map((key) => <option key={key} value={key}>{labels[key]}</option>)}</select></label>
       </div>
       {options.data ? <p className="text-xs text-[#777]">{options.data.account.name} · {options.data.account.id} · {options.data.account.currency} · {options.data.account.timezone} · {options.data.startDate} – {options.data.endDate}</p> : null}
-      {options.loading || report.loading ? <p role="status">Loading Demand Gen data…</p> : null}
+      {options.loading || report.loading ? <AdvancedLoadingPanel title="Loading Demand Gen analysis" message="Retrieving campaign, audience, and format performance..." /> : null}
       {options.error || report.error ? <p role="alert">{options.error ?? report.error} <button className={control} onClick={options.error ? options.retry : report.retry}>Retry</button></p> : null}
       {options.data && !campaigns.length ? <p>No Demand Gen campaigns match this account and campaign filter.</p> : null}
       {data?.warnings.map((warning) => <p key={warning} className="text-sm text-amber-800">{warning}</p>)}
@@ -46,11 +47,7 @@ function DemandGenScope({ queryString, campaignNameFilter }: { queryString: stri
       <AudiencePanel title="In-market" rows={data.inMarket} metric={metric} />
       <AudiencePanel title="Affinity" rows={data.affinity} metric={metric} />
       <MatrixPanel cells={data.cells} unmapped={data.unmapped} metric={metric} />
-      <details className={panel}><summary className="cursor-pointer font-medium">Metric definitions and coverage</summary>
-        <p className="text-sm">Audience rows report native USER_INTEREST criterion performance. They overlap and must not be summed into unique reach or campaign totals. Configured composite audience components are not measured In-market or Affinity delivery.</p>
-        <p className="text-sm">Conversions use Google metrics.conversions and native attribution settings. CTR, CPC and CPM are calculated after aggregation. Missing values and zero denominators are unavailable; returned zeros remain zero. Dates use the account timezone.</p>
-        {data.unresolved.map((row) => <p key={row.id} className="text-xs">Unclassified interest: {row.name} · {labels[metric]}: {valueLabel(row.metrics[metric])}</p>)}
-      </details>
+
     </div> : null}
   </section>;
 }

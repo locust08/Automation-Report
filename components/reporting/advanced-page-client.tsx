@@ -18,6 +18,7 @@ import {
 } from "lucide-react";
 
 import { CampaignNameFilterControl } from "@/components/reporting/campaign-name-filter-control";
+import { AdvancedLoadingPanel } from "@/components/reporting/advanced-loading-panel";
 import { DemandGenSection } from "@/components/reporting/demand-gen-section";
 import { ReportDownloadButton } from "@/components/reporting/screenshot-mode-toggle";
 import { ReportFiltersBar } from "@/components/reporting/report-filters-bar";
@@ -183,8 +184,9 @@ function TikTokAdvancedPageClient({
 
   return (
     <ReportShell
+      wideContent
       title={data?.account.advertiserName ? `${data.account.advertiserName} TikTok Insights` : "TikTok Ads Advanced Report"}
-      dateLabel={initialStartDate && initialEndDate ? `${initialStartDate} – ${initialEndDate}` : "Selected period"}
+      dateLabel={initialStartDate && initialEndDate ? `${initialStartDate} â€“ ${initialEndDate}` : "Selected period"}
       activeQuery={queryString}
       reportReady={Boolean(data && !loading)}
       headerBottomControl={
@@ -368,6 +370,7 @@ function LegacyAdvancedPageClient({
 
   return (
     <ReportShell
+      wideContent
       title={title}
       dateLabel={dateLabel}
       activeQuery={activeQueryString}
@@ -384,7 +387,7 @@ function LegacyAdvancedPageClient({
             <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
               <div className="rounded-2xl bg-white/15 px-4 py-3 text-sm font-medium text-white">
                 {payload ? `${payload.metadata.country.emoji} ${payload.metadata.country.label} market analysis` : "Advanced report"}
-                {payload ? (payload.metadata.cached ? " · loaded from cache" : " · freshly generated") : ""}
+                {payload ? (payload.metadata.cached ? " Â· loaded from cache" : " Â· freshly generated") : ""}
               </div>
               <div className="flex flex-col gap-3 sm:flex-row">
                 <CampaignNameFilterControl
@@ -420,10 +423,7 @@ function LegacyAdvancedPageClient({
       ) : null}
 
       {loading ? (
-        <ReportLoadingState
-          kind="insights"
-          message="Generating advanced market, competitor, keyword, and content planning sections..."
-        />
+        <AdvancedLoadingPanel title="Loading Advanced Report" message="Preparing market, competitor, keyword, and content planning sections…" />
       ) : null}
 
       {error ? (
@@ -634,13 +634,9 @@ function AdvancedSourceStages({
   onCampaignNameFilterChange: (filter: CampaignNameFilter | null) => void;
 }) {
   return (
-    <div className="space-y-5" data-advanced-report-content="true" data-report-mode="advanced">
+    <div className="space-y-5 pt-6" data-advanced-report-content="true" data-report-mode="advanced">
       {finalUrlStage.loading ? (
-        <ReportLoadingState
-          kind="insights"
-          message="Loading Final URL Destination Performance..."
-          onRetry={finalUrlStage.retry}
-        />
+        <AdvancedLoadingPanel title="Loading destination performance" message="Retrieving landing page metrics…" />
       ) : null}
       {finalUrlStage.error ? (
         <ReportErrorState kind="insights" message={finalUrlStage.error} onRetry={finalUrlStage.retry} />
@@ -661,11 +657,7 @@ function AdvancedSourceStages({
       ) : null}
 
       {auctionStage.loading ? (
-        <ReportLoadingState
-          kind="insights"
-          message="Loading Auction Insight..."
-          onRetry={auctionStage.retry}
-        />
+        <AdvancedLoadingPanel title="Loading auction insights" message="Retrieving competitor visibility…" />
       ) : null}
       {auctionStage.error ? (
         <ReportErrorState kind="insights" message={auctionStage.error} onRetry={auctionStage.retry} />
@@ -952,7 +944,7 @@ function AdvancedReportContent({
 
   return (
     <div
-      className="space-y-5"
+      className="space-y-5 pt-6"
       data-advanced-report-content="true"
       data-advanced-report-ready="true"
       data-report-mode="advanced"
@@ -1142,8 +1134,8 @@ function FinalUrlPerformanceSection({
         ) : null}
       </div>
 
-      <div className="overflow-hidden rounded-xl border border-[#d8d8d8] bg-white">
-        <table className="w-full table-fixed text-left text-[10px] leading-5 text-[#111] sm:text-xs">
+      <div className="overflow-x-auto rounded-xl border border-[#d8d8d8] bg-white">
+        <table className="w-full min-w-[1600px] table-fixed text-left text-sm leading-6 text-[#111]">
           <colgroup>
             <col className="w-[12%]" />
             <col className="w-[12%]" />
@@ -1194,8 +1186,8 @@ function FinalUrlPerformanceSection({
                 <FinalUrlCell align="right">{formatFinalUrlCurrency(row.cpa)}</FinalUrlCell>
                 <FinalUrlCell align="right">{formatFinalUrlPercent(row.conversionRate)}</FinalUrlCell>
                 <FinalUrlCell align="right">{formatFinalUrlPercent(row.impressionShare)}</FinalUrlCell>
-                <FinalUrlCell align="right">{formatFinalUrlPercent(row.lostImpressionShareBudget, "–")}</FinalUrlCell>
-                <FinalUrlCell align="right">{formatFinalUrlPercent(row.lostImpressionShareRank, "–")}</FinalUrlCell>
+                <FinalUrlCell align="right">{formatFinalUrlPercent(row.lostImpressionShareBudget, "â€“")}</FinalUrlCell>
+                <FinalUrlCell align="right">{formatFinalUrlPercent(row.lostImpressionShareRank, "â€“")}</FinalUrlCell>
               </tr>
             ))}
           </tbody>
@@ -1340,8 +1332,8 @@ function AuctionVisibilitySection({
       ) : null}
 
       {rows.length > 0 ? (
-        <div className="overflow-hidden rounded-xl border border-[#d8d8d8] bg-white">
-          <table className="w-full table-fixed text-left text-sm">
+        <div className="overflow-x-auto rounded-xl border border-[#d8d8d8] bg-white">
+          <table className="w-full min-w-[1000px] table-fixed text-left text-sm">
             <colgroup>
               <col className="w-[22%]" />
               <col className="w-[25%]" />
@@ -1431,7 +1423,7 @@ function MetaCreativeAnalysisSection({
           <div key={row.id} className="overflow-hidden rounded-2xl border border-[#d8d8d8] bg-white shadow-sm">
             <div className="grid gap-0 lg:grid-cols-[280px_1fr]">
               <div className="bg-[#f3f3f3] p-3">
-                <div className="aspect-[1.91/1] overflow-hidden rounded-xl border border-[#d8d8d8] bg-white">
+                <div className="aspect-[1.91/1] overflow-x-auto rounded-xl border border-[#d8d8d8] bg-white">
                   {row.mediaType === "video" && row.videoUrl ? (
                     <a href={row.videoUrl} target="_blank" rel="noreferrer" className="group relative block size-full">
                       {row.thumbnailUrl || row.imageUrl ? (
@@ -2740,8 +2732,8 @@ function OpportunityList({
               </span>
             </div>
             <p className="mt-1 text-sm text-[#666]">
-              {formatNumber(row.previousVolume)} → {formatNumber(row.currentVolume)}
-              {row.growthPercent === null ? " · New growth" : ` · ${formatPercentChange(row.currentVolume, row.previousVolume)}`}
+              {formatNumber(row.previousVolume)} â†’ {formatNumber(row.currentVolume)}
+              {row.growthPercent === null ? " Â· New growth" : ` Â· ${formatPercentChange(row.currentVolume, row.previousVolume)}`}
             </p>
             <CollapsibleReason text={row.reason} />
             {row.history.length > 1 ? (
@@ -2776,7 +2768,7 @@ function RisingKeywordList({
           <div key={row.keyword} className="rounded-xl bg-[#f7f7f7] p-3">
             <p className="font-semibold text-[#333]">{row.keyword}</p>
             <p className="text-sm text-[#666]">
-              {formatNumber(row.previousVolume)} → {formatNumber(row.currentVolume)}
+              {formatNumber(row.previousVolume)} â†’ {formatNumber(row.currentVolume)}
             </p>
             <p className="mt-1 font-semibold text-[#009b7a]">
               {row.growthPercent === null ? "New growth" : formatSignedPercent(row.growthPercent)}
@@ -2818,7 +2810,7 @@ function SeasonalList({
         {rows.map((row) => (
           <div key={`${row.keyword}-${row.upcomingMonth}`} className="rounded-xl bg-[#f7f7f7] p-3">
             <p className="font-semibold text-[#333]">{row.keyword}</p>
-            <p className="text-sm text-[#666]">{row.upcomingMonth} · {formatNumber(row.previousYearVolume)}</p>
+            <p className="text-sm text-[#666]">{row.upcomingMonth} Â· {formatNumber(row.previousYearVolume)}</p>
             <CollapsibleReason text={row.reason} />
             {showCharts && row.history.length > 1 ? <MiniLineChart points={row.history.slice(-12)} /> : null}
           </div>
@@ -3184,7 +3176,7 @@ function MediaCarousel({
             className="absolute left-2 top-1/2 flex size-4 -translate-y-1/2 items-center justify-center rounded-full bg-white/80 text-[10px] text-[#999] shadow-sm"
             onClick={() => scrollToIndex(activeIndex - 1)}
           >
-            ‹
+            â€¹
           </button>
           <button
             type="button"
@@ -3192,7 +3184,7 @@ function MediaCarousel({
             className="absolute right-2 top-1/2 flex size-4 -translate-y-1/2 items-center justify-center rounded-full bg-white/80 text-[10px] text-[#999] shadow-sm"
             onClick={() => scrollToIndex(activeIndex + 1)}
           >
-            ›
+            â€º
           </button>
         </>
       ) : null}
