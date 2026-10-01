@@ -1,4 +1,4 @@
-const USER_PAGE_PATHS = ["/dashboard", "/overall", "/preview", "/advanced", "/demand-gen"];
+const USER_PAGE_PATHS = ["/dashboard", "/overall", "/preview", "/advanced", "/demand-gen", "/campaign-breakdown"];
 export function isUserRoleRequestAllowed(pathname: string, method = "GET") {
   if (USER_PAGE_PATHS.some((path) => pathname === path || pathname.startsWith(`${path}/`))) return true;
   if (pathname === "/api/auth/session" && method === "GET") return true;

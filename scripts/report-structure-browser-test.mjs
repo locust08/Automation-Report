@@ -6,6 +6,7 @@ const base = process.env.REPORT_QA_BASE_URL ?? "http://localhost:3105";
 const browser = await chromium.launch({ channel: "chrome", headless: true });
 const page = await browser.newPage({ viewport: { width: 1920, height: 1080 } });
 page.setDefaultNavigationTimeout(120000);
+page.on("pageerror", (error) => console.error("UI error:", error.message));
 const values = { impressions: 100, clicks: 10, spend: 5, conversions: 2, ctr: 10, cpc: .5, cpm: 50 };
 const demand = { account: { id: "1234567890", name: "Fixture Google", currency: "MYR", timezone: "Asia/Kuala_Lumpur" }, startDate: "2026-09-01", endDate: "2026-09-30", campaigns: [{ id: "1", name: "Demand A" }, { id: "2", name: "Demand B" }], campaignId: "1", inMarket: [{ id: "i", name: "Furniture", metrics: values }], affinity: [{ id: "a", name: "Home enthusiasts", metrics: values }], cells: ["In-feed", "In-stream", "Shorts"].flatMap((format) => ["Desktop", "Mobile", "Tablet", "TV"].map((device) => ({ format, device, metrics: values }))), unmapped: [], unresolved: [], warnings: [], complete: true };
 const dateRange = { startDate: "2026-09-01", endDate: "2026-09-30", previousStartDate: "2026-08-01", previousEndDate: "2026-08-31", currentLabel: "September 2026", previousLabel: "August 2026" };
@@ -18,6 +19,7 @@ const requests = [];
 await page.route("**/api/**", async (route) => {
   const url = new URL(route.request().url()); requests.push(url);
   let data = {};
+  if (url.pathname.includes("tiktok-insights")) return route.fulfill({ status: 503, json: { error: "Fixture insights unavailable" } });
   if (url.pathname === "/api/auth/session") data = { user: { role: "admin" } };
   else if (url.pathname === "/api/reporting/demand-gen") { demandRequests++; data = { ...demand, campaignId: url.searchParams.get("campaignId") }; }
   else if (url.pathname.includes("/ad-groups") || url.pathname.includes("/ads")) {
@@ -27,6 +29,9 @@ await page.route("**/api/**", async (route) => {
   else if (url.pathname.endsWith("/final-url-performance")) data = { section: { rows: [{ id: "url", campaign: "Demand Gen campaign with a readable name", finalUrl: "https://example.com/landing-page?utm_source=google&utm_campaign=demand-gen", spend: 2007.59, impressions: 289568, clicks: 21237, conversions: 1256, ctr: 7.33, cpc: .09, cpa: 1.60, conversionRate: 5.92 }], otherRow: null, totalUrlCount: 1 }, warnings: [] };
   else if (url.pathname.includes("/advanced") || url.pathname === "/api/reporting/advanced") return route.fulfill({ status: 503, json: { error: "Fixture analysis unavailable" } });
   else if (url.pathname.includes("/accounts/search")) data = { accounts: [] };
+  if (url.searchParams.get("platform") === "tiktok") {
+    data = JSON.parse(JSON.stringify(data).replaceAll('"meta"', '"tiktok"').replaceAll('"Paused"', '"ENABLE"'));
+  }
   if (url.pathname.includes("/api/reports/") && url.searchParams.get("googleAccountId")) await new Promise((resolve) => setTimeout(resolve, 1500));
   await route.fulfill({ json: data });
 });
@@ -63,6 +68,10 @@ try {
   assert.ok(href?.includes("metaAccountId=96906550"), `Meta return link: ${href}`);
   assert.ok(!href?.includes("googleAccountId"));
   await link.click();
+  await page.getByText("Fixture campaign", { exact: true }).filter({ visible: true }).first().waitFor();
+  assert.equal(await page.getByRole("button", { name: /Expand .* hierarchy/ }).count(), 0, "Meta Monthly Performance is campaign-only");
+  await page.getByRole("button", { name: "Navigation", exact: true }).click();
+  await page.getByRole("menuitem", { name: "Campaign Breakdown", exact: true }).click();
   await page.getByRole("button", { name: "Expand Fixture campaign hierarchy" }).first().click();
   await page.getByRole("button", { name: "Historical set" }).first().waitFor();
   await page.getByRole("button", { name: "Historical set" }).first().click();
@@ -103,6 +112,25 @@ try {
   await page.setViewportSize({ width: 390, height: 844 });
   assert.equal(await page.getByRole("button", { name: /Expand .* hierarchy/ }).count(), 0, "Google mobile campaigns have no hierarchy controls");
   assert.equal(await page.getByText("AD GROUPS", { exact: true }).count(), 0);
+  await page.goto(`${base}/campaign-breakdown?googleAccountId=1234567890&platform=google&startDate=2026-09-01&endDate=2026-09-30`);
+  await page.getByText("Choose a Meta or TikTok account", { exact: true }).filter({ visible: true }).first().waitFor();
+  assert.equal(await page.getByRole("button", { name: /Expand .* hierarchy/ }).count(), 0);
+  const googleHierarchyRequests = requests.length;
+  await page.getByRole("button", { name: "Navigation", exact: true }).click();
+  assert.equal(await page.getByRole("menuitem", { name: "Demand Gen Analysis", exact: true }).count(), 1);
+  await page.keyboard.press("Escape");
+  assert.equal(requests.slice(googleHierarchyRequests).filter((url) => url.pathname.includes("/api/reports/") || url.pathname.includes("/ad-groups")).length, 0);
+  failHierarchy = false;
+  await page.goto(`${base}/overall?tiktokAccountId=1234&platform=tiktok&startDate=2026-09-01&endDate=2026-09-30`);
+  await page.getByText("Fixture campaign", { exact: true }).filter({ visible: true }).first().waitFor();
+  assert.equal(await page.getByRole("button", { name: /Expand .* hierarchy/ }).count(), 0, "TikTok Monthly Performance is campaign-only");
+  await page.goto(`${base}/campaign-breakdown?tiktokAccountId=1234&platform=tiktok&startDate=2026-09-01&endDate=2026-09-30`);
+  await page.getByRole("button", { name: "Expand Fixture campaign hierarchy" }).first().click();
+  await page.getByRole("button", { name: "Historical set" }).first().click();
+  await page.getByText("Historical ad", { exact: true }).filter({ visible: true }).first().waitFor();
+  await page.goto(`${base}/campaign-breakdown?metaAccountId=96906550&platform=meta&startDate=2026-08-01&endDate=2026-08-31`);
+  await page.getByRole("button", { name: "Expand Fixture campaign hierarchy" }).first().waitFor();
+  assert.equal(await page.getByText("Historical ad", { exact: true }).count(), 0, "date changes discard expanded child data");
   console.log("Browser QA passed: Google campaign-only desktop/mobile,  independent Demand Gen, sorting/pagination, shared metrics without refetch, mobile layout, Meta return navigation, historical children, retained retry data, wider Overall, preserved capture width and PDF render.");
 } catch (error) {
   console.log((await page.locator("body").innerText()).slice(0, 5000));

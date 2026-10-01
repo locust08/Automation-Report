@@ -24,6 +24,7 @@ export function OverallCampaignGroupsTable({
   campaignScope = "all",
   onCampaignScopeChange,
   compact = false,
+  enableHierarchy = false,
 }: {
   groups: CampaignGroup[];
   queryString: string;
@@ -33,6 +34,7 @@ export function OverallCampaignGroupsTable({
   campaignScope?: CampaignScope;
   onCampaignScopeChange?: (scope: CampaignScope) => void;
   compact?: boolean;
+  enableHierarchy?: boolean;
 }) {
   const resolvedCampaignOptions = useMemo(
     () =>
@@ -154,7 +156,7 @@ export function OverallCampaignGroupsTable({
                   previewHref={buildPreviewHref(row, queryString)}
                   hierarchyOpen={expandedCampaignKey === campaignHierarchyKey(row)}
                   expandedAdGroupId={expandedAdGroupId}
-                  onHierarchyToggle={() => toggleCampaign(row)}
+                  onHierarchyToggle={enableHierarchy ? () => toggleCampaign(row) : undefined}
                   onExpandedAdGroupChange={setExpandedAdGroupId}
                   hierarchyQueryString={queryString}
                 />
@@ -196,7 +198,7 @@ export function OverallCampaignGroupsTable({
                   {group.rows.map((row) => {
                     const hierarchyOpen =
                       expandedCampaignKey === campaignHierarchyKey(row);
-                    const hierarchyAvailable = supportsCampaignHierarchy(row);
+                    const hierarchyAvailable = enableHierarchy && supportsCampaignHierarchy(row);
                     return (
                       <Fragment key={row.id}>
                         <tr className="border-b border-border/40 hover:bg-muted/20">
