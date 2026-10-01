@@ -46,7 +46,8 @@ try {
   await inMarket.getByRole("button", { name: "Previous", exact: true }).click();
   await inMarket.getByRole("button", { name: /^Audience/ }).click();
   await page.getByRole("button", { name: "Ranked chart", exact: true }).first().click();
-  await page.getByRole("combobox").filter({ has: page.locator('option[value="ctr"]') }).selectOption("ctr");
+  await page.getByRole("combobox", { name: "Metric", exact: true }).click();
+  await page.getByRole("option", { name: "CTR (%)", exact: true }).click();
   assert.equal(demandRequests, before, "presentation changes must not refetch");
   await page.getByRole("button", { name: "Grouped chart" }).click();
   await page.setViewportSize({ width: 390, height: 844 });

@@ -4,6 +4,7 @@ import { AdvancedLoadingPanel } from "./advanced-loading-panel";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { BarChart3Icon, UsersIcon, LayoutGridIcon } from "lucide-react";
 import { useReportSectionQuery } from "./use-report-data";
 import { filterRowsByCampaignName, type CampaignNameFilter } from "@/lib/reporting/campaign-name-filter";
@@ -12,7 +13,6 @@ import { demandMetrics, demandDevices, demandFormats, type DemandMetric, type De
 const labels: Record<DemandMetric, string> = { impressions: "Impressions", clicks: "Clicks", spend: "Spend", conversions: "Conversions", ctr: "CTR (%)", cpc: "CPC", cpm: "CPM" };
 const valueLabel = (value: number | null | undefined) => value == null ? "—" : value.toLocaleString(undefined, { maximumFractionDigits: 2 });
 const panel = "gap-0 space-y-5 rounded-[1.5rem] border border-[#dedede] bg-white p-4 shadow-sm sm:p-6 text-[#111]";
-const control = "rounded-lg border border-[#ddd] bg-white px-3 py-2 text-sm";
 const action = "border-red-200 bg-white text-[#9f0019] hover:bg-red-50 hover:text-[#9f0019]";
 
 export function DemandGenSection({ queryString, campaignNameFilter }: { queryString: string; campaignNameFilter: CampaignNameFilter | null }) {
@@ -34,11 +34,11 @@ function DemandGenScope({ queryString, campaignNameFilter }: { queryString: stri
     <Card className={panel}>
       <div className="flex items-center gap-3"><span className="flex size-11 shrink-0 items-center justify-center rounded-xl bg-[#e10600] text-white"><BarChart3Icon className="size-5" /></span><h2 className="text-2xl font-semibold sm:text-3xl">Demand Gen Analysis</h2></div>
       <div className="flex flex-wrap gap-3">
-        <label className="flex items-center gap-2 text-sm">Campaign<select className={control} value={campaignId ?? ""} onChange={(event) => setSelection(event.target.value)} disabled={!campaigns.length}>
-          {!campaigns.length ? <option value="">No matching Demand Gen campaigns</option> : null}
-          {campaigns.map((campaign) => <option key={campaign.id} value={campaign.id}>{campaign.name}</option>)}
-        </select></label>
-        <label className="flex items-center gap-2 text-sm">Metric<select className={control} value={metric} onChange={(event) => setMetric(event.target.value as DemandMetric)}>{demandMetrics.map((key) => <option key={key} value={key}>{labels[key]}</option>)}</select></label>
+        <div className="flex min-w-0 w-full flex-col gap-2 text-sm sm:w-auto sm:flex-row sm:items-center"><span id="demand-campaign-label">Campaign</span><Select value={campaignId ?? ""} onValueChange={setSelection} disabled={!campaigns.length}>
+          <SelectTrigger aria-labelledby="demand-campaign-label" className="w-full min-w-0 bg-white sm:w-[420px]"><SelectValue placeholder="No matching Demand Gen campaigns" /></SelectTrigger>
+          <SelectContent>{campaigns.map((campaign) => <SelectItem key={campaign.id} value={campaign.id}>{campaign.name}</SelectItem>)}</SelectContent>
+        </Select></div>
+        <div className="flex flex-col gap-2 text-sm sm:flex-row sm:items-center"><span id="demand-metric-label">Metric</span><Select value={metric} onValueChange={(value) => setMetric(value as DemandMetric)}><SelectTrigger aria-labelledby="demand-metric-label" className="w-[160px] bg-white"><SelectValue /></SelectTrigger><SelectContent>{demandMetrics.map((key) => <SelectItem key={key} value={key}>{labels[key]}</SelectItem>)}</SelectContent></Select></div>
       </div>
       {options.data ? <p className="text-xs text-[#777]">{options.data.account.name} · {options.data.account.id} · {options.data.account.currency} · {options.data.account.timezone} · {options.data.startDate} – {options.data.endDate}</p> : null}
       {options.loading || report.loading ? <AdvancedLoadingPanel title="Loading Demand Gen analysis" message="Retrieving campaign, audience, and format performance..." /> : null}
