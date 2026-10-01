@@ -1,6 +1,6 @@
 "use client";
 
-import type { ReactNode } from "react";
+import { Fragment, type ReactNode } from "react";
 import {
   AdIcon,
   ChevronRightIcon,
@@ -71,11 +71,11 @@ export function CampaignHierarchyTree({
   return (
     <Collapsible open={open}>
       <CollapsibleContent>
-        <div className="py-2">
-          <div className="mb-2 flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.08em] text-[#777]">
+        <div className="min-w-0 space-y-2 py-2">
+          {campaign.platform !== "meta" || !adGroups.length ? <div className="mb-2 flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.08em] text-[#777]">
             <AdIcon className="size-3.5" />
             {childLabel}
-          </div>
+          </div> : null}
           {adGroupsQuery.loading ? (
             <HierarchyMessage loading>Loading {childLabel.toLowerCase()}...</HierarchyMessage>
           ) : null}
@@ -87,7 +87,23 @@ export function CampaignHierarchyTree({
           {!adGroupsQuery.loading && !adGroupsQuery.error && adGroups.length === 0 ? (
             <HierarchyMessage>No {childLabel.toLowerCase()} found.</HierarchyMessage>
           ) : null}
-          {adGroups.length > 0 ? (
+          {adGroups.length > 0 ? campaign.platform === "meta" ? (
+            <MetaHierarchyTables
+              adGroups={adGroups}
+              ads={ads}
+              expandedAdGroupId={selectedAdGroup?.id ?? null}
+              onExpandedAdGroupChange={onExpandedAdGroupChange}
+              campaignId={campaign.id}
+              queryString={queryString}
+              adsStatus={<>
+                {adsQuery.loading ? <HierarchyMessage loading>Loading ads...</HierarchyMessage> : null}
+                {adsQuery.error ? <HierarchyError message={adsQuery.error} onRetry={adsQuery.retry} /> : null}
+                {adsQuery.data?.warnings.map((warning) => <HierarchyMessage key={warning}>{warning}</HierarchyMessage>)}
+                {adsQuery.data?.warnings.length ? <Button variant="ghost" size="xs" onClick={adsQuery.retry}>Retry ads</Button> : null}
+                {!adsQuery.loading && !adsQuery.error && ads.length === 0 ? <HierarchyMessage>No ads found.</HierarchyMessage> : null}
+              </>}
+            />
+          ) : (
             <div className="ml-2 space-y-1 border-l border-[#d8dde7] pl-3">
               {adGroups.map((adGroup) => {
                 const expanded = adGroup.id === selectedAdGroup?.id;
@@ -115,8 +131,6 @@ export function CampaignHierarchyTree({
                       <GroupIcon className="size-3.5 shrink-0" />
                       <span className="min-w-0 flex-1 truncate font-medium">{adGroup.name}</span>
                     </button>
-                    {campaign.platform === "meta" ? <HierarchyLink queryString={queryString} campaignId={campaign.id} adSetId={adGroup.id} /> : null}
-                    {campaign.platform === "meta" ? <HierarchyMetrics performance={adGroup.performance} /> : null}
                     {expanded ? (
                       <div className="ml-4 border-l border-[#d8dde7] py-1 pl-4">
                         {adsQuery.loading ? (
@@ -139,8 +153,6 @@ export function CampaignHierarchyTree({
                             <MegaphoneIcon className="mt-0.5 size-3.5 shrink-0 text-[#6d7b98]" />
                             <span className="min-w-0 flex-1 truncate">{ad.name}</span>
                             </div>
-                            {campaign.platform === "meta" && selectedAdGroup ? <HierarchyLink queryString={queryString} campaignId={campaign.id} adSetId={selectedAdGroup.id} adId={ad.id} /> : null}
-                            {campaign.platform === "meta" ? <HierarchyMetrics performance={ad.performance} /> : null}
                           </div>
                         ))}
                       </div>
@@ -156,15 +168,72 @@ export function CampaignHierarchyTree({
   );
 }
 
-function HierarchyMetrics({ performance: p }: { performance?: PreviewPerformanceSummary | null }) {
+
+// Every level uses the campaign table's column order and proportions.
+function HierarchyTableFrame({ label, children }: { label: string; children: ReactNode }) {
+  return <section className="min-w-0 overflow-hidden rounded-xl border border-[#e3c6c6] bg-white" aria-label={`${label} performance`}>
+    <h3 className="border-b border-[#e3c6c6] bg-[#f9e4e4] px-4 py-3 text-base font-semibold text-[#66232b]">{label}</h3>
+    <div className="overflow-x-auto" role="region" aria-label={`${label} performance table`} tabIndex={0}>
+      <table className="w-full min-w-[1200px] table-fixed text-left text-sm sm:text-base">
+        <colgroup>
+          <col className="w-[180px] sm:w-[30%]" />
+          {[8, 8, 8, 10, 8, 10, 10, 8].map((width, index) => <col key={index} style={{ width: `${width}%` }} />)}
+        </colgroup>
+        <thead><tr className="border-b border-[#e6e6e6] bg-[#fafafa] text-[#454545]">
+          {["Name", "Impression", "Clicks", "CTR (%)", "CPM", "Results", "Cost/Results", "Ads Spent", "Actions"].map((heading, index) => <th key={heading} scope="col" className={cn("px-3 py-3 font-semibold", index === 0 ? "sticky left-0 z-10 border-r border-[#e6e6e6] bg-[#fafafa]" : "text-center")} data-report-export-exclude={index === 8 ? "true" : undefined}>{heading}</th>)}
+        </tr></thead>
+        <tbody>{children}</tbody>
+      </table>
+    </div>
+  </section>;
+}
+
+function MetaHierarchyTables({ adGroups, ads, expandedAdGroupId, onExpandedAdGroupChange, campaignId, queryString, adsStatus }: {
+  adGroups: PreviewAdGroupNode[]; ads: PreviewAdNode[]; expandedAdGroupId: string | null;
+  onExpandedAdGroupChange: (id: string | null) => void; campaignId: string; queryString: string; adsStatus: ReactNode;
+}) {
+  return <HierarchyTableFrame label="Ad Sets">
+    {adGroups.map((adGroup) => {
+      const expanded = expandedAdGroupId === adGroup.id;
+      return <Fragment key={adGroup.id}>
+        <tr className={cn("border-b border-[#e6e6e6]", expanded ? "bg-[#fff5f5]" : "bg-white hover:bg-[#fafafa]")}>
+          <td className={cn("sticky left-0 z-10 border-r border-[#e6e6e6] px-3 py-4 align-top", expanded ? "bg-[#fff5f5]" : "bg-white")}>
+            <button type="button" aria-expanded={expanded} onClick={() => onExpandedAdGroupChange(expanded ? null : adGroup.id)} className="flex w-full items-start gap-2 text-left font-medium text-[#9f0019]">
+              <ChevronRightIcon className={cn("mt-0.5 size-4 shrink-0 transition-transform", expanded && "rotate-90")} />
+              <GroupIcon className="mt-0.5 size-4 shrink-0 text-[#777]" />
+              <span className="min-w-0 break-words leading-6">{adGroup.name}</span>
+            </button>
+          </td>
+          <HierarchyMetricCells performance={adGroup.performance} />
+          <td className="px-3 py-4 text-center" data-report-export-exclude="true"><HierarchyLink queryString={queryString} campaignId={campaignId} adSetId={adGroup.id} /></td>
+        </tr>
+        {expanded ? <tr><td colSpan={9} className="bg-[#f6f6f6] p-3">
+          <div className="mb-2 space-y-2">{adsStatus}</div>
+          <HierarchyTableFrame label="Ads">
+            {ads.map((ad) => <tr key={ad.id} className="border-b border-[#e6e6e6] bg-white hover:bg-[#fafafa]">
+              <td className="sticky left-0 z-10 border-r border-[#e6e6e6] bg-white px-3 py-4 align-top"><div className="flex items-start gap-2"><MegaphoneIcon className="mt-1 size-4 shrink-0 text-[#777]" /><span className="min-w-0 break-words leading-6 font-medium">{ad.name}</span></div></td>
+              <HierarchyMetricCells performance={ad.performance} />
+              <td className="px-3 py-4 text-center" data-report-export-exclude="true"><HierarchyLink queryString={queryString} campaignId={campaignId} adSetId={adGroup.id} adId={ad.id} /></td>
+            </tr>)}
+          </HierarchyTableFrame>
+        </td></tr> : null}
+      </Fragment>;
+    })}
+  </HierarchyTableFrame>;
+}
+
+function HierarchyMetricCells({ performance: p }: { performance?: PreviewPerformanceSummary | null }) {
   const missing = (key: string) => p?.unavailableMetrics?.includes(key);
-  const metrics = [
-    ["Impressions", missing("impressions") ? null : p?.impressions], ["Clicks", missing("clicks") ? null : p?.clicks], ["CTR (%)", p && !missing("impressions") && !missing("clicks") && p.impressions > 0 ? p.ctr : null], ["CPM", missing("spend") || missing("impressions") ? null : p?.cpm],
-    [p?.resultLabel ?? "Results", p?.resultsAvailable === false ? null : p?.results], ["Cost/Result", p?.resultsAvailable === false || missing("spend") ? null : p?.costPerResult], ["Ads Spent", missing("spend") ? null : p?.spend],
-  ] as const;
-  return <dl className="mb-2 grid grid-cols-2 gap-2 rounded-md bg-white/70 px-3 py-2 sm:grid-cols-4 xl:grid-cols-7">
-    {metrics.map(([label, value]) => <div key={label}><dt className="text-[10px] text-[#777]">{label}</dt><dd className="text-xs font-medium tabular-nums">{value == null ? "—" : value.toLocaleString(undefined, { maximumFractionDigits: 2 })}</dd></div>)}
-  </dl>;
+  const values = [
+    missing("impressions") ? null : p?.impressions,
+    missing("clicks") ? null : p?.clicks,
+    p && !missing("impressions") && !missing("clicks") && p.impressions > 0 ? p.ctr : null,
+    missing("spend") || missing("impressions") ? null : p?.cpm,
+    p?.resultsAvailable === false ? null : p?.results,
+    p?.resultsAvailable === false || missing("spend") ? null : p?.costPerResult,
+    missing("spend") ? null : p?.spend,
+  ];
+  return <>{values.map((value, index) => <td key={index} className="px-3 py-4 text-center tabular-nums whitespace-nowrap" title={index === 4 || index === 5 ? p?.resultLabel : undefined}>{value == null ? "—" : value.toLocaleString(undefined, { maximumFractionDigits: 2 })}</td>)}</>;
 }
 
 function HierarchyLink({ queryString, campaignId, adSetId, adId }: { queryString: string; campaignId: string; adSetId: string; adId?: string }) {
@@ -173,7 +242,7 @@ function HierarchyLink({ queryString, campaignId, adSetId, adId }: { queryString
   if (!/^\d+$/.test(accountId)) return null;
   const params = new URLSearchParams({ act: accountId, selected_campaign_ids: campaignId, selected_adset_ids: adSetId });
   if (adId) params.set("selected_ad_ids", adId);
-  return <a href={`https://www.facebook.com/adsmanager/manage/${adId ? "ads" : "adsets"}?${params}`} target="_blank" rel="noopener noreferrer" className="mb-1 block px-3 text-right text-xs text-[#9f0019] hover:underline">View in Ads Manager ↗</a>;
+  return <a href={`https://www.facebook.com/adsmanager/manage/${adId ? "ads" : "adsets"}?${params}`} target="_blank" rel="noopener noreferrer" className="inline-block whitespace-nowrap text-sm text-[#9f0019] hover:underline" aria-label="View in Ads Manager">View ↗</a>;
 }
 
 function HierarchyMessage({

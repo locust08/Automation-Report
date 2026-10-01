@@ -258,7 +258,7 @@ export function OverallCampaignGroupsTable({
                         </tr>
                         {hierarchyAvailable && hierarchyOpen ? (
                           <tr className="border-b border-border/40 bg-[#fbfcfe]">
-                            <td colSpan={9} className="px-4 pb-3 pt-1">
+                            <td colSpan={9} className="px-1 pb-3 pt-1">
                               <CampaignHierarchyTree
                                 campaign={row}
                                 queryString={queryString}

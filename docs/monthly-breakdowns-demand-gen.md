@@ -18,3 +18,5 @@ Reference: `C:/Users/User/.codex/worktrees/meta-render-fix/MCPS/digitalbee-mcp/s
 - All 13 focused tests, scoped TypeScript compilation, scoped ESLint, and browser/PDF QA pass. Repository-wide typecheck and lint remain blocked by unrelated existing/generated/untracked code; no diagnostics reference the changed reporting implementation. A clean HEAD archive also fails typecheck in existing Cloudflare campaign-creation types.
 
 No deployment, provider writes, email sends, database migrations, or changes to unrelated working-tree files.
+
+Meta child layout refinement: ad sets and ads render in separate bordered tables following the campaign columns. Names stay fixed while metrics scroll horizontally on narrow screens; expanded content uses the campaign box width. Desktop, mobile, and capture fixture checks pass.
