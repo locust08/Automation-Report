@@ -15,7 +15,7 @@ export async function cachedReportPage<T extends { warnings?: string[]; complete
   }
   const key = createHash("sha256").update(JSON.stringify({ version: 4, scope, identity })).digest("hex");
   if (refresh) cache.delete(key);
-  const payload = await readThroughMemoryCache(cache, key, () => reportPageCacheContext.run({ refresh }, load), { ttlMs: 24 * 60 * 60 * 1000, maxEntries: 500 }) as T;
+  const payload = await readThroughMemoryCache(cache, key, () => reportPageCacheContext.run({ refresh }, load), { ttlMs: 7 * 24 * 60 * 60 * 1000, maxEntries: 500 }) as T;
   if (payload.complete === false || payload.warnings?.some((warning) => !warning.startsWith("Notion resolved "))) cache.delete(key);
   return payload;
 }

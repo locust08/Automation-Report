@@ -1887,7 +1887,7 @@ async function fetchMetaCollection<TItem>(initialUrl: string): Promise<TItem[]> 
   // Includes access token, account, dates, level, and requested fields without retaining credentials in keys.
   const key = createHash("sha256").update(initialUrl).digest("hex");
   if (context.refresh) metaCollectionCache.delete(key);
-  return readThroughMemoryCache(metaCollectionCache, key, () => fetchMetaCollectionUncached<TItem>(initialUrl), { ttlMs: 24 * 60 * 60 * 1000, maxEntries: 500 }) as Promise<TItem[]>;
+  return readThroughMemoryCache(metaCollectionCache, key, () => fetchMetaCollectionUncached<TItem>(initialUrl), { ttlMs: 7 * 24 * 60 * 60 * 1000, maxEntries: 500 }) as Promise<TItem[]>;
 }
 async function fetchMetaCollectionUncached<TItem>(initialUrl: string): Promise<TItem[]> {
   const items: TItem[] = [];

@@ -27,3 +27,19 @@ test("report cache never retains incomplete coverage or failures", async () => {
   await assert.rejects(cachedReportPage({ test: "failure" }, failing));
   assert.equal(calls, 4);
 });
+
+test("report cache retains six-day snapshots and expires after seven days", async () => {
+  const originalNow = Date.now;
+  let clock = originalNow();
+  Date.now = () => clock;
+  let calls = 0;
+  const scope = { test: "seven-day-expiry" };
+  const load = async () => ({ complete: true, count: ++calls });
+  try {
+    await cachedReportPage(scope, load);
+    clock += 6 * 24 * 60 * 60 * 1000;
+    assert.equal((await cachedReportPage(scope, load)).count, 1);
+    clock += 24 * 60 * 60 * 1000 + 1;
+    assert.equal((await cachedReportPage(scope, load)).count, 2);
+  } finally { Date.now = originalNow; }
+});

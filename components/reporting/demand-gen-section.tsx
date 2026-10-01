@@ -25,7 +25,7 @@ export function DemandGenSection({ queryString, campaignNameFilter, onContext }:
 
 function DemandGenScope({ queryString, campaignNameFilter, onContext }: { queryString: string; campaignNameFilter: CampaignNameFilter | null; onContext?: (data: DemandGenPayload | null, ready: boolean) => void }) {
   const router = useRouter(), searchParams = useSearchParams();
-  const options = useReportSectionQuery<DemandGenPayload>("/api/reporting/demand-gen", queryString, true, "Unable to list Demand Gen campaigns.", 5 * 60 * 1000);
+  const options = useReportSectionQuery<DemandGenPayload>("/api/reporting/demand-gen", queryString, true, "Unable to list Demand Gen campaigns.", 7 * 24 * 60 * 60 * 1000);
   const campaigns = filterRowsByCampaignName(options.data?.campaigns ?? [], (campaign) => campaign.name, campaignNameFilter);
   const [selection, setSelection] = useState<string[] | null>(() => searchParams.getAll("campaignId").length ? searchParams.getAll("campaignId") : null);
   const campaignIds = selection === null ? campaigns.slice(0, 1).map((c) => c.id) : selection.filter((id) => campaigns.some((c) => c.id === id));
@@ -38,7 +38,7 @@ function DemandGenScope({ queryString, campaignNameFilter, onContext }: { queryS
   const choose = (ids: string[]) => { setSelection(ids); persist(ids, metric); };
   const params = new URLSearchParams(queryString);
   campaignIds.slice().sort().forEach((id) => params.append("campaignId", id));
-  const report = useReportSectionQuery<DemandGenPayload>("/api/reporting/demand-gen", params.toString(), Boolean(campaignIds.length), "Unable to load Demand Gen analysis.", 5 * 60 * 1000);
+  const report = useReportSectionQuery<DemandGenPayload>("/api/reporting/demand-gen", params.toString(), Boolean(campaignIds.length), "Unable to load Demand Gen analysis.", 7 * 24 * 60 * 60 * 1000);
   const data = report.data;
   useEffect(() => { onContext?.(data ?? options.data, Boolean(data?.complete && !report.loading && !report.error && campaignIds.length)); }, [data, options.data, report.loading, report.error, campaignIds.length, onContext]);
   return <section className="space-y-5 rounded-[2rem] bg-[#e7e7e7] p-3 shadow-sm sm:p-6" aria-label="Demand Gen analysis">

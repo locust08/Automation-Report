@@ -64,7 +64,7 @@ type InFlightQueryValue = {
 const queryResponseCache = new Map<string, CachedQueryValue<unknown>>();
 const inFlightQueries = new Map<string, InFlightQueryValue>();
 const MAX_QUERY_CACHE_ENTRIES = 100;
-const OVERALL_STAGE_QUERY_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+const OVERALL_STAGE_QUERY_CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
 function extractErrorMessage(
   payload: ReportingErrorPayload | null | undefined,

@@ -2,7 +2,7 @@ import type { DemandGenPayload } from "./demand-gen";
 import { readThroughMemoryCache, type MemoryCacheEntry } from "./memory-cache";
 
 const cache = new Map<string, MemoryCacheEntry<DemandGenPayload>>();
-const TTL_MS = 15 * 60 * 1000;
+const TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
 export async function resolveDemandGenWithCache(key: string, load: () => Promise<DemandGenPayload>, refresh = false) {
   if (refresh) cache.delete(key);
