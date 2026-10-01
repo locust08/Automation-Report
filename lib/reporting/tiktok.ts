@@ -550,6 +550,27 @@ async function fetchTikTokStagedPreviewHierarchy(
     : null;
   const selectedItemId = String(selectedAd?.tiktok_item_id ?? "").trim();
   const selectedMedia = selectedItemId ? await fetchPublicTikTokPostMedia(selectedItemId) : null;
+  const creativeMedia = new Map<string, TikTokPublicPostMedia>();
+  if (stage === "ads") {
+    const scopedAds = ads.filter((ad) => !input.adGroupId || String(ad.adgroup_id ?? "") === input.adGroupId);
+    const videoIds = [...new Set(scopedAds.map((ad) => String(ad.video_id ?? "")).filter(Boolean))];
+    for (let offset = 0; offset < videoIds.length; offset += 100) {
+      try {
+        const response = await client.request("asset.video-search", { advertiser_id: input.advertiserId, filtering: { video_ids: videoIds.slice(offset, offset + 100) }, page: 1, page_size: 100 });
+        for (const video of listFrom(response.data)) {
+          const source = [video.cover_url, video.video_cover_url, video.thumbnail_url, video.preview_url, video.image_url, video.poster_url].find((value) => typeof value === "string" && value.startsWith("https://"));
+          if (source) for (const ad of scopedAds) if (String(ad.video_id ?? "") === String(video.video_id ?? video.id ?? "")) ad.video_cover_url = source;
+        }
+      } catch { /* Missing native thumbnails remain unavailable. */ }
+    }
+    for (const ad of ads) {
+      if (input.adGroupId && String(ad.adgroup_id ?? "") !== input.adGroupId) continue;
+      const itemId = String(ad.tiktok_item_id ?? "").trim();
+      if (!itemId || creativeMedia.has(itemId)) continue;
+      const media = await fetchPublicTikTokPostMedia(itemId).catch(() => null);
+      if (media) creativeMedia.set(itemId, media);
+    }
+  }
 
   const nodes = campaigns.flatMap((campaign): PreviewCampaignNode[] => {
     const campaignId = String(campaign.campaign_id ?? "").trim();
@@ -588,7 +609,7 @@ async function fetchTikTokStagedPreviewHierarchy(
               performance: previewPerformance(adMetrics.get(adId)),
               dailyPerformance: ownDaily.get(adId) ?? [],
               managementFields: tikTokAdManagementFields(ad),
-              ...buildTikTokPreviewMediaFields(ad, adId === input.selectedAdId ? selectedMedia : null),
+              ...buildTikTokPreviewMediaFields(ad, adId === input.selectedAdId ? selectedMedia : creativeMedia.get(String(ad.tiktok_item_id ?? "")) ?? null),
             }];
           }),
         }];
@@ -655,12 +676,12 @@ export function buildTikTokPreviewMediaFields(
 ): Pick<PreviewAdNode, "creative" | "previewLinks"> {
   const itemId = String(ad.tiktok_item_id ?? "").trim();
   const adName = String(ad.ad_name ?? (itemId || "TikTok ad"));
-  const thumbnailUrl = media?.thumbnailUrl ?? null;
+  const thumbnailUrl = media?.thumbnailUrl || (typeof ad.video_cover_url === "string" ? ad.video_cover_url : null) || (typeof ad.image_url === "string" ? ad.image_url : null);
   const publicPostUrl = media?.publicPostUrl ?? null;
 
   return {
-    creative: itemId ? {
-      id: itemId,
+    creative: itemId || thumbnailUrl ? {
+      id: itemId || String(ad.ad_id ?? "creative"),
       name: adName,
       body: typeof ad.ad_text === "string" ? ad.ad_text : null,
       mediaType: "video",

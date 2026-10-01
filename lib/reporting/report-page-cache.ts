@@ -10,7 +10,7 @@ export async function cachedReportPage<T extends { warnings?: string[]; complete
     const authorization = await getTikTokBusinessAuthorizationContext();
     identity.push(authorization.accessToken, authorization.updatedAt, JSON.stringify(authorization.advertisers), JSON.stringify(authorization.grantedScopes));
   }
-  const key = createHash("sha256").update(JSON.stringify({ version: 1, scope, identity })).digest("hex");
+  const key = createHash("sha256").update(JSON.stringify({ version: 2, scope, identity })).digest("hex");
   if (refresh) cache.delete(key);
   const payload = await readThroughMemoryCache(cache, key, load, { ttlMs: 15 * 60 * 1000, maxEntries: 100 }) as T;
   if (payload.complete === false || payload.warnings?.some((warning) => !warning.startsWith("Notion resolved "))) cache.delete(key);

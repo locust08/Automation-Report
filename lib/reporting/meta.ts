@@ -1075,7 +1075,7 @@ export async function fetchMetaPreviewData({
     };
   }
 
-  const includeCreativeDetails = !managementStage && (previewStage === "preview" || previewStage === "assets" || previewStage === "full");
+  const includeCreativeDetails = managementStage === "ads" || !managementStage && (previewStage === "preview" || previewStage === "assets" || previewStage === "full");
   const includePreviewLinks = !managementStage && (previewStage === "assets" || previewStage === "full");
   const includePerformance = managementStage === "ads" || previewStage === "preview" || previewStage === "assets" || previewStage === "full";
   const creativeIds = Array.from(

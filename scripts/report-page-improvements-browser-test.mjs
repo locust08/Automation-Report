@@ -8,7 +8,8 @@ const page = await browser.newPage({ viewport: { width: 1920, height: 1080 } });
 page.setDefaultNavigationTimeout(120000);
 page.on("pageerror", (error) => console.error("UI error:", error.message));
 const values = { impressions: 100, views: 100, clicks: 10, spend: 5, conversions: 2, ctr: 10, cpc: .5, cpm: 50 };
-const demand = { account: { id: "1234567890", name: "Fixture Google", currency: "MYR", timezone: "Asia/Kuala_Lumpur" }, startDate: "2026-09-01", endDate: "2026-09-30", campaigns: [{ id: "1", name: "Demand A" }, { id: "2", name: "Demand B" }], campaignId: "1", inMarket: [{ id: "i", name: "Furniture", metrics: values }], affinity: [{ id: "a", name: "Home enthusiasts", metrics: values }], cells: ["In-feed", "In-stream", "Shorts"].flatMap((format) => ["Desktop", "Mobile", "Tablet", "TV"].map((device) => ({ format, device, metrics: values }))), unmapped: [], unresolved: [], warnings: [], complete: true };
+const creativeUrl = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aQ1cAAAAASUVORK5CYII=";
+const demand = { account: { id: "1234567890", name: "Fixture Google", currency: "MYR", timezone: "Asia/Kuala_Lumpur" }, startDate: "2026-09-01", endDate: "2026-09-30", campaigns: [{ id: "1", name: "Demand A" }, { id: "2", name: "Demand B" }], campaignId: "1", ads: [{ id: "ad1", name: "Demand ad", campaignName: "Demand A", imageUrls: [creativeUrl], metrics: values }], inMarket: [{ id: "i", name: "Furniture", metrics: values }], affinity: [{ id: "a", name: "Home enthusiasts", metrics: values }], cells: ["In-feed", "In-stream", "Shorts"].flatMap((format) => ["Desktop", "Mobile", "Tablet", "TV"].map((device) => ({ format, device, metrics: values }))), unmapped: [], unresolved: [], warnings: [], complete: true };
 const dateRange = { startDate: "2026-09-01", endDate: "2026-09-30", previousStartDate: "2026-08-01", previousEndDate: "2026-08-31", currentLabel: "September 2026", previousLabel: "August 2026" };
 demand.inMarket.push(...Array.from({ length: 11 }, (_, index) => ({ id: `i${index}`, name: `Interest ${String(index).padStart(2, "0")}`, metrics: values })));
 const campaign = { id: "c", platform: "meta", campaignType: "Lead", campaignName: "Fixture campaign", resultActionType: "lead", resultLabel: "Lead", impressions: 1000, videoViews: 500, clicks: 100, spend: 50, results: 20, ctr: 10, cpm: 50, costPerResult: 2.5, conversions: 20, avgCpc: .5, youtubeEarnedLikes: 0, youtubeEarnedShares: 0 };
@@ -24,7 +25,7 @@ await page.route("**/api/**", async (route) => {
   else if (url.pathname === "/api/reporting/demand-gen") { demandRequests++; data = { ...demand, campaignId: url.searchParams.get("campaignId") }; }
   else if (url.pathname.includes("/ad-groups") || url.pathname.includes("/ads")) {
     if (failHierarchy) return route.fulfill({ status: 503, json: { error: "Fixture retry failure" } });
-    data = { ...overall, sections: [{ platform: "meta", campaigns: [{ id: "c", name: "Fixture campaign", status: "Paused", details: [], children: [{ id: "s", name: "Historical set", status: "Paused", details: [], performance, ads: [{ id: "a", name: "Historical ad", status: "Paused", details: [], performance: { ...performance, spend: 3, results: 1 } }] }] }] }], warnings: partialHierarchy ? ["Fixture partial coverage"] : [] };
+    data = { ...overall, sections: [{ platform: "meta", campaigns: [{ id: "c", name: "Fixture campaign", status: "Paused", details: [], children: [{ id: "s", name: "Historical set", status: "Paused", details: [], performance, ads: [{ id: "a", name: "Historical ad", status: "Paused", details: [], creative: { id: "creative1", imageUrl: creativeUrl }, performance: { ...performance, spend: 3, results: 1 } }] }] }] }], warnings: partialHierarchy ? ["Fixture partial coverage"] : [] };
   } else if (url.pathname.includes("/api/reports/") || url.pathname === "/api/reporting") data = url.searchParams.get("googleAccountId") ? { ...overall, accountIds: { metaAccountId: null, metaAccountIds: [], googleAccountId: "1234567890", googleAccountIds: ["1234567890"] }, campaignGroups: [{ ...overall.campaignGroups[0], id: "google-search", platform: "google", campaignType: "Search", rows: [{ ...campaign, platform: "google", campaignType: "Search", campaignName: "Google campaign only" }] }] } : overall;
   else if (url.pathname.endsWith("/final-url-performance")) data = { section: { rows: [{ id: "url", campaign: "Demand Gen campaign with a readable name", finalUrl: "https://example.com/landing-page?utm_source=google&utm_campaign=demand-gen", spend: 2007.59, impressions: 289568, clicks: 21237, conversions: 1256, ctr: 7.33, cpc: .09, cpa: 1.60, conversionRate: 5.92 }], otherRow: null, totalUrlCount: 1 }, warnings: [] };
   else if (url.pathname.includes("/advanced") || url.pathname === "/api/reporting/advanced") return route.fulfill({ status: 503, json: { error: "Fixture analysis unavailable" } });
@@ -49,6 +50,8 @@ try {
   await page.goto(`${base}/demand-gen?googleAccountId=1234567890&platform=google&startDate=2026-09-01&endDate=2026-09-30`);
   await page.getByRole("cell", { name: "Furniture", exact: true }).waitFor();
   assert.ok(await page.getByRole("heading", { level: 1 }).innerText().then((text) => text.includes("Fixture Google") && text.includes("1234567890")));
+  await page.getByRole("img", { name: "Demand ad creative", exact: true }).waitFor();
+  assert.ok(await page.getByRole("columnheader", { name: "Creative", exact: true }).count());
   await page.getByRole("button", { name: "Show all", exact: true }).click();
   await page.waitForURL((url) => url.searchParams.getAll("campaignId").length === 2);
   assert.ok(requests.some((url) => url.pathname.endsWith("demand-gen") && url.searchParams.getAll("campaignId").length === 2));
@@ -78,6 +81,7 @@ try {
   await page.getByRole("spinbutton", { name: "Filter value", exact: true }).fill("4");
   await page.getByRole("button", { name: "Apply value filter", exact: true }).click();
   await page.getByText("Historical ad", { exact: true }).waitFor();
+  await page.getByRole("img", { name: "Historical ad creative", exact: true }).waitFor();
   const campaignRow = page.getByRole("row").filter({ has: page.getByRole("button", { name: "Collapse Fixture campaign", exact: true }) });
   assert.ok((await campaignRow.innerText()).includes("50"), "ancestor retains its own spend");
   assert.ok((await page.getByRole("row").filter({ has: page.getByText("Historical ad", { exact: true }) }).last().innerText()).includes("3"));
@@ -87,6 +91,7 @@ try {
   await page.getByRole("spinbutton", { name: "Filter value", exact: true }).fill("5");
   await page.getByRole("button", { name: "Apply value filter", exact: true }).click();
   await page.getByText("Historical ad", { exact: true }).waitFor();
+  await page.getByRole("img", { name: "Historical ad creative", exact: true }).waitFor();
   assert.equal(stageRequestCount(), previous, "local value changes reuse loaded stages");
   await page.screenshot({ path: "tmp/breakdown-improvements-desktop.png", fullPage: true });
   await downloadPdf("breakdown-improvements");

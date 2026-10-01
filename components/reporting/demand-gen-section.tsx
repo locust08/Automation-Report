@@ -63,6 +63,7 @@ function DemandGenScope({ queryString, campaignNameFilter, onContext }: { queryS
     {data ? <div key={campaignIds.join(",")} className="space-y-4">
       <AudiencePanel title="In-market" rows={data.inMarket} metric={metric} />
       <AudiencePanel title="Affinity" rows={data.affinity} metric={metric} />
+      <DemandAdsPanel ads={data.ads ?? []} />
       <MatrixPanel cells={data.cells} unmapped={data.unmapped} totals={data.totals} metric={metric} />
 
     </div> : null}
@@ -112,4 +113,14 @@ function MatrixPanel({ cells, unmapped, totals, metric }: { cells: DemandCell[];
     {!chart || screenshotMode ? <div className="overflow-x-auto rounded-xl border border-[#dedede]" data-report-full-width-table="true"><table className="w-full min-w-[950px] text-sm"><thead className="bg-[#fff1f2] text-[#9f0019]"><tr><th className="px-4 py-3 text-left">{labels[metric]}</th>{[...demandDevices, "Total"].map((d) => <th key={d} className="px-4 text-right">{d}</th>)}</tr></thead><tbody>{rows.map(({ label, entries }) => <tr key={label} className="border-t"><th className="px-4 py-4 text-left">{label}</th>{demandDevices.map((d) => <td key={d} className="px-4 py-4 text-right tabular-nums">{display(sum(entries.filter((c) => c.device === d)))}</td>)}<td className="px-4 py-4 text-right tabular-nums bg-red-50">{display(sum(entries))}</td></tr>)}<tr className="border-t bg-red-50 font-semibold"><th className="px-4 py-4 text-left">Overall total</th>{demandDevices.map((d) => <td key={d} className="px-4 py-4 text-right">{display(sum([...cells, ...unmapped].filter((c) => c.device === d)))}</td>)}<td className="px-4 py-4 text-right">{display(overall[metric])}</td></tr></tbody></table></div> : <div className="space-y-4">{cells.map((c) => <div key={`${c.format}:${c.device}`}><div className="flex justify-between text-sm"><span>{c.format} · {c.device}</span><span>{display(c.metrics[metric])}</span></div><div className="h-3 rounded bg-gray-100"><div className="h-3 rounded bg-[#e10600]" style={{ width: `${(c.metrics[metric] ?? 0) / max * 100}%` }} /></div></div>)}</div>}
     {unmapped.length ? <details open={screenshotMode || undefined}><summary>Unknown format/device references</summary>{unmapped.map((c) => <p key={`${c.format}:${c.device}`}>{c.format} × {c.device}: {valueLabel(c.metrics[metric])}</p>)}</details> : null}
   </Card></section>;
+}
+
+function DemandAdsPanel({ ads }: { ads: NonNullable<DemandGenPayload["ads"]> }) {
+  return <Card className={panel}><h3 className="text-xl font-semibold">Ads</h3><div className="overflow-x-auto rounded-xl border" data-report-full-width-table="true"><table className="w-full min-w-[900px] text-sm"><thead className="bg-red-50 text-[#9f0019]"><tr>{["Ad", "Campaign", "Creative", "Clicks", "CTR (%)", "CPC", "Views"].map((label) => <th key={label} className="px-4 py-3 text-left">{label}</th>)}</tr></thead><tbody>{ads.map((ad) => <tr key={ad.id} className="border-t"><td className="px-4 py-3">{ad.name}</td><td className="px-4 py-3">{ad.campaignName}</td><td className="px-4 py-3"><div className="flex flex-wrap gap-2">{ad.imageUrls.length ? ad.imageUrls.map((url) => <AdCreativeImage key={url} url={url} name={ad.name} />) : "—"}</div></td>{(["clicks", "ctr", "cpc", "views"] as const).map((metric) => <td key={metric} className="px-4 py-3 tabular-nums">{valueLabel(ad.metrics[metric])}</td>)}</tr>)}</tbody></table></div>{!ads.length ? <p>No ad creatives available for these campaigns.</p> : null}</Card>;
+}
+function AdCreativeImage({ url, name }: { url: string; name: string }) {
+  const [failed, setFailed] = useState(false);
+  if (failed) return <span>—</span>;
+  // eslint-disable-next-line @next/next/no-img-element
+  return <img src={url} alt={`${name} creative`} className="h-24 w-32 rounded-md object-contain" onError={() => setFailed(true)} />;
 }

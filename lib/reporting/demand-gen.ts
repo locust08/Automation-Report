@@ -18,6 +18,7 @@ export interface DemandGenPayload {
   campaignId: string | null;
   campaignIds?: string[];
   totals?: DemandValues;
+  ads?: { id: string; name: string; campaignName: string; imageUrls: string[]; metrics: DemandValues }[];
   inMarket: DemandAudienceRow[]; affinity: DemandAudienceRow[];
   cells: DemandCell[]; unmapped: DemandCell[];
   unresolved: DemandAudienceRow[];
