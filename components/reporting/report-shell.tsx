@@ -108,10 +108,10 @@ export function ReportShell({
       label: "Reports",
       items: [
         { href: hrefs.overall, label: "Monthly Performance", active: pathname === "/overall", icon: BarChart3Icon },
-        ...((new URLSearchParams(reportContextQuery).has("metaAccountId") || new URLSearchParams(reportContextQuery).has("tiktokAccountId") || pathname === "/campaign-breakdown") ? [{ href: withQuery("/campaign-breakdown", reportContextQuery), label: "Campaign Breakdown", active: pathname === "/campaign-breakdown", icon: BarChart3Icon }] : []),
+        { href: withQuery("/campaign-breakdown", reportContextQuery), label: "Campaign Breakdown", active: pathname === "/campaign-breakdown", icon: BarChart3Icon },
         { href: hrefs.preview, label: "Campaign Preview", active: pathname === "/preview", icon: EyeIcon },
         { href: hrefs.advanced, label: "Advanced Report", active: pathname === "/advanced", icon: SparklesIcon },
-        ...((new URLSearchParams(reportContextQuery).has("googleAccountId") || pathname === "/demand-gen") ? [{ href: withQuery("/demand-gen", reportContextQuery), label: "Demand Gen Analysis", active: pathname === "/demand-gen", icon: BarChart3Icon }] : []),
+        { href: withQuery("/demand-gen", reportContextQuery), label: "Demand Gen Analysis", active: pathname === "/demand-gen", icon: BarChart3Icon },
       ],
     },
     {

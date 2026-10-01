@@ -1,5 +1,7 @@
 "use client";
 
+import { searchCachedAccounts } from "./account-search-cache";
+
 import {
   FormEvent,
   KeyboardEvent,
@@ -544,11 +546,8 @@ function ReportAccountSearchInput({
       const storedValue = window.localStorage.getItem(RECENT_ACCOUNTS_STORAGE_KEY);
       const storedAccounts = storedValue ? (JSON.parse(storedValue) as unknown) : [];
       if (Array.isArray(storedAccounts)) {
-        setRecentAccounts(
-          storedAccounts
-            .filter(isAccountSearchSuggestion)
-            .slice(0, RECENT_ACCOUNTS_LIMIT)
-        );
+        const nextRecent = storedAccounts.filter(isAccountSearchSuggestion).slice(0, RECENT_ACCOUNTS_LIMIT);
+        queueMicrotask(() => setRecentAccounts(nextRecent));
       }
     } catch {
       window.localStorage.removeItem(RECENT_ACCOUNTS_STORAGE_KEY);
@@ -559,37 +558,25 @@ function ReportAccountSearchInput({
     requestId.current += 1;
     const currentRequestId = requestId.current;
 
-    if (query.length < 2) {
-      setSuggestions([]);
-      setSearchState("idle");
-      setSearchError(null);
-      return;
-    }
-
-    setSearchState("loading");
-    setSearchError(null);
-    setIsOpen(true);
+    queueMicrotask(() => {
+      if (currentRequestId !== requestId.current) return;
+      if (query.length < 2) {
+        setSuggestions([]);
+        setSearchState("idle");
+        setSearchError(null);
+      } else {
+        setSearchState("loading");
+        setSearchError(null);
+        setIsOpen(true);
+      }
+    });
+    if (query.length < 2) return;
 
     const controller = new AbortController();
     const timeoutId = window.setTimeout(async () => {
       try {
-        const response = await fetch(
-          `/api/notion/accounts/search?q=${encodeURIComponent(query)}`,
-          { cache: "no-store", signal: controller.signal }
-        );
-        const payload = (await response.json().catch(() => null)) as
-          | { accounts?: AccountSearchSuggestion[]; error?: string; message?: string }
-          | null;
-
-        if (controller.signal.aborted || currentRequestId !== requestId.current) {
-          return;
-        }
-
-        if (!response.ok || !payload) {
-          throw new Error(payload?.error ?? payload?.message ?? "Unable to search accounts.");
-        }
-
-        const nextSuggestions = Array.isArray(payload.accounts) ? payload.accounts : [];
+        const nextSuggestions = await searchCachedAccounts<AccountSearchSuggestion>(query);
+        if (controller.signal.aborted || currentRequestId !== requestId.current) return;
         setSuggestions(nextSuggestions);
         setSearchState("success");
         setHighlightedId(nextSuggestions[0]?.notionPageId ?? null);

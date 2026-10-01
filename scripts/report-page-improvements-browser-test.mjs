@@ -49,6 +49,23 @@ async function downloadPdf(file) {
 try {
   await page.goto(`${base}/demand-gen?googleAccountId=1234567890&platform=google&startDate=2026-09-01&endDate=2026-09-30`);
   await page.getByRole("cell", { name: "Furniture", exact: true }).waitFor();
+  await page.getByRole("button", { name: "Navigation", exact: true }).click();
+  await page.getByRole("menuitem", { name: "Campaign Breakdown", exact: true }).waitFor();
+  await page.getByRole("menuitem", { name: "Demand Gen Analysis", exact: true }).waitFor();
+  await page.keyboard.press("Escape");
+  let accountSearchRequests = 0;
+  await page.route("**/api/notion/accounts/search?**", async (route) => { accountSearchRequests++; await route.fulfill({ json: { accounts: [{ notionPageId: "cache-account", accountName: "Cache Account", adAccountId: "1234567890", platform: "google" }] } }); });
+  await page.locator('button[aria-haspopup="listbox"]').first().click();
+  const accountSearch = page.getByRole("textbox", { name: "Search accounts", exact: true });
+  await accountSearch.fill("cache account");
+  await page.getByText("Cache Account | 1234567890", { exact: true }).waitFor();
+  await accountSearch.fill("");
+  await page.getByText("Cache Account | 1234567890", { exact: true }).waitFor({ state: "hidden" });
+  await accountSearch.fill("cache account");
+  await page.getByText("Cache Account | 1234567890", { exact: true }).waitFor();
+  assert.equal(accountSearchRequests, 1, "repeated account searches reuse cached results");
+  await accountSearch.press("Escape");
+
   assert.ok(await page.getByRole("heading", { level: 1 }).innerText().then((text) => text.includes("Fixture Google") && text.includes("1234567890")));
   await page.getByRole("img", { name: "Demand ad creative", exact: true }).waitFor();
   assert.ok(await page.getByRole("columnheader", { name: "Creative", exact: true }).count());
@@ -101,6 +118,7 @@ try {
   const previous = stageRequestCount();
   await page.getByRole("spinbutton", { name: "Filter value", exact: true }).fill("5");
   await page.getByRole("button", { name: "Apply value filter", exact: true }).click();
+  await page.waitForURL((url) => JSON.parse(url.searchParams.get("valueFilter") || "{}").value === 5);
   await page.getByText("Historical ad", { exact: true }).waitFor();
   await page.getByRole("img", { name: "Historical ad creative", exact: true }).waitFor();
   assert.equal(stageRequestCount(), previous, "local value changes reuse loaded stages");
