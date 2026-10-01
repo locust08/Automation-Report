@@ -23,7 +23,7 @@ await page.route("**/api/**", async (route) => {
   else if (url.pathname.includes("/ad-groups") || url.pathname.includes("/ads")) {
     if (failHierarchy) return route.fulfill({ status: 503, json: { error: "Fixture retry failure" } });
     data = { ...overall, sections: [{ platform: "meta", campaigns: [{ id: "c", name: "Fixture campaign", status: "Paused", details: [], children: [{ id: "s", name: "Historical set", status: "Paused", details: [], performance, ads: [{ id: "a", name: "Historical ad", status: "Paused", details: [], performance: { ...performance, spend: 3, results: 1 } }] }] }] }], warnings: url.pathname.includes("/ad-groups") ? ["Fixture partial coverage"] : [] };
-  } else if (url.pathname.includes("/api/reports/") || url.pathname === "/api/reporting") data = overall;
+  } else if (url.pathname.includes("/api/reports/") || url.pathname === "/api/reporting") data = url.searchParams.get("googleAccountId") ? { ...overall, accountIds: { metaAccountId: null, metaAccountIds: [], googleAccountId: "1234567890", googleAccountIds: ["1234567890"] }, campaignGroups: [{ ...overall.campaignGroups[0], id: "google-search", platform: "google", campaignType: "Search", rows: [{ ...campaign, platform: "google", campaignType: "Search", campaignName: "Google campaign only" }] }] } : overall;
   else if (url.pathname.endsWith("/final-url-performance")) data = { section: { rows: [{ id: "url", campaign: "Demand Gen campaign with a readable name", finalUrl: "https://example.com/landing-page?utm_source=google&utm_campaign=demand-gen", spend: 2007.59, impressions: 289568, clicks: 21237, conversions: 1256, ctr: 7.33, cpc: .09, cpa: 1.60, conversionRate: 5.92 }], otherRow: null, totalUrlCount: 1 }, warnings: [] };
   else if (url.pathname.includes("/advanced") || url.pathname === "/api/reporting/advanced") return route.fulfill({ status: 503, json: { error: "Fixture analysis unavailable" } });
   else if (url.pathname.includes("/accounts/search")) data = { accounts: [] };
@@ -91,7 +91,13 @@ try {
   const captureWidth = await page.locator('[data-report-capture-root="true"] > div').first().evaluate((element) => element.getBoundingClientRect().width);
   assert.equal(captureWidth, 1440, "capture must preserve the established width");
   await page.pdf({ path: "tmp/monthly-capture-fixture.pdf", printBackground: true, width: "1520px", height: "2200px" });
-  console.log("Browser QA passed: independent Demand Gen, sorting/pagination, shared metrics without refetch, mobile layout, Meta return navigation, historical children, retained retry data, wider Overall, preserved capture width and PDF render.");
+  await page.goto(`${base}/overall?googleAccountId=1234567890&platform=google&startDate=2026-09-01&endDate=2026-09-30`);
+  await page.getByText("Google campaign only", { exact: true }).filter({ visible: true }).first().waitFor();
+  assert.equal(await page.getByRole("button", { name: /Expand .* hierarchy/ }).count(), 0, "Google campaigns have no hierarchy controls");
+  await page.setViewportSize({ width: 390, height: 844 });
+  assert.equal(await page.getByRole("button", { name: /Expand .* hierarchy/ }).count(), 0, "Google mobile campaigns have no hierarchy controls");
+  assert.equal(await page.getByText("AD GROUPS", { exact: true }).count(), 0);
+  console.log("Browser QA passed: Google campaign-only desktop/mobile,  independent Demand Gen, sorting/pagination, shared metrics without refetch, mobile layout, Meta return navigation, historical children, retained retry data, wider Overall, preserved capture width and PDF render.");
 } catch (error) {
   console.log((await page.locator("body").innerText()).slice(0, 5000));
   throw error;

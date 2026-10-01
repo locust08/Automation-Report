@@ -610,7 +610,6 @@ function buildPreviewHref(row: CampaignRow, queryString: string): string | null 
 function supportsCampaignHierarchy(row: CampaignRow): boolean {
   return (
     row.platform === "meta" ||
-    row.platform === "google" ||
     row.platform === "tiktok"
   );
 }
