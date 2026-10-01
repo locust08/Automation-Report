@@ -71,25 +71,27 @@ function DemandGenScope({ queryString, campaignNameFilter, onContext }: { queryS
 
 function AudiencePanel({ title, rows, metric }: { title: string; rows: DemandAudienceRow[]; metric: DemandMetric }) {
   const { screenshotMode } = useScreenshotMode();
-  const [sort, setSort] = useState<"name" | "value">("value");
+  const [sort, setSort] = useState<"name" | DemandMetric>(metric);
+  const columns: DemandMetric[] = ["clicks", "ctr", "cpc", "views"];
+  if (!columns.includes(metric)) columns.push(metric);
   const [ascending, setAscending] = useState(false);
   const [page, setPage] = useState(0);
   const sorted = [...rows].sort((a, b) => {
     if (sort === "name") return (ascending ? 1 : -1) * a.name.localeCompare(b.name);
-    const av = a.metrics[metric], bv = b.metrics[metric];
+    const av = a.metrics[sort], bv = b.metrics[sort];
     if (av == null) return bv == null ? a.name.localeCompare(b.name) : 1;
     if (bv == null) return -1;
     return (ascending ? 1 : -1) * (av - bv) || a.name.localeCompare(b.name);
   });
   const pages = Math.max(1, Math.ceil(rows.length / 10)), currentPage = Math.min(page, pages - 1);
   const visible = screenshotMode ? sorted : sorted.slice(currentPage * 10, currentPage * 10 + 10);
-  const changeSort = (next: "name" | "value") => { setAscending(sort === next ? !ascending : next === "name"); setSort(next); setPage(0); };
+  const changeSort = (next: "name" | DemandMetric) => { setAscending(sort === next ? !ascending : next === "name"); setSort(next); setPage(0); };
   const max = Math.max(1, ...rows.map((row) => row.metrics[metric] ?? 0));
   return <section><Card className={panel}>
     <div className="flex flex-wrap items-center justify-between gap-3"><div className="flex items-center gap-3"><span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-[#e10600] text-white"><UsersIcon className="size-4" /></span><h3 className="text-xl font-semibold sm:text-2xl">{title}</h3></div></div>
     <p className="text-xs text-[#777]">Measured interest observations may overlap. Missing categories are unavailable.</p>
     {!rows.length ? <p>No measured {title} interest observations available.</p> : <div className="grid min-w-0 gap-6 xl:grid-cols-2"><div className="space-y-3">{[...rows].sort((a, b) => (b.metrics[metric] ?? -1) - (a.metrics[metric] ?? -1)).map((row) => <div key={row.id}><div className="flex justify-between gap-4 text-sm"><span>{row.name}</span><span>{valueLabel(row.metrics[metric])}</span></div><div className="mt-1 h-3 rounded bg-gray-100"><div className="h-3 rounded bg-[#e10600]" style={{ width: `${(row.metrics[metric] ?? 0) / max * 100}%` }} /></div></div>)}</div><div className="min-w-0 space-y-4">
-      <div data-report-full-width-table="true" className="overflow-x-auto rounded-xl border border-[#dedede]"><table className="w-full min-w-[500px] text-left text-sm"><thead className="bg-[#fff1f2] text-[#9f0019]"><tr className="border-b"><th className="px-4 py-3"><Button variant="ghost" className="px-0 hover:bg-transparent text-[#9f0019]" onClick={() => changeSort("name")}>Audience {sort === "name" ? ascending ? "↑" : "↓" : ""}</Button></th><th className="px-4 text-right"><Button variant="ghost" className="px-0 hover:bg-transparent text-[#9f0019]" onClick={() => changeSort("value")}>{labels[metric]} {sort === "value" ? ascending ? "↑" : "↓" : ""}</Button></th></tr></thead><tbody>{visible.map((row) => <tr key={row.id} className="border-b"><td className="px-4 py-4">{row.name}</td><td className="px-4 py-4 text-right font-medium tabular-nums">{valueLabel(row.metrics[metric])}</td></tr>)}</tbody></table></div>
+      <div data-report-full-width-table="true" className="overflow-x-auto rounded-xl border border-[#dedede]"><table className="w-full min-w-[760px] text-left text-sm"><thead className="bg-[#fff1f2] text-[#9f0019]"><tr className="border-b"><th className="px-4 py-3"><Button variant="ghost" className="px-0 hover:bg-transparent text-[#9f0019]" onClick={() => changeSort("name")}>Audience {sort === "name" ? ascending ? "↑" : "↓" : ""}</Button></th>{columns.map((column) => <th key={column} className="px-4 text-right whitespace-nowrap"><Button variant="ghost" className="px-0 hover:bg-transparent text-[#9f0019]" onClick={() => changeSort(column)}>{labels[column]} {sort === column ? ascending ? "↑" : "↓" : ""}</Button></th>)}</tr></thead><tbody>{visible.map((row) => <tr key={row.id} className="border-b"><td className="px-4 py-4">{row.name}</td>{columns.map((column) => <td key={column} className="px-4 py-4 text-right font-medium tabular-nums">{valueLabel(row.metrics[column])}</td>)}</tr>)}</tbody></table></div>
       <div data-report-export-exclude="true" className="flex items-center justify-end gap-3 text-sm"><Button variant="outline" className={action} disabled={currentPage === 0} onClick={() => setPage(currentPage - 1)}>Previous</Button><span>Page {currentPage + 1} of {pages}</span><Button variant="outline" className={action} disabled={currentPage + 1 === pages} onClick={() => setPage(currentPage + 1)}>Next</Button></div>
     </div></div>}
   </Card></section>;
