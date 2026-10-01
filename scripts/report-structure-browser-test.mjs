@@ -24,6 +24,7 @@ await page.route("**/api/**", async (route) => {
     if (failHierarchy) return route.fulfill({ status: 503, json: { error: "Fixture retry failure" } });
     data = { ...overall, sections: [{ platform: "meta", campaigns: [{ id: "c", name: "Fixture campaign", status: "Paused", details: [], children: [{ id: "s", name: "Historical set", status: "Paused", details: [], performance, ads: [{ id: "a", name: "Historical ad", status: "Paused", details: [], performance: { ...performance, spend: 3, results: 1 } }] }] }] }], warnings: url.pathname.includes("/ad-groups") ? ["Fixture partial coverage"] : [] };
   } else if (url.pathname.includes("/api/reports/") || url.pathname === "/api/reporting") data = overall;
+  else if (url.pathname.endsWith("/final-url-performance")) data = { section: { rows: [{ id: "url", campaign: "Demand Gen campaign with a readable name", finalUrl: "https://example.com/landing-page?utm_source=google&utm_campaign=demand-gen", spend: 2007.59, impressions: 289568, clicks: 21237, conversions: 1256, ctr: 7.33, cpc: .09, cpa: 1.60, conversionRate: 5.92 }], otherRow: null, totalUrlCount: 1 }, warnings: [] };
   else if (url.pathname.includes("/advanced") || url.pathname === "/api/reporting/advanced") return route.fulfill({ status: 503, json: { error: "Fixture analysis unavailable" } });
   else if (url.pathname.includes("/accounts/search")) data = { accounts: [] };
   await route.fulfill({ json: data });
@@ -32,6 +33,11 @@ try {
   await page.goto(`${base}/advanced?googleAccountId=1234567890&platform=google&startDate=2026-09-01&endDate=2026-09-30`);
   await page.getByRole("heading", { name: "Demand Gen Analysis" }).waitFor();
   await page.getByRole("cell", { name: "Furniture", exact: true }).waitFor();
+  const finalUrlTable = page.getByRole("region", { name: "Final URL performance table" });
+  await finalUrlTable.waitFor();
+  assert.ok(await finalUrlTable.evaluate((element) => element.scrollWidth > element.clientWidth), "Final URL table scrolls on desktop");
+  await finalUrlTable.evaluate((element) => { element.scrollLeft = 500; });
+  assert.ok(await finalUrlTable.evaluate((element) => element.scrollLeft > 0), "Final URL metrics are reachable by horizontal scroll");
   const before = demandRequests;
   const inMarket = page.locator("section").filter({ has: page.getByRole("heading", { name: "In-market", exact: true }) }).last();
   await inMarket.getByRole("button", { name: "Next", exact: true }).click();

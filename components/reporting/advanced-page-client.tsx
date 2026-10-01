@@ -1134,22 +1134,12 @@ function FinalUrlPerformanceSection({
         ) : null}
       </div>
 
-      <div className="overflow-x-auto rounded-xl border border-[#d8d8d8] bg-white">
-        <table className="w-full min-w-[1600px] table-fixed text-left text-sm leading-6 text-[#111]">
+      <div role="region" aria-label="Final URL performance table" tabIndex={0} className="max-w-full overflow-x-auto rounded-xl border border-[#d8d8d8] bg-white">
+        <table className="w-full min-w-[2400px] table-fixed text-left text-sm leading-6 text-[#111]">
           <colgroup>
-            <col className="w-[12%]" />
-            <col className="w-[12%]" />
-            <col className="w-[8%]" />
-            <col className="w-[7%]" />
-            <col className="w-[6%]" />
-            <col className="w-[6%]" />
-            <col className="w-[7%]" />
-            <col className="w-[6%]" />
-            <col className="w-[7%]" />
-            <col className="w-[7%]" />
-            <col className="w-[9%]" />
-            <col className="w-[7%]" />
-            <col className="w-[6%]" />
+            <col className="w-[300px]" />
+            <col className="w-[450px]" />
+            {Array.from({ length: 11 }, (_, index) => <col key={index} className="w-[150px]" />)}
           </colgroup>
           <thead className="bg-[#f8f8f8] text-[#111]">
             <tr>
@@ -1186,8 +1176,8 @@ function FinalUrlPerformanceSection({
                 <FinalUrlCell align="right">{formatFinalUrlCurrency(row.cpa)}</FinalUrlCell>
                 <FinalUrlCell align="right">{formatFinalUrlPercent(row.conversionRate)}</FinalUrlCell>
                 <FinalUrlCell align="right">{formatFinalUrlPercent(row.impressionShare)}</FinalUrlCell>
-                <FinalUrlCell align="right">{formatFinalUrlPercent(row.lostImpressionShareBudget, "â€“")}</FinalUrlCell>
-                <FinalUrlCell align="right">{formatFinalUrlPercent(row.lostImpressionShareRank, "â€“")}</FinalUrlCell>
+                <FinalUrlCell align="right">{formatFinalUrlPercent(row.lostImpressionShareBudget, "\u2014")}</FinalUrlCell>
+                <FinalUrlCell align="right">{formatFinalUrlPercent(row.lostImpressionShareRank, "\u2014")}</FinalUrlCell>
               </tr>
             ))}
           </tbody>
@@ -1897,7 +1887,7 @@ function FinalUrlHeader({
   align?: "left" | "right";
 }) {
   return (
-    <th className={`break-words px-2 py-4 font-semibold ${align === "right" ? "text-right" : "text-left"}`}>
+    <th className={`px-4 py-4 font-semibold ${align === "right" ? "text-right" : "text-left"}`}>
       {children}
     </th>
   );
@@ -1913,7 +1903,7 @@ function FinalUrlCell({
   className?: string;
 }) {
   return (
-    <td className={`px-2 py-5 align-middle text-[#111] ${align === "right" ? "text-right" : "text-left"} ${className}`}>
+    <td className={`px-4 py-5 align-middle text-[#111] ${align === "right" ? "whitespace-nowrap text-right tabular-nums" : "text-left"} ${className}`}>
       {children}
     </td>
   );
