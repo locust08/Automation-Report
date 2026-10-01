@@ -1,3 +1,4 @@
+import { metaVideoPlays } from "./video-views";
 import {
   coerceAudienceClicks,
   createAudienceClickBreakdownItem,
@@ -272,6 +273,7 @@ interface MetaInsightRow {
   publisher_platform?: string;
   device_platform?: string;
   actions?: MetaActionMetric[];
+  video_play_actions?: MetaActionMetric[];
   cost_per_action_type?: MetaActionMetric[];
   country?: string;
   region?: string;
@@ -406,6 +408,7 @@ const META_AWARENESS_RESULT_FIELDS = [
 
 const META_LEGACY_RESULT_FIELDS = [
   "actions",
+  "video_play_actions",
   "cost_per_action_type",
 ] as const;
 
@@ -497,6 +500,7 @@ const META_ADVANCED_CREATIVE_INSIGHT_FIELDS = [
   "cost_per_result",
   "cost_per_objective_result",
   "actions",
+  "video_play_actions",
   "cost_per_action_type",
 ] as const;
 
@@ -521,6 +525,7 @@ const META_PREVIEW_INSIGHT_FIELDS = [
   "cost_per_result",
   "cost_per_objective_result",
   "actions",
+  "video_play_actions",
   "cost_per_action_type",
 ] as const;
 
@@ -536,6 +541,7 @@ const META_PREVIEW_DEMOGRAPHIC_FIELDS = [
   "cpp",
   "spend",
   "actions",
+  "video_play_actions",
   "cost_per_action_type",
 ] as const;
 
@@ -623,7 +629,7 @@ export async function fetchMetaCampaignRows({
     row.costPerResult =
       resultMetric.costPerResult ?? (resultMetric.value > 0 ? spend / resultMetric.value : 0);
     row.avgCpc = clicks > 0 ? spend / clicks : 0;
-    row.videoViews = item.actions?.find((action) => action.action_type === "video_view") ? toNumber(item.actions.find((action) => action.action_type === "video_view")!.value) : null;
+    row.videoViews = metaVideoPlays(item.video_play_actions);
     row.conversions = resultMetric.value;
 
     if (hasReportableCampaignSpend(row)) {
@@ -2191,8 +2197,8 @@ function buildPerformanceMap(
       current.resultCostTotal += resultMetric.costPerResult * resultMetric.value;
       current.hasNativeResultCost = true;
     }
-    const videoView = row.actions?.find((action) => action.action_type === "video_view");
-    current.videoViews = current.videoViews == null || !videoView ? null : current.videoViews + toNumber(videoView.value);
+    const videoViews = metaVideoPlays(row.video_play_actions);
+    current.videoViews = current.videoViews == null || videoViews == null ? null : current.videoViews + videoViews;
     current.spend += toNumber(row.spend);
     current.impressions += toNumber(row.impressions);
     current.clicks += toNumber(row.clicks);
@@ -2719,6 +2725,7 @@ function pickResultMetric(input: {
   videoThruPlayWatchedActions?: MetaActionMetricValue;
   costPerThruPlay?: MetaActionMetricValue;
   actions?: MetaActionMetric[];
+  video_play_actions?: MetaActionMetric[];
   costs?: MetaActionMetric[];
   objective?: string;
   optimizationGoal?: string;
@@ -2978,6 +2985,7 @@ function pickTrafficResultMetric(input: {
   objective?: string;
   optimizationGoal?: string;
   actions?: MetaActionMetric[];
+  video_play_actions?: MetaActionMetric[];
   costs?: MetaActionMetric[];
 }): { actionType: string; label: string; value: number; costPerResult: number | null } | null {
   const objective = input.objective?.trim().toUpperCase() ?? "";
@@ -3013,6 +3021,7 @@ function pickLeadResultMetric(input: {
   objective?: string;
   optimizationGoal?: string;
   actions?: MetaActionMetric[];
+  video_play_actions?: MetaActionMetric[];
   costs?: MetaActionMetric[];
 }): { actionType: string; label: string; value: number; costPerResult: number | null } | null {
   if (!isLeadResult(input.objective, input.optimizationGoal)) {
@@ -3035,6 +3044,7 @@ function pickSalesResultMetric(input: {
   objective?: string;
   optimizationGoal?: string;
   actions?: MetaActionMetric[];
+  video_play_actions?: MetaActionMetric[];
   costs?: MetaActionMetric[];
 }): { actionType: string; label: string; value: number; costPerResult: number | null } | null {
   const objective = input.objective?.trim().toUpperCase() ?? "";

@@ -14,7 +14,7 @@ test("campaign management retrieves only campaigns and campaign-level daily insi
     }
     if (url.includes("/insights?")) {
       assert.equal(new URL(url).searchParams.get("level"), "campaign");
-      return jsonResponse({ data: [{ date_start: "2026-01-15", campaign_id: "c1", impressions: "1000", clicks: "25", spend: "50", reach: "900" }] });
+      return jsonResponse({ data: [{ date_start: "2026-01-15", campaign_id: "c1", impressions: "1000", clicks: "25", spend: "50", reach: "900", actions: [{ action_type: "video_view", value: "75" }], video_play_actions: [{ action_type: "video_view", value: "350" }] }] });
     }
     throw new Error(`Unexpected Meta request: ${url}`);
   };
@@ -30,6 +30,8 @@ test("campaign management retrieves only campaigns and campaign-level daily insi
     });
     assert.equal(urls.length, 2);
     assert.equal(result.data[0]?.performance?.spend, 50);
+    assert.equal(result.data[0]?.performance?.videoViews, 350);
+    assert.ok(new URL(urls.find((url) => url.includes("/insights?"))!).searchParams.get("fields")?.includes("video_play_actions"));
     assert.equal(result.data[0]?.dailyPerformance?.[0]?.date, "2026-01-15");
   } finally {
     globalThis.fetch = originalFetch;
@@ -46,7 +48,7 @@ test("ad-group management skips the account ads and creative endpoints", async (
     if (url.includes("/adsets?")) return jsonResponse({ data: [{ id: "s1", campaign_id: "c1", name: "Ad set", status: "ACTIVE" }] });
     if (url.includes("/insights?")) {
       assert.equal(new URL(url).searchParams.get("level"), "adset");
-      return jsonResponse({ data: [{ date_start: "2026-01-15", campaign_id: "c1", adset_id: "s1", impressions: "100", clicks: "5", spend: "10" }] });
+      return jsonResponse({ data: [{ date_start: "2026-01-15", campaign_id: "c1", adset_id: "s1", impressions: "100", clicks: "5", spend: "10", video_play_actions: [{ action_type: "video_view", value: "40" }] }] });
     }
     throw new Error(`Unexpected Meta request: ${url}`);
   };
@@ -63,6 +65,7 @@ test("ad-group management skips the account ads and creative endpoints", async (
     assert.equal(urls.length, 3);
     assert.equal(urls.some((url) => url.includes("/ads?")), false);
     assert.equal(result.data[0]?.children[0]?.performance?.spend, 10);
+    assert.equal(result.data[0]?.children[0]?.performance?.videoViews, 40);
   } finally {
     globalThis.fetch = originalFetch;
   }
