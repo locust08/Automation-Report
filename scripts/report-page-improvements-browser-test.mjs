@@ -52,6 +52,13 @@ try {
   assert.ok(await page.getByRole("heading", { level: 1 }).innerText().then((text) => text.includes("Fixture Google") && text.includes("1234567890")));
   await page.getByRole("img", { name: "Demand ad creative", exact: true }).waitFor();
   assert.ok(await page.getByRole("columnheader", { name: "Creative", exact: true }).count());
+  await page.getByRole("button", { name: "Select campaigns", exact: true }).click();
+  await page.getByRole("menuitemcheckbox", { name: "Demand A", exact: true }).waitFor();
+  await page.getByRole("textbox", { name: "Search campaigns", exact: true }).fill("Demand B");
+  assert.equal(await page.getByRole("menuitemcheckbox").count(), 1);
+  await page.getByRole("menuitemcheckbox", { name: "Demand B", exact: true }).click();
+  await page.waitForURL((url) => url.searchParams.getAll("campaignId").length === 2);
+  await page.keyboard.press("Escape");
   await page.getByRole("button", { name: "Show all", exact: true }).click();
   await page.waitForURL((url) => url.searchParams.getAll("campaignId").length === 2);
   assert.ok(requests.some((url) => url.pathname.endsWith("demand-gen") && url.searchParams.getAll("campaignId").length === 2));

@@ -4,13 +4,12 @@ import { AdvancedLoadingPanel } from "./advanced-loading-panel";
 import { useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useScreenshotMode } from "./use-screenshot-mode";
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuTrigger, DropdownMenuCheckboxItem } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
-import { Checkbox } from "@/components/ui/checkbox";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { BarChart3Icon, UsersIcon, LayoutGridIcon } from "lucide-react";
+import { BarChart3Icon, UsersIcon, LayoutGridIcon, ChevronDownIcon } from "lucide-react";
 import { useReportSectionQuery } from "./use-report-data";
 import { filterRowsByCampaignName, type CampaignNameFilter } from "@/lib/reporting/campaign-name-filter";
 import { sumDemandValues, demandShare, demandMetrics, demandDevices, demandFormats, type DemandMetric, type DemandAudienceRow, type DemandGenPayload, type DemandCell } from "@/lib/reporting/demand-gen";
@@ -46,9 +45,12 @@ function DemandGenScope({ queryString, campaignNameFilter, onContext }: { queryS
     <Card className={panel}>
       <div className="flex items-center gap-3"><span className="flex size-11 shrink-0 items-center justify-center rounded-xl bg-[#e10600] text-white"><BarChart3Icon className="size-5" /></span><h2 className="text-2xl font-semibold sm:text-3xl">Demand Gen Analysis</h2></div>
       <div className="flex flex-wrap items-center gap-3" data-report-export-exclude="true">
-        <Popover><PopoverTrigger asChild><Button variant="outline" aria-label="Select campaigns" className="max-w-full truncate">{campaignIds.length === 1 ? campaigns.find((c) => c.id === campaignIds[0])?.name : `${campaignIds.length} campaigns selected`}</Button></PopoverTrigger>
-          <PopoverContent className="w-[420px] max-w-[calc(100vw-32px)] space-y-3"><Input aria-label="Search campaigns" placeholder="Search campaigns" value={search} onChange={(e) => setSearch(e.target.value)} /><div className="max-h-72 space-y-2 overflow-y-auto">{campaigns.filter((c) => c.name.toLowerCase().includes(search.toLowerCase())).map((c) => <label key={c.id} className="flex items-center gap-2 text-sm"><Checkbox checked={campaignIds.includes(c.id)} onCheckedChange={(checked) => choose(checked ? [...campaignIds, c.id] : campaignIds.filter((id) => id !== c.id))} />{c.name}</label>)}</div></PopoverContent>
-        </Popover>
+        <DropdownMenu><DropdownMenuTrigger aria-label="Select campaigns" className="flex h-9 w-[420px] max-w-full items-center justify-between gap-2 rounded-md border border-input bg-white px-3 text-sm shadow-xs outline-none focus-visible:ring-2 focus-visible:ring-ring">
+          <span className="truncate">{campaignIds.length === 1 ? campaigns.find((c) => c.id === campaignIds[0])?.name : `${campaignIds.length} campaigns selected`}</span><ChevronDownIcon className="size-4 shrink-0 text-muted-foreground" />
+        </DropdownMenuTrigger><DropdownMenuContent align="start" className="w-[420px] max-w-[calc(100vw-32px)] p-2">
+          <Input aria-label="Search campaigns" placeholder="Search campaigns" value={search} onChange={(e) => setSearch(e.target.value)} onKeyDown={(event) => { if (event.key !== "Escape" && event.key !== "Tab") event.stopPropagation(); }} className="mb-2" />
+          <div className="max-h-72 overflow-y-auto">{campaigns.filter((c) => c.name.toLowerCase().includes(search.toLowerCase())).map((c) => <DropdownMenuCheckboxItem key={c.id} checked={campaignIds.includes(c.id)} onSelect={(event) => event.preventDefault()} onCheckedChange={(checked) => choose(checked ? [...campaignIds, c.id] : campaignIds.filter((id) => id !== c.id))}>{c.name}</DropdownMenuCheckboxItem>)}{!campaigns.some((c) => c.name.toLowerCase().includes(search.toLowerCase())) ? <p className="px-2 py-3 text-sm text-muted-foreground">No matching campaigns.</p> : null}</div>
+        </DropdownMenuContent></DropdownMenu>
         <Button variant="outline" className={action} onClick={() => choose(campaigns.map((c) => c.id))}>Show all</Button>
         <span id="demand-metric-label">Metric</span><Select value={metric} onValueChange={(value) => { setMetric(value as DemandMetric); persist(campaignIds, value as DemandMetric); }}><SelectTrigger aria-labelledby="demand-metric-label" className="w-[160px] bg-white"><SelectValue /></SelectTrigger><SelectContent>{demandMetrics.map((key) => <SelectItem key={key} value={key}>{labels[key]}</SelectItem>)}</SelectContent></Select>
       </div>
