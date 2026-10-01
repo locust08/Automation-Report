@@ -41,6 +41,15 @@ type ExportOverlayState =
 const TRANSPARENT_IMAGE_PLACEHOLDER =
   "data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='1' height='1'%3E%3C/svg%3E";
 const REPORT_EXPORT_CAPTURE_STYLE = `
+  [data-standalone-report="demand-gen"] [data-slot="card"] {
+    overflow: visible !important;
+    height: auto !important;
+  }
+
+  [data-standalone-report="demand-gen"] [data-slot="card"] > * {
+    flex-shrink: 0 !important;
+  }
+
   [data-report-export-exclude='true'] {
     display: none !important;
   }
@@ -537,7 +546,7 @@ async function captureReportPng(root: HTMLElement, format: DownloadFormat): Prom
         root.style.maxWidth = "none"; root.style.overflow = "visible";
         const shell = root.firstElementChild as HTMLElement; shell.style.maxWidth = "none"; shell.style.width = "100%";
       }
-      tables.forEach((element) => { element.style.overflow = "visible"; element.style.width = `${element.scrollWidth}px`; });
+      tables.forEach((element) => { element.style.overflow = "visible"; element.style.minWidth = `${element.scrollWidth}px`; element.style.width = "100%"; });
       return await captureElementPng(root, format);
     } finally { styles.forEach(({ element, value }) => value == null ? element.removeAttribute("style") : element.setAttribute("style", value)); }
   } finally {
