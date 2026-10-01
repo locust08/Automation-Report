@@ -40,7 +40,7 @@ function DemandGenScope({ queryString, campaignNameFilter }: { queryString: stri
       {options.loading || report.loading ? <AdvancedLoadingPanel title="Loading Demand Gen analysis" message="Retrieving campaign, audience, and format performance..." /> : null}
       {options.error || report.error ? <p role="alert">{options.error ?? report.error} <button className={control} onClick={options.error ? options.retry : report.retry}>Retry</button></p> : null}
       {options.data && !campaigns.length ? <p>No Demand Gen campaigns match this account and campaign filter.</p> : null}
-      {data?.warnings.map((warning) => <p key={warning} className="text-sm text-amber-800">{warning}</p>)}
+      {data?.warnings.filter((warning) => !warning.startsWith("Notion resolved ") && !/^\d+ non-interest criteria excluded;/.test(warning)).map((warning) => <p key={warning} role="alert" className="text-sm text-amber-800">{warning}</p>)}
       {data && !data.complete ? <button className={control} onClick={report.retry}>Retry incomplete data</button> : null}
     </div>
     {data ? <div key={campaignId} className="space-y-4">
