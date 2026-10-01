@@ -6,6 +6,7 @@ import { AudienceClickBreakdownSection } from "@/components/reporting/audience-c
 import { OverallCampaignGroupsTable } from "@/components/reporting/campaign-table";
 import { ReportHeaderMonthPicker } from "@/components/reporting/report-header-month-picker";
 import { MetricSection } from "@/components/reporting/metric-grid";
+import { AdvancedLoadingPanel } from "@/components/reporting/advanced-loading-panel";
 import {
   OverallAudienceSkeleton,
   OverallCampaignSkeleton,
@@ -327,7 +328,8 @@ export function OverallPageClient({
           </div>
         ) : hasAccountId ? (
           <>
-            {summaryQuery.loading && !summaryQuery.data ? <OverallSummarySkeleton compact={compactInteractive} /> : null}
+            {!screenshotMode && (summaryQuery.loading || campaignQuery.loading) ? <AdvancedLoadingPanel title="Loading Monthly Performance" message={summaryQuery.loading ? "Retrieving account totals and campaign performance..." : "Account totals ready. Retrieving campaign performance..."} /> : null}
+            {screenshotMode && summaryQuery.loading && !summaryQuery.data ? <OverallSummarySkeleton compact={compactInteractive} /> : null}
             {summaryQuery.error ? (
               <ReportErrorState
                 kind="overall"
@@ -352,7 +354,7 @@ export function OverallPageClient({
               </>
             ) : null}
 
-            {campaignQuery.loading && !campaignQuery.data ? <OverallCampaignSkeleton compact={compactInteractive} /> : null}
+            {screenshotMode && campaignQuery.loading && !campaignQuery.data ? <OverallCampaignSkeleton compact={compactInteractive} /> : null}
             {campaignQuery.error ? (
               <ReportErrorState
                 kind="overall"
@@ -459,7 +461,8 @@ function SplitAccountOverallReport({
         </p>
       </div>
 
-      {loading && !data ? <OverallReportSkeleton compact={!screenshotMode} /> : null}
+      {!screenshotMode && loading ? <AdvancedLoadingPanel title="Loading Monthly Performance" message="Retrieving account totals and campaign performance..." /> : null}
+      {screenshotMode && loading && !data ? <OverallReportSkeleton compact={!screenshotMode} /> : null}
 
       {error ? <ReportErrorState kind="overall" message={error} onRetry={retry} /> : null}
 

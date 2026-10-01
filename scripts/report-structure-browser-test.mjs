@@ -27,6 +27,7 @@ await page.route("**/api/**", async (route) => {
   else if (url.pathname.endsWith("/final-url-performance")) data = { section: { rows: [{ id: "url", campaign: "Demand Gen campaign with a readable name", finalUrl: "https://example.com/landing-page?utm_source=google&utm_campaign=demand-gen", spend: 2007.59, impressions: 289568, clicks: 21237, conversions: 1256, ctr: 7.33, cpc: .09, cpa: 1.60, conversionRate: 5.92 }], otherRow: null, totalUrlCount: 1 }, warnings: [] };
   else if (url.pathname.includes("/advanced") || url.pathname === "/api/reporting/advanced") return route.fulfill({ status: 503, json: { error: "Fixture analysis unavailable" } });
   else if (url.pathname.includes("/accounts/search")) data = { accounts: [] };
+  if (url.pathname.includes("/api/reports/") && url.searchParams.get("googleAccountId")) await new Promise((resolve) => setTimeout(resolve, 1500));
   await route.fulfill({ json: data });
 });
 try {
@@ -92,8 +93,10 @@ try {
   assert.equal(captureWidth, 1440, "capture must preserve the established width");
   await page.pdf({ path: "tmp/monthly-capture-fixture.pdf", printBackground: true, width: "1520px", height: "2200px" });
   await page.goto(`${base}/overall?googleAccountId=1234567890&platform=google&startDate=2026-09-01&endDate=2026-09-30`);
+  await page.getByText("Loading Monthly Performance", { exact: true }).filter({ visible: true }).first().waitFor();
   await page.getByText("Google campaign only", { exact: true }).filter({ visible: true }).first().waitFor();
   assert.equal(await page.getByRole("button", { name: /Expand .* hierarchy/ }).count(), 0, "Google campaigns have no hierarchy controls");
+  assert.equal(await page.getByText("Loading Monthly Performance", { exact: true }).count(), 0, "loading bar disappears after report data arrives");
   await page.setViewportSize({ width: 390, height: 844 });
   assert.equal(await page.getByRole("button", { name: /Expand .* hierarchy/ }).count(), 0, "Google mobile campaigns have no hierarchy controls");
   assert.equal(await page.getByText("AD GROUPS", { exact: true }).count(), 0);
