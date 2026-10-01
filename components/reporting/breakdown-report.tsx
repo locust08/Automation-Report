@@ -27,7 +27,7 @@ async function readStage(url: string, refresh = false): Promise<Stage> {
     const rows = payload.sections.flatMap((section) => section.campaigns.flatMap((campaign) => campaign.children));
     const warnings = payload.warnings.filter((warning) => !warning.startsWith("Notion resolved "));
     const result = { rows, warnings, complete: warnings.length === 0 };
-    if (result.complete) { cache.set(url, { data: result, expires: Date.now() + 300000 }); while (cache.size > 100) cache.delete(cache.keys().next().value!); }
+    if (result.complete) { cache.set(url, { data: result, expires: Date.now() + 24 * 60 * 60 * 1000 }); while (cache.size > 100) cache.delete(cache.keys().next().value!); }
     return result;
   }).finally(() => pending.delete(url));
   pending.set(url, load);

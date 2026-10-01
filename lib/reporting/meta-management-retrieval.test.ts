@@ -2,6 +2,33 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { fetchMetaPreviewData } from "./meta";
+import { reportPageCacheContext } from "./report-page-cache";
+
+test("report Meta collections survive fifteen minutes, coalesce, and refresh explicitly", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalNow = Date.now;
+  let clock = originalNow();
+  let requests = 0;
+  Date.now = () => clock;
+  globalThis.fetch = async (input) => {
+    requests++;
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    return jsonResponse({ data: String(input).includes("/campaigns?") ? [{ id: "cached", name: "Cached campaign", status: "ACTIVE" }] : [] });
+  };
+  const load = () => fetchMetaPreviewData({ accountId: "daily-cache-test", accessToken: "test", startDate: "2026-09-01", endDate: "2026-09-30", managementStage: "campaigns" });
+  try {
+    await Promise.all([reportPageCacheContext.run({ refresh: false }, load), reportPageCacheContext.run({ refresh: false }, load)]);
+    assert.equal(requests, 2);
+    clock += 16 * 60 * 1000;
+    await reportPageCacheContext.run({ refresh: false }, load);
+    assert.equal(requests, 2);
+    await reportPageCacheContext.run({ refresh: true }, load);
+    assert.equal(requests, 4);
+    clock += 25 * 60 * 60 * 1000;
+    await reportPageCacheContext.run({ refresh: false }, load);
+    assert.equal(requests, 6);
+  } finally { globalThis.fetch = originalFetch; Date.now = originalNow; }
+});
 
 test("campaign management retrieves only campaigns and campaign-level daily insights", async () => {
   const originalFetch = globalThis.fetch;

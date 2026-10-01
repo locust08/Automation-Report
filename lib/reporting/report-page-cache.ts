@@ -1,6 +1,9 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import { getTikTokBusinessAuthorizationContext } from "@/lib/tiktok/token-manager";
 import { createHash } from "node:crypto";
 import { readThroughMemoryCache, type MemoryCacheEntry } from "./memory-cache";
+
+export const reportPageCacheContext = new AsyncLocalStorage<{ refresh: boolean }>();
 
 const cache = new Map<string, MemoryCacheEntry<unknown>>();
 export async function cachedReportPage<T extends { warnings?: string[]; complete?: boolean }>(scope: unknown, load: () => Promise<T>, refresh = false): Promise<T> {
@@ -12,7 +15,7 @@ export async function cachedReportPage<T extends { warnings?: string[]; complete
   }
   const key = createHash("sha256").update(JSON.stringify({ version: 4, scope, identity })).digest("hex");
   if (refresh) cache.delete(key);
-  const payload = await readThroughMemoryCache(cache, key, load, { ttlMs: 15 * 60 * 1000, maxEntries: 100 }) as T;
+  const payload = await readThroughMemoryCache(cache, key, () => reportPageCacheContext.run({ refresh }, load), { ttlMs: 24 * 60 * 60 * 1000, maxEntries: 500 }) as T;
   if (payload.complete === false || payload.warnings?.some((warning) => !warning.startsWith("Notion resolved "))) cache.delete(key);
   return payload;
 }

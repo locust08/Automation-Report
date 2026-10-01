@@ -181,7 +181,7 @@ export function parseMetaUsage(appUsageHeader: string | null, adAccountUsageHead
 export function isMetaRateLimitError(error: unknown): boolean {
   if (!error || typeof error !== "object") return false;
   const value = error as { code?: unknown; subcode?: unknown };
-  return Number(value.code) === 80004 || Number(value.subcode) === 2446079;
+  return [4, 17, 32, 613, 80004].includes(Number(value.code)) || Number(value.subcode) === 2446079;
 }
 
 function parseUsageObject(value: string | null): Record<string, unknown> {

@@ -82,3 +82,13 @@ test("parses the highest utilization and provider reset duration", () => {
     { utilizationPercent: 65, recoverySeconds: 90 },
   );
 });
+
+
+test("Meta user request limits stop subsequent provider calls during cooldown", async () => {
+  const protection = createMetaAccountProtection({ now: () => 1000 });
+  let calls = 0;
+  const load = async () => { calls++; throw Object.assign(new Error("User request limit reached"), { code: 17 }); };
+  await assert.rejects(protection.run({ accountId: "user-limit", key: "campaigns", load }), MetaAccountCircuitOpenError);
+  await assert.rejects(protection.run({ accountId: "user-limit", key: "ads", load }), MetaAccountCircuitOpenError);
+  assert.equal(calls, 1);
+});

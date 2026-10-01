@@ -1,3 +1,6 @@
+import { createHash } from "node:crypto";
+import { reportPageCacheContext } from "./report-page-cache";
+import { readThroughMemoryCache, type MemoryCacheEntry } from "./memory-cache";
 import { metaVideoPlays } from "./video-views";
 import {
   coerceAudienceClicks,
@@ -21,6 +24,7 @@ import {
 import {
   MetaAccountCircuitOpenError,
   metaAccountProtection,
+  isMetaRateLimitError,
   parseMetaUsage,
 } from "@/lib/reporting/meta-account-protection";
 import {
@@ -1876,7 +1880,16 @@ class PartialMetaCollectionError extends Error {
   constructor(readonly items: unknown[]) { super("A later Meta page failed. Loaded rows are retained; retry this parent to complete coverage."); }
 }
 
+const metaCollectionCache = new Map<string, MemoryCacheEntry<unknown[]>>();
 async function fetchMetaCollection<TItem>(initialUrl: string): Promise<TItem[]> {
+  const context = reportPageCacheContext.getStore();
+  if (!context) return fetchMetaCollectionUncached<TItem>(initialUrl);
+  // Includes access token, account, dates, level, and requested fields without retaining credentials in keys.
+  const key = createHash("sha256").update(initialUrl).digest("hex");
+  if (context.refresh) metaCollectionCache.delete(key);
+  return readThroughMemoryCache(metaCollectionCache, key, () => fetchMetaCollectionUncached<TItem>(initialUrl), { ttlMs: 24 * 60 * 60 * 1000, maxEntries: 500 }) as Promise<TItem[]>;
+}
+async function fetchMetaCollectionUncached<TItem>(initialUrl: string): Promise<TItem[]> {
   const items: TItem[] = [];
   let nextUrl = initialUrl;
   const seen = new Set<string>();
@@ -1935,7 +1948,7 @@ async function fetchMetaGraphPage<TItem>(url: string): Promise<MetaGraphResponse
         json.error?.error_subcode
       );
 
-      if (accountId && (error.code === 80004 || error.subcode === 2446079)) {
+      if (accountId && isMetaRateLimitError(error)) {
         metaAccountProtection.recordRateLimit(accountId, error.message, usage.recoverySeconds);
       }
 
