@@ -60,6 +60,11 @@ async function downloadPdf(file) {
       return Array.from(root.querySelectorAll('th, td')).some((cell) => getComputedStyle(cell).display !== "none" && cell.getBoundingClientRect().right > bounds.right + 1);
     });
     assert.equal(overflow, false, "every PDF table cell fits the export width");
+    const usesWidth = await page.locator('[data-compact-pdf="true"]').evaluate((root) => {
+      const width = root.getBoundingClientRect().width;
+      return Array.from(root.querySelectorAll('[data-report-full-width-table] > table')).every((table) => table.getBoundingClientRect().width >= width * 0.9);
+    });
+    assert.ok(usesWidth, "PDF tables use at least 90 percent of the capture width");
     const date = await page.locator('[data-report-export-date-label="true"]').evaluate((label) => {
       const range = document.createRange(); range.selectNodeContents(label);
       return { lines: range.getClientRects().length, text: label.textContent };

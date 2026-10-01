@@ -44,7 +44,11 @@ const REPORT_EXPORT_CAPTURE_STYLE = `
   [data-report-export-date-label="true"] { white-space: nowrap !important; overflow-wrap: normal !important; word-break: normal !important; font-size: 13px !important; }
   [data-compact-pdf="true"] { font-size: 13px !important; }
   [data-compact-pdf="true"] * { font-size: inherit !important; line-height: 1.4 !important; }
-  [data-compact-pdf="true"] > div { width: 100% !important; max-width: none !important; }
+  [data-compact-pdf="true"] > div { width: 100% !important; max-width: none !important; padding: 8px !important; }
+  [data-compact-pdf="true"] > div > section > div { padding-left: 0 !important; padding-right: 0 !important; }
+  [data-compact-pdf="true"] > div > section:first-child > div { padding-left: 16px !important; padding-right: 16px !important; }
+  [data-compact-pdf="true"] [data-standalone-report] > section,
+  [data-compact-pdf="true"] [data-standalone-report] > div > section { padding: 8px !important; }
   [data-compact-pdf="true"] h1 { font-size: 24px !important; }
   [data-compact-pdf="true"] h2 { font-size: 20px !important; }
   [data-compact-pdf="true"] :is(h3, h4, h5) { font-size: 16px !important; }
@@ -54,11 +58,11 @@ const REPORT_EXPORT_CAPTURE_STYLE = `
   [data-compact-pdf="true"] [data-report-full-width-table] { min-width: 0 !important; width: 100% !important; overflow: visible !important; }
   [data-compact-pdf="true"] table { width: 100% !important; min-width: 0 !important; table-layout: fixed !important; border-collapse: collapse !important; }
   [data-compact-pdf="true"] col { width: auto !important; }
-  [data-compact-pdf="true"] col:first-child { width: 24% !important; }
+  [data-compact-pdf="true"] col:first-child { width: 18% !important; }
   [data-compact-pdf="true"] col:last-child { display: none !important; width: 0 !important; }
-  [data-compact-pdf="true"] :is(th, td) { padding: 7px !important; white-space: normal !important; overflow-wrap: anywhere !important; position: static !important; }
-  [data-compact-pdf="true"] thead th { font-size: 11px !important; padding: 5px 3px !important; overflow-wrap: normal !important; word-break: normal !important; }
-  [data-compact-pdf="true"] :is(th, td) img { width: 72px !important; height: 54px !important; max-width: 100% !important; object-fit: contain !important; }
+  [data-compact-pdf="true"] :is(th, td) { padding: 9px 8px !important; white-space: normal !important; overflow-wrap: anywhere !important; position: static !important; }
+  [data-compact-pdf="true"] thead th { font-size: 12px !important; padding: 7px 5px !important; overflow-wrap: normal !important; word-break: normal !important; }
+  [data-compact-pdf="true"] :is(th, td) img { width: 84px !important; height: 64px !important; max-width: 100% !important; object-fit: contain !important; }
   [data-compact-pdf="true"] button { min-height: 0 !important; height: auto !important; padding: 0 !important; }
 
   [data-standalone-report="demand-gen"] [data-slot="card"] {
@@ -521,11 +525,11 @@ async function createStandalonePdfBlob(root: HTMLElement): Promise<Blob> {
     const crossing = rowBounds.filter((bounds) => bounds.top < split && bounds.bottom > split && bounds.top > height * 0.2);
     if (crossing.length) split = Math.min(...crossing.map((bounds) => bounds.top));
     const pages = [{ start: 0, end: split }, { start: split, end: height }];
-    const scale = 277 / width;
+    const scale = 287 / width;
     // PDF coordinates have a size limit. UserUnit preserves physical dimensions
     // for unusually long reports without shrinking or truncating their contents.
-    const userUnit = Math.max(1, Math.ceil((20 + Math.max(split, height - split) * scale) / 5000));
-    const pageSize = (page: { start: number; end: number }): [number, number] => [297 / userUnit, (20 + (page.end - page.start) * scale) / userUnit];
+    const userUnit = Math.max(1, Math.ceil((10 + Math.max(split, height - split) * scale) / 5000));
+    const pageSize = (page: { start: number; end: number }): [number, number] => [297 / userUnit, (10 + (page.end - page.start) * scale) / userUnit];
     const orientation = (size: [number, number]) => size[0] > size[1] ? "landscape" as const : "portrait" as const;
     const { jsPDF } = await import("jspdf");
     const pdf = new jsPDF({ orientation: orientation(pageSize(pages[0])), unit: "mm", format: pageSize(pages[0]), userUnit, compress: true });
@@ -563,13 +567,13 @@ async function createStandalonePdfBlob(root: HTMLElement): Promise<Blob> {
         context.fillRect(0, 0, canvas.width, canvas.height);
         context.drawImage(image, 0, 0, canvas.width, canvas.height);
         const pageImage = canvas.toDataURL("image/png");
-        pdf.addImage(pageImage, "PNG", 10 / userUnit, (10 + (offset - page.start) * scale) / userUnit, 277 / userUnit, sliceHeight * scale / userUnit, `standalone-tile-${pageIndex}-${offset}`, "FAST");
+        pdf.addImage(pageImage, "PNG", 5 / userUnit, (5 + (offset - page.start) * scale) / userUnit, 287 / userUnit, sliceHeight * scale / userUnit, `standalone-tile-${pageIndex}-${offset}`, "FAST");
         canvas.width = 0; canvas.height = 0;
         offset = end;
       }
       pdf.setFontSize(8 / userUnit);
       pdf.setTextColor(100);
-      pdf.text(String(pageIndex + 1), 287 / userUnit, size[1] - 4 / userUnit, { align: "right" });
+      pdf.text(String(pageIndex + 1), 292 / userUnit, size[1] - 2 / userUnit, { align: "right" });
     }
     return pdf.output("blob");
   } finally {
