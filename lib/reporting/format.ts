@@ -49,3 +49,7 @@ export function formatCompactNumber(value: number): string {
     maximumFractionDigits: 2,
   }).format(value);
 }
+
+export function formatCpcRinggit(value: number | null | undefined): string {
+ return value == null || !Number.isFinite(value) ? "—" : `RM ${value.toLocaleString("en-MY", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
