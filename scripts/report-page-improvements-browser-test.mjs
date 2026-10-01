@@ -1,5 +1,6 @@
 // Read-only UI QA against a running dev server, with synthetic API fixtures.
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import { chromium } from "playwright";
 
 const base = process.env.REPORT_QA_BASE_URL ?? "http://localhost:3105";
@@ -59,10 +60,20 @@ async function downloadPdf(file) {
       return Array.from(root.querySelectorAll('th, td')).some((cell) => getComputedStyle(cell).display !== "none" && cell.getBoundingClientRect().right > bounds.right + 1);
     });
     assert.equal(overflow, false, "every PDF table cell fits the export width");
+    const date = await page.locator('[data-report-export-date-label="true"]').evaluate((label) => {
+      const range = document.createRange(); range.selectNodeContents(label);
+      return { lines: range.getClientRects().length, text: label.textContent };
+    });
+    assert.equal(date.lines, 1, "PDF date range stays on one line");
+    assert.ok(date.text.includes("2026"));
   }
   const download = await downloadPromise;
   await download.saveAs(`tmp/${file}.pdf`);
   assert.equal(await download.failure(), null);
+  if (file.startsWith("demand") || file.startsWith("breakdown")) {
+    const contents = await readFile(`tmp/${file}.pdf`, "latin1");
+    assert.match(contents, /\/Type \/Pages\s+\/Kids \[[^\]]*\]\s+\/Count 2\b/, "standalone export contains exactly two long pages");
+  }
   await page.waitForURL((url) => !url.searchParams.has("screenshot"), { timeout: 30000 });
 }
 try {

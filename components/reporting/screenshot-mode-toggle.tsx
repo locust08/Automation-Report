@@ -41,6 +41,7 @@ type ExportOverlayState =
 const TRANSPARENT_IMAGE_PLACEHOLDER =
   "data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='1' height='1'%3E%3C/svg%3E";
 const REPORT_EXPORT_CAPTURE_STYLE = `
+  [data-report-export-date-label="true"] { white-space: nowrap !important; overflow-wrap: normal !important; word-break: normal !important; font-size: 13px !important; }
   [data-compact-pdf="true"] { font-size: 13px !important; }
   [data-compact-pdf="true"] * { font-size: inherit !important; line-height: 1.4 !important; }
   [data-compact-pdf="true"] > div { width: 100% !important; max-width: none !important; }
@@ -479,7 +480,7 @@ async function prepareAdvancedPdfDownload(
   };
 }
 
-// Standalone reports use bounded page captures: a single very tall image can
+// Standalone reports stitch bounded captures into two long PDF pages: one tall image can
 // exceed both browser canvas limits and jsPDF's maximum page dimensions.
 async function createStandalonePdfBlob(root: HTMLElement): Promise<Blob> {
   const width = 1120;
@@ -516,8 +517,18 @@ async function createStandalonePdfBlob(root: HTMLElement): Promise<Blob> {
         if (bottom - top <= pageHeight) rowBounds.push({ top, bottom });
       }
     });
+    let split = Math.floor(height / 2);
+    const crossing = rowBounds.filter((bounds) => bounds.top < split && bounds.bottom > split && bounds.top > height * 0.2);
+    if (crossing.length) split = Math.min(...crossing.map((bounds) => bounds.top));
+    const pages = [{ start: 0, end: split }, { start: split, end: height }];
+    const scale = 277 / width;
+    // PDF coordinates have a size limit. UserUnit preserves physical dimensions
+    // for unusually long reports without shrinking or truncating their contents.
+    const userUnit = Math.max(1, Math.ceil((20 + Math.max(split, height - split) * scale) / 5000));
+    const pageSize = (page: { start: number; end: number }): [number, number] => [297 / userUnit, (20 + (page.end - page.start) * scale) / userUnit];
+    const orientation = (size: [number, number]) => size[0] > size[1] ? "landscape" as const : "portrait" as const;
     const { jsPDF } = await import("jspdf");
-    const pdf = new jsPDF({ orientation: "landscape", unit: "mm", format: "a4", compress: true });
+    const pdf = new jsPDF({ orientation: orientation(pageSize(pages[0])), unit: "mm", format: pageSize(pages[0]), userUnit, compress: true });
     // Embed fonts and creatives once, then rasterize bounded SVG viewports.
     // Re-cloning a large report for every page makes exports unnecessarily slow.
     const svgUrl = await toSvg(root, {
@@ -531,35 +542,34 @@ async function createStandalonePdfBlob(root: HTMLElement): Promise<Blob> {
     if (!content) throw new Error("The PDF capture did not contain report content.");
     content.setAttribute("width", String(width));
     content.setAttribute("height", String(height));
-    let offset = 0;
-    let page = 0;
-    while (offset < height) {
-      let end = Math.min(offset + pageHeight, height);
-      // Keep complete rows and thumbnails together whenever they fit on a page.
-      const crossing = rowBounds.filter((bounds) => bounds.top < end && bounds.bottom > end && bounds.top > offset + pageHeight * 0.3);
-      if (crossing.length) end = Math.min(...crossing.map((bounds) => bounds.top));
-      const sliceHeight = end - offset;
-      svg.setAttribute("height", String(sliceHeight));
-      svg.setAttribute("viewBox", `0 ${offset} ${width} ${sliceHeight}`);
-      const image = new Image();
-      image.src = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(new XMLSerializer().serializeToString(svg))}`;
-      await image.decode();
-      const canvas = document.createElement("canvas");
-      canvas.width = width * 2;
-      canvas.height = sliceHeight * 2;
-      const context = canvas.getContext("2d");
-      if (!context) throw new Error("The browser could not prepare a PDF page.");
-      context.fillStyle = "#f0f0f0";
-      context.fillRect(0, 0, canvas.width, canvas.height);
-      context.drawImage(image, 0, 0, canvas.width, canvas.height);
-      const pageImage = canvas.toDataURL("image/png");
-      if (page++) pdf.addPage("a4", "landscape");
-      pdf.addImage(pageImage, "PNG", 10, 10, 277, sliceHeight * 277 / width, `standalone-page-${page}`, "FAST");
-      pdf.setFontSize(8);
+    for (const [pageIndex, page] of pages.entries()) {
+      const size = pageSize(page);
+      if (pageIndex > 0) pdf.addPage(size, orientation(size));
+      let offset = page.start;
+      while (offset < page.end) {
+        const end = Math.min(offset + pageHeight, page.end);
+        const sliceHeight = end - offset;
+        svg.setAttribute("height", String(sliceHeight));
+        svg.setAttribute("viewBox", `0 ${offset} ${width} ${sliceHeight}`);
+        const image = new Image();
+        image.src = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(new XMLSerializer().serializeToString(svg))}`;
+        await image.decode();
+        const canvas = document.createElement("canvas");
+        canvas.width = width * 2;
+        canvas.height = sliceHeight * 2;
+        const context = canvas.getContext("2d");
+        if (!context) throw new Error("The browser could not prepare a PDF page.");
+        context.fillStyle = "#f0f0f0";
+        context.fillRect(0, 0, canvas.width, canvas.height);
+        context.drawImage(image, 0, 0, canvas.width, canvas.height);
+        const pageImage = canvas.toDataURL("image/png");
+        pdf.addImage(pageImage, "PNG", 10 / userUnit, (10 + (offset - page.start) * scale) / userUnit, 277 / userUnit, sliceHeight * scale / userUnit, `standalone-tile-${pageIndex}-${offset}`, "FAST");
+        canvas.width = 0; canvas.height = 0;
+        offset = end;
+      }
+      pdf.setFontSize(8 / userUnit);
       pdf.setTextColor(100);
-      pdf.text(String(page), 287, 204, { align: "right" });
-      canvas.width = 0; canvas.height = 0;
-      offset = end;
+      pdf.text(String(pageIndex + 1), 287 / userUnit, size[1] - 4 / userUnit, { align: "right" });
     }
     return pdf.output("blob");
   } finally {

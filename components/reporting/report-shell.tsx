@@ -389,7 +389,7 @@ export function ReportExportHeader({
           <div className="grid gap-2 md:justify-self-end md:w-full">
             <div className="inline-flex min-h-11 w-full items-center gap-2 rounded-2xl bg-white/88 px-4 text-sm font-semibold text-[#5f5f5f] shadow-sm">
               <CalendarDaysIcon className="size-4 shrink-0 text-[#7a7a7a]" />
-              <span className="min-w-0 break-words leading-tight">{dateLabel}</span>
+              <span data-report-export-date-label="true" className="min-w-0 whitespace-nowrap leading-tight">{dateLabel}</span>
             </div>
             {accountItems.length > 0 ? (
               <div className="rounded-2xl bg-white/88 p-2 shadow-sm">
