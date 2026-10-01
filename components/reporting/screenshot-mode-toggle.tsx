@@ -7,7 +7,7 @@ import {
   FileTextIcon,
   LoaderCircleIcon,
 } from "lucide-react";
-import { toPng } from "html-to-image";
+import { toPng, toSvg } from "html-to-image";
 
 import {
   ReportErrorScreen,
@@ -41,6 +41,24 @@ type ExportOverlayState =
 const TRANSPARENT_IMAGE_PLACEHOLDER =
   "data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='1' height='1'%3E%3C/svg%3E";
 const REPORT_EXPORT_CAPTURE_STYLE = `
+  [data-compact-pdf="true"] { font-size: 13px !important; }
+  [data-compact-pdf="true"] * { font-size: inherit !important; line-height: 1.4 !important; }
+  [data-compact-pdf="true"] > div { width: 100% !important; max-width: none !important; }
+  [data-compact-pdf="true"] h1 { font-size: 24px !important; }
+  [data-compact-pdf="true"] h2 { font-size: 20px !important; }
+  [data-compact-pdf="true"] :is(h3, h4, h5) { font-size: 16px !important; }
+  [data-compact-pdf="true"] [data-slot="card"] { padding: 14px !important; gap: 12px !important; }
+  [data-compact-pdf="true"] [data-slot="card"] > * + * { margin-top: 12px !important; }
+  [data-compact-pdf="true"] [data-standalone-report] :is(.size-10, .size-12) { width: 28px !important; height: 28px !important; }
+  [data-compact-pdf="true"] [data-report-full-width-table] { min-width: 0 !important; width: 100% !important; overflow: visible !important; }
+  [data-compact-pdf="true"] table { width: 100% !important; min-width: 0 !important; table-layout: fixed !important; border-collapse: collapse !important; }
+  [data-compact-pdf="true"] col { width: auto !important; }
+  [data-compact-pdf="true"] col:first-child { width: 24% !important; }
+  [data-compact-pdf="true"] col:last-child { display: none !important; width: 0 !important; }
+  [data-compact-pdf="true"] :is(th, td) { padding: 7px !important; white-space: normal !important; overflow-wrap: anywhere !important; position: static !important; }
+  [data-compact-pdf="true"] :is(th, td) img { width: 72px !important; height: 54px !important; max-width: 100% !important; object-fit: contain !important; }
+  [data-compact-pdf="true"] button { min-height: 0 !important; height: auto !important; padding: 0 !important; }
+
   [data-standalone-report="demand-gen"] [data-slot="card"] {
     overflow: visible !important;
     height: auto !important;
@@ -435,6 +453,10 @@ async function prepareStandardDownload(
   format: DownloadFormat,
   fileNamePrefix: string | undefined
 ): Promise<() => void> {
+  if (format === "pdf" && root.querySelector("[data-standalone-report]")) {
+    const blob = await createStandalonePdfBlob(root);
+    return () => downloadBlob(blob, buildFileName("pdf", fileNamePrefix));
+  }
   const dataUrl = await captureReportPng(root, format);
   return format === "pdf"
     ? preparePdfDownload(dataUrl, fileNamePrefix)
@@ -454,6 +476,86 @@ async function prepareAdvancedPdfDownload(
   return () => {
     downloadBlob(pdfBlob, buildFileName("pdf", fileNamePrefix));
   };
+}
+
+// Standalone reports use bounded page captures: a single very tall image can
+// exceed both browser canvas limits and jsPDF's maximum page dimensions.
+async function createStandalonePdfBlob(root: HTMLElement): Promise<Blob> {
+  const width = 1120;
+  const pageHeight = 760;
+  const previousStyle = root.getAttribute("style");
+  const previousMode = root.getAttribute("data-compact-pdf");
+  const exportStyle = installReportExportCaptureStyle();
+  const spans = Array.from(root.querySelectorAll<HTMLTableCellElement>("td[colspan]")).map((cell) => ({ cell, value: cell.colSpan }));
+  root.setAttribute("data-compact-pdf", "true");
+  root.style.width = `${width}px`;
+  root.style.maxWidth = "none";
+  root.style.overflow = "visible";
+  try {
+    spans.forEach(({ cell }) => {
+      const header = cell.closest("table")?.tHead?.rows[0];
+      if (header) cell.colSpan = Array.from(header.cells).filter((column) => getComputedStyle(column).display !== "none").length;
+    });
+    await waitForReportCaptureReady(root);
+    const rootBounds = root.getBoundingClientRect();
+    const height = Math.ceil(root.scrollHeight);
+    const rowBounds = Array.from(root.querySelectorAll<HTMLElement>("tr:not(:has(table)), h1, h2, h3, h4, h5, img"))
+      .map((element) => {
+        const bounds = element.getBoundingClientRect();
+        return { top: Math.floor(bounds.top - rootBounds.top), bottom: Math.ceil(bounds.bottom - rootBounds.top) };
+      }).filter((bounds) => bounds.bottom > bounds.top && bounds.bottom - bounds.top <= pageHeight);
+    const { jsPDF } = await import("jspdf");
+    const pdf = new jsPDF({ orientation: "landscape", unit: "mm", format: "a4", compress: true });
+    // Embed fonts and creatives once, then rasterize bounded SVG viewports.
+    // Re-cloning a large report for every page makes exports unnecessarily slow.
+    const svgUrl = await toSvg(root, {
+      width, height, cacheBust: false,
+      imagePlaceholder: TRANSPARENT_IMAGE_PLACEHOLDER,
+      style: { height: `${height}px` },
+      filter: (node) => !(node instanceof HTMLElement) || (node.dataset.reportDownloadOverlay !== "true" && node.dataset.reportExportExclude !== "true"),
+    });
+    const svg = new DOMParser().parseFromString(decodeURIComponent(svgUrl.slice(svgUrl.indexOf(",") + 1)), "image/svg+xml").documentElement;
+    const content = svg.querySelector("foreignObject");
+    if (!content) throw new Error("The PDF capture did not contain report content.");
+    content.setAttribute("width", String(width));
+    content.setAttribute("height", String(height));
+    let offset = 0;
+    let page = 0;
+    while (offset < height) {
+      let end = Math.min(offset + pageHeight, height);
+      // Keep complete rows and thumbnails together whenever they fit on a page.
+      const crossing = rowBounds.filter((bounds) => bounds.top < end && bounds.bottom > end && bounds.top > offset + pageHeight * 0.3);
+      if (crossing.length) end = Math.min(...crossing.map((bounds) => bounds.top));
+      const sliceHeight = end - offset;
+      svg.setAttribute("height", String(sliceHeight));
+      svg.setAttribute("viewBox", `0 ${offset} ${width} ${sliceHeight}`);
+      const image = new Image();
+      image.src = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(new XMLSerializer().serializeToString(svg))}`;
+      await image.decode();
+      const canvas = document.createElement("canvas");
+      canvas.width = width * 2;
+      canvas.height = sliceHeight * 2;
+      const context = canvas.getContext("2d");
+      if (!context) throw new Error("The browser could not prepare a PDF page.");
+      context.fillStyle = "#f0f0f0";
+      context.fillRect(0, 0, canvas.width, canvas.height);
+      context.drawImage(image, 0, 0, canvas.width, canvas.height);
+      const pageImage = canvas.toDataURL("image/png");
+      if (page++) pdf.addPage("a4", "landscape");
+      pdf.addImage(pageImage, "PNG", 10, 10, 277, sliceHeight * 277 / width, `standalone-page-${page}`, "FAST");
+      pdf.setFontSize(8);
+      pdf.setTextColor(100);
+      pdf.text(String(page), 287, 204, { align: "right" });
+      canvas.width = 0; canvas.height = 0;
+      offset = end;
+    }
+    return pdf.output("blob");
+  } finally {
+    spans.forEach(({ cell, value }) => { cell.colSpan = value; });
+    if (previousStyle === null) root.removeAttribute("style"); else root.setAttribute("style", previousStyle);
+    if (previousMode === null) root.removeAttribute("data-compact-pdf"); else root.setAttribute("data-compact-pdf", previousMode);
+    exportStyle.remove();
+  }
 }
 
 async function createPdfBlob(dataUrl: string): Promise<Blob> {

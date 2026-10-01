@@ -52,6 +52,14 @@ async function downloadPdf(file) {
     assert.ok(bounds.height < 50, "PDF heading stays on one line");
     assert.ok(bounds.groupTop >= bounds.bottom, "PDF heading does not overlap the campaign table");
   }
+  await page.waitForFunction(() => document.querySelector('[data-compact-pdf="true"]') || !location.pathname.match(/demand-gen|campaign-breakdown/));
+  if (file.startsWith("demand") || file.startsWith("breakdown")) {
+    const overflow = await page.locator('[data-compact-pdf="true"]').evaluate((root) => {
+      const bounds = root.getBoundingClientRect();
+      return Array.from(root.querySelectorAll('th, td')).some((cell) => getComputedStyle(cell).display !== "none" && cell.getBoundingClientRect().right > bounds.right + 1);
+    });
+    assert.equal(overflow, false, "every PDF table cell fits the export width");
+  }
   const download = await downloadPromise;
   await download.saveAs(`tmp/${file}.pdf`);
   assert.equal(await download.failure(), null);
@@ -153,6 +161,15 @@ try {
   await page.screenshot({ path: "tmp/breakdown-improvements-mobile.png", fullPage: true });
   await downloadPdf("breakdown-improvements-mobile");
   assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), "mobile layout restores after export");
+  if (process.env.REPORT_QA_LONG_PDF === "1") {
+    const originalAds = demand.ads;
+    demand.ads = Array.from({ length: 100 }, (_, index) => ({ ...originalAds[0], id: `long-${index}`, name: index === 99 ? "FINAL AD 100" : `Ad ${index + 1}` }));
+    await page.goto(`${base}/demand-gen?googleAccountId=1234567890&platform=google&startDate=2026-09-01&endDate=2026-09-29`);
+    await page.getByText("FINAL AD 100", { exact: true }).waitFor();
+    await downloadPdf("demand-long-compact");
+    assert.equal(await page.locator('[data-compact-pdf]').count(), 0, "compact export mode restores");
+    demand.ads = originalAds;
+  }
   overall.companyName = "VTAR Education and Professional Training Centre";
   for (const route of ["overall", "campaign-breakdown", "demand-gen"]) {
     for (const width of [390, 782, 1440, 1920]) {
