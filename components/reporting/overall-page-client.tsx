@@ -222,6 +222,7 @@ export function OverallPageClient({
 
   return (
     <ReportShell
+      wideContent
       compactResponsive={compactInteractive}
       title={title}
       dateLabel={dateLabel}

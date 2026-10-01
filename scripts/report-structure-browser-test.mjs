@@ -1,0 +1,78 @@
+// Read-only UI QA against a running dev server, with synthetic API fixtures.
+import assert from "node:assert/strict";
+import { chromium } from "playwright";
+
+const base = process.env.REPORT_QA_BASE_URL ?? "http://localhost:3105";
+const browser = await chromium.launch({ channel: "chrome", headless: true });
+const page = await browser.newPage({ viewport: { width: 1920, height: 1080 } });
+page.setDefaultNavigationTimeout(120000);
+const values = { impressions: 100, clicks: 10, spend: 5, conversions: 2, ctr: 10, cpc: .5, cpm: 50 };
+const demand = { account: { id: "1234567890", name: "Fixture Google", currency: "MYR", timezone: "Asia/Kuala_Lumpur" }, startDate: "2026-09-01", endDate: "2026-09-30", campaigns: [{ id: "1", name: "Demand A" }, { id: "2", name: "Demand B" }], campaignId: "1", inMarket: [{ id: "i", name: "Furniture", metrics: values }], affinity: [{ id: "a", name: "Home enthusiasts", metrics: values }], cells: ["In-feed", "In-stream", "Shorts"].flatMap((format) => ["Desktop", "Mobile", "Tablet", "TV"].map((device) => ({ format, device, metrics: values }))), unmapped: [], unresolved: [], warnings: [], complete: true };
+const dateRange = { startDate: "2026-09-01", endDate: "2026-09-30", previousStartDate: "2026-08-01", previousEndDate: "2026-08-31", currentLabel: "September 2026", previousLabel: "August 2026" };
+demand.inMarket.push(...Array.from({ length: 11 }, (_, index) => ({ id: `i${index}`, name: `Interest ${String(index).padStart(2, "0")}`, metrics: values })));
+const campaign = { id: "c", platform: "meta", campaignType: "Lead", campaignName: "Fixture campaign", resultActionType: "lead", resultLabel: "Lead", impressions: 1000, clicks: 100, spend: 50, results: 20, ctr: 10, cpm: 50, costPerResult: 2.5, conversions: 20, avgCpc: .5, youtubeEarnedLikes: 0, youtubeEarnedShares: 0 };
+const overall = { companyName: "Fixture", dateRange, accountIds: { metaAccountId: "96906550", googleAccountId: null, metaAccountIds: ["96906550"], googleAccountIds: [] }, summaries: [], campaignGroups: [{ id: "meta-lead", platform: "meta", campaignType: "Lead", rows: [campaign], totals: campaign }], warnings: [], diagnostics: [], audienceClickBreakdown: { age: [], gender: [], location: { country: [], region: [], city: [] } } };
+const performance = { resultLabel: "Lead", results: 2, impressions: 100, clicks: 10, spend: 5, ctr: 10, cpm: 50, cpc: .5, costPerResult: 2.5, landingPageViews: 0, linkClicks: 0 };
+let demandRequests = 0, failHierarchy = false;
+const requests = [];
+await page.route("**/api/**", async (route) => {
+  const url = new URL(route.request().url()); requests.push(url);
+  let data = {};
+  if (url.pathname === "/api/auth/session") data = { user: { role: "admin" } };
+  else if (url.pathname === "/api/reporting/demand-gen") { demandRequests++; data = { ...demand, campaignId: url.searchParams.get("campaignId") }; }
+  else if (url.pathname.includes("/ad-groups") || url.pathname.includes("/ads")) {
+    if (failHierarchy) return route.fulfill({ status: 503, json: { error: "Fixture retry failure" } });
+    data = { ...overall, sections: [{ platform: "meta", campaigns: [{ id: "c", name: "Fixture campaign", status: "Paused", details: [], children: [{ id: "s", name: "Historical set", status: "Paused", details: [], performance, ads: [{ id: "a", name: "Historical ad", status: "Paused", details: [], performance: { ...performance, spend: 3, results: 1 } }] }] }] }], warnings: url.pathname.includes("/ad-groups") ? ["Fixture partial coverage"] : [] };
+  } else if (url.pathname.includes("/api/reports/") || url.pathname === "/api/reporting") data = overall;
+  else if (url.pathname.includes("/advanced") || url.pathname === "/api/reporting/advanced") return route.fulfill({ status: 503, json: { error: "Fixture analysis unavailable" } });
+  else if (url.pathname.includes("/accounts/search")) data = { accounts: [] };
+  await route.fulfill({ json: data });
+});
+try {
+  await page.goto(`${base}/advanced?googleAccountId=1234567890&platform=google&startDate=2026-09-01&endDate=2026-09-30`);
+  await page.getByRole("heading", { name: "Demand Gen Analysis" }).waitFor();
+  await page.getByRole("cell", { name: "Furniture", exact: true }).waitFor();
+  const before = demandRequests;
+  const inMarket = page.locator("section").filter({ has: page.getByRole("heading", { name: "In-market", exact: true }) }).last();
+  await inMarket.getByRole("button", { name: "Next", exact: true }).click();
+  await inMarket.getByText("Page 2 of 2", { exact: true }).waitFor();
+  await inMarket.getByRole("button", { name: "Previous", exact: true }).click();
+  await inMarket.getByRole("button", { name: /^Audience/ }).click();
+  await page.getByRole("button", { name: "Ranked chart", exact: true }).first().click();
+  await page.getByRole("combobox").filter({ has: page.locator('option[value="ctr"]') }).selectOption("ctr");
+  assert.equal(demandRequests, before, "presentation changes must not refetch");
+  await page.getByRole("button", { name: "Grouped chart" }).click();
+  await page.setViewportSize({ width: 390, height: 844 });
+  assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), "mobile page should not overflow");
+  await page.screenshot({ path: "tmp/demand-mobile.png", fullPage: true });
+  await page.setViewportSize({ width: 1920, height: 1080 });
+  await page.goto(`${base}/advanced?metaAccountId=96906550&platform=meta&startDate=2026-09-01&endDate=2026-09-30`);
+  await page.getByRole("button", { name: "Navigation", exact: true }).click();
+  const link = page.getByRole("menuitem", { name: "Monthly Performance" });
+  const href = await link.getAttribute("href");
+  assert.ok(href?.includes("metaAccountId=96906550"), `Meta return link: ${href}`);
+  assert.ok(!href?.includes("googleAccountId"));
+  await link.click();
+  await page.getByRole("button", { name: "Expand Fixture campaign hierarchy" }).first().click();
+  await page.getByRole("button", { name: "Historical set" }).first().waitFor();
+  await page.getByRole("button", { name: "Historical set" }).first().click();
+  await page.getByText("Historical ad", { exact: true }).filter({ visible: true }).first().waitFor();
+  assert.equal(await page.getByRole("heading", { name: "Demand Gen Analysis" }).count(), 0);
+  failHierarchy = true;
+  await page.getByRole("button", { name: "Retry ad sets" }).first().click();
+  await page.getByText("Fixture retry failure", { exact: true }).waitFor();
+  assert.ok(await page.getByRole("button", { name: "Historical set" }).first().isVisible(), "retry failure must retain children");
+  const width = await page.locator('[data-report-capture-root="true"] > div').first().evaluate((element) => element.getBoundingClientRect().width);
+  assert.ok(width > 1440, `Overall width ${width}`);
+  await page.screenshot({ path: "tmp/meta-hierarchy-desktop.png", fullPage: true });
+  assert.ok(requests.filter((url) => url.pathname.includes("/api/reports/")).every((url) => !url.searchParams.get("googleAccountId")), "return requests must remain Meta scoped");
+  await page.goto(`${base}/overall?metaAccountId=96906550&platform=meta&startDate=2026-09-01&endDate=2026-09-30&screenshot=1`);
+  await page.locator('[data-report-capture-root="true"][data-report-ready="true"]').waitFor();
+  const captureWidth = await page.locator('[data-report-capture-root="true"] > div').first().evaluate((element) => element.getBoundingClientRect().width);
+  assert.equal(captureWidth, 1440, "capture must preserve the established width");
+  await page.pdf({ path: "tmp/monthly-capture-fixture.pdf", printBackground: true, width: "1520px", height: "2200px" });
+  console.log("Browser QA passed: independent Demand Gen, sorting/pagination, shared metrics without refetch, mobile layout, Meta return navigation, historical children, retained retry data, wider Overall, preserved capture width and PDF render.");
+} catch (error) {
+  console.log((await page.locator("body").innerText()).slice(0, 5000));
+  throw error;
+} finally { await browser.close(); }

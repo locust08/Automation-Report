@@ -1,4 +1,6 @@
 import { buildDateRange } from "@/lib/reporting/date";
+import { fetchGoogleDemandGen } from "@/lib/reporting/google";
+
 import {
   filterRowsByCampaignScope,
   resolveEffectiveCampaignScope,
@@ -105,6 +107,8 @@ export interface OverallInput {
   previewSelection?: PreviewFetchSelection;
   metaIncludeInactivePreview?: boolean;
   metaManagementStage?: MetaManagementStage;
+  metaResultActionType?: string | null;
+  metaPeriodPerformance?: boolean;
 }
 
 interface CampaignInput extends OverallInput {
@@ -1157,6 +1161,8 @@ export async function getPreviewReport(input: OverallInput): Promise<PreviewRepo
       previewSelection,
       Boolean(input.metaIncludeInactivePreview),
       input.metaManagementStage,
+      input.metaResultActionType,
+      input.metaPeriodPerformance,
     ),
     tryFetchGooglePreviewSections(
       resolvedAccountIds.googleAccountIds,
@@ -1405,6 +1411,17 @@ export async function getTopKeywordsReport(input: OverallInput): Promise<TopKeyw
     totals,
     warnings: dedupeWarnings(warnings),
   };
+}
+
+export async function getDemandGenReport(input: OverallInput, campaignId: string | null) {
+  const credentials = getCredentials();
+  const dates = buildDateRange(input.startDate, input.endDate);
+  const { resolvedAccountIds, googleManagerContext } = await resolveReportAccountContext(input, credentials);
+  if (resolvedAccountIds.googleAccountIds.length !== 1) throw new Error("Select one Google Ads account for Demand Gen analysis.");
+  const customerId = resolvedAccountIds.googleAccountIds[0];
+  const payload = await fetchGoogleDemandGen({ customerId, apiVersion: credentials.googleAdsApiVersion, accessToken: credentials.googleAccessToken, refreshToken: credentials.googleRefreshToken, clientId: credentials.googleClientId, clientSecret: credentials.googleClientSecret, loginCustomerId: resolveLoginCustomerIdForAccount(customerId, googleManagerContext.loginCustomerIdByAccount), accessPath: googleManagerContext.accessPathByAccount[customerId], fallbackLoginCustomerId: credentials.googleLoginCustomerId, startDate: dates.startDate, endDate: dates.endDate }, campaignId);
+  payload.warnings.unshift(...googleManagerContext.messages);
+  return payload;
 }
 
 export async function getGoogleAdvancedAdUsageReport(input: OverallInput): Promise<{
@@ -2050,6 +2067,8 @@ async function tryFetchMetaPreview(
   previewSelection: PreviewFetchSelection,
   includeInactive = false,
   managementStage?: MetaManagementStage,
+  resultActionType?: string | null,
+  periodPerformance = false,
 ): Promise<{
   campaigns: PreviewCampaignNode[];
   warnings: string[];
@@ -2084,6 +2103,8 @@ async function tryFetchMetaPreview(
       adId: previewSelection.adId,
       includeInactive,
       managementStage,
+      resultActionType,
+      periodPerformance,
       credentials: accessToken.slice(-10),
     });
     const result = await readThroughMemoryCache(
@@ -2102,6 +2123,8 @@ async function tryFetchMetaPreview(
           },
           includeInactive,
           managementStage,
+          resultActionType,
+          periodPerformance,
         }),
       {
         ttlMs: GOOGLE_FETCH_CACHE_TTL_MS,
@@ -2111,7 +2134,7 @@ async function tryFetchMetaPreview(
     // A required Meta block failure is not an empty dataset. Do not preserve the
     // failed response in the read-through cache, so a later refresh can recover
     // as soon as the provider rate limit or transient error clears.
-    if (result.fatalErrors.length > 0) {
+    if (result.fatalErrors.length > 0 || result.warnings.length > 0) {
       metaPreviewCache.delete(cacheKey);
     }
     return {
@@ -3024,6 +3047,8 @@ async function tryFetchMetaPreviewSections(
   previewSelection: PreviewFetchSelection,
   includeInactive = false,
   managementStage?: MetaManagementStage,
+  resultActionType?: string | null,
+  periodPerformance = false,
 ): Promise<{
   campaigns: PreviewCampaignNode[];
   warnings: string[];
@@ -3054,6 +3079,8 @@ async function tryFetchMetaPreviewSections(
       previewSelection,
       includeInactive,
       managementStage,
+      resultActionType,
+      periodPerformance,
     );
     campaigns.push(...result.campaigns);
     warnings.push(

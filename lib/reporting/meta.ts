@@ -39,6 +39,8 @@ import {
 } from "@/lib/reporting/types";
 
 interface MetaFetchInput {
+  resultActionType?: string | null;
+  periodPerformance?: boolean;
   accountId: string;
   accessToken: string;
   startDate: string;
@@ -612,6 +614,8 @@ export async function fetchMetaCampaignRows({
     row.clicks = clicks;
     row.spend = spend;
     row.results = resultMetric.value;
+    row.resultActionType = resultMetric.actionType;
+    row.resultLabel = resultMetric.label;
     row.ctr = toNumber(item.ctr) || (impressions > 0 ? (clicks * 100) / impressions : 0);
     row.cpm = toNumber(item.cpm) || (impressions > 0 ? (spend * 1000) / impressions : 0);
     row.costPerResult =
@@ -857,6 +861,8 @@ export async function fetchMetaPreviewData({
   },
   includeInactive = false,
   managementStage,
+  resultActionType,
+  periodPerformance = false,
 }: MetaFetchInput & {
   previewStage?: MetaPreviewStage;
   previewSelection?: MetaPreviewSelection;
@@ -910,7 +916,7 @@ export async function fetchMetaPreviewData({
         endDate,
         breakdowns: [],
         fields: [...META_PREVIEW_INSIGHT_FIELDS],
-        timeIncrement: 1,
+        timeIncrement: periodPerformance ? undefined : 1,
         level: getMetaManagementInsightLevel(managementStage),
       }),
     });
@@ -974,13 +980,13 @@ export async function fetchMetaPreviewData({
         endDate,
         breakdowns: [],
         fields: [...META_PREVIEW_INSIGHT_FIELDS],
-        timeIncrement: 1,
+        timeIncrement: periodPerformance ? undefined : 1,
         level: getMetaManagementInsightLevel(managementStage),
       }),
     });
     diagnostics.push(insightsBlock.diagnostic);
     if (insightsBlock.issue) warnings.push(insightsBlock.issue);
-    const performance = buildPerformanceMap(insightsBlock.data ?? [], (row) => getMetaManagementEntityId(managementStage, row));
+    const performance = buildPerformanceMap(insightsBlock.data ?? [], (row) => getMetaManagementEntityId(managementStage, row), resultActionType);
     const daily = buildDailyPerformanceMap(insightsBlock.data ?? [], (row) => getMetaManagementEntityId(managementStage, row));
     const adSetsByCampaign = buildMetaPreviewAdSetsByCampaign(visibleAdSets, new Map());
     adSetsByCampaign.forEach((items, campaignId) => {
@@ -1122,7 +1128,7 @@ export async function fetchMetaPreviewData({
             endDate,
             breakdowns: [],
             fields: [...META_PREVIEW_INSIGHT_FIELDS],
-            timeIncrement: 1,
+            timeIncrement: periodPerformance ? undefined : 1,
             level: managementStage ? getMetaManagementInsightLevel(managementStage) : "ad",
           })
         : Promise.resolve([]),
@@ -1178,7 +1184,7 @@ export async function fetchMetaPreviewData({
 
   const creativeMap = creativesBlock.data ?? new Map<string, PreviewCreativeAsset>();
   const previewLinkMap = previewLinksBlock.data ?? new Map<string, PreviewLinkAsset[]>();
-  const adPerformanceMap = buildPerformanceMap(insightsBlock.data ?? []);
+  const adPerformanceMap = buildPerformanceMap(insightsBlock.data ?? [], undefined, resultActionType);
   const adDailyPerformanceMap = buildDailyPerformanceMap(insightsBlock.data ?? []);
   const adDemographicMap = buildDemographicMap(demographicsBlock.data ?? []);
   const adPlatformMap = buildPlatformDistributionMap(platformsBlock.data ?? []);
@@ -1856,12 +1862,29 @@ function resolveMetaAudienceLabel(
   return normalizeAudienceLocationLabel(row.city);
 }
 
+class PartialMetaCollectionError extends Error {
+  constructor(readonly items: unknown[]) { super("A later Meta page failed. Loaded rows are retained; retry this parent to complete coverage."); }
+}
+
 async function fetchMetaCollection<TItem>(initialUrl: string): Promise<TItem[]> {
   const items: TItem[] = [];
   let nextUrl = initialUrl;
+  const seen = new Set<string>();
 
   while (nextUrl) {
-    const json = await fetchMetaGraphPage<TItem>(nextUrl);
+    let json;
+    try {
+      if (seen.has(nextUrl)) throw new Error("Repeated Meta pagination URL.");
+      seen.add(nextUrl);
+      json = await fetchMetaGraphPage<TItem>(nextUrl);
+      if (!Array.isArray(json.data)) throw new Error("Invalid successful Meta payload: expected entity rows.");
+      if (json.data.some((item) => !item || typeof item !== "object" || Array.isArray(item))) throw new Error("Invalid successful Meta payload: expected row objects.");
+      if (/\/(campaigns|adsets|ads)$/.test(new URL(initialUrl).pathname) && json.data.some((item) => !("id" in (item as object)))) throw new Error("Invalid successful Meta hierarchy: entity IDs are missing. Retry this parent.");
+    } catch (error) {
+      // Never retain data after access denial/revocation.
+      if (items.length && !(error instanceof MetaApiError && [10, 190, 200].includes(error.code ?? 0))) throw new PartialMetaCollectionError(items);
+      throw error;
+    }
 
     items.push(...(json.data ?? []));
     nextUrl = json.paging?.next ?? "";
@@ -1957,13 +1980,13 @@ async function runMetaPreviewBlock<T>(input: {
     });
     logMetaPreviewIssue(issue);
     return {
-      data: null,
+      data: error instanceof PartialMetaCollectionError ? error.items as T : null,
       diagnostic: {
         label: input.label,
         required: input.required,
         fields: input.fields,
         status: "failed",
-        rowCount: 0,
+        rowCount: error instanceof PartialMetaCollectionError ? error.items.length : 0,
         errorCode: issue.errorCode,
         errorSubcode: issue.errorSubcode,
         message: issue.message,
@@ -2082,6 +2105,7 @@ async function sleepMetaRetry(attempt: number) {
 function buildPerformanceMap(
   rows: MetaInsightRow[],
   getEntityId: (row: MetaInsightRow) => string | null = (row) => row.ad_id?.trim() || null,
+  resultActionType?: string | null,
 ): Map<string, PreviewPerformanceSummary> {
   const performanceByAdId = new Map<
     string,
@@ -2095,6 +2119,8 @@ function buildPerformanceMap(
       linkClicks: number;
       resultCostTotal: number;
       hasNativeResultCost: boolean;
+      resultsAvailable: boolean;
+      unavailableMetrics: string[];
     }
   >();
 
@@ -2129,7 +2155,28 @@ function buildPerformanceMap(
       linkClicks: 0,
       resultCostTotal: 0,
       hasNativeResultCost: false,
+      resultsAvailable: true,
+      unavailableMetrics: [],
     };
+
+    for (const metric of ["impressions", "clicks", "spend"] as const) {
+      if (row[metric] == null) current.unavailableMetrics.push(metric);
+    }
+
+    if (resultActionType && resultMetric.actionType !== resultActionType) {
+      const action = row.actions?.find((item) => item.action_type === resultActionType);
+      if (action) {
+        resultMetric.value = toNumber(action.value);
+        resultMetric.actionType = resultActionType;
+        resultMetric.label = humanizeActionType(resultActionType);
+        const cost = row.cost_per_action_type?.find((item) => item.action_type === resultActionType);
+        resultMetric.costPerResult = cost ? toNumber(cost.value) : null;
+      } else {
+        resultMetric.value = 0;
+        resultMetric.costPerResult = null;
+        current.resultsAvailable = false;
+      }
+    }
 
     current.resultLabel =
       current.resultLabel === resultMetric.label ? current.resultLabel : "Results";
@@ -2505,6 +2552,8 @@ function buildVisiblePreviewAdSets(ads: MetaAdRow[], adSets: MetaAdSetRow[]): Me
 }
 
 function finalizePerformanceSummary(input: {
+  resultsAvailable?: boolean;
+  unavailableMetrics?: string[];
   resultLabel: string;
   results: number;
   spend: number;
@@ -2515,6 +2564,8 @@ function finalizePerformanceSummary(input: {
   costPerResult?: number;
 }): PreviewPerformanceSummary {
   return {
+    resultsAvailable: input.resultsAvailable,
+    unavailableMetrics: input.unavailableMetrics,
     resultLabel: input.resultLabel || "Results",
     results: input.results,
     spend: input.spend,

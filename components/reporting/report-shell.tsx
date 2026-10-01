@@ -50,6 +50,7 @@ interface ReportShellProps {
   compactResponsive?: boolean;
   titleLoading?: boolean;
   initialRole?: AuthRole;
+  wideContent?: boolean;
   children: React.ReactNode;
 }
 
@@ -70,6 +71,7 @@ export function ReportShell({
   compactResponsive = false,
   titleLoading = false,
   initialRole,
+  wideContent = false,
   children,
 }: ReportShellProps) {
   const { screenshotMode } = useScreenshotMode();
@@ -157,7 +159,7 @@ export function ReportShell({
       data-report-capture-root="true"
       data-report-ready={reportReady ? "true" : undefined}
     >
-      <div className={`${REPORT_PAGE_FRAME_CLASS} ${screenshotMode ? "!min-h-0 !flex-none" : ""}`}>
+      <div className={`${REPORT_PAGE_FRAME_CLASS} ${wideContent && !screenshotMode ? "!max-w-[1920px]" : ""} ${screenshotMode ? "!min-h-0 !flex-none" : ""}`}>
         {screenshotMode && !suppressExportHeader ? (
           <ReportExportHeader title={title} dateLabel={dateLabel} activeQuery={activeQuery} />
         ) : null}

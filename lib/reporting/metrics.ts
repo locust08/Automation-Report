@@ -56,6 +56,7 @@ export function mergeCampaignRows(base: CampaignRow, incoming: CampaignRow): Cam
     spend: base.spend + incoming.spend,
     results: base.results + incoming.results,
     resultLabel: mergeResultLabels(base, incoming),
+    resultActionType: base.resultActionType && incoming.resultActionType && base.resultActionType !== incoming.resultActionType ? undefined : base.resultActionType ?? incoming.resultActionType,
     conversions: base.conversions + incoming.conversions,
     youtubeEarnedLikes: base.youtubeEarnedLikes + incoming.youtubeEarnedLikes,
     youtubeEarnedShares: base.youtubeEarnedShares + incoming.youtubeEarnedShares,

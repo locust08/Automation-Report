@@ -28,6 +28,10 @@ export async function GET(
       endDate: context.endDate,
       diagnosticsMode: searchParams.get("diagnostics") === "1",
       previewStage: "ad-groups",
+      metaIncludeInactivePreview: platform === "meta" && searchParams.get("performance") === "1",
+      metaManagementStage: platform === "meta" && searchParams.get("performance") === "1" ? "ad-groups" : undefined,
+      metaResultActionType: searchParams.get("resultActionType"),
+      metaPeriodPerformance: searchParams.get("performance") === "1",
       previewSelection: {
         platform,
         campaignId: decodeURIComponent(routeParams.campaignId),
@@ -37,7 +41,7 @@ export async function GET(
     });
 
     return NextResponse.json(
-      buildPreviewAdGroupsStage(payload, {
+      searchParams.get("performance") === "1" && platform === "meta" ? payload : buildPreviewAdGroupsStage(payload, {
         platform,
         campaignId: decodeURIComponent(routeParams.campaignId),
         adGroupId: null,

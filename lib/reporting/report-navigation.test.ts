@@ -3,6 +3,13 @@ import test from "node:test";
 
 import { buildReportContextQuery } from "./report-navigation";
 
+test("return navigation keeps a generic Meta account out of Google routing", () => {
+  const params = new URLSearchParams(buildReportContextQuery("accountId=96906550&platform=meta&startDate=2026-09-01"));
+  assert.equal(params.get("metaAccountId"), "96906550");
+  assert.equal(params.get("googleAccountId"), null);
+  assert.equal(params.get("accountId"), null);
+});
+
 test("preserves TikTok report context and corrects a stale Meta platform", () => {
   const query = buildReportContextQuery(
     "reportMode=advanced&reportType=advanced&tiktokAccountId=7512267932496560146&platform=meta&country=MY&startDate=2026-07-01&endDate=2026-07-31&screenshot=1",

@@ -18,6 +18,7 @@ import type {
   PreviewAdGroupNode,
   PreviewAdNode,
   PreviewReportPayload,
+  PreviewPerformanceSummary,
 } from "@/lib/reporting/types";
 import { cn } from "@/lib/utils";
 
@@ -38,13 +39,15 @@ export function CampaignHierarchyTree({
 }) {
   const baseQueryString = buildHierarchyQuery(queryString, {
     platform: hierarchyPlatform(campaign),
+    resultActionType: campaign.resultActionType,
   });
   const adGroupsQuery = useReportSectionQuery<PreviewReportPayload>(
     `/api/campaigns/${encodeURIComponent(campaign.id)}/ad-groups`,
     baseQueryString,
     open,
     "Unable to load the campaign structure.",
-    HIERARCHY_CACHE_TTL_MS
+    HIERARCHY_CACHE_TTL_MS,
+    true,
   );
   const adGroups = getAdGroups(adGroupsQuery.data, campaign);
   const selectedAdGroup =
@@ -52,13 +55,15 @@ export function CampaignHierarchyTree({
   const adsQueryString = buildHierarchyQuery(queryString, {
     platform: hierarchyPlatform(campaign),
     campaignId: campaign.id,
+    resultActionType: campaign.resultActionType,
   });
   const adsQuery = useReportSectionQuery<PreviewReportPayload>(
     `/api/ad-groups/${encodeURIComponent(selectedAdGroup?.id ?? "-")}/ads`,
     adsQueryString,
     open && Boolean(selectedAdGroup),
     "Unable to load ads.",
-    HIERARCHY_CACHE_TTL_MS
+    HIERARCHY_CACHE_TTL_MS,
+    true,
   );
   const ads = getAds(adsQuery.data, campaign, selectedAdGroup);
   const childLabel = campaign.platform === "meta" ? "Ad Sets" : "Ad Groups";
@@ -77,6 +82,8 @@ export function CampaignHierarchyTree({
           {adGroupsQuery.error ? (
             <HierarchyError message={adGroupsQuery.error} onRetry={adGroupsQuery.retry} />
           ) : null}
+          {adGroupsQuery.data?.warnings.map((warning) => <HierarchyMessage key={warning}>{warning}</HierarchyMessage>)}
+          {adGroupsQuery.data?.warnings.length ? <Button variant="ghost" size="xs" onClick={adGroupsQuery.retry}>Retry ad sets</Button> : null}
           {!adGroupsQuery.loading && !adGroupsQuery.error && adGroups.length === 0 ? (
             <HierarchyMessage>No {childLabel.toLowerCase()} found.</HierarchyMessage>
           ) : null}
@@ -108,6 +115,8 @@ export function CampaignHierarchyTree({
                       <GroupIcon className="size-3.5 shrink-0" />
                       <span className="min-w-0 flex-1 truncate font-medium">{adGroup.name}</span>
                     </button>
+                    {campaign.platform === "meta" ? <HierarchyLink queryString={queryString} campaignId={campaign.id} adSetId={adGroup.id} /> : null}
+                    {campaign.platform === "meta" ? <HierarchyMetrics performance={adGroup.performance} /> : null}
                     {expanded ? (
                       <div className="ml-4 border-l border-[#d8dde7] py-1 pl-4">
                         {adsQuery.loading ? (
@@ -116,16 +125,22 @@ export function CampaignHierarchyTree({
                         {adsQuery.error ? (
                           <HierarchyError message={adsQuery.error} onRetry={adsQuery.retry} />
                         ) : null}
+                        {adsQuery.data?.warnings.map((warning) => <HierarchyMessage key={warning}>{warning}</HierarchyMessage>)}
+                        {adsQuery.data?.warnings.length ? <Button variant="ghost" size="xs" onClick={adsQuery.retry}>Retry ads</Button> : null}
                         {!adsQuery.loading && !adsQuery.error && ads.length === 0 ? (
                           <HierarchyMessage>No ads found.</HierarchyMessage>
                         ) : null}
                         {ads.map((ad) => (
                           <div
                             key={ad.id}
-                            className="flex min-w-0 items-start gap-2 rounded-md px-2 py-2 text-sm text-[#555] hover:bg-[#f7f8fa]"
+                            className="min-w-0 rounded-md px-2 py-2 text-sm text-[#555] hover:bg-[#f7f8fa]"
                           >
+                            <div className="flex items-start gap-2">
                             <MegaphoneIcon className="mt-0.5 size-3.5 shrink-0 text-[#6d7b98]" />
                             <span className="min-w-0 flex-1 truncate">{ad.name}</span>
+                            </div>
+                            {campaign.platform === "meta" && selectedAdGroup ? <HierarchyLink queryString={queryString} campaignId={campaign.id} adSetId={selectedAdGroup.id} adId={ad.id} /> : null}
+                            {campaign.platform === "meta" ? <HierarchyMetrics performance={ad.performance} /> : null}
                           </div>
                         ))}
                       </div>
@@ -139,6 +154,26 @@ export function CampaignHierarchyTree({
       </CollapsibleContent>
     </Collapsible>
   );
+}
+
+function HierarchyMetrics({ performance: p }: { performance?: PreviewPerformanceSummary | null }) {
+  const missing = (key: string) => p?.unavailableMetrics?.includes(key);
+  const metrics = [
+    ["Impressions", missing("impressions") ? null : p?.impressions], ["Clicks", missing("clicks") ? null : p?.clicks], ["CTR (%)", p && !missing("impressions") && !missing("clicks") && p.impressions > 0 ? p.ctr : null], ["CPM", missing("spend") || missing("impressions") ? null : p?.cpm],
+    [p?.resultLabel ?? "Results", p?.resultsAvailable === false ? null : p?.results], ["Cost/Result", p?.resultsAvailable === false || missing("spend") ? null : p?.costPerResult], ["Ads Spent", missing("spend") ? null : p?.spend],
+  ] as const;
+  return <dl className="mb-2 grid grid-cols-2 gap-2 rounded-md bg-white/70 px-3 py-2 sm:grid-cols-4 xl:grid-cols-7">
+    {metrics.map(([label, value]) => <div key={label}><dt className="text-[10px] text-[#777]">{label}</dt><dd className="text-xs font-medium tabular-nums">{value == null ? "—" : value.toLocaleString(undefined, { maximumFractionDigits: 2 })}</dd></div>)}
+  </dl>;
+}
+
+function HierarchyLink({ queryString, campaignId, adSetId, adId }: { queryString: string; campaignId: string; adSetId: string; adId?: string }) {
+  const source = new URLSearchParams(queryString.replace(/^&/, ""));
+  const accountId = (source.get("metaAccountId") ?? source.get("accountId") ?? "").replace(/^act_/, "");
+  if (!/^\d+$/.test(accountId)) return null;
+  const params = new URLSearchParams({ act: accountId, selected_campaign_ids: campaignId, selected_adset_ids: adSetId });
+  if (adId) params.set("selected_ad_ids", adId);
+  return <a href={`https://www.facebook.com/adsmanager/manage/${adId ? "ads" : "adsets"}?${params}`} target="_blank" rel="noopener noreferrer" className="mb-1 block px-3 text-right text-xs text-[#9f0019] hover:underline">View in Ads Manager ↗</a>;
 }
 
 function HierarchyMessage({
@@ -175,12 +210,16 @@ function HierarchyError({
 
 function buildHierarchyQuery(
   queryString: string,
-  values: { platform: HierarchyPlatform; campaignId?: string }
+  values: { platform: HierarchyPlatform; campaignId?: string; resultActionType?: string }
 ): string {
   const params = new URLSearchParams(
     queryString.startsWith("&") ? queryString.slice(1) : queryString
   );
   params.set("platform", values.platform);
+  if (values.platform === "meta") {
+    params.set("performance", "1");
+    if (values.resultActionType) params.set("resultActionType", values.resultActionType);
+  }
   if (values.campaignId) {
     params.set("campaignId", values.campaignId);
   }
@@ -196,7 +235,7 @@ function getAdGroups(
     payload?.sections
       .find((section) => section.platform === platform)
       ?.campaigns.find((item) => item.id === campaign.id)?.children ?? []
-  ).filter((item) => isActiveStatus(item.status, platform === "tiktok"));
+  ).filter((item) => platform === "meta" || isActiveStatus(item.status, platform === "tiktok"));
 }
 
 function getAds(
@@ -213,7 +252,7 @@ function getAds(
       .find((section) => section.platform === platform)
       ?.campaigns.find((item) => item.id === campaign.id)
       ?.children.find((item) => item.id === adGroup.id)?.ads ?? []
-  ).filter((item) => isActiveStatus(item.status, platform === "tiktok"));
+  ).filter((item) => platform === "meta" || isActiveStatus(item.status, platform === "tiktok"));
 }
 
 type HierarchyPlatform = Extract<Platform, "meta" | "google" | "tiktok">;

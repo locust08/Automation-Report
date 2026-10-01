@@ -25,6 +25,13 @@ export function buildReportContextQuery(query: string): string {
 
   const explicitPlatform = inferExplicitPlatform(target);
   if (explicitPlatform) target.set("platform", explicitPlatform);
+  const platform = target.get("platform");
+  const accountId = target.get("accountId");
+  if (accountId && ["meta", "google", "googleYoutube", "tiktok"].includes(platform ?? "")) {
+    const accountKey = `${platform === "googleYoutube" ? "google" : platform}AccountId`;
+    if (!target.has(accountKey)) target.set(accountKey, accountId);
+    target.delete("accountId");
+  }
   return target.toString();
 }
 

@@ -93,7 +93,8 @@ function useReportQuery<T>(
   queryString: string,
   enabled: boolean,
   fallbackMessage: string,
-  cacheTtlMs = 0
+  cacheTtlMs = 0,
+  retainDataOnRetry = false,
 ): LoadingState<T> {
   const queryKey = `${requestPath}?${queryString}`;
   const [state, setState] = useState<QueryState<T>>({
@@ -165,19 +166,19 @@ function useReportQuery<T>(
           return;
         }
 
-        setState({
-          data: null,
+        setState((current) => ({
+          data: retainDataOnRetry && current.queryKey === queryKey ? current.data : null,
           error: fetchError instanceof Error ? fetchError.message : fallbackMessage,
           loading: false,
           queryKey,
           successToken: null,
-        });
+        }));
       });
 
     return () => {
       ignoreResponse = true;
     };
-  }, [cacheTtlMs, enabled, fallbackMessage, queryKey, requestVersion]);
+  }, [cacheTtlMs, enabled, fallbackMessage, queryKey, requestVersion, retainDataOnRetry]);
 
   const isCurrentQuery = state.queryKey === queryKey;
   const cached = enabled ? getFreshCachedQuery<T>(queryKey, cacheTtlMs) : undefined;
@@ -190,10 +191,10 @@ function useReportQuery<T>(
     setState((current) =>
       current.queryKey === queryKey
         ? {
-            data: null,
+            data: retainDataOnRetry ? current.data : null,
             error: null,
             loading: true,
-            queryKey: null,
+            queryKey: retainDataOnRetry ? queryKey : null,
             successToken: null,
           }
         : current
@@ -209,9 +210,10 @@ export function useReportSectionQuery<T>(
   queryString: string,
   enabled: boolean,
   fallbackMessage: string,
-  cacheTtlMs = 0
+  cacheTtlMs = 0,
+  retainDataOnRetry = false,
 ): LoadingState<T> {
-  return useReportQuery<T>(requestPath, queryString, enabled, fallbackMessage, cacheTtlMs);
+  return useReportQuery<T>(requestPath, queryString, enabled, fallbackMessage, cacheTtlMs, retainDataOnRetry);
 }
 
 function getFreshCachedQuery<T>(

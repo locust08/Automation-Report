@@ -39,6 +39,7 @@ export interface CampaignRow {
   cpm: number;
   results: number;
   resultLabel?: string;
+  resultActionType?: string;
   costPerResult: number;
   spend: number;
   conversions: number;
@@ -368,6 +369,8 @@ export interface PreviewTextAsset {
 }
 
 export interface PreviewPerformanceSummary {
+  resultsAvailable?: boolean;
+  unavailableMetrics?: string[];
   resultLabel: string;
   results: number;
   spend: number;

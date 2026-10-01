@@ -1,4 +1,5 @@
 import { GoogleAdsRestClient, GoogleAdsApiError, normalizeGoogleAdsApiVersion } from "../google-ads/rest-client";
+import { buildDemandAudiences, buildDemandMatrix, readDemandPages, type DemandNativeRow, type DemandGenPayload } from "./demand-gen";
 import { emptyCampaignRow, hasReportableCampaignSpend } from "@/lib/reporting/metrics";
 import {
   addSourceToAudienceItems,
@@ -561,6 +562,44 @@ function reportingClient(input: Pick<GoogleFetchInput, "apiVersion" | "clientId"
     id: process.env.GOOGLE_ADS_CLOUD_PROJECT_ID, number: process.env.GOOGLE_ADS_CLOUD_PROJECT_NUMBER,
     name: process.env.GOOGLE_ADS_CLOUD_PROJECT_NAME, accessLevel: process.env.GOOGLE_ADS_PROJECT_ACCESS_LEVEL,
   } });
+}
+
+export async function fetchGoogleDemandGen(input: GoogleFetchInput, campaignId: string | null): Promise<DemandGenPayload> {
+  const context = await resolveVerifiedGoogleAdsContext(input);
+  const client = reportingClient(input);
+  const query = <T,>(gaql: string) => readDemandPages((pageToken) => client.search<T>(context.customerId, gaql, { loginCustomerId: context.loginCustomerId, pageToken }));
+  const campaignRows = await query<{ campaign?: { id?: string; name?: string } }>("SELECT campaign.id, campaign.name FROM campaign WHERE campaign.advertising_channel_type = 'DEMAND_GEN' AND campaign.status != 'REMOVED'");
+  const campaigns = campaignRows.rows.flatMap((row) => row.campaign?.id ? [{ id: row.campaign.id, name: row.campaign.name ?? row.campaign.id }] : []).sort((a, b) => a.name.localeCompare(b.name));
+  if (campaignId && (!/^\d+$/.test(campaignId) || !campaigns.some((campaign) => campaign.id === campaignId))) throw new Error("Select a Demand Gen campaign belonging to this Google account.");
+  const accountRows = await query<{ customer?: { descriptiveName?: string; currencyCode?: string; timeZone?: string } }>("SELECT customer.descriptive_name, customer.currency_code, customer.time_zone FROM customer LIMIT 1");
+  const customer = accountRows.rows[0]?.customer;
+  const payload: DemandGenPayload = { account: { id: context.customerId, name: customer?.descriptiveName ?? context.customerId, currency: customer?.currencyCode ?? "", timezone: customer?.timeZone ?? "" }, startDate: input.startDate, endDate: input.endDate, campaigns, campaignId, inMarket: [], affinity: [], unresolved: [], cells: buildDemandMatrix([]).cells, unmapped: [], warnings: [], complete: campaignRows.complete && accountRows.complete };
+  if (!campaignRows.complete) payload.warnings.push(campaignRows.reason!);
+  if (!campaignId) return payload;
+  const scope = `campaign.id = ${campaignId} AND segments.date BETWEEN '${input.startDate}' AND '${input.endDate}'`;
+  const fields = "metrics.impressions, metrics.clicks, metrics.cost_micros, metrics.conversions";
+  try {
+    const audience = await query<DemandNativeRow>(`SELECT campaign.id, ad_group.id, ad_group_criterion.criterion_id, ad_group_criterion.type, ad_group_criterion.user_interest.user_interest_category, ${fields} FROM ad_group_audience_view WHERE ${scope}`);
+    const references = [...new Set(audience.rows.map((row) => row.adGroupCriterion?.userInterest?.userInterestCategory).filter((ref): ref is string => Boolean(ref && new RegExp(`^customers/${context.customerId}/userInterests/\\d+$`).test(ref))))];
+    const taxonomy = new Map<string, { name: string; type: string }>();
+    for (let offset = 0; offset < references.length; offset += 100) {
+      const batch = references.slice(offset, offset + 100);
+      const result = await query<{ userInterest?: { resourceName?: string; name?: string; taxonomyType?: string } }>(`SELECT user_interest.resource_name, user_interest.name, user_interest.taxonomy_type FROM user_interest WHERE user_interest.resource_name IN (${batch.map((ref) => `'${ref}'`).join(",")})`);
+      for (const row of result.rows) { const item = row.userInterest; if (item?.resourceName && batch.includes(item.resourceName)) taxonomy.set(item.resourceName, { name: item.name ?? item.resourceName, type: item.taxonomyType ?? "UNKNOWN" }); }
+      if (!result.complete) { payload.complete = false; payload.warnings.push(result.reason!); }
+    }
+    const normalized = buildDemandAudiences(audience.rows, taxonomy);
+    Object.assign(payload, { inMarket: normalized.inMarket, affinity: normalized.affinity, unresolved: normalized.unresolved });
+    if (normalized.excluded) payload.warnings.push(`${normalized.excluded} non-interest criteria excluded; configured components are not measured interest delivery.`);
+    if (normalized.unresolved.length) { payload.complete = false; payload.warnings.push("Some interest references could not be classified; see coverage details."); }
+    if (!audience.complete) { payload.complete = false; payload.warnings.push(audience.reason!); }
+  } catch (error) { payload.complete = false; payload.warnings.push(`Audience data unavailable: ${error instanceof Error ? error.message : "Google request failed"}`); }
+  try {
+    const matrix = await query<DemandNativeRow>(`SELECT campaign.id, segments.ad_format_type, segments.device, ${fields} FROM campaign WHERE ${scope}`);
+    Object.assign(payload, buildDemandMatrix(matrix.rows));
+    if (!matrix.complete) { payload.complete = false; payload.warnings.push(matrix.reason!); }
+  } catch (error) { payload.complete = false; payload.warnings.push(`Format/device data unavailable: ${error instanceof Error ? error.message : "Google request failed"}`); }
+  return payload;
 }
 
 export async function fetchGoogleCampaignRows({

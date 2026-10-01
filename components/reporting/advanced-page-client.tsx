@@ -18,6 +18,7 @@ import {
 } from "lucide-react";
 
 import { CampaignNameFilterControl } from "@/components/reporting/campaign-name-filter-control";
+import { DemandGenSection } from "@/components/reporting/demand-gen-section";
 import { ReportDownloadButton } from "@/components/reporting/screenshot-mode-toggle";
 import { ReportFiltersBar } from "@/components/reporting/report-filters-bar";
 import { AccountReportContent } from "@/components/reporting/overall-page-client";
@@ -233,11 +234,12 @@ function LegacyAdvancedPageClient({
     params.set("reportMode", "advanced");
     params.set("reportType", "advanced");
     if (initialAccountId) params.set("accountId", initialAccountId);
+    params.set("platform", normalizeAdvancedPlatform(initialPlatform, initialAccountId));
     if (initialCountry) params.set("country", initialCountry);
     if (initialStartDate) params.set("startDate", initialStartDate);
     if (initialEndDate) params.set("endDate", initialEndDate);
     return params.toString();
-  }, [initialAccountId, initialCountry, initialStartDate, initialEndDate]);
+  }, [initialAccountId, initialPlatform, initialCountry, initialStartDate, initialEndDate]);
   const activeQueryString = useMemo(() => {
     const params = new URLSearchParams(queryString);
     writeCampaignNameFilterParams(params, campaignNameFilter);
@@ -411,6 +413,10 @@ function LegacyAdvancedPageClient({
           title="Choose an advertising account"
           message="Search for an account above to open its advanced report."
         />
+      ) : null}
+
+      {initialAccountId && normalizeAdvancedPlatform(initialPlatform, initialAccountId) === "google" ? (
+        <DemandGenSection queryString={queryString} campaignNameFilter={campaignNameFilter} />
       ) : null}
 
       {loading ? (
