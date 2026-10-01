@@ -96,6 +96,8 @@ try {
   await page.setViewportSize({ width: 390, height: 844 });
   assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth));
   await page.screenshot({ path: "tmp/demand-improvements-mobile.png", fullPage: true });
+  await downloadPdf("demand-improvements-mobile");
+  assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), "mobile layout restores after export");
   await page.setViewportSize({ width: 1920, height: 1080 });
   await page.goto(`${base}/campaign-breakdown?metaAccountId=96906550&platform=meta&startDate=2026-09-01&endDate=2026-09-30`);
   await page.getByRole("button", { name: "Expand Fixture campaign", exact: true }).waitFor();
@@ -128,6 +130,8 @@ try {
   await page.setViewportSize({ width: 390, height: 844 });
   assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth));
   await page.screenshot({ path: "tmp/breakdown-improvements-mobile.png", fullPage: true });
+  await downloadPdf("breakdown-improvements-mobile");
+  assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), "mobile layout restores after export");
   console.log("Improvement QA passed: multi-select, shares/totals, side-by-side charts, no presentation refetch, filtering unopened branches with retained ancestors, views, native PDF downloads, preserved state, mobile scrolling.");
 } catch (error) { console.log((await page.locator("body").innerText()).slice(0, 6500)); throw error; }
 finally { await browser.close(); }

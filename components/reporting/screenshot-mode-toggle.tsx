@@ -352,11 +352,10 @@ function ReportExportOverlay({
 }
 
 async function preparePdfDownload(
-  root: HTMLElement,
   dataUrl: string,
   fileNamePrefix: string | undefined
 ): Promise<() => void> {
-  const pdfBlob = await createPdfBlob(root, dataUrl);
+  const pdfBlob = await createPdfBlob(dataUrl);
 
   return () => {
     downloadBlob(pdfBlob, buildFileName("pdf", fileNamePrefix));
@@ -429,7 +428,7 @@ async function prepareStandardDownload(
 ): Promise<() => void> {
   const dataUrl = await captureReportPng(root, format);
   return format === "pdf"
-    ? preparePdfDownload(root, dataUrl, fileNamePrefix)
+    ? preparePdfDownload(dataUrl, fileNamePrefix)
     : preparePngDownload(dataUrl, fileNamePrefix);
 }
 
@@ -448,10 +447,11 @@ async function prepareAdvancedPdfDownload(
   };
 }
 
-async function createPdfBlob(root: HTMLElement, dataUrl: string): Promise<Blob> {
+async function createPdfBlob(dataUrl: string): Promise<Blob> {
   const { jsPDF } = await import("jspdf");
-  const orientation = root.scrollWidth > root.scrollHeight ? "landscape" : "portrait";
-  const image = new jsPDF({ orientation, unit: "px", format: "a4" }).getImageProperties(dataUrl);
+  const image = new jsPDF().getImageProperties(dataUrl);
+  // Capture can expand scrolling tables beyond the restored mobile layout.
+  const orientation = image.width > image.height ? "landscape" : "portrait";
   const pdf = new jsPDF({
     orientation,
     unit: "px",
