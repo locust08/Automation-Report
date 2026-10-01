@@ -31,14 +31,9 @@ await page.route("**/api/**", async (route) => {
   await route.fulfill({ json: data });
 });
 try {
-  await page.goto(`${base}/advanced?googleAccountId=1234567890&platform=google&startDate=2026-09-01&endDate=2026-09-30`);
-  await page.getByRole("heading", { name: "Demand Gen Analysis" }).waitFor();
+  await page.goto(`${base}/demand-gen?googleAccountId=1234567890&platform=google&startDate=2026-09-01&endDate=2026-09-30`);
+  await page.getByRole("heading", { name: "Demand Gen Analysis", exact: true }).last().waitFor();
   await page.getByRole("cell", { name: "Furniture", exact: true }).waitFor();
-  const finalUrlTable = page.getByRole("region", { name: "Final URL performance table" });
-  await finalUrlTable.waitFor();
-  assert.ok(await finalUrlTable.evaluate((element) => element.scrollWidth > element.clientWidth), "Final URL table scrolls on desktop");
-  await finalUrlTable.evaluate((element) => { element.scrollLeft = 500; });
-  assert.ok(await finalUrlTable.evaluate((element) => element.scrollLeft > 0), "Final URL metrics are reachable by horizontal scroll");
   const before = demandRequests;
   const inMarket = page.locator("section").filter({ has: page.getByRole("heading", { name: "In-market", exact: true }) }).last();
   await inMarket.getByRole("button", { name: "Next", exact: true }).click();
@@ -54,6 +49,13 @@ try {
   assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), "mobile page should not overflow");
   await page.screenshot({ path: "tmp/demand-mobile.png", fullPage: true });
   await page.setViewportSize({ width: 1920, height: 1080 });
+  await page.goto(`${base}/advanced?googleAccountId=1234567890&platform=google&startDate=2026-09-01&endDate=2026-09-30`);
+  const finalUrlTable = page.getByRole("region", { name: "Final URL performance table" });
+  await finalUrlTable.waitFor();
+  assert.ok(await finalUrlTable.evaluate((element) => element.scrollWidth > element.clientWidth), "Final URL table scrolls on desktop");
+  await finalUrlTable.evaluate((element) => { element.scrollLeft = 500; });
+  assert.ok(await finalUrlTable.evaluate((element) => element.scrollLeft > 0), "Final URL metrics are reachable by horizontal scroll");
+  assert.equal(await page.getByRole("heading", { name: "Demand Gen Analysis", exact: true }).count(), 0, "Demand Gen moved out of Advanced");
   await page.goto(`${base}/advanced?metaAccountId=96906550&platform=meta&startDate=2026-09-01&endDate=2026-09-30`);
   await page.getByRole("button", { name: "Navigation", exact: true }).click();
   const link = page.getByRole("menuitem", { name: "Monthly Performance" });

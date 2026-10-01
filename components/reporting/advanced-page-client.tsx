@@ -19,7 +19,6 @@ import {
 
 import { CampaignNameFilterControl } from "@/components/reporting/campaign-name-filter-control";
 import { AdvancedLoadingPanel } from "@/components/reporting/advanced-loading-panel";
-import { DemandGenSection } from "@/components/reporting/demand-gen-section";
 import { ReportDownloadButton } from "@/components/reporting/screenshot-mode-toggle";
 import { ReportFiltersBar } from "@/components/reporting/report-filters-bar";
 import { AccountReportContent } from "@/components/reporting/overall-page-client";
@@ -418,9 +417,6 @@ function LegacyAdvancedPageClient({
         />
       ) : null}
 
-      {initialAccountId && normalizeAdvancedPlatform(initialPlatform, initialAccountId) === "google" ? (
-        <DemandGenSection queryString={queryString} campaignNameFilter={campaignNameFilter} />
-      ) : null}
 
       {loading ? (
         <AdvancedLoadingPanel title="Loading Advanced Report" message="Preparing market, competitor, keyword, and content planning sections…" />

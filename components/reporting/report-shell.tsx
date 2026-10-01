@@ -110,6 +110,7 @@ export function ReportShell({
         { href: hrefs.overall, label: "Monthly Performance", active: pathname === "/overall", icon: BarChart3Icon },
         { href: hrefs.preview, label: "Campaign Preview", active: pathname === "/preview", icon: EyeIcon },
         { href: hrefs.advanced, label: "Advanced Report", active: pathname === "/advanced", icon: SparklesIcon },
+        ...((new URLSearchParams(reportContextQuery).has("googleAccountId") || pathname === "/demand-gen") ? [{ href: withQuery("/demand-gen", reportContextQuery), label: "Demand Gen Analysis", active: pathname === "/demand-gen", icon: BarChart3Icon }] : []),
       ],
     },
     {
