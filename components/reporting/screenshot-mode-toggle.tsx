@@ -56,6 +56,7 @@ const REPORT_EXPORT_CAPTURE_STYLE = `
   [data-compact-pdf="true"] col:first-child { width: 24% !important; }
   [data-compact-pdf="true"] col:last-child { display: none !important; width: 0 !important; }
   [data-compact-pdf="true"] :is(th, td) { padding: 7px !important; white-space: normal !important; overflow-wrap: anywhere !important; position: static !important; }
+  [data-compact-pdf="true"] thead th { font-size: 11px !important; padding: 5px 3px !important; overflow-wrap: normal !important; word-break: normal !important; }
   [data-compact-pdf="true"] :is(th, td) img { width: 72px !important; height: 54px !important; max-width: 100% !important; object-fit: contain !important; }
   [data-compact-pdf="true"] button { min-height: 0 !important; height: auto !important; padding: 0 !important; }
 
@@ -486,17 +487,19 @@ async function createStandalonePdfBlob(root: HTMLElement): Promise<Blob> {
   const previousStyle = root.getAttribute("style");
   const previousMode = root.getAttribute("data-compact-pdf");
   const exportStyle = installReportExportCaptureStyle();
-  const spans = Array.from(root.querySelectorAll<HTMLTableCellElement>("td[colspan]")).map((cell) => ({ cell, value: cell.colSpan }));
+  const spans: { cell: HTMLTableCellElement; value: number }[] = [];
   root.setAttribute("data-compact-pdf", "true");
   root.style.width = `${width}px`;
   root.style.maxWidth = "none";
   root.style.overflow = "visible";
   try {
+    await waitForReportCaptureReady(root);
+    spans.push(...Array.from(root.querySelectorAll<HTMLTableCellElement>("td[colspan]")).map((cell) => ({ cell, value: cell.colSpan })));
     spans.forEach(({ cell }) => {
       const header = cell.closest("table")?.tHead?.rows[0];
       if (header) cell.colSpan = Array.from(header.cells).filter((column) => getComputedStyle(column).display !== "none").length;
     });
-    await waitForReportCaptureReady(root);
+    await waitForStableLayout(root);
     const rootBounds = root.getBoundingClientRect();
     const height = Math.ceil(root.scrollHeight);
     const rowBounds = Array.from(root.querySelectorAll<HTMLElement>("tr:not(:has(table)), h1, h2, h3, h4, h5, img"))
@@ -504,6 +507,15 @@ async function createStandalonePdfBlob(root: HTMLElement): Promise<Blob> {
         const bounds = element.getBoundingClientRect();
         return { top: Math.floor(bounds.top - rootBounds.top), bottom: Math.ceil(bounds.bottom - rootBounds.top) };
       }).filter((bounds) => bounds.bottom > bounds.top && bounds.bottom - bounds.top <= pageHeight);
+    root.querySelectorAll("table").forEach((table) => {
+      const header = table.tHead;
+      const firstRow = table.tBodies[0]?.rows[0];
+      if (header && firstRow && !firstRow.querySelector("table")) {
+        const top = Math.floor(header.getBoundingClientRect().top - rootBounds.top);
+        const bottom = Math.ceil(firstRow.getBoundingClientRect().bottom - rootBounds.top);
+        if (bottom - top <= pageHeight) rowBounds.push({ top, bottom });
+      }
+    });
     const { jsPDF } = await import("jspdf");
     const pdf = new jsPDF({ orientation: "landscape", unit: "mm", format: "a4", compress: true });
     // Embed fonts and creatives once, then rasterize bounded SVG viewports.
