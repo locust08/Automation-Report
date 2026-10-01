@@ -41,6 +41,17 @@ async function downloadPdf(file) {
   await page.getByRole("button", { name: "Report", exact: true }).click();
   const downloadPromise = page.waitForEvent("download", { timeout: 120000 });
   await page.getByRole("menuitem", { name: "Download PDF", exact: true }).click();
+  if (file.startsWith("breakdown")) {
+    await page.waitForURL((url) => url.searchParams.has("screenshot"));
+    const heading = page.getByRole("heading", { name: "Campaign Breakdown", exact: true });
+    const bounds = await heading.evaluate((element) => {
+      const title = element.getBoundingClientRect();
+      const group = element.closest("section").querySelector("h3").getBoundingClientRect();
+      return { height: title.height, bottom: title.bottom, groupTop: group.top };
+    });
+    assert.ok(bounds.height < 50, "PDF heading stays on one line");
+    assert.ok(bounds.groupTop >= bounds.bottom, "PDF heading does not overlap the campaign table");
+  }
   const download = await downloadPromise;
   await download.saveAs(`tmp/${file}.pdf`);
   assert.equal(await download.failure(), null);
