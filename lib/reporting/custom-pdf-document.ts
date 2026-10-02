@@ -14,6 +14,13 @@ export function groupAdsByCampaign<T extends { campaign: string }>(ads: T[]): T[
   return Array.from(groups.values()).flat();
 }
 
+export function metricColumnGroups(columnCount: number): number[][] {
+  if (columnCount <= 7) return [Array.from({length:columnCount},(_,index)=>index)];
+  const groups: number[][]=[];
+  for(let offset=1;offset<columnCount;offset+=5) groups.push([0,...Array.from({length:Math.min(5,columnCount-offset)},(_,index)=>offset+index)]);
+  return groups;
+}
+
 type ChartRow = { label: string; value: string; width: string };
 type Section = { title: string; headers: string[]; rows: string[][]; charts: ChartRow[]; notes: string[] };
 type Creative = { label: string; source: string; alt: string };
@@ -106,13 +113,14 @@ const css = `
 .custom-report-pdf h1 { font-size:23px; overflow-wrap:anywhere; line-height:1.2; margin:0 0 6px; }
 .custom-report-pdf .pdf-subtitle { font-size:12px; color:#555; }
 .custom-report-pdf .pdf-body { flex:1; min-height:0; overflow:hidden; }
-.custom-report-pdf h2 { font-size:19px; margin:0 0 8px; overflow-wrap:anywhere; }
+.custom-report-pdf h2 { font-size:19px; line-height:1.45; margin:0 0 14px; padding-bottom:28px; overflow-wrap:anywhere; }
 .custom-report-pdf p { font-size:12px; margin:0 0 8px; color:#555; }
-.custom-report-pdf .pdf-section { margin-bottom:14px; }
+.custom-report-pdf .pdf-section { margin-bottom:24px; display:flow-root; }
 .custom-report-pdf .pdf-columns { display:grid; grid-template-columns:minmax(0,1fr); gap:20px; align-items:start; }
-.custom-report-pdf table { width:100%; border-collapse:collapse; table-layout:fixed; font-size:11px; }
-.custom-report-pdf th, .custom-report-pdf td { padding:7px 8px; border-bottom:1px solid #ddd; overflow-wrap:anywhere; vertical-align:top; text-align:right; }
-.custom-report-pdf th:first-child, .custom-report-pdf td:first-child { text-align:left; width:28%; }
+.custom-report-pdf table { width:100%; border-collapse:collapse; table-layout:auto; font-size:12px; line-height:1.5; }
+.custom-report-pdf th, .custom-report-pdf td { padding:9px 8px; border-bottom:1px solid #ddd; overflow-wrap:normal; vertical-align:top; text-align:right; }
+.custom-report-pdf th:first-child, .custom-report-pdf td:first-child { text-align:left; width:26%; overflow-wrap:anywhere; }
+.custom-report-pdf td:not(:first-child) { white-space:nowrap; }
 .custom-report-pdf th { background:#fff0f2; color:#970019; font-weight:600; }
 .custom-report-pdf .pdf-chart-row { margin-bottom:8px; font-size:12px; }
 .custom-report-pdf .pdf-chart-label { display:flex; justify-content:space-between; gap:8px; }
@@ -155,7 +163,9 @@ export async function createCustomReportPdf(root: HTMLElement, onPage?: (image:s
     const intro = el("section"); intro.className = "pdf-section"; intro.append(el("h2",content.reportTitle));
     [...content.scope,...content.warnings].forEach(note => intro.append(el("p",note)));
     appendBlock(intro);
-    for (const section of content.sections) {
+    for (const section of content.sections.flatMap(section => metricColumnGroups(section.headers.length).map((indexes,groupIndex,groups) => ({...section,
+      title:groups.length>1 ? `${section.title} · Metrics ${groupIndex+1} of ${groups.length}` : section.title,
+      headers:indexes.map(index=>section.headers[index]), rows:section.rows.map(row=>indexes.map(index=>row[index]))})))) {
       let block: HTMLElement, tbody: HTMLTableSectionElement, chart: HTMLElement;
       let count = 0;
       const startTable = (continued=false) => {
@@ -193,10 +203,12 @@ export async function createCustomReportPdf(root: HTMLElement, onPage?: (image:s
       const adHeader = (continued = false) => {
         body!.append(el("h2",ad.campaign));
         body!.append(el("p",`Ad: ${ad.name}${continued ? " (continued)" : ""}`));
-        const table = el("table"), head = el("thead"), header = el("tr"), rows = el("tbody"), row = el("tr");
-        ad.headers.forEach(value => header.append(el("th",value)));
-        ad.values.forEach(value => row.append(el("td",value)));
-        head.append(header); rows.append(row); table.append(head,rows); body!.append(table);
+        for (const indexes of metricColumnGroups(ad.headers.length)) {
+          const table = el("table"), head = el("thead"), header = el("tr"), rows = el("tbody"), row = el("tr");
+          indexes.forEach(index => header.append(el("th",ad.headers[index])));
+          indexes.forEach(index => row.append(el("td",ad.values[index])));
+          head.append(header); rows.append(row); table.append(head,rows); table.style.marginBottom="16px"; body!.append(table);
+        }
         body!.append(el("h2",continued ? "Creatives (continued)" : "Creatives"));
       };
       adHeader();

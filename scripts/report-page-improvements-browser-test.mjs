@@ -21,7 +21,7 @@ const dateRange = { startDate: "2026-09-01", endDate: "2026-09-30", previousStar
 demand.inMarket.push(...Array.from({ length: 11 }, (_, index) => ({ id: `i${index}`, name: `Interest ${String(index).padStart(2, "0")}`, metrics: values })));
 const campaign = { id: "c", platform: "meta", campaignType: "Lead", campaignName: "Fixture campaign", resultActionType: "lead", resultLabel: "Lead", impressions: 1000, videoViews: 500, clicks: 100, spend: 50, results: 20, ctr: 10, cpm: 50, costPerResult: 2.5, conversions: 20, avgCpc: .5, youtubeEarnedLikes: 0, youtubeEarnedShares: 0 };
 const overall = { companyName: "Fixture", dateRange, accountIds: { metaAccountId: "96906550", googleAccountId: null, metaAccountIds: ["96906550"], googleAccountIds: [] }, summaries: [], campaignGroups: [{ id: "meta-lead", platform: "meta", campaignType: "Lead", rows: [campaign], totals: campaign }], warnings: [], diagnostics: [], audienceClickBreakdown: { age: [], gender: [], location: { country: [], region: [], city: [] } } };
-const performance = { resultLabel: "Lead", results: 2, impressions: 100, videoViews: 50, clicks: 10, spend: 5, ctr: 10, cpm: 50, cpc: .5, costPerResult: 2.5, landingPageViews: 0, linkClicks: 0 };
+const performance = { resultLabel: "Lead", results: 2, impressions: 1489660, videoViews: 1463361, clicks: 10, spend: 2228.44, ctr: 10, cpm: 50, cpc: .5, costPerResult: 2.5, landingPageViews: 0, linkClicks: 0 };
 let demandRequests = 0, failHierarchy = false, partialHierarchy = false;
 let sessionRole = "admin";
 const requests = [];
@@ -62,6 +62,11 @@ async function downloadPdf(file) {
         headers:Array.from(host.querySelectorAll('thead')).map(head=>head.textContent),
         creatives:host.querySelectorAll('figure').length,
         text:host.textContent,
+        layoutSafe:pages.every(page=>Array.from(page.querySelectorAll('.pdf-section')).every(section=>{
+          const heading=section.querySelector('h2'), table=section.querySelector('table');
+          return !heading || !table || heading.getBoundingClientRect().bottom<=table.getBoundingClientRect().top;
+        })),
+        numericFits:Array.from(host.querySelectorAll('td:not(:first-child)')).every(cell=>cell.scrollWidth<=cell.clientWidth+1),
       };
     });
     window.customPdfObserver.observe(document.body,{childList:true,subtree:true});
@@ -74,7 +79,9 @@ async function downloadPdf(file) {
     await page.waitForFunction(() => window.customPdfStructure);
     const structure = await page.evaluate(() => window.customPdfStructure);
     assert.ok(structure.pages > 0 && structure.fits, 'complete custom pages fit their printable area');
-    assert.ok(structure.adPages.every(page=>page.label && page.tables===1), 'each ad page has its own metrics and creative group');
+    assert.ok(structure.adPages.every(page=>page.label && page.tables>=1 && page.tables<=2), 'each ad page has its own metrics and creative group');
+    assert.ok(structure.layoutSafe,"wrapped headings stay above tables");
+    assert.ok(structure.numericFits,"numeric values fit without wrapping or clipping");
     assert.equal(structure.tableImages, 0, 'performance tables contain no creative images');
     assert.ok(structure.headers.every(header => !header.includes('Creative') && !header.includes('Actions')));
   }  const download = await downloadPromise;

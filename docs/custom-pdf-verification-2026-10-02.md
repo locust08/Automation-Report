@@ -27,3 +27,11 @@ The actual account's 38-page admin preview completed after the fix. This verifie
 ## Campaign grouping refinement
 
 Ad pages now group campaigns in first-seen order, retaining the original order of ads within each campaign. Each page and continuation repeats the campaign heading above the ad name, removing the redundant Campaign column only from ad metrics. Screen and PNG remain unchanged.
+
+## Breakdown spacing follow-up
+
+Wide Breakdown PDF tables now use consecutive metric groups with the Name column repeated, retaining every provider metric and total. Automatic table sizing, unbroken numeric values, larger cell padding and fully wrapping headings prevent the reported clipping and heading/header overlap. Each group paginates independently with repeated context; screen layouts are unchanged.
+
+Local verification: four PDF helper tests passed; scoped TypeScript and ESLint passed. The full browser fixture suite passed with Meta value filters, retained hierarchy ancestors, TikTok exports, large numeric values, long names and mobile downloads. Geometry checks verify headings end before tables begin, numeric cells fit, and page bodies do not overflow. Existing repository-wide typecheck/lint blockers remain as recorded above. Native reconciliation and deployment acceptance remain pending.
+
+Fresh Bellamy Meta account preview completed locally. Raster inspection identified an additional continuation-heading wrap difference, so headings reserve an extra line of space below their text. This is export-only spacing; the selected dates and report filters are unchanged.

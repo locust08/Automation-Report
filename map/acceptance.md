@@ -29,3 +29,5 @@ Standalone custom portrait PDF and admin preview local evidence is recorded in [
 Usage analytics, SEO and unrelated gallery work remain deferred. Mapping-only edits require no runtime deployment. Provider writes, emails and migrations are outside today's reporting verification scope.
 
 Demand Gen Ads metric sorting local fixture evidence is recorded in [sorting receipt](../docs/demand-ad-sort-verification-2026-10-02.md). Campaign filtering was explicitly excluded; deployment acceptance remains separate.
+
+Breakdown PDF clipping/spacing fixture acceptance is recorded in the custom PDF receipt: grouped metrics, heading/table separation, large-number fit and filtered Meta/TikTok exports passed locally. Native reconciliation and deployment remain separate acceptance gates.
