@@ -4,6 +4,10 @@ Source reviewed 2026-10-02. Implementation present; acceptance partial.
 
 ## Ownership and flow
 
+The dashboard's top Reports section includes Monthly Performance, Campaign Preview, Advanced Report, Demand Gen Analysis (`/demand-gen`) and Campaign Breakdown (`/campaign-breakdown`) for both user and admin roles. Accounts are selected inside each report. These links reuse existing report pages and access permissions.
+
+2026-10-02 launcher verification: both roles render both links in Reports; existing navigation/layout tests pass, scoped ESLint passes, and a clean source copy passes typecheck. Playwright on the opened browser tab confirms each link reaches its account-selection page locally. Repository-wide lint still reports unrelated existing errors. Provider reconciliation is unaffected; GitHub/Vercel publishing is tracked separately from these local checks.
+
 Page wrapper → reporting page client → `use-report-data.ts` → `/api/reporting/*` → `lib/reporting/service.ts` → Google/Meta adapter → normalized payload → tables/charts. Query state carries explicit provider/account IDs and inclusive dates. Google manager routing uses existing Notion resolution and `google-access-path.ts`; never infer authorization from a supplied account ID.
 
 `types.ts` owns shared report contracts; `demand-gen.ts` owns Demand Gen normalization/contracts. HTTP report responses remain no-store. Server caches are separate from HTTP caching. Preserve existing provider access resolution before retrieving a cached result.

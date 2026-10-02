@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import {
   ArrowRightIcon,
+  BarChart3Icon,
   CalendarDaysIcon,
   ClipboardListIcon,
   EyeIcon,
@@ -300,6 +301,20 @@ export function HomePageClient({ displayName, role }: HomePageClientProps) {
               <Link href={advancedHref}>
                 Open Advanced Report
                 <SlidersHorizontalIcon data-icon="inline-end" />
+              </Link>
+            </Button>
+          </div>
+          <div className="mt-3 grid gap-3 sm:grid-cols-2">
+            <Button asChild variant="outline" className="h-auto min-h-12 whitespace-normal border-white/30 bg-white/10 px-3 py-2.5 text-center text-[clamp(12px,1.45vw,14px)] text-white hover:bg-white/20 hover:text-white lg:min-h-14 lg:px-4 lg:py-3">
+              <Link href="/demand-gen">
+                Demand Gen Analysis
+                <BarChart3Icon data-icon="inline-end" />
+              </Link>
+            </Button>
+            <Button asChild variant="outline" className="h-auto min-h-12 whitespace-normal border-white/30 bg-white/10 px-3 py-2.5 text-center text-[clamp(12px,1.45vw,14px)] text-white hover:bg-white/20 hover:text-white lg:min-h-14 lg:px-4 lg:py-3">
+              <Link href="/campaign-breakdown">
+                Campaign Breakdown
+                <ListChecksIcon data-icon="inline-end" />
               </Link>
             </Button>
           </div>
