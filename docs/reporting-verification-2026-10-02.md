@@ -49,4 +49,3 @@ Private screenshots: `tmp/native-meta-september-2026-10-02.png` and `tmp/connect
 ## Check limits
 
 Full repository TypeScript checking remains blocked by pre-existing errors in artifacts/m07/domain-smoke.ts and outputs/dscaff-google-ads-apr-aug-2026/fetch-performance-data.mts. Full repository ESLint traversed generated .worktrees/.next bundles and was stopped; it did not finish. Scoped checks for the changed report component and regression script passed. The export fix is committed for review; production deployment has not been verified.
-
