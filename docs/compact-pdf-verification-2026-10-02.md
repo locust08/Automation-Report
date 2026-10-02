@@ -26,4 +26,19 @@ Ignored artifacts: `tmp/demand-compact.pdf`, `tmp/demand-compact-preview.pdf`, `
 
 ## Separate acceptance
 
-These are synthetic local fixtures, not native platform reconciliation or connected-account acceptance. No production deployment, provider writes or email sends are included. No Cloudflare service changes require deployment.
+These are synthetic local fixtures, not native platform reconciliation or connected-account acceptance. Provider writes and email sends are excluded. No Cloudflare service changes require deployment.
+
+## Creative caption follow-up
+
+Commit `01500d132dbbb3c7fd5976b726dc834ba53b6717` removes selection/ranking and asset-spend captions from both PDF Creative columns, retaining the selected image and ad metrics. The presentation card records the current contract; the evidence above describes the initial compact version.
+
+- The selected-creative browser regression failed before the change at the caption-omission assertion.
+- Typecheck, scoped ESLint and nine focused composer/pagination tests passed after the change.
+- The same compact fixture command passed: 12 Demand Gen ads across six pages; 26 Breakdown ads across 12 pages. Downloads and Preview PDF passed, all metrics/totals remained present, images stayed uncropped and printable bodies fit.
+- Raster previews of both reports were inspected with the extra captions absent.
+
+## Production deployment evidence
+
+Through Ava's Vercel browser, the initial compact source `2ab993f` reached Ready in production deployment `3dFxrzZyUwwRHpFMHSCFitWwMfCD`. The caption follow-up source `01500d1` then reached Ready in production deployment `PVjrqq3MLYZQrPinz8iRba5M8Dzr` on 2026-10-02 at 16:53:15 Malaysia time (build duration 1m 24s). The dashboard shows the production alias [automated-report-iota.vercel.app](https://automated-report-iota.vercel.app). Screenshot evidence is stored locally in ignored `tmp/creative-captions-production-ready.png`.
+
+GitHub branch `codex/compact-report-pdfs` is pushed. Publishing to `master` through the requested browser remains pending because GitHub is signed out. Deployment readiness is separate from native platform reconciliation, which remains pending. Subsequent receipt-only commits do not change the deployed runtime source.
