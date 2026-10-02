@@ -31,7 +31,7 @@ See [dated implementation and API smoke evidence](../docs/monthly-breakdowns-dem
 - Current cache in `demand-gen-cache.ts`: **seven days**, at most 100 entries, per-process memory, concurrent request deduplication. Key includes schema version, account, sorted selected campaigns, dates, API version and Google access routing. Partial snapshots are evicted; explicit refresh invalidates the entry. Restart loses entries. This supersedes the older 15-minute receipt.
 - Advanced navigation returns explicit provider identity to Overall to avoid Meta IDs entering Google routing.
 
-Evidence currently covers empty/unavailable matrix data and local fixtures. Classified nonzero formats and measured Affinity still need native comparison with matching dates and definitions.
+The [2026-10-02 native receipt](../docs/reporting-verification-2026-10-02.md) reconciles all three nonzero classified formats, six In-market rows and measured Affinity for Magnet campaign `22906147660` in September. Individual native device-cell reconciliation, a seven-impression campaign/segmented-total discrepancy and fresh connected MCP routing remain open. UNKNOWN stays UNKNOWN despite numerical agreement with native Image totals.
 
 ## Change impact
 

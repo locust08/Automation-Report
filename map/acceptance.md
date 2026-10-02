@@ -10,13 +10,15 @@
 
 | Gate | Completion evidence required | Current status |
 | --- | --- | --- |
-| Dashboard mapping | Source-backed reporting, typography, cache and export ownership plus honest remaining gates | Created; documentation validation pending |
+| Dashboard mapping | Source-backed reporting, typography, cache and export ownership plus honest remaining gates | Created; source and local links verified |
 | MCP Meta discovery | Ordinary account request resolves authorized mapping or accurately explains the failure | Pending; prior Mapping review required |
-| MCP Meta completion/regeneration | Full account pagination, descendant completeness and date change verified in connected host | Pending |
+| MCP Meta completion/regeneration | Full account pagination, descendant completeness and date change verified in connected host | Date regeneration and campaign spend/native comparison passed; full collection and completeness partial |
 | MCP Meta retry/denial | Failed continuation retains rows/retries; denied access clears data correctly | Pending |
-| Demand Gen native comparison | Matched account/campaign/dates, classified nonzero format/device and measured Affinity evidence | Pending suitable native evidence |
+| Demand Gen native comparison | Matched account/campaign/dates, classified nonzero format/device and measured Affinity evidence | Three formats, six In-market rows and Affinity reconciled; individual device cells and seven-impression total discrepancy remain |
 | MCP Demand Gen fresh routing | Fresh natural prompt resolves scope and mounts correct interactive report | Pending |
-| Overall PDF audience layout | Populated audience fixture reproduces issue; exported artifact has no overlapping headings/controls/charts | Pending reproduction |
+| Overall PDF audience layout | Populated audience fixture reproduces issue; exported artifact has no overlapping headings/controls/charts | Fixed locally; empty/populated serialized export bounds, PNG/PDF downloads and visual inspection passed |
+
+See the [2026-10-02 verification receipt](../docs/reporting-verification-2026-10-02.md) for exact scope, values, artifacts and limitations.
 
 For each new receipt record source commit, account/campaign, inclusive dates, metric/event definitions, expected/returned counts, verification surface, result and artifact path. Never include credentials. Synthetic fixtures, provider API reads, native UI reconciliation and connected MCP interaction are different evidence types.
 

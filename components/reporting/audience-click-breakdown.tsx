@@ -264,7 +264,7 @@ function AudienceChartCard({
   return (
     <div className="rounded-[1.4rem] border border-[#dadada] bg-white p-4 shadow-sm sm:p-5">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-        <div>
+        <div className="min-w-0 flex-1">
           <h3 className="text-xl font-semibold text-[#2f2f2f] sm:text-[1.85rem]">{title}</h3>
           <p className="mt-1 text-sm text-[#666]">
             {chartType === "pie" ? "Percentage of clicks" : "Clicks"}

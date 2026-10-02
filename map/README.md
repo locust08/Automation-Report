@@ -5,7 +5,7 @@ Reviewed 2026-10-02. This map describes the current source, ownership, behavior 
 | Area | Entry | Status |
 | --- | --- | --- |
 | Reporting and provider collection | [Reporting](reporting.md) | Implemented; native and connected acceptance partial |
-| Global fonts and export layouts | [Presentation](presentation.md) | Implemented; Overall audience-heading overlap needs reproduction |
+| Global fonts and export layouts | [Presentation](presentation.md) | Implemented; audience-heading export fix verified locally |
 | Today's verification work | [Acceptance](acceptance.md) | Open gates tracked separately from implementation |
 
 Read the repository [AGENTS.md](../AGENTS.md) before implementation. Routes are thin wrappers; provider queries and orchestration belong in `lib/reporting`. Credentials come from existing environment/Doppler configuration and must never appear in evidence.
