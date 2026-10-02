@@ -101,7 +101,7 @@ export function readCustomPdfContent(root: HTMLElement) {
     accountId:["googleAccountId","metaAccountId","tiktokAccountId","accountId"].map(key => new URLSearchParams(window.location.search).get(key)).find(Boolean) ?? "",
     dates:text(root.querySelector('[data-report-export-date-label]')),
     reportTitle:demand ? "Demand Gen Analysis" : "Campaign Breakdown",
-    scope:demand && summary ? Array.from(summary.querySelectorAll("p:not([role='alert'])")).map(text).filter(Boolean) : Array.from(report.querySelectorAll("p")).filter(node => !node.closest('[role="alert"]')).map(text).filter(Boolean),
+    scope:demand && summary ? Array.from(summary.querySelectorAll("p:not([role='alert'])")).map(text).filter(Boolean) : Array.from(report.querySelectorAll("p")).filter(node => !node.closest('table, [role="alert"], [data-pdf-creative-meta], [data-report-export-exclude]')).map(text).filter(Boolean),
     warnings:Array.from(report.querySelectorAll('[role="alert"]')).map(text).filter(Boolean),sections,ads };
 }
 

@@ -39,3 +39,7 @@ Demand Gen screen Ads metrics (Clicks, CTR, CPC, Impressions, Ad spend) toggle n
 Wide Breakdown PDF tables split into consecutive metric groups with repeated Name context instead of squeezing every metric into one portrait table. Numeric values stay on one line; headings wrap fully above table headers with additional spacing. Every metric, total and active filter remains represented. See the Breakdown spacing follow-up in the custom PDF receipt for local fixture evidence.
 
 Current dashboard-style single-creative PDF checks are recorded in the [creative/PDF receipt](../docs/demand-gen-creative-pdf-verification-2026-10-02.md). Earlier gallery receipts are historical. These latest changes are locally verified and not deployed.
+
+## Breakdown opening-card overflow fix — 2026-10-02
+
+Report-level scope excludes paragraphs inside tables, per-creative metadata and export-excluded controls. Creative selection/spend captions remain on individual ad pages instead of being duplicated into an unbounded introduction. A 25-ad fixture reproduced the exact “report block is too large” failure before this fix and exports all 25 ads after it, with zero ad captions in the introduction and every page fitting its printable body. Nine focused PDF tests and scoped lint passed. Artifact: ignored `tmp/breakdown-scope-regression.pdf`. This is local fixture evidence; deployment remains separate.

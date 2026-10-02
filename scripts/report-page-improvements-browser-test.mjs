@@ -33,7 +33,7 @@ await page.route("**/api/**", async (route) => {
   else if (url.pathname === "/api/reporting/demand-gen") { demandRequests++; data = { ...demand, campaignId: url.searchParams.get("campaignId") }; }
   else if (url.pathname.includes("/ad-groups") || url.pathname.includes("/ads")) {
     if (failHierarchy) return route.fulfill({ status: 503, json: { error: "Fixture retry failure" } });
-    data = { ...overall, sections: [{ platform: "meta", campaigns: [{ id: "c", name: "Fixture campaign", status: "Paused", details: [], children: [{ id: "s", name: "Historical set", status: "Paused", details: [], performance, ads: [{ id: "a", name: "Historical ad", status: "Paused", details: [], creative: { id: "creative1", imageUrl: creativeUrl }, performance: { ...performance, spend: 3, results: 1 } }] }] }] }], warnings: partialHierarchy ? ["Fixture partial coverage"] : [] };
+    data = { ...overall, sections: [{ platform: "meta", campaigns: [{ id: "c", name: "Fixture campaign", status: "Paused", details: [], children: [{ id: "s", name: "Historical set", status: "Paused", details: [], performance, ads: Array.from({length:process.env.REPORT_QA_BREAKDOWN_SCOPE === "1" ? 25 : 1},(_,index)=>({ id: index ? `a${index}` : "a", name: `Historical ad${index ? ` ${index}` : ""}`, status: "Paused", details: [], creative: { id: "creative1", imageUrl: creativeUrl }, performance: { ...performance, spend: 3, results: 1 } })) }] }] }], warnings: partialHierarchy ? ["Fixture partial coverage"] : [] };
   } else if (url.pathname.includes("/api/reports/") || url.pathname === "/api/reporting") data = url.searchParams.get("googleAccountId") ? { ...overall, accountIds: { metaAccountId: null, metaAccountIds: [], googleAccountId: "1234567890", googleAccountIds: ["1234567890"] }, campaignGroups: [{ ...overall.campaignGroups[0], id: "google-search", platform: "google", campaignType: "Search", rows: [{ ...campaign, platform: "google", campaignType: "Search", campaignName: "Google campaign only" }] }] } : overall;
   else if (url.pathname.endsWith("/final-url-performance")) data = { section: { rows: [{ id: "url", campaign: "Demand Gen campaign with a readable name", finalUrl: "https://example.com/landing-page?utm_source=google&utm_campaign=demand-gen", spend: 2007.59, impressions: 289568, clicks: 21237, conversions: 1256, ctr: 7.33, cpc: .09, cpa: 1.60, conversionRate: 5.92 }], otherRow: null, totalUrlCount: 1 }, warnings: [] };
   else if (url.pathname.includes("/advanced") || url.pathname === "/api/reporting/advanced") return route.fulfill({ status: 503, json: { error: "Fixture analysis unavailable" } });
@@ -56,6 +56,7 @@ async function downloadPdf(file) {
       if(!pages.length) return;
       window.customPdfStructure={
         pages:pages.length,
+        introNotes:pages[0].querySelector('.pdf-section')?.querySelectorAll('p').length ?? 0,
         fits:pages.every(page => {const body=page.querySelector('.pdf-body'); return body.scrollHeight<=body.clientHeight+1;}),
         adPages:pages.filter(page=>page.querySelector('.pdf-body').dataset.adLabel).map(page=>({label:page.querySelector('.pdf-body').dataset.adLabel, tables:page.querySelectorAll('table').length})),
         tableImages:host.querySelectorAll('table img').length,
@@ -100,6 +101,16 @@ async function downloadPdf(file) {
 try {
   await page.goto(`${base}/demand-gen?googleAccountId=1234567890&platform=google&startDate=2026-09-01&endDate=2026-09-30`);
   await page.getByRole("cell", { name: "Furniture", exact: true }).waitFor();
+  if (process.env.REPORT_QA_BREAKDOWN_SCOPE === "1") {
+    await page.goto(`${base}/campaign-breakdown?metaAccountId=96906550&platform=meta&startDate=2026-09-01&endDate=2026-09-30`);
+    await page.getByRole('button',{name:'Expand Fixture campaign',exact:true}).waitFor();
+    await downloadPdf('breakdown-scope-regression');
+    const output=await page.evaluate(()=>window.customPdfStructure);
+    assert.equal(output.adPages.length,25,'all ads exported');
+    assert.equal(output.introNotes,0,'ad creative captions do not leak into report scope');
+    console.log('Breakdown scope regression passed');
+    await browser.close(); process.exit(0);
+  }
   if (process.env.REPORT_QA_CREATIVE_SELECTION === "1") {
     demand.ads[0].imageUrls=Array.from({length:6},(_,index)=>`${creativeUrl}#${index}`);
     demand.ads[0].selectedCreative={assetId:"2",assetResource:"customers/1234567890/assets/2",kind:"image",previewUrl:`${creativeUrl}#selected`,metrics:{...values,spend:2.34},performanceComplete:true,selection:"top_performing"};

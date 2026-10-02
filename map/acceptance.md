@@ -37,3 +37,5 @@ Standalone PDF changes through commit `4f598bf` were deployed to Vercel producti
 ## Demand Gen creative/PDF follow-up
 
 [2026-10-02 receipt](../docs/demand-gen-creative-pdf-verification-2026-10-02.md): 30 focused tests, scoped source TypeScript, scoped lint, production build and desktop/mobile PDF browser checks pass. Repository-wide typecheck remains blocked by three pre-existing generated-file errors. Read-only Magnet September API evidence confirms 21 ads, exact asset scope, ranking and separate spend. Native Google Ads UI reconciliation remains pending. No deployment of this follow-up is included; the earlier `4f598bf` rollout above remains historical.
+
+Breakdown opening-card overflow was reproduced and fixed locally: 25-ad export preserves every ad and keeps creative captions out of report scope. See the presentation card; no production deployment is included.
