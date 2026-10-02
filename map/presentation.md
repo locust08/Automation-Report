@@ -43,3 +43,5 @@ Current dashboard-style single-creative PDF checks are recorded in the [creative
 ## Breakdown opening-card overflow fix — 2026-10-02
 
 Report-level scope excludes paragraphs inside tables, per-creative metadata and export-excluded controls. Creative selection/spend captions remain on individual ad pages instead of being duplicated into an unbounded introduction. A 25-ad fixture reproduced the exact “report block is too large” failure before this fix and exports all 25 ads after it, with zero ad captions in the introduction and every page fitting its printable body. Nine focused PDF tests and scoped lint passed. Artifact: ignored `tmp/breakdown-scope-regression.pdf`. This is local fixture evidence; deployment remains separate.
+
+Live local browser confirmation for Bellamy MY account `265352415868160`, September 1–30: port 3000 runs from the original workspace at `681abcc`. Reloaded the browser and generated Preview PDF against real read-only provider data; all 45 preview pages appeared with no overflow error. This verifies local connected rendering, not a production deployment. The earlier error did not recur after a fresh browser reload.
