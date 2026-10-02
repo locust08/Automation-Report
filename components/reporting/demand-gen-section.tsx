@@ -129,7 +129,7 @@ function DemandAdsPanel({ ads }: { ads: NonNullable<DemandGenPayload["ads"]> }) 
 }
 function AdCreativeImage({ url, name }: { url: string; name: string }) {
   const [failed, setFailed] = useState(false);
-  if (failed) return <span>—</span>;
+  if (failed) return <span data-pdf-creative-source={url} data-pdf-creative-alt={`${name} creative`}>—</span>;
   // eslint-disable-next-line @next/next/no-img-element
   return <img src={url} alt={`${name} creative`} className="h-24 w-32 rounded-md object-contain" onError={() => setFailed(true)} />;
 }

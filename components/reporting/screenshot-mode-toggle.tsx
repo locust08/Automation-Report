@@ -7,7 +7,7 @@ import {
   FileTextIcon,
   LoaderCircleIcon,
 } from "lucide-react";
-import { toPng, toSvg } from "html-to-image";
+import { toPng } from "html-to-image";
 import NextImage from "next/image";
 
 import {
@@ -24,7 +24,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { useScreenshotMode } from "@/components/reporting/use-screenshot-mode";
 import { cn } from "@/lib/utils";
-import { paginateReport } from "@/lib/reporting/pdf-pagination";
+import { createCustomReportPdf } from "@/lib/reporting/custom-pdf-document";
 import { isAdminRole } from "@/lib/auth/roles";
 
 type DownloadFormat = "png" | "pdf";
@@ -387,7 +387,7 @@ export function ReportDownloadButton({ fileNamePrefix, compact = false, disabled
       {overlayState.phase !== "idle" ? createPortal(overlay, document.body) : null}
       {preview ? createPortal(<dialog ref={previewDialog} aria-labelledby="report-pdf-preview-title" onCancel={() => setPreview(null)} className="fixed inset-0 m-auto h-[90vh] w-[95vw] max-w-none rounded-xl bg-white p-4 backdrop:bg-black/50">
         <div className="flex h-full flex-col gap-3"><div className="flex flex-wrap items-center justify-between gap-4"><h2 id="report-pdf-preview-title" className="text-lg font-semibold">PDF preview</h2><div className="flex gap-2"><Button onClick={() => downloadBlob(preview.blob, buildFileName("pdf", fileNamePrefix))}>Download PDF</Button><Button variant="outline" onClick={() => setPreview(null)}>Close preview</Button></div></div>
-          <div className="min-h-0 flex-1 space-y-4 overflow-auto rounded bg-neutral-200 p-3">{preview.pages.map((image,index) => <figure key={index}><NextImage unoptimized src={image} width={1485} height={1050} alt={`PDF preview page ${index+1}`} className="mx-auto h-auto w-full max-w-[1120px] border bg-white shadow"/><figcaption className="mt-1 text-center text-sm">Page {index+1} of {preview.pages.length}</figcaption></figure>)}</div>
+          <div className="min-h-0 flex-1 space-y-4 overflow-auto rounded bg-neutral-200 p-3">{preview.pages.map((image,index) => <figure key={index}><NextImage unoptimized src={image} width={792} height={1120} alt={`PDF preview page ${index+1}`} className="mx-auto h-auto w-full max-w-[792px] border bg-white shadow"/><figcaption className="mt-1 text-center text-sm">Page {index+1} of {preview.pages.length}</figcaption></figure>)}</div>
         </div>
       </dialog>, document.body) : null}
     </>
@@ -521,119 +521,11 @@ async function prepareAdvancedPdfDownload(
   };
 }
 
-// Rasterize bounded viewports onto standard landscape pages, embedding assets once.
+// Build complete custom pages from the prepared report's content.
 async function createStandalonePdfBlob(root: HTMLElement, onPage?: (image: string) => void): Promise<Blob> {
-  const width = 1120;
-  const scale = 277 / width;
-  const pageHeight = Math.floor(190 / scale);
-  const previousStyle = root.getAttribute("style");
-  const previousMode = root.getAttribute("data-compact-pdf");
-  const exportStyle = installReportExportCaptureStyle();
-  const spans: { cell: HTMLTableCellElement; value: number }[] = [];
-  root.setAttribute("data-compact-pdf", "true");
-  root.style.width = `${width}px`;
-  root.style.maxWidth = "none";
-  root.style.overflow = "visible";
-  try {
-    await waitForReportCaptureReady(root);
-    spans.push(...Array.from(root.querySelectorAll<HTMLTableCellElement>("td[colspan]")).map((cell) => ({ cell, value: cell.colSpan })));
-    spans.forEach(({ cell }) => {
-      const header = cell.closest("table")?.tHead?.rows[0];
-      if (header) cell.colSpan = Array.from(header.cells).filter((column) => getComputedStyle(column).display !== "none").length;
-    });
-    await waitForStableLayout(root);
-    const rootBounds = root.getBoundingClientRect();
-    const height = Math.ceil(root.scrollHeight);
-    const rowBounds = Array.from(root.querySelectorAll<HTMLElement>("tr:not(:has(table)), h1, h2, h3, h4, h5, img, [data-demand-chart-label-row], [data-slot='card']"))
-      .map((element) => {
-        const bounds = element.getBoundingClientRect();
-        const group = element.hasAttribute("data-demand-chart-label-row") ? element.parentElement?.getBoundingClientRect() : null;
-        return { top: bounds.top - rootBounds.top, bottom: (group?.bottom ?? bounds.bottom) - rootBounds.top };
-      }).filter((bounds) => bounds.bottom > bounds.top && bounds.bottom - bounds.top <= pageHeight);
-    root.querySelectorAll<HTMLElement>("h1, h2, h3, h4, h5").forEach((heading) => {
-      const top = heading.getBoundingClientRect().top - rootBounds.top;
-      const container = heading.closest('[data-slot="card"]') ?? heading.parentElement;
-      const candidates = Array.from(container?.querySelectorAll<HTMLElement>("tr:not(:has(table)), [data-demand-chart-label-row], p, img") ?? []);
-      const substantive = candidates.filter(element => element.matches("tr, [data-demand-chart-label-row], img"));
-      const next = (substantive.length ? substantive : candidates)
-        .filter(element => !(element.closest("[data-report-export-exclude]") || getComputedStyle(element).display === "none"))
-        .map(element => element.getBoundingClientRect()).filter(rect => rect.height > 0 && rect.top >= heading.getBoundingClientRect().bottom)
-        .sort((a, b) => a.top - b.top)[0];
-      if (next) rowBounds.push({ top, bottom: next.bottom - rootBounds.top });
-    });
-    root.querySelectorAll("table").forEach((table) => {
-      const header = table.tHead;
-      const firstRow = table.tBodies[0]?.rows[0];
-      if (header && firstRow && !firstRow.querySelector("table")) {
-        const top = header.getBoundingClientRect().top - rootBounds.top;
-        const bottom = firstRow.getBoundingClientRect().bottom - rootBounds.top;
-        if (bottom - top <= pageHeight) rowBounds.push({ top, bottom });
-      }
-    });
-    const pages = paginateReport(height, pageHeight, rowBounds);
-    const { jsPDF } = await import("jspdf");
-    const pdf = new jsPDF({ orientation: "landscape", unit: "mm", format: "a4", compress: true });
-    // Embed fonts and creatives once, then rasterize bounded SVG viewports.
-    // Re-cloning a large report for every page makes exports unnecessarily slow.
-    const svgUrl = await toSvg(root, {
-      width, height, cacheBust: false,
-      imagePlaceholder: TRANSPARENT_IMAGE_PLACEHOLDER,
-      style: { height: `${height}px` },
-      filter: (node) => !(node instanceof HTMLElement) || (node.dataset.reportDownloadOverlay !== "true" && node.dataset.reportExportExclude !== "true"),
-    });
-    const svg = new DOMParser().parseFromString(decodeURIComponent(svgUrl.slice(svgUrl.indexOf(",") + 1)), "image/svg+xml").documentElement;
-    const content = svg.querySelector("foreignObject");
-    if (!content) throw new Error("The PDF capture did not contain report content.");
-    content.setAttribute("width", String(width));
-    content.setAttribute("height", String(height));
-    for (const [pageIndex, page] of pages.entries()) {
-      if (pageIndex > 0) pdf.addPage("a4", "landscape");
-      const pageScale = Math.min(scale, 190 / (page.end - page.start));
-      const previewCanvas = onPage ? document.createElement("canvas") : null;
-      if (previewCanvas) { previewCanvas.width = 1485; previewCanvas.height = 1050; }
-      const previewContext = previewCanvas?.getContext("2d");
-      if (previewContext) { previewContext.fillStyle = "white"; previewContext.fillRect(0,0,1485,1050); }
-      let offset = page.start;
-      while (offset < page.end) {
-        const end = Math.min(offset + pageHeight, page.end);
-        const sliceHeight = end - offset;
-        svg.setAttribute("height", String(sliceHeight));
-        svg.setAttribute("viewBox", `0 ${offset} ${width} ${sliceHeight}`);
-        const image = new Image();
-        image.src = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(new XMLSerializer().serializeToString(svg))}`;
-        await image.decode();
-        const canvas = document.createElement("canvas");
-        canvas.width = width * 2;
-        canvas.height = sliceHeight * 2;
-        const context = canvas.getContext("2d");
-        if (!context) throw new Error("The browser could not prepare a PDF page.");
-        context.fillStyle = "#f0f0f0";
-        context.fillRect(0, 0, canvas.width, canvas.height);
-        context.drawImage(image, 0, 0, canvas.width, canvas.height);
-        previewContext?.drawImage(canvas, 50, (10 + (offset-page.start)*pageScale)*5, width*pageScale*5, sliceHeight*pageScale*5);
-        const pageImage = canvas.toDataURL("image/png");
-        pdf.addImage(pageImage, "PNG", 10, 10 + (offset - page.start) * pageScale, width * pageScale, sliceHeight * pageScale, `standalone-tile-${pageIndex}-${offset}`, "FAST");
-        canvas.width = 0; canvas.height = 0;
-        offset = end;
-      }
-      pdf.setFontSize(8);
-      pdf.setTextColor(100);
-      pdf.text(String(pageIndex + 1), 287, 205, { align: "right" });
-      if (previewCanvas && onPage) {
-        if (previewContext) { previewContext.fillStyle = "#646464"; previewContext.font = "14px sans-serif"; previewContext.textAlign = "right"; previewContext.fillText(String(pageIndex+1),1435,1025); }
-        onPage(previewCanvas.toDataURL("image/png"));
-        previewCanvas.width = 0; previewCanvas.height = 0;
-      }
-    }
-    return pdf.output("blob");
-  } finally {
-    spans.forEach(({ cell, value }) => { cell.colSpan = value; });
-    if (previousStyle === null) root.removeAttribute("style"); else root.setAttribute("style", previousStyle);
-    if (previousMode === null) root.removeAttribute("data-compact-pdf"); else root.setAttribute("data-compact-pdf", previousMode);
-    exportStyle.remove();
-  }
+  await waitForReportCaptureReady(root);
+  return createCustomReportPdf(root, onPage);
 }
-
 async function createPdfBlob(dataUrl: string): Promise<Blob> {
   const { jsPDF } = await import("jspdf");
   const image = new jsPDF().getImageProperties(dataUrl);

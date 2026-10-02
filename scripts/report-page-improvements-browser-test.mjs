@@ -1,9 +1,9 @@
 // Read-only UI QA against a running dev server, with synthetic API fixtures.
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
 import { chromium } from "playwright";
 
-const base = process.env.REPORT_QA_BASE_URL ?? "http://localhost:3105";
+const base = process.env.REPORT_QA_BASE_URL ?? "http://localhost:3000";
 const browser = await chromium.launch({ channel: "chrome", headless: true });
 const page = await browser.newPage({ viewport: { width: 1920, height: 1080 } });
 page.setDefaultNavigationTimeout(120000);
@@ -40,64 +40,45 @@ await page.route("**/api/**", async (route) => {
 });
 
 async function downloadPdf(file) {
+  await page.evaluate(() => {
+    window.customPdfObserver?.disconnect();
+    window.customPdfStructure=null;
+    window.customPdfObserver=new MutationObserver(() => {
+      const host=document.querySelector('.custom-report-pdf');
+      if(!host) return;
+      const pages=Array.from(host.querySelectorAll('[data-custom-pdf-page]'));
+      if(!pages.length) return;
+      window.customPdfStructure={
+        pages:pages.length,
+        fits:pages.every(page => {const body=page.querySelector('.pdf-body'); return body.scrollHeight<=body.clientHeight+1;}),
+        adPages:pages.filter(page=>page.querySelector('.pdf-body').dataset.adLabel).map(page=>({label:page.querySelector('.pdf-body').dataset.adLabel, tables:page.querySelectorAll('table').length})),
+        tableImages:host.querySelectorAll('table img').length,
+        headers:Array.from(host.querySelectorAll('thead')).map(head=>head.textContent),
+        creatives:host.querySelectorAll('figure').length,
+        text:host.textContent,
+      };
+    });
+    window.customPdfObserver.observe(document.body,{childList:true,subtree:true});
+  });
   await page.getByRole("button", { name: "Report", exact: true }).click();
   const downloadPromise = page.waitForEvent("download", { timeout: file.includes("long") ? 300000 : 120000 });
+  void downloadPromise.catch(() => undefined);
   await page.getByRole("menuitem", { name: "Download PDF", exact: true }).click();
-  if (file.startsWith("breakdown")) {
-    await page.waitForURL((url) => url.searchParams.has("screenshot"));
-    const heading = page.getByRole("heading", { name: "Campaign Breakdown", exact: true });
-    const bounds = await heading.evaluate((element) => {
-      const title = element.getBoundingClientRect();
-      const group = element.closest("section").querySelector("h3").getBoundingClientRect();
-      return { height: title.height, bottom: title.bottom, groupTop: group.top };
-    });
-    assert.ok(bounds.height < 50, "PDF heading stays on one line");
-    assert.ok(bounds.groupTop >= bounds.bottom, "PDF heading does not overlap the campaign table");
-  }
-  await page.waitForFunction(() => document.querySelector('[data-compact-pdf="true"]') || !location.pathname.match(/demand-gen|campaign-breakdown/));
   if (file.startsWith("demand") || file.startsWith("breakdown")) {
-    const overflow = await page.locator('[data-compact-pdf="true"]').evaluate((root) => {
-      const bounds = root.getBoundingClientRect();
-      return Array.from(root.querySelectorAll('th, td')).some((cell) => getComputedStyle(cell).display !== "none" && cell.getBoundingClientRect().right > bounds.right + 1);
-    });
-    assert.equal(overflow, false, "every PDF table cell fits the export width");
-    const usesWidth = await page.locator('[data-compact-pdf="true"]').evaluate((root) => {
-      return Array.from(root.querySelectorAll('[data-report-full-width-table] > table')).every((table) => table.getBoundingClientRect().width >= table.parentElement.getBoundingClientRect().width * 0.9);
-    });
-    assert.ok(usesWidth, "PDF tables use at least 90 percent of their column width");
-    if (file.startsWith("demand")) {
-      const heights = await page.locator('[data-compact-pdf="true"]').evaluate(root => {
-        const clone = root.cloneNode(true);
-        clone.style.position = "fixed"; clone.style.left = "-20000px"; clone.style.top = "0";
-        clone.querySelectorAll('[data-demand-pdf-columns]').forEach(element => element.removeAttribute('data-demand-pdf-columns'));
-        document.body.appendChild(clone);
-        const heights = { horizontal: root.scrollHeight, stacked: clone.scrollHeight };
-        clone.remove();
-        return heights;
-      });
-      assert.ok(heights.horizontal < heights.stacked, "horizontal PDF layout reduces capture height");
-      console.log(`${file}: capture height ${heights.stacked} → ${heights.horizontal}px`);
-      const columns = await page.locator('[data-compact-pdf="true"] [data-demand-pdf-columns]').evaluateAll(elements => elements.map(element => {
-        const children = Array.from(element.children).map(child => child.getBoundingClientRect()).sort((a,b) => a.left-b.left);
-        return children.length === 2 && Math.abs(children[0].top - children[1].top) < 2 && children[0].right <= children[1].left;
-      }));
-      assert.ok(columns.length > 0 && columns.every(Boolean), "PDF tables and charts sit side by side");
-    }
-    const date = await page.locator('[data-report-export-date-label="true"]').evaluate((label) => {
-      const range = document.createRange(); range.selectNodeContents(label);
-      return { lines: range.getClientRects().length, text: label.textContent };
-    });
-    assert.equal(date.lines, 1, "PDF date range stays on one line");
-    assert.ok(date.text.includes("2026"));
-  }
-  const download = await downloadPromise;
+    await page.waitForFunction(() => window.customPdfStructure);
+    const structure = await page.evaluate(() => window.customPdfStructure);
+    assert.ok(structure.pages > 0 && structure.fits, 'complete custom pages fit their printable area');
+    assert.ok(structure.adPages.every(page=>page.label && page.tables===1), 'each ad page has its own metrics and creative group');
+    assert.equal(structure.tableImages, 0, 'performance tables contain no creative images');
+    assert.ok(structure.headers.every(header => !header.includes('Creative') && !header.includes('Actions')));
+  }  const download = await downloadPromise;
   await download.saveAs(`tmp/${file}.pdf`);
   assert.equal(await download.failure(), null);
   if (file.startsWith("demand") || file.startsWith("breakdown")) {
     const contents = await readFile(`tmp/${file}.pdf`, "latin1");
     const boxes = [...contents.matchAll(/\/MediaBox \[([^\]]+)\]/g)].map(match => match[1].trim().split(/\s+/).map(Number));
     assert.ok(boxes.length > 0, "standalone export contains pages");
-    assert.ok(boxes.every(([x,y,w,h]) => x === 0 && y === 0 && Math.abs(w-841.89)<1 && Math.abs(h-595.28)<1), "every page is A4 landscape");
+    assert.ok(boxes.every(([x,y,w,h]) => x === 0 && y === 0 && Math.abs(w-595.28)<1 && Math.abs(h-841.89)<1), "every page is A4 portrait");
   }
   await page.waitForURL((url) => !url.searchParams.has("screenshot"), { timeout: 30000 });
 }
@@ -105,14 +86,25 @@ try {
   await page.goto(`${base}/demand-gen?googleAccountId=1234567890&platform=google&startDate=2026-09-01&endDate=2026-09-30`);
   await page.getByRole("cell", { name: "Furniture", exact: true }).waitFor();
   if (process.env.REPORT_QA_EDGE_ONLY === "1") {
+    demand.ads[0].imageUrls = Array.from({length:14},(_,i)=>`${creativeUrl}#${i}`);
+    demand.ads.push({...demand.ads[0],id:"ad2",name:"Second distinct ad",imageUrls:[creativeUrl]});
+    await page.reload();
+    await page.getByRole("cell", {name:"Furniture",exact:true}).waitFor();
     await downloadPdf("demand-height");
+    const overflow = await page.evaluate(()=>window.customPdfStructure);
+    assert.equal(overflow.creatives,15,"all creatives preserved");
+    assert.ok(overflow.adPages.length>=4,"overflow continues for same ad");
+    assert.ok(overflow.adPages.at(-1).label.includes("Second distinct ad"),"next ad starts on own page");
     demand.inMarket = [];
     demand.affinity = [];
     demand.ads[0].name = "Long unavailable-metric creative name ".repeat(8);
     demand.ads[0].metrics = { ...values, cpc: null, views: null };
+    demand.ads[0].imageUrls = ["data:image/png;base64,broken"];
     await page.goto(`${base}/demand-gen?googleAccountId=1234567890&platform=google&startDate=2026-09-01&endDate=2026-09-29`);
     await page.getByRole("heading", {name:"Ads",exact:true}).waitFor();
     await downloadPdf("demand-empty-null-long-label");
+    assert.ok((await page.evaluate(()=>window.customPdfStructure.text)).includes("Creative image unavailable"),"failed creatives retain explicit placeholders");
+    assert.equal(await page.locator(".custom-report-pdf").count(),0,"completed export removes temporary document");
     await page.getByRole("button", { name: "Report", exact: true }).click();
     const png = page.waitForEvent("download", {timeout:120000});
     await page.getByRole("menuitem", {name:"Download PNG",exact:true}).click();
@@ -133,13 +125,16 @@ try {
     await page.getByRole("button", { name: "Preview PDF", exact: true }).click();
     await page.getByText("Fixture raster failure", { exact: true }).waitFor({timeout:120000});
     await page.waitForURL(url => !url.searchParams.has("screenshot"));
-    assert.equal(await page.locator('[data-compact-pdf]').count(),0,"failed export restores compact styles");
+    assert.equal(await page.locator('[data-compact-pdf], .custom-report-pdf').count(),0,"failed export restores styles and removes temporary document");
     await page.evaluate(() => { HTMLCanvasElement.prototype.toDataURL = window.originalPdfCanvasDataUrl; delete window.originalPdfCanvasDataUrl; });
     await page.getByRole("button", { name: "Retry", exact: true }).click();
     await page.getByRole("dialog", { name: "PDF preview", exact: true }).waitFor({ timeout: 120000 });
     assert.equal(downloads, 0, "preview does not download automatically");
     assert.ok(await page.getByAltText("PDF preview page 1", { exact: true }).isVisible());
-    await page.screenshot({ path: "tmp/admin-landscape-pdf-preview.png" });
+    await page.screenshot({ path: "tmp/admin-portrait-pdf-preview.png" });
+    const previewImages = await page.locator('img[alt^="PDF preview page"]').evaluateAll(images=>images.map(image=>image.src));
+    await writeFile("tmp/portrait-analysis-page.png",Buffer.from(previewImages[0].split(",")[1],"base64"));
+    await writeFile("tmp/portrait-ad-page.png",Buffer.from(previewImages.at(-1).split(",")[1],"base64"));
     const save = page.waitForEvent("download");
     await page.getByRole("button", { name: "Download PDF", exact: true }).click();
     await (await save).saveAs("tmp/admin-preview.pdf");
@@ -249,11 +244,15 @@ try {
   await page.screenshot({ path: "tmp/breakdown-improvements-desktop.png", fullPage: true });
   await downloadPdf("breakdown-improvements");
   assert.ok(new URL(page.url()).searchParams.has("valueFilter"));
+  assert.ok((await page.evaluate(()=>window.customPdfStructure.text)).includes("Value filter:"), "PDF retains filter description");
   await page.setViewportSize({ width: 390, height: 844 });
   assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth));
   await page.screenshot({ path: "tmp/breakdown-improvements-mobile.png", fullPage: true });
   await downloadPdf("breakdown-improvements-mobile");
   assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), "mobile layout restores after export");
+  await page.goto(`${base}/campaign-breakdown?tiktokAccountId=96906550&platform=tiktok&startDate=2026-09-01&endDate=2026-09-30`);
+  await page.getByRole("button", {name:"Expand Fixture campaign",exact:true}).waitFor();
+  await downloadPdf("breakdown-tiktok");
   if (process.env.REPORT_QA_LONG_PDF === "1") {
     const originalAds = demand.ads;
     demand.ads = Array.from({ length: 100 }, (_, index) => ({ ...originalAds[0], id: `long-${index}`, name: index === 99 ? "FINAL AD 100" : `Ad ${index + 1}` }));
