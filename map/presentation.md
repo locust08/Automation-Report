@@ -18,7 +18,9 @@ Screen root uses a 16px base. Main titles wrap at word boundaries. Mobile contro
 
 `ReportShell` marks `[data-report-capture-root="true"]` and sets `data-report-typography` to screen or capture. Capture restores its separate root sizing; screen rules deliberately exclude capture documents. Overall interactive maximum width is 1,920px; established screenshot width is 1,440px.
 
-Demand Gen and Campaign Breakdown exports use compact PDF-only styling and two long pages, wide tables, unbroken dates and labels above bars. CPC uses `formatCpcRinggit` to display `RM 0.50`; null/nonfinite values remain unavailable. Preserve this current explicit RM presentation when changing exports.
+Demand Gen and Campaign Breakdown exports use compact PDF-only styling on standard A4 landscape pages with 10 mm margins. Demand Gen interest tables/charts use equal columns; the format/device matrix and chart use a 2:1 split. Campaign Breakdown tables retain the full content width. Row and label/bar bounds guide pagination; inseparable overlapping groups fit together, and oversized individual elements continue in bounded captures. Dates remain unbroken and CPC uses `formatCpcRinggit` (`RM 0.50`); null/nonfinite values remain unavailable.
+
+Administrators see **Preview PDF** beside **Report** on these standalone pages. Preview renders the same PDF page images in an in-page dialog and offers download of that generated PDF. Screen and PNG layouts are unchanged. Preview memory is released on close; temporary capture mode, styles and colspans restore on success/failure. See [local receipt](../docs/landscape-pdf-verification-2026-10-02.md). Deployment remains separate.
 
 Overall capture is a separate path from standalone compact exports. The audience-heading overlap was reproduced and fixed locally on 2026-10-02: the heading/caption group fills available card-header width to prevent embedded export fonts wrapping inside intrinsic text widths. Empty/populated actual SVG bounds and PNG/PDF downloads passed; the populated raster was inspected. See [receipt](../docs/reporting-verification-2026-10-02.md). Production deployment remains separate.
 

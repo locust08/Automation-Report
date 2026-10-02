@@ -17,12 +17,13 @@ const campaign = { id: "c", platform: "meta", campaignType: "Lead", campaignName
 const overall = { companyName: "Fixture", dateRange, accountIds: { metaAccountId: "96906550", googleAccountId: null, metaAccountIds: ["96906550"], googleAccountIds: [] }, summaries: [], campaignGroups: [{ id: "meta-lead", platform: "meta", campaignType: "Lead", rows: [campaign], totals: campaign }], warnings: [], diagnostics: [], audienceClickBreakdown: { age: [], gender: [], location: { country: [], region: [], city: [] } } };
 const performance = { resultLabel: "Lead", results: 2, impressions: 100, videoViews: 50, clicks: 10, spend: 5, ctr: 10, cpm: 50, cpc: .5, costPerResult: 2.5, landingPageViews: 0, linkClicks: 0 };
 let demandRequests = 0, failHierarchy = false, partialHierarchy = false;
+let sessionRole = "admin";
 const requests = [];
 await page.route("**/api/**", async (route) => {
   const url = new URL(route.request().url()); requests.push(url);
   let data = {};
   if (url.pathname.includes("tiktok-insights")) return route.fulfill({ status: 503, json: { error: "Fixture insights unavailable" } });
-  if (url.pathname === "/api/auth/session") data = { user: { role: "admin" } };
+  if (url.pathname === "/api/auth/session") data = { user: { role: sessionRole } };
   else if (url.pathname === "/api/reporting/demand-gen") { demandRequests++; data = { ...demand, campaignId: url.searchParams.get("campaignId") }; }
   else if (url.pathname.includes("/ad-groups") || url.pathname.includes("/ads")) {
     if (failHierarchy) return route.fulfill({ status: 503, json: { error: "Fixture retry failure" } });
@@ -40,7 +41,7 @@ await page.route("**/api/**", async (route) => {
 
 async function downloadPdf(file) {
   await page.getByRole("button", { name: "Report", exact: true }).click();
-  const downloadPromise = page.waitForEvent("download", { timeout: 120000 });
+  const downloadPromise = page.waitForEvent("download", { timeout: file.includes("long") ? 300000 : 120000 });
   await page.getByRole("menuitem", { name: "Download PDF", exact: true }).click();
   if (file.startsWith("breakdown")) {
     await page.waitForURL((url) => url.searchParams.has("screenshot"));
@@ -61,10 +62,27 @@ async function downloadPdf(file) {
     });
     assert.equal(overflow, false, "every PDF table cell fits the export width");
     const usesWidth = await page.locator('[data-compact-pdf="true"]').evaluate((root) => {
-      const width = root.getBoundingClientRect().width;
-      return Array.from(root.querySelectorAll('[data-report-full-width-table] > table')).every((table) => table.getBoundingClientRect().width >= width * 0.9);
+      return Array.from(root.querySelectorAll('[data-report-full-width-table] > table')).every((table) => table.getBoundingClientRect().width >= table.parentElement.getBoundingClientRect().width * 0.9);
     });
-    assert.ok(usesWidth, "PDF tables use at least 90 percent of the capture width");
+    assert.ok(usesWidth, "PDF tables use at least 90 percent of their column width");
+    if (file.startsWith("demand")) {
+      const heights = await page.locator('[data-compact-pdf="true"]').evaluate(root => {
+        const clone = root.cloneNode(true);
+        clone.style.position = "fixed"; clone.style.left = "-20000px"; clone.style.top = "0";
+        clone.querySelectorAll('[data-demand-pdf-columns]').forEach(element => element.removeAttribute('data-demand-pdf-columns'));
+        document.body.appendChild(clone);
+        const heights = { horizontal: root.scrollHeight, stacked: clone.scrollHeight };
+        clone.remove();
+        return heights;
+      });
+      assert.ok(heights.horizontal < heights.stacked, "horizontal PDF layout reduces capture height");
+      console.log(`${file}: capture height ${heights.stacked} → ${heights.horizontal}px`);
+      const columns = await page.locator('[data-compact-pdf="true"] [data-demand-pdf-columns]').evaluateAll(elements => elements.map(element => {
+        const children = Array.from(element.children).map(child => child.getBoundingClientRect()).sort((a,b) => a.left-b.left);
+        return children.length === 2 && Math.abs(children[0].top - children[1].top) < 2 && children[0].right <= children[1].left;
+      }));
+      assert.ok(columns.length > 0 && columns.every(Boolean), "PDF tables and charts sit side by side");
+    }
     const date = await page.locator('[data-report-export-date-label="true"]').evaluate((label) => {
       const range = document.createRange(); range.selectNodeContents(label);
       return { lines: range.getClientRects().length, text: label.textContent };
@@ -77,13 +95,72 @@ async function downloadPdf(file) {
   assert.equal(await download.failure(), null);
   if (file.startsWith("demand") || file.startsWith("breakdown")) {
     const contents = await readFile(`tmp/${file}.pdf`, "latin1");
-    assert.match(contents, /\/Type \/Pages\s+\/Kids \[[^\]]*\]\s+\/Count 2\b/, "standalone export contains exactly two long pages");
+    const boxes = [...contents.matchAll(/\/MediaBox \[([^\]]+)\]/g)].map(match => match[1].trim().split(/\s+/).map(Number));
+    assert.ok(boxes.length > 0, "standalone export contains pages");
+    assert.ok(boxes.every(([x,y,w,h]) => x === 0 && y === 0 && Math.abs(w-841.89)<1 && Math.abs(h-595.28)<1), "every page is A4 landscape");
   }
   await page.waitForURL((url) => !url.searchParams.has("screenshot"), { timeout: 30000 });
 }
 try {
   await page.goto(`${base}/demand-gen?googleAccountId=1234567890&platform=google&startDate=2026-09-01&endDate=2026-09-30`);
   await page.getByRole("cell", { name: "Furniture", exact: true }).waitFor();
+  if (process.env.REPORT_QA_EDGE_ONLY === "1") {
+    await downloadPdf("demand-height");
+    demand.inMarket = [];
+    demand.affinity = [];
+    demand.ads[0].name = "Long unavailable-metric creative name ".repeat(8);
+    demand.ads[0].metrics = { ...values, cpc: null, views: null };
+    await page.goto(`${base}/demand-gen?googleAccountId=1234567890&platform=google&startDate=2026-09-01&endDate=2026-09-29`);
+    await page.getByRole("heading", {name:"Ads",exact:true}).waitFor();
+    await downloadPdf("demand-empty-null-long-label");
+    await page.getByRole("button", { name: "Report", exact: true }).click();
+    const png = page.waitForEvent("download", {timeout:120000});
+    await page.getByRole("menuitem", {name:"Download PNG",exact:true}).click();
+    await (await png).saveAs("tmp/demand-unchanged-png.png");
+    await page.waitForURL(url => !url.searchParams.has("screenshot"));
+    assert.equal(await page.locator('[data-compact-pdf]').count(),0,"PNG never uses PDF compact styling");
+    console.log("Edge QA passed: reduced capture height, empty interest panels, unavailable values and long creative name.");
+    await browser.close();
+    process.exit(0);
+  }
+  if (process.env.REPORT_QA_PREVIEW === "1") {
+    let downloads = 0;
+    page.on("download", () => downloads++);
+    await page.evaluate(() => {
+      window.originalPdfCanvasDataUrl = HTMLCanvasElement.prototype.toDataURL;
+      HTMLCanvasElement.prototype.toDataURL = () => { throw new Error("Fixture raster failure"); };
+    });
+    await page.getByRole("button", { name: "Preview PDF", exact: true }).click();
+    await page.getByText("Fixture raster failure", { exact: true }).waitFor({timeout:120000});
+    await page.waitForURL(url => !url.searchParams.has("screenshot"));
+    assert.equal(await page.locator('[data-compact-pdf]').count(),0,"failed export restores compact styles");
+    await page.evaluate(() => { HTMLCanvasElement.prototype.toDataURL = window.originalPdfCanvasDataUrl; delete window.originalPdfCanvasDataUrl; });
+    await page.getByRole("button", { name: "Retry", exact: true }).click();
+    await page.getByRole("dialog", { name: "PDF preview", exact: true }).waitFor({ timeout: 120000 });
+    assert.equal(downloads, 0, "preview does not download automatically");
+    assert.ok(await page.getByAltText("PDF preview page 1", { exact: true }).isVisible());
+    await page.screenshot({ path: "tmp/admin-landscape-pdf-preview.png" });
+    const save = page.waitForEvent("download");
+    await page.getByRole("button", { name: "Download PDF", exact: true }).click();
+    await (await save).saveAs("tmp/admin-preview.pdf");
+    await page.getByRole("button", { name: "Close preview", exact: true }).click();
+    assert.equal(await page.locator('dialog[open], [data-compact-pdf]').count(),0);
+    await page.waitForURL(url => !url.searchParams.has("screenshot"));
+    sessionRole = "user";
+    const userSession = page.waitForResponse(response => response.url().includes("/api/auth/session"));
+    await page.reload();
+    await page.getByRole("cell", { name: "Furniture", exact: true }).waitFor();
+    await userSession;
+    assert.equal(await page.getByRole("button", { name: "Preview PDF", exact: true }).count(),0);
+    sessionRole = "admin";
+    await page.reload();
+    await page.getByRole("button", { name: "Preview PDF", exact: true }).waitFor();
+    if (process.env.REPORT_QA_PREVIEW_ONLY === "1") {
+      console.log("Preview QA passed: failure cleanup, retry intent, no automatic download, saved PDF, close and user-role visibility.");
+      await browser.close();
+      process.exit(0);
+    }
+  }
   await page.getByRole("button", { name: "Navigation", exact: true }).click();
   await page.getByRole("menuitem", { name: "Campaign Breakdown", exact: true }).waitFor();
   await page.getByRole("menuitem", { name: "Demand Gen Analysis", exact: true }).waitFor();
