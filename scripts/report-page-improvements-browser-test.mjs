@@ -91,6 +91,27 @@ async function downloadPdf(file) {
 try {
   await page.goto(`${base}/demand-gen?googleAccountId=1234567890&platform=google&startDate=2026-09-01&endDate=2026-09-30`);
   await page.getByRole("cell", { name: "Furniture", exact: true }).waitFor();
+  if (process.env.REPORT_QA_AD_SORT === "1") {
+    const original=demand.ads[0];
+    demand.ads=[{...original,id:"a",name:"Ten",metrics:{...values,clicks:10,ctr:10,cpc:10,views:10}}, { ...original,id:"b",name:"Zero",metrics:{...values,clicks:0,ctr:0,cpc:0,views:0}}, {...original,id:"c",name:"Unavailable",metrics:{...values,clicks:null,ctr:null,cpc:null,views:null}}];
+    await page.reload();
+    const card=page.locator('[data-slot="card"]').filter({has:page.getByRole("heading",{name:"Ads",exact:true})});
+    await card.getByRole("cell",{name:"Unavailable",exact:true}).waitFor();
+    const before=demandRequests;
+    for(const metric of ["Clicks","CTR (%)","CPC","Views"]) {
+      await card.getByRole("button",{name:metric,exact:true}).click();
+      assert.deepEqual(await card.locator('tbody tr td:first-child').allTextContents(),["Ten","Zero","Unavailable"]);
+      await card.getByRole("button",{name:`${metric} ↓`,exact:true}).click();
+      assert.deepEqual(await card.locator('tbody tr td:first-child').allTextContents(),["Zero","Ten","Unavailable"]);
+    }
+    assert.equal(demandRequests,before,"sorting does not refetch data");
+    await downloadPdf("demand-ad-sort");
+    const exported=await page.evaluate(()=>window.customPdfStructure.adPages.map(page=>page.label));
+    assert.ok(exported[0].includes("Zero") && exported[1].includes("Ten") && exported[2].includes("Unavailable"),"export preserves sorted ad order");
+    assert.deepEqual(await card.locator('tbody tr td:first-child').allTextContents(),["Zero","Ten","Unavailable"]);
+    console.log("Ads sorting QA passed: all metrics toggle, missing values last, no refetch, sorted export and restored screen.");
+    await browser.close(); process.exit(0);
+  }
   if (process.env.REPORT_QA_IMAGE_REFETCH === "1") {
     demand.ads[0].imageUrls = [`${base}/fixture-expiring-creative.png`];
     await page.reload();

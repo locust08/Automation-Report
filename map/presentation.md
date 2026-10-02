@@ -31,3 +31,5 @@ Overall capture is a separate path from standalone compact exports. The audience
 `scripts/report-structure-browser-test.mjs` covers hierarchy behavior, matrix presentation, responsive width and capture with fixtures. Keep rendered screenshots/PDFs outside tracked source. Validate screen and capture independently after presentation changes.
 
 `scripts/report-audience-export-browser-test.mjs` checks actual serialized export text against caption bounds for empty and populated audience data; download success alone cannot replace this layout check.
+
+Demand Gen screen Ads metrics (Clicks, CTR, CPC, Views) toggle numeric descending/ascending ordering on header clicks, with arrow and aria-sort indicators. Unavailable/nonfinite values stay last; equal values retain source order. Sorting is local, does not fetch data, and remains during capture. Campaign filtering was not added in this change.

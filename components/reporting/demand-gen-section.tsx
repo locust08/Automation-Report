@@ -14,6 +14,7 @@ import { useReportSectionQuery } from "./use-report-data";
 import { filterRowsByCampaignName, type CampaignNameFilter } from "@/lib/reporting/campaign-name-filter";
 import { sumDemandValues, demandShare, demandMetrics, demandDevices, demandFormats, type DemandMetric, type DemandAudienceRow, type DemandGenPayload, type DemandCell } from "@/lib/reporting/demand-gen";
 
+import { sortAdsByMetric, type AdSortMetric } from "@/lib/reporting/ad-metric-sort";
 import { formatCpcRinggit } from "@/lib/reporting/format";
 
 const labels: Record<DemandMetric, string> = { views: "Views", clicks: "Clicks", spend: "Spend", conversions: "Conversions", ctr: "CTR (%)", cpc: "CPC", cpm: "CPM" };
@@ -124,8 +125,19 @@ function MatrixPanel({ cells, unmapped, totals, metric }: { cells: DemandCell[];
   </Card></section>;
 }
 
+const adMetricHeaders: Record<string, AdSortMetric | undefined> = { "Clicks": "clicks", "CTR (%)": "ctr", "CPC": "cpc", "Views": "views" };
+
 function DemandAdsPanel({ ads }: { ads: NonNullable<DemandGenPayload["ads"]> }) {
-  return <Card className={panel}><h3 className="text-xl font-semibold">Ads</h3><div className="overflow-x-auto rounded-xl border" data-report-full-width-table="true"><table className="w-full min-w-[900px] text-sm"><thead className="bg-red-50 text-[#9f0019]"><tr>{["Ad", "Campaign", "Creative", "Clicks", "CTR (%)", "CPC", "Views"].map((label) => <th key={label} className="px-4 py-3 text-left">{label}</th>)}</tr></thead><tbody>{ads.map((ad) => <tr key={ad.id} className="border-t"><td className="px-4 py-3">{ad.name}</td><td className="px-4 py-3">{ad.campaignName}</td><td className="px-4 py-3"><div className="flex flex-wrap gap-2">{ad.imageUrls.length ? ad.imageUrls.map((url) => <AdCreativeImage key={url} url={url} name={ad.name} />) : "—"}</div></td>{(["clicks", "ctr", "cpc", "views"] as const).map((metric) => <td key={metric} className="px-4 py-3 tabular-nums">{metricLabel(ad.metrics[metric], metric)}</td>)}</tr>)}</tbody></table></div>{!ads.length ? <p>No ad creatives available for these campaigns.</p> : null}</Card>;
+  const [sort, setSort] = useState<{metric: AdSortMetric; ascending: boolean} | null>(null);
+  const ordered = sort ? sortAdsByMetric(ads, sort.metric, sort.ascending) : ads;
+  const changeSort = (metric: AdSortMetric) => setSort(previous => ({metric,ascending:previous?.metric === metric ? !previous.ascending : false}));
+  return <Card className={panel}><h3 className="text-xl font-semibold">Ads</h3><div className="overflow-x-auto rounded-xl border" data-report-full-width-table="true"><table className="w-full min-w-[900px] text-sm"><thead className="bg-red-50 text-[#9f0019]"><tr>{["Ad", "Campaign", "Creative", "Clicks", "CTR (%)", "CPC", "Views"].map((label) => {
+    const metric = adMetricHeaders[label];
+    const selected = metric && sort?.metric === metric;
+    return <th key={label} className="px-4 py-3 text-left" aria-sort={selected ? sort.ascending ? "ascending" : "descending" : undefined}>
+      {metric ? <Button variant="ghost" className="px-0 text-[#9f0019] hover:bg-transparent" onClick={() => changeSort(metric)}>{label} {selected ? sort.ascending ? "↑" : "↓" : ""}</Button> : label}
+    </th>;
+  })}</tr></thead><tbody>{ordered.map((ad) => <tr key={ad.id} className="border-t"><td className="px-4 py-3">{ad.name}</td><td className="px-4 py-3">{ad.campaignName}</td><td className="px-4 py-3"><div className="flex flex-wrap gap-2">{ad.imageUrls.length ? ad.imageUrls.map((url) => <AdCreativeImage key={url} url={url} name={ad.name} />) : "—"}</div></td>{(["clicks", "ctr", "cpc", "views"] as const).map((metric) => <td key={metric} className="px-4 py-3 tabular-nums">{metricLabel(ad.metrics[metric], metric)}</td>)}</tr>)}</tbody></table></div>{!ads.length ? <p>No ad creatives available for these campaigns.</p> : null}</Card>;
 }
 function AdCreativeImage({ url, name }: { url: string; name: string }) {
   const [failed, setFailed] = useState(false);

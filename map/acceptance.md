@@ -27,3 +27,5 @@ For each new receipt record source commit, account/campaign, inclusive dates, me
 Standalone custom portrait PDF and admin preview local evidence is recorded in [2026-10-02 custom PDF receipt](../docs/custom-pdf-verification-2026-10-02.md). Keep local fixture checks separate from production rollout and long-report performance acceptance.
 
 Usage analytics, SEO and unrelated gallery work remain deferred. Mapping-only edits require no runtime deployment. Provider writes, emails and migrations are outside today's reporting verification scope.
+
+Demand Gen Ads metric sorting local fixture evidence is recorded in [sorting receipt](../docs/demand-ad-sort-verification-2026-10-02.md). Campaign filtering was explicitly excluded; deployment acceptance remains separate.
