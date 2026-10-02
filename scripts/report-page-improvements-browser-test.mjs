@@ -1,17 +1,37 @@
 // Read-only UI QA against a running dev server, with synthetic API fixtures.
 import assert from "node:assert/strict";
-import { readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { chromium } from "playwright";
 
 const base = process.env.REPORT_QA_BASE_URL ?? "http://localhost:3000";
+await mkdir("tmp", { recursive: true });
+const compactPdf = process.env.REPORT_QA_COMPACT_PDF === "1";
 const browser = await chromium.launch({ channel: "chrome", headless: true });
 const page = await browser.newPage({ viewport: { width: 1920, height: 1080 } });
 page.setDefaultNavigationTimeout(120000);
 page.on("pageerror", (error) => console.error("UI error:", error.message));
 const values = { impressions: 100, views: 100, clicks: 10, spend: 5, conversions: 2, ctr: 10, cpc: .5, cpm: 50 };
-const creativeUrl = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aQ1cAAAAASUVORK5CYII=";
+const creativeUrl = await page.evaluate(() => {
+  const canvas = document.createElement("canvas"); canvas.width = 320; canvas.height = 160;
+  const context = canvas.getContext("2d");
+  context.fillStyle = "#f9cf58"; context.fillRect(0,0,320,160);
+  context.fillStyle = "#e10600"; context.fillRect(0,0,40,160);
+  context.fillStyle = "#315ac4"; context.fillRect(280,0,40,160);
+  context.fillStyle = "#171717"; context.font = "24px Arial"; context.fillText("Creative fixture",65,90);
+  return canvas.toDataURL("image/png");
+});
 const demand = { account: { id: "1234567890", name: "Fixture Google", currency: "MYR", timezone: "Asia/Kuala_Lumpur" }, startDate: "2026-09-01", endDate: "2026-09-30", campaigns: [{ id: "1", name: "Demand A" }, { id: "2", name: "Demand B" }], campaignId: "1", ads: [{ id: "ad1", name: "Demand ad", campaignName: "Demand A", imageUrls: [creativeUrl], metrics: values }], inMarket: [{ id: "i", name: "Furniture", metrics: values }], affinity: [{ id: "a", name: "Home enthusiasts", metrics: values }], cells: ["In-feed", "In-stream", "Shorts"].flatMap((format) => ["Desktop", "Mobile", "Tablet", "TV"].map((device) => ({ format, device, metrics: values }))), unmapped: [], unresolved: [], warnings: [], complete: true };
 let flakyImageRequests = 0;
+if (compactPdf) {
+  const original = demand.ads[0];
+  demand.ads = Array.from({length:12}, (_,index) => ({
+    ...original, id: `ad${index}`,
+    name: index === 1 ? "A long ad name that must wrap without overlapping its creative or numeric performance values" : `Demand ad ${index}`,
+    campaignName: index % 2 ? "Demand B" : "Demand A",
+    imageUrls: [index === 2 ? "data:image/png;base64,broken" : creativeUrl],
+    selectedCreative: {previewUrl:index === 2 ? "data:image/png;base64,broken" : creativeUrl, selection:"top_performing", metrics:{...values, spend:2.34}},
+  }));
+}
 await page.route("**/fixture-expiring-creative.png", async route => {
   flakyImageRequests++;
   if (flakyImageRequests > 2) return route.fulfill({status:404,body:"Thumbnail expired"});
@@ -38,6 +58,12 @@ await page.route("**/api/**", async (route) => {
   else if (url.pathname.endsWith("/final-url-performance")) data = { section: { rows: [{ id: "url", campaign: "Demand Gen campaign with a readable name", finalUrl: "https://example.com/landing-page?utm_source=google&utm_campaign=demand-gen", spend: 2007.59, impressions: 289568, clicks: 21237, conversions: 1256, ctr: 7.33, cpc: .09, cpa: 1.60, conversionRate: 5.92 }], otherRow: null, totalUrlCount: 1 }, warnings: [] };
   else if (url.pathname.includes("/advanced") || url.pathname === "/api/reporting/advanced") return route.fulfill({ status: 503, json: { error: "Fixture analysis unavailable" } });
   else if (url.pathname.includes("/accounts/search")) data = { accounts: [] };
+  if (compactPdf && data.sections) {
+    const children = data.sections[0].campaigns[0].children;
+    children[0].ads[1].name = "A long historical ad name that wraps alongside the image and preserves the full performance row";
+    children[0].ads[2].creative.imageUrl = "data:image/png;base64,broken";
+    children.push({...children[0], id:"s2", name:"Another historical set", ads:[{...children[0].ads[0], id:"other-ad", performance:{...performance, clicks:20, spend:4}}]});
+  }
   if (url.searchParams.get("platform") === "tiktok") {
     data = JSON.parse(JSON.stringify(data).replaceAll('"meta"', '"tiktok"').replaceAll('"Paused"', '"ENABLE"'));
   }
@@ -58,8 +84,8 @@ async function downloadPdf(file) {
         pages:pages.length,
         introNotes:pages[0].querySelector('.pdf-section')?.querySelectorAll('p').length ?? 0,
         fits:pages.every(page => {const body=page.querySelector('.pdf-body'); return body.scrollHeight<=body.clientHeight+1;}),
-        adPages:pages.filter(page=>page.querySelector('.pdf-body').dataset.adLabel).map(page=>({label:page.querySelector('.pdf-body').dataset.adLabel, tables:page.querySelectorAll('table').length})),
         tableImages:host.querySelectorAll('table img').length,
+        adRows:Array.from(host.querySelectorAll('[data-pdf-ad-label]')).map(row => ({label:row.dataset.pdfAdLabel, text:row.textContent, page:Number(row.closest('[data-custom-pdf-page]').dataset.customPdfPage)})),
         headers:Array.from(host.querySelectorAll('thead')).map(head=>head.textContent),
         creatives:host.querySelectorAll('figure').length,
         text:host.textContent,
@@ -67,8 +93,9 @@ async function downloadPdf(file) {
           const heading=section.querySelector('h2'), table=section.querySelector('table');
           return !heading || !table || heading.getBoundingClientRect().bottom<=table.getBoundingClientRect().top;
         })),
-        numericFits:Array.from(host.querySelectorAll('td:not(:first-child)')).every(cell=>cell.scrollWidth<=cell.clientWidth+1),
+        numericFits:Array.from(host.querySelectorAll('td:not(:first-child):not(.pdf-creative-cell)')).every(cell=>cell.scrollWidth<=cell.clientWidth+1),
         dashboardDesign:pages.every(page=>getComputedStyle(page.querySelector('.pdf-header')).backgroundImage.includes('headerbackground.png') && Array.from(page.querySelectorAll('.pdf-section')).every(section=>parseFloat(getComputedStyle(section).borderRadius)>=20)),
+        thumbnailsFit:Array.from(host.querySelectorAll('table img')).every(image=>image.clientWidth===112 && image.clientHeight===84 && getComputedStyle(image).objectFit==="contain"),
       };
     });
     window.customPdfObserver.observe(document.body,{childList:true,subtree:true});
@@ -81,12 +108,14 @@ async function downloadPdf(file) {
     await page.waitForFunction(() => window.customPdfStructure);
     const structure = await page.evaluate(() => window.customPdfStructure);
     assert.ok(structure.pages > 0 && structure.fits, 'complete custom pages fit their printable area');
-    assert.ok(structure.adPages.every(page=>page.label && page.tables>=1 && page.tables<=2), 'each ad page has its own metrics and creative group');
+    assert.ok(structure.adRows.length > 0, 'ads appear in performance table rows');
     assert.ok(structure.layoutSafe,"wrapped headings stay above tables");
     assert.ok(structure.numericFits,"numeric values fit without wrapping or clipping");
     assert.ok(structure.dashboardDesign,"dashboard header and styled cards preserved in composed pages");
-    assert.equal(structure.tableImages, 0, 'performance tables contain no creative images');
-    assert.ok(structure.headers.every(header => !header.includes('Creative') && !header.includes('Actions')));
+    assert.ok(structure.tableImages > 0, 'performance tables include selected creative images');
+    assert.ok(structure.thumbnailsFit, 'selected thumbnails use uncropped 112 by 84 boxes');
+    assert.ok(structure.headers.some(header => header.includes('Creative')));
+    assert.ok(structure.headers.every(header => !header.includes('Actions')));
   }  const download = await downloadPromise;
   await download.saveAs(`tmp/${file}.pdf`);
   assert.equal(await download.failure(), null);
@@ -101,12 +130,49 @@ async function downloadPdf(file) {
 try {
   await page.goto(`${base}/demand-gen?googleAccountId=1234567890&platform=google&startDate=2026-09-01&endDate=2026-09-30`);
   await page.getByRole("cell", { name: "Furniture", exact: true }).waitFor();
+  if (compactPdf) {
+    await downloadPdf("demand-compact");
+    const demandPdf = await page.evaluate(() => window.customPdfStructure);
+    assert.equal(new Set(demandPdf.adRows.map(row=>row.label)).size,12);
+    assert.ok(demandPdf.pages < 12, "several ads share pages");
+    assert.ok(demandPdf.adRows.some((row,index,rows)=>index && row.page===rows[index-1].page), "adjacent ads share a page");
+    assert.ok(demandPdf.text.includes("Creative image unavailable"));
+    assert.ok(demandPdf.text.includes("Asset spend: RM 2.34") && demandPdf.text.includes("Top-performing creative"));
+    const previewPromise = page.waitForEvent("download");
+    await page.getByRole("button", {name:"Preview PDF",exact:true}).click();
+    await page.getByRole("dialog", {name:"PDF preview",exact:true}).waitFor({timeout:180000});
+    const images = await page.locator('img[alt^="PDF preview page"]').evaluateAll(images=>images.map(image=>image.src));
+    await writeFile("tmp/compact-demand-ad-page.png", Buffer.from(images.at(-1).split(",")[1],"base64"));
+    await page.getByRole("button",{name:"Download PDF",exact:true}).click();
+    await (await previewPromise).saveAs("tmp/demand-compact-preview.pdf");
+    await page.getByRole("button",{name:"Close preview",exact:true}).click();
+    await page.goto(`${base}/campaign-breakdown?metaAccountId=96906550&platform=meta&startDate=2026-09-01&endDate=2026-09-30`);
+    await page.getByRole("button",{name:"Expand Fixture campaign",exact:true}).waitFor();
+    await downloadPdf("breakdown-compact");
+    const breakdownPdf = await page.evaluate(() => window.customPdfStructure);
+    assert.equal(new Set(breakdownPdf.adRows.map(row=>row.label)).size,26);
+    assert.equal(breakdownPdf.adRows.length,52,"each ad keeps all metrics across two groups");
+    assert.ok(breakdownPdf.pages < 26,"breakdown ads share pages");
+    assert.equal(breakdownPdf.introNotes,0,"creative metadata stays out of report scope");
+    assert.ok(breakdownPdf.text.includes("Historical set") && breakdownPdf.text.includes("Ads total"));
+    assert.ok(breakdownPdf.text.includes("Another historical set") && breakdownPdf.text.includes("Creative image unavailable"));
+    assert.equal(breakdownPdf.adRows.filter(row=>row.label.includes("Another historical set")).length,2,"same-named ads stay in their ad set context");
+    assert.ok(breakdownPdf.headers.some(header=>header.includes("Cost/Results")),"last metric group retained");
+    await page.getByRole("button",{name:"Preview PDF",exact:true}).click();
+    await page.getByRole("dialog",{name:"PDF preview",exact:true}).waitFor({timeout:240000});
+    const previews = await page.locator('img[alt^="PDF preview page"]').evaluateAll(images=>images.map(image=>image.src));
+    await writeFile("tmp/compact-breakdown-ad-page.png", Buffer.from(previews.at(-1).split(",")[1],"base64"));
+    await page.getByRole("button",{name:"Close preview",exact:true}).click();
+    assert.equal(await page.locator(".custom-report-pdf").count(),0,"temporary composition cleaned up");
+    console.log(JSON.stringify({demandPages:demandPdf.pages, breakdownPages:breakdownPdf.pages, demandAds:12, breakdownAds:26}));
+    await browser.close(); process.exit(0);
+  }
   if (process.env.REPORT_QA_BREAKDOWN_SCOPE === "1") {
     await page.goto(`${base}/campaign-breakdown?metaAccountId=96906550&platform=meta&startDate=2026-09-01&endDate=2026-09-30`);
     await page.getByRole('button',{name:'Expand Fixture campaign',exact:true}).waitFor();
     await downloadPdf('breakdown-scope-regression');
     const output=await page.evaluate(()=>window.customPdfStructure);
-    assert.equal(output.adPages.length,25,'all ads exported');
+    assert.equal(new Set(output.adRows.map(row=>row.label)).size,25,'all ads exported');
     assert.equal(output.introNotes,0,'ad creative captions do not leak into report scope');
     console.log('Breakdown scope regression passed');
     await browser.close(); process.exit(0);
@@ -150,7 +216,7 @@ try {
     }
     assert.equal(demandRequests,before,"sorting does not refetch data");
     await downloadPdf("demand-ad-sort");
-    const exported=await page.evaluate(()=>window.customPdfStructure.adPages.map(page=>page.label));
+    const exported=await page.evaluate(()=>window.customPdfStructure.adRows.map(row=>row.label));
     assert.ok(exported[0].includes("Zero") && exported[1].includes("Ten") && exported[2].includes("Unavailable"),"export preserves sorted ad order");
     assert.deepEqual(await card.locator('tbody tr td:first-child').allTextContents(),["Zero","Ten","Unavailable"]);
     console.log("Ads sorting QA passed: all metrics toggle, missing values last, no refetch, sorted export and restored screen.");
@@ -174,8 +240,9 @@ try {
     await downloadPdf("demand-height");
     const overflow = await page.evaluate(()=>window.customPdfStructure);
     assert.equal(overflow.creatives,2,"one representative creative per ad");
-    assert.equal(overflow.adPages.length,2,"each ad starts on its own page");
-    assert.ok(overflow.adPages.at(-1).label.includes("Second distinct ad"),"next ad starts on own page");
+    assert.equal(overflow.adRows.length,2,"both ads appear as table rows");
+    assert.equal(overflow.adRows[0].page,overflow.adRows[1].page,"adjacent ads share a page");
+    assert.ok(overflow.adRows.at(-1).label.includes("Second distinct ad"),"second ad keeps its identity");
     demand.inMarket = [];
     demand.affinity = [];
     demand.ads[0].name = "Long unavailable-metric creative name ".repeat(8);

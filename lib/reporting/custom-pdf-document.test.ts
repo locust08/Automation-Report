@@ -13,7 +13,7 @@ test("explicit summary markers distinguish totals independently of ad names", ()
   assert.equal(isAdPerformanceRow("false"), true);
 });
 
-test("ad pages omit campaign column and group campaigns in first-seen order", () => {
+test("ad tables omit campaign column and group campaigns in first-seen order", () => {
   assert.deepEqual(adColumnIndexes(["Ad","Campaign","Creative","Clicks"]),[0,3]);
   const rows=[{campaign:"A",id:1},{campaign:"B",id:2},{campaign:"A",id:3}];
   assert.deepEqual(groupAdsByCampaign(rows).map(row=>row.id),[1,3,2]);

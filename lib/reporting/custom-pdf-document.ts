@@ -90,7 +90,7 @@ export function readCustomPdfContent(root: HTMLElement) {
       charts: card ? Array.from(card.querySelectorAll<HTMLElement>('[data-demand-chart-label-row]')).map(label => ({label:text(label.children[0]),value:text(label.children[1]),width:(label.nextElementSibling?.firstElementChild as HTMLElement | null)?.style.width || "0%"})) : []});
   }
   if (demand) {
-    // Account summary and analysis precede the compact Ads table and gallery.
+    // Account summary and analysis precede the grouped Ads tables.
     sections.sort((a,b) => Number(a.title === "Ads")-Number(b.title === "Ads"));
     for (const title of ["In-market","Affinity"]) {
       if (!sections.some(section => section.title === title)) sections.splice(title === "In-market" ? 0 : 1,0,{title,headers:[],rows:[],charts:[],notes:[`No measured ${title} interest observations available.`]});
@@ -127,10 +127,14 @@ const css = `
 .custom-report-pdf .pdf-chart-label { display:flex; justify-content:space-between; gap:8px; }
 .custom-report-pdf .pdf-track { height:10px; margin-top:6px; border-radius:8px; background:#eee; }
 .custom-report-pdf .pdf-bar { height:10px; border-radius:8px; background:#e10600; }
-.custom-report-pdf .pdf-gallery-row { display:block; margin-bottom:12px; }
-.custom-report-pdf figure { margin:0; padding:12px; border:1px solid #dedede; border-radius:16px; }
-.custom-report-pdf figure img { display:block; width:100%; height:270px; object-fit:contain; background:#fafafa; border-radius:12px; }
-.custom-report-pdf figcaption { font-size:12px; margin-top:6px; overflow-wrap:anywhere; }
+.custom-report-pdf .pdf-ad-table { table-layout:fixed; font-size:11px; }
+.custom-report-pdf .pdf-ad-table th, .custom-report-pdf .pdf-ad-table td { padding:8px 6px; }
+.custom-report-pdf .pdf-ad-table th { overflow-wrap:anywhere; }
+.custom-report-pdf .pdf-ad-table th:first-child, .custom-report-pdf .pdf-ad-table td:first-child { width:auto; }
+.custom-report-pdf .pdf-ad-table .pdf-creative-cell { text-align:left; white-space:normal; }
+.custom-report-pdf figure { width:112px; margin:0; }
+.custom-report-pdf figure img { display:block; width:112px; height:84px; object-fit:contain; background:#fafafa; border-radius:8px; }
+.custom-report-pdf figcaption { font-size:10px; margin-top:6px; overflow-wrap:anywhere; }
 .custom-report-pdf .pdf-footer { display:flex; align-items:center; justify-content:space-between; gap:12px; border-top:3px solid #e10600; padding-top:8px; font-size:10px; color:#777; }
 .custom-report-pdf .pdf-footer img { width:132px; height:24px; object-fit:contain; }
 `;
@@ -165,6 +169,7 @@ export async function createCustomReportPdf(root: HTMLElement, onPage?: (image:s
     if (!fits()) throw new Error("A report block is too large for one page. Shorten its label and retry.");
   };
   try {
+    await document.fonts.ready;
     newPage();
     const intro = el("section"); intro.className = "pdf-section"; intro.append(el("h2",content.reportTitle));
     [...content.scope,...content.warnings].forEach(note => intro.append(el("p",note)));
@@ -203,37 +208,56 @@ export async function createCustomReportPdf(root: HTMLElement, onPage?: (image:s
       }
       if (!length && !fits()) { block!.remove(); appendBlock(block!); }
     }
+    const campaigns = new Map<string, Ad[]>();
     for (const ad of groupAdsByCampaign(content.ads)) {
-      newPage();
-      body!.dataset.adLabel = ad.label;
-      let adContainer: HTMLElement;
-      const adHeader = (continued = false) => {
-        adContainer = el("section"); adContainer.className = "pdf-section"; body!.append(adContainer);
-        adContainer.append(el("h2",ad.campaign));
-        adContainer.append(el("p",`Ad: ${ad.name}${continued ? " (continued)" : ""}`));
-        for (const indexes of metricColumnGroups(ad.headers.length)) {
-          const table = el("table"), head = el("thead"), header = el("tr"), rows = el("tbody"), row = el("tr");
-          indexes.forEach(index => header.append(el("th",ad.headers[index])));
-          indexes.forEach(index => row.append(el("td",ad.values[index])));
-          head.append(header); rows.append(row); table.append(head,rows); table.style.marginBottom="16px"; adContainer.append(table);
+      const ads = campaigns.get(ad.campaign) ?? [];
+      ads.push(ad); campaigns.set(ad.campaign, ads);
+    }
+    for (const [campaign, ads] of campaigns) {
+      const groups = metricColumnGroups(ads[0].headers.length);
+      for (const [groupIndex, indexes] of groups.entries()) {
+        let block: HTMLElement, tbody: HTMLTableSectionElement;
+        let count = 0;
+        const startTable = (continued = false) => {
+          block = el("section"); block.className = "pdf-section";
+          const metrics = groups.length > 1 ? ` · Metrics ${groupIndex + 1} of ${groups.length}` : "";
+          block.append(el("h2", `${campaign}${metrics}${continued ? " (continued)" : ""}`));
+          const table = el("table"); table.className = "pdf-ad-table";
+          const columns = el("colgroup"), name = el("col"), creative = el("col");
+          name.style.width = "22%"; creative.style.width = "124px";
+          columns.append(name, creative);
+          indexes.slice(1).forEach(() => columns.append(el("col")));
+          const head = el("thead"), header = el("tr");
+          const creativeHeader = el("th", "Creative"); creativeHeader.className = "pdf-creative-cell";
+          header.append(el("th", ads[0].headers[indexes[0]]), creativeHeader);
+          indexes.slice(1).forEach(index => header.append(el("th", ads[0].headers[index])));
+          head.append(header); tbody = el("tbody");
+          table.append(columns, head, tbody); block.append(table); body!.append(block); count = 0;
+        };
+        startTable();
+        for (const ad of ads) {
+          const row = el("tr"); row.dataset.pdfAdLabel = ad.label;
+          row.append(el("td", ad.values[indexes[0]]));
+          const cell = el("td"); cell.className = "pdf-creative-cell";
+          const creative = ad.creatives[0];
+          if (creative) {
+            const card = el("figure"), image = el("img");
+            image.crossOrigin = "anonymous"; image.src = creative.source; image.alt = creative.alt;
+            card.append(image, el("figcaption", creative.caption || "Representative creative — performance unavailable · Asset spend: —"));
+            cell.append(card);
+          } else cell.append(el("p", "No creative images available for this ad."));
+          row.append(cell);
+          indexes.slice(1).forEach(index => row.append(el("td", ad.values[index])));
+          tbody!.append(row);
+          if (!fits()) {
+            row.remove();
+            if (!count) block!.remove();
+            newPage(); startTable(count > 0); tbody!.append(row);
+            if (!fits()) throw new Error("An ad row is too tall for one PDF page.");
+          }
+          count++;
         }
-        adContainer.append(el("h2",continued ? "Creative (continued)" : "Creative"));
-      };
-      adHeader();
-      if (!ad.creatives.length) adContainer!.append(el("p","No creative images available for this ad."));
-      for (let index=0; index<ad.creatives.length; index+=2) {
-        const row=el("div"); row.className="pdf-gallery-row";
-        for(const creative of ad.creatives.slice(index,index+2)) {
-          const card=el("figure"),image=el("img"); image.crossOrigin="anonymous"; image.src=creative.source; image.alt=creative.alt;
-          card.append(image,el("figcaption",creative.caption || "Representative creative — performance unavailable · Asset spend: —")); row.append(card);
-        }
-        adContainer!.append(row);
-        if(!fits()) {
-          row.remove(); newPage(); body!.dataset.adLabel=ad.label; adHeader(true); adContainer!.append(row);
-        }
-        if(!fits()) throw new Error("An ad block is too tall for one PDF page.");
       }
-      if(!fits()) throw new Error("An ad's metrics are too tall for one PDF page.");
     }
     const images=Array.from(host.querySelectorAll("img"));
     await Promise.all(images.map(image => new Promise<void>(resolve => {
@@ -259,7 +283,8 @@ export async function createCustomReportPdf(root: HTMLElement, onPage?: (image:s
       } catch {
         const footerImage = Boolean(image.closest(".pdf-footer"));
         const placeholder=el("div",footerImage ? "LOCUS-T" : "Creative image unavailable");
-        placeholder.style.height=footerImage ? "24px" : "270px";
+        placeholder.style.height=footerImage ? "24px" : "84px";
+        if (!footerImage) placeholder.style.width="112px";
         if (footerImage) placeholder.style.width="132px";
         placeholder.style.background="#fafafa"; placeholder.style.display="grid"; placeholder.style.placeItems="center"; image.replaceWith(placeholder);
       }
