@@ -35,3 +35,7 @@ Wide Breakdown PDF tables now use consecutive metric groups with the Name column
 Local verification: four PDF helper tests passed; scoped TypeScript and ESLint passed. The full browser fixture suite passed with Meta value filters, retained hierarchy ancestors, TikTok exports, large numeric values, long names and mobile downloads. Geometry checks verify headings end before tables begin, numeric cells fit, and page bodies do not overflow. Existing repository-wide typecheck/lint blockers remain as recorded above. Native reconciliation and deployment acceptance remain pending.
 
 Fresh Bellamy Meta account preview completed locally. Raster inspection identified an additional continuation-heading wrap difference, so headings reserve an extra line of space below their text. This is export-only spacing; the selected dates and report filters are unchanged.
+
+## Production deployment evidence
+
+On 2026-10-02, scoped branch `codex/demand-gen-ad-filters` was pushed to GitHub at `4f598bf8c70f533516fca82e70c1d29dda05d717`. Vercel Git integration built preview `3L2zU1PnWjJmBw2D3fQHirkBAkVk`; promotion through Ava's existing Vercel dashboard built production deployment `4tnXGaxL4cYetFiC8W3Gz1Um6BnK` with production environment variables. Both reached Ready. Production is aliased to https://automated-report-iota.vercel.app. The deployed Breakdown route was opened in Ava's browser. No remote migration or advertising write was performed. Native metric reconciliation remains separate from deployment readiness.

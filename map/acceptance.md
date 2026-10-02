@@ -31,3 +31,5 @@ Usage analytics, SEO and unrelated gallery work remain deferred. Mapping-only ed
 Demand Gen Ads metric sorting local fixture evidence is recorded in [sorting receipt](../docs/demand-ad-sort-verification-2026-10-02.md). Campaign filtering was explicitly excluded; deployment acceptance remains separate.
 
 Breakdown PDF clipping/spacing fixture acceptance is recorded in the custom PDF receipt: grouped metrics, heading/table separation, large-number fit and filtered Meta/TikTok exports passed locally. Native reconciliation and deployment remain separate acceptance gates.
+
+Standalone PDF changes through commit `4f598bf` were deployed to Vercel production on 2026-10-02; deployment `4tnXGaxL4cYetFiC8W3Gz1Um6BnK` reached Ready. See the custom PDF receipt for deployment evidence. Native reconciliation remains pending independently.
