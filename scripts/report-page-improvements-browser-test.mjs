@@ -149,6 +149,7 @@ try {
     await page.goto(`${base}/campaign-breakdown?metaAccountId=96906550&platform=meta&startDate=2026-09-01&endDate=2026-09-30`);
     await page.getByRole("button",{name:"Expand Fixture campaign",exact:true}).waitFor();
     await downloadPdf("breakdown-compact");
+    assert.ok(!/Asset spend:|Representative creative/.test(await page.locator('[data-report-capture-root="true"]').innerText()),"Breakdown screen omits creative captions");
     const breakdownPdf = await page.evaluate(() => window.customPdfStructure);
     assert.equal(new Set(breakdownPdf.adRows.map(row=>row.label)).size,26);
     assert.equal(breakdownPdf.adRows.length,52,"each ad keeps all metrics across two groups");
@@ -183,7 +184,8 @@ try {
     demand.ads[0].selectedCreative={assetId:"2",assetResource:"customers/1234567890/assets/2",kind:"image",previewUrl:`${creativeUrl}#selected`,metrics:{...values,spend:2.34},performanceComplete:true,selection:"top_performing"};
     await page.goto(`${base}/demand-gen?googleAccountId=1234567890&platform=google&startDate=2026-09-01&endDate=2026-09-30&metric=views`);
     const ads=page.locator('[data-slot="card"]').filter({has:page.getByRole('heading',{name:'Ads',exact:true})});
-    await ads.getByText('Asset spend: RM 2.34',{exact:true}).waitFor();
+    await ads.getByRole('img').waitFor();
+    assert.ok(!/Asset spend:|Top-performing creative|Representative creative/.test(await ads.innerText()),'screen creative columns omit metadata captions');
     assert.equal(await ads.getByRole('img').count(),1,'single selected preview on dashboard');
     assert.ok((await ads.getByRole('img').getAttribute('src')).endsWith('#selected'),'selected asset identity retained');
     assert.equal(await ads.getByRole('columnheader',{name:'Views',exact:true}).count(),0);
@@ -199,7 +201,7 @@ try {
     await page.setViewportSize({width:390,height:844});
     await downloadPdf('demand-selected-creative-mobile');
     assert.equal(await ads.getByRole('img').count(),1,'export restores single screen preview');
-    console.log('Creative QA passed: legacy metric links, one selected image, ad/asset spend parity, portrait styled pages and mobile restoration.');
+    console.log('Creative QA passed: one selected image, caption-free screen/PDF, retained ad spend, portrait pages and mobile restoration.');
     await browser.close(); process.exit(0);
   }
   if (process.env.REPORT_QA_AD_SORT === "1") {

@@ -12,7 +12,7 @@ import { filterRowsByCampaignName, getCampaignNameOptions, type CampaignNameFilt
 import { levelTotals, matchesValueFilter, parseValueFilter, performanceValue, valueMetrics, type ValueFilter, type ValueMetric } from "@/lib/reporting/value-filter";
 import type { CampaignGroup, CampaignRow, PreviewAdGroupNode, PreviewReportPayload, PreviewPerformanceSummary, PreviewAdNode } from "@/lib/reporting/types";
 
-import { formatAccountCurrency, formatCpcRinggit } from "@/lib/reporting/format";
+import { formatCpcRinggit } from "@/lib/reporting/format";
 import { previewCreativeSource } from "@/lib/reporting/creative-preview";
 
 const tableMetrics = [...valueMetrics.slice(0, 4), "cpc", ...valueMetrics.slice(4)] as const;
@@ -161,7 +161,7 @@ function CreativeImage({ ad }: { ad?: PreviewAdNode }) {
   const failed = !source || failedSource === source;
   // Provider creatives must retain their native URL; video ads use a poster image.
   // eslint-disable-next-line @next/next/no-img-element
-  return <div data-pdf-creative-meta="true">{failed ? <span data-pdf-creative-source={source} data-pdf-creative-alt={`${ad.name} creative`} className="text-neutral-500">Creative image unavailable</span> : <img src={source} alt={`${ad.name} creative`} className="h-24 w-32 rounded-md object-contain bg-neutral-50" onError={() => setFailedSource(source)} />}<p className="mt-2 text-xs text-neutral-500">Representative creative — performance unavailable</p><p className="text-xs">Asset spend: {formatAccountCurrency(ad.creative?.assetSpend, ad.creative?.assetCurrency ?? undefined)}</p></div>;
+  return <div data-pdf-creative-meta="true">{failed ? <span data-pdf-creative-source={source} data-pdf-creative-alt={`${ad.name} creative`} className="text-neutral-500">Creative image unavailable</span> : <img src={source} alt={`${ad.name} creative`} className="h-24 w-32 rounded-md object-contain bg-neutral-50" onError={() => setFailedSource(source)} />}</div>;
 }
 function adsManagerLink(query: string, campaignId: string, groupId?: string, adId?: string) {
   const params = new URLSearchParams(query);

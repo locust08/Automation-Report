@@ -1,6 +1,5 @@
 "use client";
 
-import { demandCreativeLabel } from "@/lib/reporting/demand-gen-creatives";
 import { AdvancedLoadingPanel } from "./advanced-loading-panel";
 import { useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
@@ -138,7 +137,7 @@ function DemandAdsPanel({ ads, currency }: { ads: NonNullable<DemandGenPayload["
     return <th key={label} className="px-4 py-3 text-left" aria-sort={selected ? sort.ascending ? "ascending" : "descending" : undefined}>
       {metric ? <Button variant="ghost" className="px-0 text-[#9f0019] hover:bg-transparent" onClick={() => changeSort(metric)}>{label} {selected ? sort.ascending ? "↑" : "↓" : ""}</Button> : label}
     </th>;
-  })}</tr></thead><tbody>{ordered.map((ad) => <tr key={ad.adResource ?? ad.id} className="border-t"><td className="px-4 py-3">{ad.name}</td><td className="px-4 py-3">{ad.campaignName}</td><td className="px-4 py-3"><div className="flex flex-wrap gap-2">{(ad.selectedCreative?.previewUrl || ad.imageUrls[0]) ? <div data-pdf-creative-meta="true"><AdCreativeImage key={ad.selectedCreative?.previewUrl || ad.imageUrls[0]} url={ad.selectedCreative?.previewUrl || ad.imageUrls[0]} name={ad.name} /><p className="mt-2 max-w-48 text-xs text-muted-foreground">{demandCreativeLabel(ad.selectedCreative?.selection)}</p><p className="text-xs">Asset spend: {formatAccountCurrency(ad.selectedCreative?.metrics.spend, currency)}</p></div> : "—"}</div></td>{(["clicks", "ctr", "cpc", "impressions", "spend"] as const).map((metric) => <td key={metric} className="px-4 py-3 tabular-nums">{metricLabel(ad.metrics[metric], metric, currency)}</td>)}</tr>)}</tbody></table></div>{!ads.length ? <p>No ad creatives available for these campaigns.</p> : null}</Card>;
+  })}</tr></thead><tbody>{ordered.map((ad) => <tr key={ad.adResource ?? ad.id} className="border-t"><td className="px-4 py-3">{ad.name}</td><td className="px-4 py-3">{ad.campaignName}</td><td className="px-4 py-3"><div className="flex flex-wrap gap-2">{(ad.selectedCreative?.previewUrl || ad.imageUrls[0]) ? <div data-pdf-creative-meta="true"><AdCreativeImage key={ad.selectedCreative?.previewUrl || ad.imageUrls[0]} url={ad.selectedCreative?.previewUrl || ad.imageUrls[0]} name={ad.name} /></div> : "—"}</div></td>{(["clicks", "ctr", "cpc", "impressions", "spend"] as const).map((metric) => <td key={metric} className="px-4 py-3 tabular-nums">{metricLabel(ad.metrics[metric], metric, currency)}</td>)}</tr>)}</tbody></table></div>{!ads.length ? <p>No ad creatives available for these campaigns.</p> : null}</Card>;
 }
 function AdCreativeImage({ url, name }: { url: string; name: string }) {
   const [failed, setFailed] = useState(false);

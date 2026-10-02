@@ -39,6 +39,12 @@ Commit `01500d132dbbb3c7fd5976b726dc834ba53b6717` removes selection/ranking and 
 
 ## Production deployment evidence
 
+### Screen caption correction
+
+The user reported captions still visible on screen after the PDF-only change. Both screen components independently rendered those labels. Removed selection/ranking and asset-spend captions from Demand Gen and Breakdown Creative cells, preserving selected thumbnails, missing-image placeholders and ad-spend metric columns. This also covers PNG captures.
+
+The selected-creative screen assertion failed against the previous implementation, then passed after the correction, including mobile PDF restoration. Typecheck and scoped lint passed. The compact browser check also passed (12 Demand Gen ads/six pages; 26 Breakdown ads/12 pages), with an explicit Breakdown screen assertion for absent captions. This local fixture evidence does not establish native reconciliation.
+
 Through Ava's Vercel browser, the initial compact source `2ab993f` reached Ready in production deployment `3dFxrzZyUwwRHpFMHSCFitWwMfCD`. The caption follow-up source `01500d1` then reached Ready in production deployment `PVjrqq3MLYZQrPinz8iRba5M8Dzr` on 2026-10-02 at 16:53:15 Malaysia time (build duration 1m 24s). The dashboard shows the production alias [automated-report-iota.vercel.app](https://automated-report-iota.vercel.app). Screenshot evidence is stored locally in ignored `tmp/creative-captions-production-ready.png`.
 
 GitHub branch `codex/compact-report-pdfs` is pushed. Publishing to `master` through the requested browser remains pending because GitHub is signed out. Deployment readiness is separate from native platform reconciliation, which remains pending. Subsequent receipt-only commits do not change the deployed runtime source.
