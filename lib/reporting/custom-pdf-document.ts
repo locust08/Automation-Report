@@ -4,10 +4,20 @@ export const isAdPerformanceRow = (summaryMarker?: string) => summaryMarker !== 
 
 export const performanceColumnIndexes = (headers: string[]) => headers.flatMap((header,index) => /^(creative|actions)$/i.test(header.trim()) ? [] : [index]);
 
+export const adColumnIndexes = (headers: string[]) => performanceColumnIndexes(headers).filter(index => !/^campaign$/i.test(headers[index].trim()));
+export function groupAdsByCampaign<T extends { campaign: string }>(ads: T[]): T[] {
+  const groups = new Map<string,T[]>();
+  for (const ad of ads) {
+    const group = groups.get(ad.campaign) ?? [];
+    group.push(ad); groups.set(ad.campaign,group);
+  }
+  return Array.from(groups.values()).flat();
+}
+
 type ChartRow = { label: string; value: string; width: string };
 type Section = { title: string; headers: string[]; rows: string[][]; charts: ChartRow[]; notes: string[] };
 type Creative = { label: string; source: string; alt: string };
-type Ad = { label: string; headers: string[]; values: string[]; creatives: Creative[] };
+type Ad = { campaign: string; name: string; label: string; headers: string[]; values: string[]; creatives: Creative[] };
 
 const text = (element: Element | null | undefined) => element?.textContent?.replace(/\s+/g," ").trim() ?? "";
 function cleanText(element: Element) {
@@ -62,7 +72,8 @@ export function readCustomPdfContent(root: HTMLElement) {
     for (const row of rows) {
       const label = `${title} · ${cleanText(row.cells[0])}${demand && row.cells[1] ? ` · ${cleanText(row.cells[1])}` : ""}`;
       if (adTable && isAdPerformanceRow(row.dataset.pdfSummaryRow)) {
-        ads.push({label,headers:indexes.map(index => headers[index]),values:indexes.map(index => cleanText(row.cells[index])),
+        const adIndexes=adColumnIndexes(headers);
+        ads.push({label,campaign:demand ? cleanText(row.cells[1]) : title,name:cleanText(row.cells[0]),headers:adIndexes.map(index => headers[index]),values:adIndexes.map(index => cleanText(row.cells[index])),
           creatives:Array.from(row.querySelectorAll<HTMLElement>("img, [data-pdf-creative-source]")).map(image => ({label,source:image.dataset.pdfCreativeSource || (image as HTMLImageElement).currentSrc || (image as HTMLImageElement).src,alt:image.dataset.pdfCreativeAlt || (image as HTMLImageElement).alt}))});
       } else summaryRows.push(row);
     }
@@ -176,11 +187,12 @@ export async function createCustomReportPdf(root: HTMLElement, onPage?: (image:s
       }
       if (!length && !fits()) { block!.remove(); appendBlock(block!); }
     }
-    for (const ad of content.ads) {
+    for (const ad of groupAdsByCampaign(content.ads)) {
       newPage();
       body!.dataset.adLabel = ad.label;
       const adHeader = (continued = false) => {
-        body!.append(el("h2",`${ad.label}${continued ? " (continued)" : ""}`));
+        body!.append(el("h2",ad.campaign));
+        body!.append(el("p",`Ad: ${ad.name}${continued ? " (continued)" : ""}`));
         const table = el("table"), head = el("thead"), header = el("tr"), rows = el("tbody"), row = el("tr");
         ad.headers.forEach(value => header.append(el("th",value)));
         ad.values.forEach(value => row.append(el("td",value)));

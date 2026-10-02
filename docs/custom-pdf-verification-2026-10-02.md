@@ -23,3 +23,7 @@ Local fixtures do not establish native platform totals or remote asset availabil
 The actual selected Magnet Google report reproduced a failure on page 5: html-to-image rejected an image load Event after a remote creative URL was fetched again during embedding. The original error was not an Error object, so the UI showed only the generic fallback. Export now converts loaded CORS-safe creative pixels into bounded PNG data URLs once, preventing that second fetch; unavailable pixels retain a numbered placeholder. Raster failures include the page number.
 
 The actual account's 38-page admin preview completed after the fix. This verifies live asset rendering locally, not native metric reconciliation or deployment. A regression fixture serves a creative successfully to the screen/export image loader, then would return 404 on the renderer's next fetch; export succeeds without that third request and retains the image. Source TypeScript and scoped lint pass.
+
+## Campaign grouping refinement
+
+Ad pages now group campaigns in first-seen order, retaining the original order of ads within each campaign. Each page and continuation repeats the campaign heading above the ad name, removing the redundant Campaign column only from ad metrics. Screen and PNG remain unchanged.
