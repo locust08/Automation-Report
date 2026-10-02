@@ -11,6 +11,12 @@ page.on("pageerror", (error) => console.error("UI error:", error.message));
 const values = { impressions: 100, views: 100, clicks: 10, spend: 5, conversions: 2, ctr: 10, cpc: .5, cpm: 50 };
 const creativeUrl = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aQ1cAAAAASUVORK5CYII=";
 const demand = { account: { id: "1234567890", name: "Fixture Google", currency: "MYR", timezone: "Asia/Kuala_Lumpur" }, startDate: "2026-09-01", endDate: "2026-09-30", campaigns: [{ id: "1", name: "Demand A" }, { id: "2", name: "Demand B" }], campaignId: "1", ads: [{ id: "ad1", name: "Demand ad", campaignName: "Demand A", imageUrls: [creativeUrl], metrics: values }], inMarket: [{ id: "i", name: "Furniture", metrics: values }], affinity: [{ id: "a", name: "Home enthusiasts", metrics: values }], cells: ["In-feed", "In-stream", "Shorts"].flatMap((format) => ["Desktop", "Mobile", "Tablet", "TV"].map((device) => ({ format, device, metrics: values }))), unmapped: [], unresolved: [], warnings: [], complete: true };
+let flakyImageRequests = 0;
+await page.route("**/fixture-expiring-creative.png", async route => {
+  flakyImageRequests++;
+  if (flakyImageRequests > 2) return route.fulfill({status:404,body:"Thumbnail expired"});
+  await route.fulfill({contentType:"image/png",body:Buffer.from(creativeUrl.split(",")[1],"base64"),headers:{"Access-Control-Allow-Origin":"*"}});
+});
 const dateRange = { startDate: "2026-09-01", endDate: "2026-09-30", previousStartDate: "2026-08-01", previousEndDate: "2026-08-31", currentLabel: "September 2026", previousLabel: "August 2026" };
 demand.inMarket.push(...Array.from({ length: 11 }, (_, index) => ({ id: `i${index}`, name: `Interest ${String(index).padStart(2, "0")}`, metrics: values })));
 const campaign = { id: "c", platform: "meta", campaignType: "Lead", campaignName: "Fixture campaign", resultActionType: "lead", resultLabel: "Lead", impressions: 1000, videoViews: 500, clicks: 100, spend: 50, results: 20, ctr: 10, cpm: 50, costPerResult: 2.5, conversions: 20, avgCpc: .5, youtubeEarnedLikes: 0, youtubeEarnedShares: 0 };
@@ -85,6 +91,16 @@ async function downloadPdf(file) {
 try {
   await page.goto(`${base}/demand-gen?googleAccountId=1234567890&platform=google&startDate=2026-09-01&endDate=2026-09-30`);
   await page.getByRole("cell", { name: "Furniture", exact: true }).waitFor();
+  if (process.env.REPORT_QA_IMAGE_REFETCH === "1") {
+    demand.ads[0].imageUrls = [`${base}/fixture-expiring-creative.png`];
+    await page.reload();
+    await page.getByRole("img", {name:"Demand ad creative",exact:true}).waitFor();
+    await downloadPdf("demand-expiring-creative");
+    assert.equal(flakyImageRequests,2,"loaded creative is not fetched again during page serialization");
+    assert.ok(!(await page.evaluate(()=>window.customPdfStructure.text)).includes("Creative image unavailable"),"loaded creative retained");
+    console.log("Image embedding QA passed: expiring remote creative retained without renderer refetch.");
+    await browser.close(); process.exit(0);
+  }
   if (process.env.REPORT_QA_EDGE_ONLY === "1") {
     demand.ads[0].imageUrls = Array.from({length:14},(_,i)=>`${creativeUrl}#${i}`);
     demand.ads.push({...demand.ads[0],id:"ad2",name:"Second distinct ad",imageUrls:[creativeUrl]});
@@ -123,7 +139,7 @@ try {
       HTMLCanvasElement.prototype.toDataURL = () => { throw new Error("Fixture raster failure"); };
     });
     await page.getByRole("button", { name: "Preview PDF", exact: true }).click();
-    await page.getByText("Fixture raster failure", { exact: true }).waitFor({timeout:120000});
+    await page.getByText("Could not render PDF page 1. Fixture raster failure", {exact:true}).waitFor({timeout:120000});
     await page.waitForURL(url => !url.searchParams.has("screenshot"));
     assert.equal(await page.locator('[data-compact-pdf], .custom-report-pdf').count(),0,"failed export restores styles and removes temporary document");
     await page.evaluate(() => { HTMLCanvasElement.prototype.toDataURL = window.originalPdfCanvasDataUrl; delete window.originalPdfCanvasDataUrl; });

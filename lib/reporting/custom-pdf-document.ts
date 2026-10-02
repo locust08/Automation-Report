@@ -210,16 +210,35 @@ export async function createCustomReportPdf(root: HTMLElement, onPage?: (image:s
       image.onload=finish; image.onerror=finish;
       if(image.complete) finish();
     })));
-    // Replace failures explicitly, retaining every creative's caption/reference.
-    images.filter(image => !image.naturalWidth).forEach(image => {
-      const placeholder=el("div","Creative image unavailable");
-      placeholder.style.height="220px"; placeholder.style.background="#fafafa"; placeholder.style.display="grid"; placeholder.style.placeItems="center"; image.replaceWith(placeholder);
-    });
+    // Embed already-loaded CORS-safe pixels once. Re-fetching provider URLs during
+    // serialization can fail (expired/transient thumbnails) and reject the whole page.
+    for (const image of images) {
+      try {
+        if (!image.naturalWidth) throw new Error("Image unavailable");
+        const canvas=document.createElement("canvas");
+        const scale=Math.min(1,1600/Math.max(image.naturalWidth,image.naturalHeight));
+        canvas.width=Math.max(1,Math.round(image.naturalWidth*scale));
+        canvas.height=Math.max(1,Math.round(image.naturalHeight*scale));
+        const context=canvas.getContext("2d");
+        if (!context) throw new Error("Image canvas unavailable");
+        context.drawImage(image,0,0,canvas.width,canvas.height);
+        image.src=canvas.toDataURL("image/png");
+        await image.decode();
+      } catch {
+        const placeholder=el("div","Creative image unavailable");
+        placeholder.style.height="220px"; placeholder.style.background="#fafafa"; placeholder.style.display="grid"; placeholder.style.placeItems="center"; image.replaceWith(placeholder);
+      }
+    }
     const { jsPDF } = await import("jspdf");
     const pdf=new jsPDF({orientation:"portrait",unit:"mm",format:"a4",compress:true});
     for(const [index,page] of pages.entries()) {
       page.querySelector("footer")!.textContent=`Page ${index+1} of ${pages.length}`;
-      const image=await toPng(page,{width:792,height:1120,pixelRatio:2,cacheBust:false,backgroundColor:"#ffffff"});
+      let image: string;
+      try {
+        image=await toPng(page,{width:792,height:1120,pixelRatio:2,cacheBust:false,backgroundColor:"#ffffff"});
+      } catch (error) {
+        throw new Error(`Could not render PDF page ${index+1}. ${error instanceof Error ? error.message : "An image could not be embedded."}`);
+      }
       if(index) pdf.addPage("a4","portrait");
       pdf.addImage(image,"PNG",0,0,210,297,`custom-page-${index}`,"FAST"); onPage?.(image);
     }
