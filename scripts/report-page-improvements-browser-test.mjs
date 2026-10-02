@@ -137,7 +137,7 @@ try {
     assert.ok(demandPdf.pages < 12, "several ads share pages");
     assert.ok(demandPdf.adRows.some((row,index,rows)=>index && row.page===rows[index-1].page), "adjacent ads share a page");
     assert.ok(demandPdf.text.includes("Creative image unavailable"));
-    assert.ok(demandPdf.text.includes("Asset spend: RM 2.34") && demandPdf.text.includes("Top-performing creative"));
+    assert.ok(!/Asset spend:|Top-performing creative|Representative creative/.test(demandPdf.text),"PDF creative columns omit selection and asset-spend captions");
     const previewPromise = page.waitForEvent("download");
     await page.getByRole("button", {name:"Preview PDF",exact:true}).click();
     await page.getByRole("dialog", {name:"PDF preview",exact:true}).waitFor({timeout:180000});
@@ -156,6 +156,7 @@ try {
     assert.equal(breakdownPdf.introNotes,0,"creative metadata stays out of report scope");
     assert.ok(breakdownPdf.text.includes("Historical set") && breakdownPdf.text.includes("Ads total"));
     assert.ok(breakdownPdf.text.includes("Another historical set") && breakdownPdf.text.includes("Creative image unavailable"));
+    assert.ok(!/Asset spend:|Representative creative/.test(breakdownPdf.text),"Breakdown PDF omits creative captions");
     assert.equal(breakdownPdf.adRows.filter(row=>row.label.includes("Another historical set")).length,2,"same-named ads stay in their ad set context");
     assert.ok(breakdownPdf.headers.some(header=>header.includes("Cost/Results")),"last metric group retained");
     await page.getByRole("button",{name:"Preview PDF",exact:true}).click();
@@ -192,8 +193,8 @@ try {
     await downloadPdf('demand-selected-creative');
     const pdf=await page.evaluate(()=>window.customPdfStructure);
     assert.equal(pdf.creatives,1);
-    assert.ok(pdf.text.includes('Asset spend: RM 2.34') && pdf.text.includes('Ad spend') && pdf.text.includes('RM 5.00'));
-    assert.ok(pdf.text.includes('Top-performing creative') && !pdf.text.includes('Creative 1 of'));
+    assert.ok(pdf.text.includes('Ad spend') && pdf.text.includes('RM 5.00'));
+    assert.ok(!/Asset spend:|Top-performing creative|Representative creative|Creative 1 of/.test(pdf.text),"PDF keeps ad spend metrics while omitting creative metadata");
     assert.ok(pdf.fits && pdf.text.includes('LOCUS-T SDN BHD'),'failed footer logo preserves bounded fallback and page numbering');
     await page.setViewportSize({width:390,height:844});
     await downloadPdf('demand-selected-creative-mobile');

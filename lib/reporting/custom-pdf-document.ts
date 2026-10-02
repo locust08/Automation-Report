@@ -23,7 +23,7 @@ export function metricColumnGroups(columnCount: number): number[][] {
 
 type ChartRow = { label: string; value: string; width: string };
 type Section = { title: string; headers: string[]; rows: string[][]; charts: ChartRow[]; notes: string[] };
-type Creative = { label: string; source: string; alt: string; caption: string };
+type Creative = { label: string; source: string; alt: string };
 type Ad = { campaign: string; name: string; label: string; headers: string[]; values: string[]; creatives: Creative[] };
 
 const text = (element: Element | null | undefined) => element?.textContent?.replace(/\s+/g," ").trim() ?? "";
@@ -81,7 +81,7 @@ export function readCustomPdfContent(root: HTMLElement) {
       if (adTable && isAdPerformanceRow(row.dataset.pdfSummaryRow)) {
         const adIndexes=adColumnIndexes(headers);
         ads.push({label,campaign:demand ? cleanText(row.cells[1]) : title,name:cleanText(row.cells[0]),headers:adIndexes.map(index => headers[index]),values:adIndexes.map(index => cleanText(row.cells[index])),
-          creatives:Array.from(row.querySelectorAll<HTMLElement>("img, [data-pdf-creative-source]")).slice(0,1).map(image => ({label,source:image.dataset.pdfCreativeSource || (image as HTMLImageElement).currentSrc || (image as HTMLImageElement).src,alt:image.dataset.pdfCreativeAlt || (image as HTMLImageElement).alt,caption:Array.from(image.closest('[data-pdf-creative-meta]')?.querySelectorAll('p') ?? []).map(text).join(' · ')}))});
+          creatives:Array.from(row.querySelectorAll<HTMLElement>("img, [data-pdf-creative-source]")).slice(0,1).map(image => ({label,source:image.dataset.pdfCreativeSource || (image as HTMLImageElement).currentSrc || (image as HTMLImageElement).src,alt:image.dataset.pdfCreativeAlt || (image as HTMLImageElement).alt}))});
       } else summaryRows.push(row);
     }
     if (adTable && !summaryRows.length && rows.length) continue;
@@ -134,7 +134,6 @@ const css = `
 .custom-report-pdf .pdf-ad-table .pdf-creative-cell { text-align:left; white-space:normal; }
 .custom-report-pdf figure { width:112px; margin:0; }
 .custom-report-pdf figure img { display:block; width:112px; height:84px; object-fit:contain; background:#fafafa; border-radius:8px; }
-.custom-report-pdf figcaption { font-size:10px; margin-top:6px; overflow-wrap:anywhere; }
 .custom-report-pdf .pdf-footer { display:flex; align-items:center; justify-content:space-between; gap:12px; border-top:3px solid #e10600; padding-top:8px; font-size:10px; color:#777; }
 .custom-report-pdf .pdf-footer img { width:132px; height:24px; object-fit:contain; }
 `;
@@ -243,7 +242,7 @@ export async function createCustomReportPdf(root: HTMLElement, onPage?: (image:s
           if (creative) {
             const card = el("figure"), image = el("img");
             image.crossOrigin = "anonymous"; image.src = creative.source; image.alt = creative.alt;
-            card.append(image, el("figcaption", creative.caption || "Representative creative — performance unavailable · Asset spend: —"));
+            card.append(image);
             cell.append(card);
           } else cell.append(el("p", "No creative images available for this ad."));
           row.append(cell);
