@@ -1,5 +1,7 @@
 # Automation Report Codebase Guide
 
+Current reporting behavior, typography/export contracts and remaining acceptance gates are indexed in [map/README.md](map/README.md). Update the affected card when changing these behaviors; keep local fixture verification, native reconciliation and deployment evidence separate.
+
 This repository is a Next.js reporting application for Meta Ads and Google Ads data. It renders interactive report pages, exposes API routes that fetch and normalize ad platform data, and includes a monthly automation path that captures the Overall report as a PDF and emails it through Resend.
 
 ## Tech Stack
