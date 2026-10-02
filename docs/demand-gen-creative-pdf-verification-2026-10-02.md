@@ -1,6 +1,6 @@
-# Demand Gen creative and PDF verification — 2026-10-02
+# Demand Gen creative and PDF verification ï¿½ 2026-10-02
 
-Implemented on `codex/demand-gen-ad-filters`. Notion module work remains paused in its separate worktree. Unrelated working edits are excluded. No deployment or advertising writes were performed.
+Implementation commit: `cfaaeb9` on `codex/demand-gen-ad-filters`. Notion module work remains paused in its separate worktree. Unrelated working edits are excluded. No deployment or advertising writes were performed.
 
 ## Current behaviour
 
@@ -21,9 +21,9 @@ Demand Gen and Breakdown PDFs restore dashboard branding and cards while retaini
 
 `doppler run -- npx tsx scripts/demand-creative-preflight.ts` reconciled Google Ads v25 for Magnet Security & Automation Sdn Bhd, account `5849785984`, 2026-09-01 through 2026-09-30, MYR / Asia-Kuala_Lumpur. Ignored credential-free receipt: `artifacts/demand-creative-verification/magnet-september.json`. Core and creative coverage were complete: 21 ads, 13 ranked and 8 representative.
 
-The screenshot ad “No Shake No Clone” returned zero impressions, clicks, views, conversions and ad spend. Selected image asset `152178600074` is representative; supplied asset spend is zero. Zero delivery is not described as top-performing.
+The screenshot ad ï¿½No Shake No Cloneï¿½ returned zero impressions, clicks, views, conversions and ad spend. Selected image asset `152178600074` is representative; supplied asset spend is zero. Zero delivery is not described as top-performing.
 
-“Video - BG856” (ad `769734850316`) returned 112,644 impressions versus 24,444 video views, 8,470 clicks and MYR 838.559681 ad spend. Selected video asset `276575206077` returned 55,620 impressions, 4,145 clicks, 289.263177 conversions and MYR 374.028633 asset spend. Independent candidate comparison confirmed ranking. Attribution values can change between provider reads.
+ï¿½Video - BG856ï¿½ (ad `769734850316`) returned 112,644 impressions versus 24,444 video views, 8,470 clicks and MYR 838.559681 ad spend. Selected video asset `276575206077` returned 55,620 impressions, 4,145 clicks, 289.263177 conversions and MYR 374.028633 asset spend. Independent candidate comparison confirmed ranking. Attribution values can change between provider reads.
 
 ## Remaining gates
 
