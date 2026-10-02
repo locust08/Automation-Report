@@ -32,7 +32,7 @@ See [dated implementation and API smoke evidence](../docs/monthly-breakdowns-dem
 - Complete bounded pagination and aggregate repeated dimension rows before calculating ratios. Keep native zero distinct from unavailable; zero denominators produce unavailable ratios.
 - Preserve unknown format/device and unresolved taxonomy coverage. Composite targeting criteria are not invented measured audience performance; overlapping observations are not mutually exclusive totals.
 - Sorting, pagination, metric selection and table/chart toggles use the same normalized snapshot without presentation-triggered provider reads.
-- Current cache in `demand-gen-cache.ts`: **seven days**, at most 100 entries, per-process memory, concurrent request deduplication. Key includes schema version, account, sorted selected campaigns, dates, API version and Google access routing. Partial snapshots are evicted; explicit refresh invalidates the entry. Restart loses entries. This supersedes the older 15-minute receipt.
+- Current cache in `demand-gen-cache.ts`: **seven days**, at most 100 entries, per-process memory, concurrent request deduplication. Key includes schema version, account, sorted selected campaigns, dates, API version and Google access routing. Schema version 4 separates the new creative payload. Partial core or incomplete creative snapshots are evicted; explicit refresh invalidates the entry. Restart loses entries. This supersedes the older 15-minute receipt.
 - Advanced navigation returns explicit provider identity to Overall to avoid Meta IDs entering Google routing.
 
 The [2026-10-02 native receipt](../docs/reporting-verification-2026-10-02.md) reconciles all three nonzero classified formats, six In-market rows and measured Affinity for Magnet campaign `22906147660` in September. Individual native device-cell reconciliation, a seven-impression campaign/segmented-total discrepancy and fresh connected MCP routing remain open. UNKNOWN stays UNKNOWN despite numerical agreement with native Image totals.
@@ -40,3 +40,11 @@ The [2026-10-02 native receipt](../docs/reporting-verification-2026-10-02.md) re
 ## Change impact
 
 Provider/normalization changes affect UI, totals, cache identity and exports. Contract changes require synchronized route/service/client types. Cache changes require partial/error retry and refresh verification. Preserve nullable values and provider-native semantics in all displays.
+
+## Demand Gen impressions and creative selection — 2026-10-02
+
+Demand Gen defaults to actual Google `metrics.impressions`; legacy `metric=views` links resolve to impressions. Other reports retain their view metrics. Ad spend is sortable and formatted in account currency. Ad totals come from ad metrics, never summed asset metrics.
+
+Exact account/ad/date asset observations are isolated by full resource identity. Marketing image orientations, classic display images, carousel images and video thumbnails are eligible; logo observations are excluded. Complete delivered candidates rank by conversions, clicks, impressions, then stable asset identity. Missing/incomplete/no-delivery evidence produces one preview labelled “Representative creative — performance unavailable.” Asset spend is independent and nullable. Optional creative failures retain usable ad data and expose retry.
+
+See [implementation and verification receipt](../docs/demand-gen-creative-pdf-verification-2026-10-02.md): 30 focused tests and local browser checks passed; read-only Magnet September API reconciliation returned 21 ads (13 ranked, 8 representative). Native UI reconciliation and deployment remain separate gates.

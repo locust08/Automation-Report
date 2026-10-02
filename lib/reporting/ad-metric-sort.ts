@@ -1,4 +1,4 @@
-export type AdSortMetric = "clicks" | "ctr" | "cpc" | "views";
+export type AdSortMetric = "clicks" | "ctr" | "cpc" | "views" | "impressions" | "spend";
 
 /** Stable numeric ordering; unavailable values remain last in either direction. */
 export function sortAdsByMetric<T extends { metrics: Partial<Record<AdSortMetric, number | null>> }>(rows: T[], metric: AdSortMetric, ascending: boolean): T[] {

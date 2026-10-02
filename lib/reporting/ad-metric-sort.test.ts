@@ -7,3 +7,9 @@ test("metric sorting is numeric, stable, nonmutating and keeps unavailable value
   assert.deepEqual(sortAdsByMetric(rows,"clicks",false).map(row=>row.id),["ten","tie","zero","null","nan"]);
   assert.equal(rows[0].id,"null");
 });
+test("Demand Gen impressions and ad spend sort without replacing video metrics", () => {
+  const rows=[{id:"a",metrics:{impressions:30,views:1,spend:2}},{id:"b",metrics:{impressions:10,views:50,spend:9}},{id:"c",metrics:{impressions:null,spend:null}}];
+  assert.equal(sortAdsByMetric(rows,"impressions",false)[0].id,"a");
+  assert.equal(sortAdsByMetric(rows,"spend",false)[0].id,"b");
+  assert.equal(sortAdsByMetric(rows,"views",false)[0].id,"b");
+});

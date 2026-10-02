@@ -1437,7 +1437,7 @@ export async function getDemandGenReport(input: OverallInput, campaignId: string
   const customerId = resolvedAccountIds.googleAccountIds[0];
   const loginCustomerId = resolveLoginCustomerIdForAccount(customerId, googleManagerContext.loginCustomerIdByAccount);
   const accessPath = googleManagerContext.accessPathByAccount[customerId];
-  const cacheKey = JSON.stringify({ schemaVersion: 3, customerId, campaignId: Array.isArray(campaignId) ? [...new Set(campaignId)].sort() : campaignId, startDate: dates.startDate, endDate: dates.endDate, loginCustomerId, accessPath, apiVersion: credentials.googleAdsApiVersion, fallbackLoginCustomerId: credentials.googleLoginCustomerId });
+  const cacheKey = JSON.stringify({ schemaVersion: 4, customerId, campaignId: Array.isArray(campaignId) ? [...new Set(campaignId)].sort() : campaignId, startDate: dates.startDate, endDate: dates.endDate, loginCustomerId, accessPath, apiVersion: credentials.googleAdsApiVersion, fallbackLoginCustomerId: credentials.googleLoginCustomerId });
   const payload = await resolveDemandGenWithCache(cacheKey, () => fetchGoogleDemandGen({ customerId, apiVersion: credentials.googleAdsApiVersion, accessToken: credentials.googleAccessToken, refreshToken: credentials.googleRefreshToken, clientId: credentials.googleClientId, clientSecret: credentials.googleClientSecret, loginCustomerId, accessPath, fallbackLoginCustomerId: credentials.googleLoginCustomerId, startDate: dates.startDate, endDate: dates.endDate }, campaignId), Boolean(input.cacheRefreshKey));
   payload.warnings.unshift(...googleManagerContext.messages);
   return payload;

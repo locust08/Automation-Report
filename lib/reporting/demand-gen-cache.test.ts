@@ -25,3 +25,11 @@ test("partial snapshots and failed retrievals can be retried immediately", async
   await assert.rejects(resolveDemandGenWithCache("failed", async () => { throw new Error("provider failure"); }));
   assert.equal((await resolveDemandGenWithCache("failed", async () => payload)).complete, true);
 });
+
+test("optional creative failure permits the report but does not become a sticky snapshot", async () => {
+  let calls = 0;
+  const load = async () => { calls++; return { ...payload, creativeCoverageComplete: false }; };
+  assert.equal((await resolveDemandGenWithCache("optional-creative",load)).complete,true);
+  await resolveDemandGenWithCache("optional-creative",load);
+  assert.equal(calls,2);
+});

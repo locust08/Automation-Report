@@ -1,5 +1,6 @@
 import { GoogleAdsRestClient, GoogleAdsApiError, normalizeGoogleAdsApiVersion } from "../google-ads/rest-client";
 import { buildDemandAudiences, aggregateDemandMetrics, buildDemandMatrix, readDemandPages, type DemandNativeRow, type DemandGenPayload } from "./demand-gen";
+import { collectDemandCreatives, selectDemandCreative, type DemandAdDefinition } from "./demand-gen-creatives";
 import { emptyCampaignRow, hasReportableCampaignSpend } from "@/lib/reporting/metrics";
 import {
   addSourceToAudienceItems,
@@ -601,16 +602,19 @@ export async function fetchGoogleDemandGen(input: GoogleFetchInput, campaignId: 
     if (!matrix.complete) { payload.complete = false; payload.warnings.push(matrix.reason!); }
   } catch (error) { payload.complete = false; payload.warnings.push(`Format/device data unavailable: ${error instanceof Error ? error.message : "Google request failed"}`); }
   try {
-    type AdResult = DemandNativeRow & { campaign?: { name?: string }; adGroupAd?: { ad?: { id?: string; name?: string; demandGenMultiAssetAd?: { marketingImages?: { asset?: string }[]; squareMarketingImages?: { asset?: string }[] }; demandGenVideoResponsiveAd?: { videos?: { asset?: string }[] } } } };
-    const ads = await query<AdResult>(`SELECT campaign.name, ad_group_ad.ad.id, ad_group_ad.ad.name, ad_group_ad.ad.demand_gen_multi_asset_ad.marketing_images, ad_group_ad.ad.demand_gen_multi_asset_ad.square_marketing_images, ad_group_ad.ad.demand_gen_video_responsive_ad.videos, ${fields} FROM ad_group_ad WHERE ${scope}`);
-    const refs = [...new Set(ads.rows.flatMap((row) => { const ad = row.adGroupAd?.ad; return [...(ad?.demandGenMultiAssetAd?.marketingImages ?? []), ...(ad?.demandGenMultiAssetAd?.squareMarketingImages ?? []), ...(ad?.demandGenVideoResponsiveAd?.videos ?? [])].flatMap((item) => item.asset ? [item.asset] : []); }))];
-    const urls = new Map<string, string>();
-    for (let offset = 0; offset < refs.length; offset += 100) {
-      const assets = await query<{ asset?: { resourceName?: string; imageAsset?: { fullSize?: { url?: string } }; youtubeVideoAsset?: { youtubeVideoId?: string } } }>(`SELECT asset.resource_name, asset.image_asset.full_size.url, asset.youtube_video_asset.youtube_video_id FROM asset WHERE asset.resource_name IN (${refs.slice(offset, offset + 100).map((ref) => `'${ref}'`).join(",")})`);
-      for (const row of assets.rows) { const asset = row.asset; const url = asset?.imageAsset?.fullSize?.url || (asset?.youtubeVideoAsset?.youtubeVideoId ? buildYoutubeThumbnailUrl(asset.youtubeVideoAsset.youtubeVideoId) : null); if (asset?.resourceName && url) urls.set(asset.resourceName, url); }
-      if (!assets.complete) { payload.complete = false; payload.warnings.push(assets.reason!); }
-    }
-    payload.ads = ads.rows.flatMap((row) => { const ad = row.adGroupAd?.ad; if (!ad?.id) return []; const images = [...(ad.demandGenMultiAssetAd?.marketingImages ?? []), ...(ad.demandGenMultiAssetAd?.squareMarketingImages ?? []), ...(ad.demandGenVideoResponsiveAd?.videos ?? [])].flatMap((item) => item.asset && urls.has(item.asset) ? [urls.get(item.asset)!] : []); return [{ id: ad.id, name: ad.name || `Ad ${ad.id}`, campaignName: row.campaign?.name ?? "", imageUrls: [...new Set(images)], metrics: aggregateDemandMetrics([row]) }]; });
+    type AdResult = DemandNativeRow & { campaign?: { name?: string }; adGroupAd?: { resourceName?: string; ad?: DemandAdDefinition & { id?: string; name?: string } } };
+    const ads = await query<AdResult>(`SELECT campaign.name, ad_group_ad.resource_name, ad_group_ad.ad.id, ad_group_ad.ad.name, ad_group_ad.ad.demand_gen_multi_asset_ad.marketing_images, ad_group_ad.ad.demand_gen_multi_asset_ad.square_marketing_images, ad_group_ad.ad.demand_gen_multi_asset_ad.portrait_marketing_images, ad_group_ad.ad.demand_gen_multi_asset_ad.classic_display_images, ad_group_ad.ad.demand_gen_carousel_ad.carousel_cards, ad_group_ad.ad.demand_gen_video_responsive_ad.videos, ${fields} FROM ad_group_ad WHERE ${scope}`);
+    const definitions = ads.rows.flatMap(row => row.adGroupAd?.resourceName && row.adGroupAd.ad ? [{ resourceName: row.adGroupAd.resourceName, ad: row.adGroupAd.ad }] : []);
+    let collection: Awaited<ReturnType<typeof collectDemandCreatives>> = { byAd: new Map(), warnings: [], complete: false };
+    try { collection = await collectDemandCreatives(definitions, query, scope, context.customerId); }
+    catch { collection.warnings.push("Creative previews or asset performance are unavailable; ad metrics remain available."); }
+    payload.creativeCoverageComplete = collection.complete && ads.complete;
+    payload.warnings.push(...collection.warnings);
+    payload.ads = ads.rows.flatMap(row => {
+      const ad = row.adGroupAd?.ad; if (!ad?.id) return [];
+      const creatives = (collection.byAd.get(row.adGroupAd?.resourceName ?? "") ?? []).map(creative => ({ ...creative, performanceComplete: creative.performanceComplete && ads.complete }));
+      return [{ id: ad.id, name: ad.name || `Ad ${ad.id}`, adResource: row.adGroupAd?.resourceName, campaignName: row.campaign?.name ?? "", imageUrls: [...new Set(creatives.map(creative => creative.previewUrl).filter(Boolean))], creatives, selectedCreative: selectDemandCreative(creatives), metrics: aggregateDemandMetrics([row]) }];
+    });
     if (!ads.complete) { payload.complete = false; payload.warnings.push(ads.reason!); }
   } catch (error) { payload.complete = false; payload.warnings.push(`Ad creatives unavailable: ${error instanceof Error ? error.message : "Google request failed"}`); }
   return payload;

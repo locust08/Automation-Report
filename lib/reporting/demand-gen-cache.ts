@@ -8,6 +8,6 @@ export async function resolveDemandGenWithCache(key: string, load: () => Promise
   if (refresh) cache.delete(key);
   const payload = await readThroughMemoryCache(cache, key, load, { ttlMs: TTL_MS, maxEntries: 100 });
   // Partial snapshots must remain retrievable on retry rather than becoming sticky failures.
-  if (!payload.complete) cache.delete(key);
+  if (!payload.complete || payload.creativeCoverageComplete === false) cache.delete(key);
   return payload;
 }

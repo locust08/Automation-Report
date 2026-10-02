@@ -1,5 +1,6 @@
 "use client";
 
+import { demandCreativeLabel } from "@/lib/reporting/demand-gen-creatives";
 import { AdvancedLoadingPanel } from "./advanced-loading-panel";
 import { useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
@@ -12,14 +13,14 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { BarChart3Icon, UsersIcon, LayoutGridIcon, ChevronDownIcon } from "lucide-react";
 import { useReportSectionQuery } from "./use-report-data";
 import { filterRowsByCampaignName, type CampaignNameFilter } from "@/lib/reporting/campaign-name-filter";
-import { sumDemandValues, demandShare, demandMetrics, demandDevices, demandFormats, type DemandMetric, type DemandAudienceRow, type DemandGenPayload, type DemandCell } from "@/lib/reporting/demand-gen";
+import { sumDemandValues, demandShare, demandMetrics, resolveDemandMetric, demandDevices, demandFormats, type DemandMetric, type DemandAudienceRow, type DemandGenPayload, type DemandCell } from "@/lib/reporting/demand-gen";
 
 import { sortAdsByMetric, type AdSortMetric } from "@/lib/reporting/ad-metric-sort";
-import { formatCpcRinggit } from "@/lib/reporting/format";
+import { formatAccountCurrency, formatCpcRinggit } from "@/lib/reporting/format";
 
-const labels: Record<DemandMetric, string> = { views: "Views", clicks: "Clicks", spend: "Spend", conversions: "Conversions", ctr: "CTR (%)", cpc: "CPC", cpm: "CPM" };
+const labels: Record<DemandMetric, string> = { impressions: "Impressions", clicks: "Clicks", spend: "Spend", conversions: "Conversions", ctr: "CTR (%)", cpc: "CPC", cpm: "CPM" };
 const valueLabel = (value: number | null | undefined) => value == null ? "—" : value.toLocaleString(undefined, { maximumFractionDigits: 2 });
-const metricLabel = (value: number | null | undefined, metric: DemandMetric) => metric === "cpc" ? formatCpcRinggit(value) : valueLabel(value);
+const metricLabel = (value: number | null | undefined, metric: DemandMetric, currency?: string) => metric === "spend" ? formatAccountCurrency(value, currency) : metric === "cpc" ? formatCpcRinggit(value) : valueLabel(value);
 const panel = "[&>*]:shrink-0 gap-0 space-y-5 rounded-[1.5rem] border border-[#dedede] bg-white p-4 shadow-sm sm:p-6 text-[#111]";
 const action = "border-red-200 bg-white text-[#9f0019] hover:bg-red-50 hover:text-[#9f0019]";
 
@@ -33,7 +34,7 @@ function DemandGenScope({ queryString, campaignNameFilter, onContext }: { queryS
   const campaigns = filterRowsByCampaignName(options.data?.campaigns ?? [], (campaign) => campaign.name, campaignNameFilter);
   const [selection, setSelection] = useState<string[] | null>(() => searchParams.getAll("campaignId").length ? searchParams.getAll("campaignId") : null);
   const campaignIds = selection === null ? campaigns.slice(0, 1).map((c) => c.id) : selection.filter((id) => campaigns.some((c) => c.id === id));
-  const [metric, setMetric] = useState<DemandMetric>(() => demandMetrics.includes(searchParams.get("metric") as DemandMetric) ? searchParams.get("metric") as DemandMetric : "views");
+  const [metric, setMetric] = useState<DemandMetric>(() => resolveDemandMetric(searchParams.get("metric")));
   const [search, setSearch] = useState("");
   const persist = (ids: string[], nextMetric: DemandMetric) => {
     const url = new URLSearchParams(searchParams.toString()); url.delete("campaignId"); ids.forEach((id) => url.append("campaignId", id)); url.set("metric", nextMetric);
@@ -64,23 +65,23 @@ function DemandGenScope({ queryString, campaignNameFilter, onContext }: { queryS
       {options.error || report.error ? <p role="alert">{options.error ?? report.error} <Button variant="outline" className={action} onClick={options.error ? options.retry : report.retry}>Retry</Button></p> : null}
       {options.data && !campaigns.length ? <p>No Demand Gen campaigns match this account and campaign filter.</p> : null}
       {data?.warnings.filter((warning) => !warning.startsWith("Notion resolved ") && !/^\d+ non-interest criteria excluded;/.test(warning)).map((warning) => <p key={warning} role="alert" className="text-sm text-amber-800">{warning}</p>)}
-      {data && !data.complete ? <Button variant="outline" className={action} onClick={report.retry}>Retry incomplete data</Button> : null}
+      {data && (!data.complete || data.creativeCoverageComplete === false) ? <Button variant="outline" className={action} onClick={report.retry}>Retry incomplete data</Button> : null}
     </Card>
     {data ? <div key={campaignIds.join(",")} className="space-y-4">
-      <AudiencePanel title="In-market" rows={data.inMarket} metric={metric} />
-      <AudiencePanel title="Affinity" rows={data.affinity} metric={metric} />
-      <DemandAdsPanel ads={data.ads ?? []} />
-      <MatrixPanel cells={data.cells} unmapped={data.unmapped} totals={data.totals} metric={metric} />
+      <AudiencePanel title="In-market" rows={data.inMarket} metric={metric} currency={data.account.currency} />
+      <AudiencePanel title="Affinity" rows={data.affinity} metric={metric} currency={data.account.currency} />
+      <DemandAdsPanel ads={data.ads ?? []} currency={data.account.currency} />
+      <MatrixPanel cells={data.cells} unmapped={data.unmapped} totals={data.totals} metric={metric} currency={data.account.currency} />
 
     </div> : null}
   </section>;
 }
 
-function AudiencePanel({ title, rows, metric }: { title: string; rows: DemandAudienceRow[]; metric: DemandMetric }) {
+function AudiencePanel({ title, rows, metric, currency }: { title: string; rows: DemandAudienceRow[]; metric: DemandMetric; currency: string }) {
   const { screenshotMode } = useScreenshotMode();
   const [chart, setChart] = useState(false);
   const [sort, setSort] = useState<"name" | DemandMetric>(metric);
-  const columns: DemandMetric[] = ["clicks", "ctr", "cpc", "views"];
+  const columns: DemandMetric[] = ["clicks", "ctr", "cpc", "impressions"];
   if (!columns.includes(metric)) columns.push(metric);
   const [ascending, setAscending] = useState(false);
   const [page, setPage] = useState(0);
@@ -98,21 +99,21 @@ function AudiencePanel({ title, rows, metric }: { title: string; rows: DemandAud
   return <section><Card className={panel}>
     <div className="flex flex-wrap items-center justify-between gap-3"><div className="flex items-center gap-3"><span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-[#e10600] text-white"><UsersIcon className="size-4" /></span><h3 className="text-xl font-semibold leading-normal sm:text-2xl">{title}</h3></div>{!screenshotMode ? <Button data-report-export-exclude="true" variant="outline" className={`${action} md:hidden`} aria-pressed={chart} onClick={() => setChart(!chart)}>{chart ? "Show table" : "Ranked chart"}</Button> : null}</div>
     <p className="text-xs text-[#777]">Measured interest observations may overlap. Missing categories are unavailable.</p>
-    {!rows.length ? <p>No measured {title} interest observations available.</p> : <div data-demand-pdf-columns="audience" className={`grid min-w-0 gap-6 ${screenshotMode ? "grid-cols-1" : "md:grid-cols-2"}`}><div className={`${screenshotMode || chart ? "block" : "hidden"} min-w-0 space-y-3 md:order-2 md:block`}>{[...rows].sort((a, b) => (b.metrics[metric] ?? -1) - (a.metrics[metric] ?? -1)).map((row) => <div key={row.id}><div data-demand-chart-label-row="true" className="grid grid-cols-[minmax(0,1fr)_auto] items-start gap-x-4 text-sm"><span className="min-w-0 break-words">{row.name}</span><span className="whitespace-nowrap">{metricLabel(row.metrics[metric], metric)}</span></div><div className="mt-2 h-3 rounded bg-gray-100"><div className="h-3 rounded bg-[#e10600]" style={{ width: `${(row.metrics[metric] ?? 0) / max * 100}%` }} /></div></div>)}</div><div className={`${screenshotMode || !chart ? "block" : "hidden"} min-w-0 space-y-4 md:order-1 md:block`}>
-      <div data-report-full-width-table="true" className="overflow-x-auto rounded-xl border border-[#dedede]"><table className="w-full min-w-[760px] text-left text-sm"><thead className="bg-[#fff1f2] text-[#9f0019]"><tr className="border-b"><th className="px-4 py-3"><Button variant="ghost" className="px-0 hover:bg-transparent text-[#9f0019]" onClick={() => changeSort("name")}>Audience {sort === "name" ? ascending ? "↑" : "↓" : ""}</Button></th>{columns.map((column) => <th key={column} className="px-4 text-right whitespace-nowrap"><Button variant="ghost" className="px-0 hover:bg-transparent text-[#9f0019]" onClick={() => changeSort(column)}>{labels[column]} {sort === column ? ascending ? "↑" : "↓" : ""}</Button></th>)}</tr></thead><tbody>{visible.map((row) => <tr key={row.id} className="border-b"><td className="px-4 py-4">{row.name}</td>{columns.map((column) => <td key={column} className="px-4 py-4 text-right font-medium tabular-nums">{metricLabel(row.metrics[column], column)}</td>)}</tr>)}</tbody></table></div>
+    {!rows.length ? <p>No measured {title} interest observations available.</p> : <div data-demand-pdf-columns="audience" className={`grid min-w-0 gap-6 ${screenshotMode ? "grid-cols-1" : "md:grid-cols-2"}`}><div className={`${screenshotMode || chart ? "block" : "hidden"} min-w-0 space-y-3 md:order-2 md:block`}>{[...rows].sort((a, b) => (b.metrics[metric] ?? -1) - (a.metrics[metric] ?? -1)).map((row) => <div key={row.id}><div data-demand-chart-label-row="true" className="grid grid-cols-[minmax(0,1fr)_auto] items-start gap-x-4 text-sm"><span className="min-w-0 break-words">{row.name}</span><span className="whitespace-nowrap">{metricLabel(row.metrics[metric], metric, currency)}</span></div><div className="mt-2 h-3 rounded bg-gray-100"><div className="h-3 rounded bg-[#e10600]" style={{ width: `${(row.metrics[metric] ?? 0) / max * 100}%` }} /></div></div>)}</div><div className={`${screenshotMode || !chart ? "block" : "hidden"} min-w-0 space-y-4 md:order-1 md:block`}>
+      <div data-report-full-width-table="true" className="overflow-x-auto rounded-xl border border-[#dedede]"><table className="w-full min-w-[760px] text-left text-sm"><thead className="bg-[#fff1f2] text-[#9f0019]"><tr className="border-b"><th className="px-4 py-3"><Button variant="ghost" className="px-0 hover:bg-transparent text-[#9f0019]" onClick={() => changeSort("name")}>Audience {sort === "name" ? ascending ? "↑" : "↓" : ""}</Button></th>{columns.map((column) => <th key={column} className="px-4 text-right whitespace-nowrap"><Button variant="ghost" className="px-0 hover:bg-transparent text-[#9f0019]" onClick={() => changeSort(column)}>{labels[column]} {sort === column ? ascending ? "↑" : "↓" : ""}</Button></th>)}</tr></thead><tbody>{visible.map((row) => <tr key={row.id} className="border-b"><td className="px-4 py-4">{row.name}</td>{columns.map((column) => <td key={column} className="px-4 py-4 text-right font-medium tabular-nums">{metricLabel(row.metrics[column], column, currency)}</td>)}</tr>)}</tbody></table></div>
       <div data-report-export-exclude="true" className="flex items-center justify-end gap-3 text-sm"><Button variant="outline" className={action} disabled={currentPage === 0} onClick={() => setPage(currentPage - 1)}>Previous</Button><span>Page {currentPage + 1} of {pages}</span><Button variant="outline" className={action} disabled={currentPage + 1 === pages} onClick={() => setPage(currentPage + 1)}>Next</Button></div>
     </div></div>}
   </Card></section>;
 }
 
-function MatrixPanel({ cells, unmapped, totals, metric }: { cells: DemandCell[]; unmapped: DemandCell[]; totals?: import("@/lib/reporting/demand-gen").DemandValues; metric: DemandMetric }) {
+function MatrixPanel({ cells, unmapped, totals, metric, currency }: { cells: DemandCell[]; unmapped: DemandCell[]; totals?: import("@/lib/reporting/demand-gen").DemandValues; metric: DemandMetric; currency: string }) {
   const { screenshotMode } = useScreenshotMode();
   const [chart, setChart] = useState(false);
   const overall = totals ?? sumDemandValues([...cells, ...unmapped].filter((cell) => cell.observed !== false && Object.values(cell.metrics).some((v) => v != null)).map((c) => c.metrics));
-  const additive = ["views", "clicks", "spend", "conversions"].includes(metric);
+  const additive = ["impressions", "clicks", "spend", "conversions"].includes(metric);
   const display = (value: number | null | undefined) => {
     const percentage = demandShare(value, overall[metric]);
-    return <span className="whitespace-nowrap">{additive ? <><span className="font-semibold text-[#9f0019]">{valueLabel(percentage)}{percentage == null ? "" : "%"}</span><span className="text-muted-foreground"> / </span></> : null}{metricLabel(value, metric)}</span>;
+    return <span className="whitespace-nowrap">{additive ? <><span className="font-semibold text-[#9f0019]">{valueLabel(percentage)}{percentage == null ? "" : "%"}</span><span className="text-muted-foreground"> / </span></> : null}{metricLabel(value, metric, currency)}</span>;
   };
   const sum = (entries: DemandCell[]) => sumDemandValues(entries.filter((c) => c.observed !== false && Object.values(c.metrics).some((v) => v != null)).map((c) => c.metrics))[metric];
   const rows: { label: string; entries: DemandCell[] }[] = demandFormats.map((format) => ({ label: format, entries: cells.filter((c) => c.format === format) }));
@@ -121,23 +122,23 @@ function MatrixPanel({ cells, unmapped, totals, metric }: { cells: DemandCell[];
   return <section><Card className={panel}><div className="flex flex-wrap items-center justify-between gap-3"><div className="flex items-center gap-3"><span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-[#e10600] text-white"><LayoutGridIcon className="size-4" /></span><h3 className="text-xl font-semibold leading-normal sm:text-2xl">Ad format × Device</h3></div>{!screenshotMode ? <Button data-report-export-exclude="true" variant="outline" className={`${action} md:hidden`} aria-pressed={chart} onClick={() => setChart(!chart)}>{chart ? "Show matrix" : "Grouped chart"}</Button> : null}</div>
     <p className="text-xs text-[#777]">{additive ? "Percent / value. Percent = current value ÷ overall total × 100. " : "Totals use weighted calculations. "}Unavailable values are shown as —.</p>
     <div data-demand-pdf-columns="matrix" className="grid min-w-0 grid-cols-1 gap-6"><div className={`${screenshotMode || !chart ? "block" : "hidden"} min-w-0 overflow-x-auto rounded-xl border border-[#dedede] md:block`} data-report-full-width-table="true"><table className="w-full min-w-[950px] text-sm"><thead className="bg-[#fff1f2] text-[#9f0019]"><tr><th className="px-4 py-3 text-left">{labels[metric]}</th>{[...demandDevices, "Total"].map((d) => <th key={d} className="px-4 text-right">{d}</th>)}</tr></thead><tbody>{rows.map(({ label, entries }) => <tr key={label} className="border-t"><th className="px-4 py-4 text-left">{label}</th>{demandDevices.map((d) => <td key={d} className="px-4 py-4 text-right tabular-nums">{display(sum(entries.filter((c) => c.device === d)))}</td>)}<td className="px-4 py-4 text-right tabular-nums bg-red-50">{display(sum(entries))}</td></tr>)}<tr className="border-t bg-red-50 font-semibold"><th className="px-4 py-4 text-left">Overall total</th>{demandDevices.map((d) => <td key={d} className="px-4 py-4 text-right">{display(sum([...cells, ...unmapped].filter((c) => c.device === d)))}</td>)}<td className="px-4 py-4 text-right">{display(overall[metric])}</td></tr></tbody></table></div><div className={`${screenshotMode || chart ? "block" : "hidden"} min-w-0 space-y-4 md:block`}>{cells.map((c) => <div key={`${c.format}:${c.device}`}><div data-demand-chart-label-row="true" className="grid grid-cols-[minmax(0,1fr)_auto] items-start gap-x-4 text-sm"><span className="min-w-0 break-words">{c.format} · {c.device}</span><span className="whitespace-nowrap">{display(c.metrics[metric])}</span></div><div className="mt-2 h-3 rounded bg-gray-100"><div className="h-3 rounded bg-[#e10600]" style={{ width: `${(c.metrics[metric] ?? 0) / max * 100}%` }} /></div></div>)}</div></div>
-    {unmapped.length ? <details open={screenshotMode || undefined}><summary>Unknown format/device references</summary>{unmapped.map((c) => <p key={`${c.format}:${c.device}`}>{c.format} × {c.device}: {metricLabel(c.metrics[metric], metric)}</p>)}</details> : null}
+    {unmapped.length ? <details open={screenshotMode || undefined}><summary>Unknown format/device references</summary>{unmapped.map((c) => <p key={`${c.format}:${c.device}`}>{c.format} × {c.device}: {metricLabel(c.metrics[metric], metric, currency)}</p>)}</details> : null}
   </Card></section>;
 }
 
-const adMetricHeaders: Record<string, AdSortMetric | undefined> = { "Clicks": "clicks", "CTR (%)": "ctr", "CPC": "cpc", "Views": "views" };
+const adMetricHeaders: Record<string, AdSortMetric | undefined> = { "Clicks": "clicks", "CTR (%)": "ctr", "CPC": "cpc", "Impressions": "impressions", "Ad spend": "spend" };
 
-function DemandAdsPanel({ ads }: { ads: NonNullable<DemandGenPayload["ads"]> }) {
+function DemandAdsPanel({ ads, currency }: { ads: NonNullable<DemandGenPayload["ads"]>; currency: string }) {
   const [sort, setSort] = useState<{metric: AdSortMetric; ascending: boolean} | null>(null);
   const ordered = sort ? sortAdsByMetric(ads, sort.metric, sort.ascending) : ads;
   const changeSort = (metric: AdSortMetric) => setSort(previous => ({metric,ascending:previous?.metric === metric ? !previous.ascending : false}));
-  return <Card className={panel}><h3 className="text-xl font-semibold">Ads</h3><div className="overflow-x-auto rounded-xl border" data-report-full-width-table="true"><table className="w-full min-w-[900px] text-sm"><thead className="bg-red-50 text-[#9f0019]"><tr>{["Ad", "Campaign", "Creative", "Clicks", "CTR (%)", "CPC", "Views"].map((label) => {
+  return <Card className={panel}><h3 className="text-xl font-semibold">Ads</h3><div className="overflow-x-auto rounded-xl border" data-report-full-width-table="true"><table className="w-full min-w-[900px] text-sm"><thead className="bg-red-50 text-[#9f0019]"><tr>{["Ad", "Campaign", "Creative", "Clicks", "CTR (%)", "CPC", "Impressions", "Ad spend"].map((label) => {
     const metric = adMetricHeaders[label];
     const selected = metric && sort?.metric === metric;
     return <th key={label} className="px-4 py-3 text-left" aria-sort={selected ? sort.ascending ? "ascending" : "descending" : undefined}>
       {metric ? <Button variant="ghost" className="px-0 text-[#9f0019] hover:bg-transparent" onClick={() => changeSort(metric)}>{label} {selected ? sort.ascending ? "↑" : "↓" : ""}</Button> : label}
     </th>;
-  })}</tr></thead><tbody>{ordered.map((ad) => <tr key={ad.id} className="border-t"><td className="px-4 py-3">{ad.name}</td><td className="px-4 py-3">{ad.campaignName}</td><td className="px-4 py-3"><div className="flex flex-wrap gap-2">{ad.imageUrls.length ? ad.imageUrls.map((url) => <AdCreativeImage key={url} url={url} name={ad.name} />) : "—"}</div></td>{(["clicks", "ctr", "cpc", "views"] as const).map((metric) => <td key={metric} className="px-4 py-3 tabular-nums">{metricLabel(ad.metrics[metric], metric)}</td>)}</tr>)}</tbody></table></div>{!ads.length ? <p>No ad creatives available for these campaigns.</p> : null}</Card>;
+  })}</tr></thead><tbody>{ordered.map((ad) => <tr key={ad.adResource ?? ad.id} className="border-t"><td className="px-4 py-3">{ad.name}</td><td className="px-4 py-3">{ad.campaignName}</td><td className="px-4 py-3"><div className="flex flex-wrap gap-2">{(ad.selectedCreative?.previewUrl || ad.imageUrls[0]) ? <div data-pdf-creative-meta="true"><AdCreativeImage key={ad.selectedCreative?.previewUrl || ad.imageUrls[0]} url={ad.selectedCreative?.previewUrl || ad.imageUrls[0]} name={ad.name} /><p className="mt-2 max-w-48 text-xs text-muted-foreground">{demandCreativeLabel(ad.selectedCreative?.selection)}</p><p className="text-xs">Asset spend: {formatAccountCurrency(ad.selectedCreative?.metrics.spend, currency)}</p></div> : "—"}</div></td>{(["clicks", "ctr", "cpc", "impressions", "spend"] as const).map((metric) => <td key={metric} className="px-4 py-3 tabular-nums">{metricLabel(ad.metrics[metric], metric, currency)}</td>)}</tr>)}</tbody></table></div>{!ads.length ? <p>No ad creatives available for these campaigns.</p> : null}</Card>;
 }
 function AdCreativeImage({ url, name }: { url: string; name: string }) {
   const [failed, setFailed] = useState(false);

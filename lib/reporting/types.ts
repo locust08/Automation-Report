@@ -462,6 +462,8 @@ export interface PreviewCreativeAsset {
   pageId?: string | null;
   instagramActorId?: string | null;
   imageHash?: string | null;
+  assetSpend?: number | null;
+  assetCurrency?: string | null;
 }
 
 export interface PreviewManagementPerformancePoint {

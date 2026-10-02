@@ -33,3 +33,7 @@ Demand Gen Ads metric sorting local fixture evidence is recorded in [sorting rec
 Breakdown PDF clipping/spacing fixture acceptance is recorded in the custom PDF receipt: grouped metrics, heading/table separation, large-number fit and filtered Meta/TikTok exports passed locally. Native reconciliation and deployment remain separate acceptance gates.
 
 Standalone PDF changes through commit `4f598bf` were deployed to Vercel production on 2026-10-02; deployment `4tnXGaxL4cYetFiC8W3Gz1Um6BnK` reached Ready. See the custom PDF receipt for deployment evidence. Native reconciliation remains pending independently.
+
+## Demand Gen creative/PDF follow-up
+
+[2026-10-02 receipt](../docs/demand-gen-creative-pdf-verification-2026-10-02.md): 30 focused tests, scoped source TypeScript, scoped lint, production build and desktop/mobile PDF browser checks pass. Repository-wide typecheck remains blocked by three pre-existing generated-file errors. Read-only Magnet September API evidence confirms 21 ads, exact asset scope, ranking and separate spend. Native Google Ads UI reconciliation remains pending. No deployment of this follow-up is included; the earlier `4f598bf` rollout above remains historical.

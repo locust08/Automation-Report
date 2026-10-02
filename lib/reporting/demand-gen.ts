@@ -1,7 +1,9 @@
 // Semantics ported from DigitalBee's structured-reporting/demand-gen collector.
-export const demandMetrics = ["views", "clicks", "spend", "conversions", "ctr", "cpc", "cpm"] as const;
+import type { DemandCreative, SelectedDemandCreative } from "./demand-gen-creatives";
+export const demandMetrics = ["impressions", "clicks", "spend", "conversions", "ctr", "cpc", "cpm"] as const;
 export type DemandMetric = typeof demandMetrics[number];
-export type DemandValues = Record<DemandMetric | "impressions", number | null>;
+export type DemandValues = Record<DemandMetric | "views", number | null>;
+export function resolveDemandMetric(value: string | null): DemandMetric { return demandMetrics.includes(value as DemandMetric) ? value as DemandMetric : "impressions"; }
 export type DemandNativeRow = {
   metrics?: Record<string, unknown>;
   segments?: { adFormatType?: string; device?: string };
@@ -18,7 +20,8 @@ export interface DemandGenPayload {
   campaignId: string | null;
   campaignIds?: string[];
   totals?: DemandValues;
-  ads?: { id: string; name: string; campaignName: string; imageUrls: string[]; metrics: DemandValues }[];
+  ads?: { id: string; name: string; campaignName: string; imageUrls: string[]; metrics: DemandValues; adResource?: string; creatives?: DemandCreative[]; selectedCreative?: SelectedDemandCreative | null }[];
+  creativeCoverageComplete?: boolean;
   inMarket: DemandAudienceRow[]; affinity: DemandAudienceRow[];
   cells: DemandCell[]; unmapped: DemandCell[];
   unresolved: DemandAudienceRow[];

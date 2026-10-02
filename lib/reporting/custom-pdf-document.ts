@@ -23,7 +23,7 @@ export function metricColumnGroups(columnCount: number): number[][] {
 
 type ChartRow = { label: string; value: string; width: string };
 type Section = { title: string; headers: string[]; rows: string[][]; charts: ChartRow[]; notes: string[] };
-type Creative = { label: string; source: string; alt: string };
+type Creative = { label: string; source: string; alt: string; caption: string };
 type Ad = { campaign: string; name: string; label: string; headers: string[]; values: string[]; creatives: Creative[] };
 
 const text = (element: Element | null | undefined) => element?.textContent?.replace(/\s+/g," ").trim() ?? "";
@@ -81,7 +81,7 @@ export function readCustomPdfContent(root: HTMLElement) {
       if (adTable && isAdPerformanceRow(row.dataset.pdfSummaryRow)) {
         const adIndexes=adColumnIndexes(headers);
         ads.push({label,campaign:demand ? cleanText(row.cells[1]) : title,name:cleanText(row.cells[0]),headers:adIndexes.map(index => headers[index]),values:adIndexes.map(index => cleanText(row.cells[index])),
-          creatives:Array.from(row.querySelectorAll<HTMLElement>("img, [data-pdf-creative-source]")).map(image => ({label,source:image.dataset.pdfCreativeSource || (image as HTMLImageElement).currentSrc || (image as HTMLImageElement).src,alt:image.dataset.pdfCreativeAlt || (image as HTMLImageElement).alt}))});
+          creatives:Array.from(row.querySelectorAll<HTMLElement>("img, [data-pdf-creative-source]")).slice(0,1).map(image => ({label,source:image.dataset.pdfCreativeSource || (image as HTMLImageElement).currentSrc || (image as HTMLImageElement).src,alt:image.dataset.pdfCreativeAlt || (image as HTMLImageElement).alt,caption:Array.from(image.closest('[data-pdf-creative-meta]')?.querySelectorAll('p') ?? []).map(text).join(' · ')}))});
       } else summaryRows.push(row);
     }
     if (adTable && !summaryRows.length && rows.length) continue;
@@ -108,35 +108,38 @@ export function readCustomPdfContent(root: HTMLElement) {
 const css = `
 .custom-report-pdf, .custom-report-pdf * { box-sizing:border-box; }
 .custom-report-pdf { position:fixed; left:-20000px; top:0; font-family:Arial,sans-serif; color:#171717; font-size:14px; line-height:1.35; }
-.custom-report-pdf .pdf-page { width:792px; height:1120px; padding:38px; background:white; display:block; }
-.custom-report-pdf .pdf-header { flex:none; border-bottom:2px solid #b60019; padding-bottom:10px; margin-bottom:12px; }
+.custom-report-pdf .pdf-page { width:792px; height:1120px; padding:38px; background:#f0f0f0; display:block; }
+.custom-report-pdf .pdf-header { flex:none; border-radius:24px; background:#9f0019 url('/headerbackground.png') center/cover no-repeat; color:white; padding:20px; margin-bottom:16px; }
 .custom-report-pdf h1 { font-size:23px; overflow-wrap:anywhere; line-height:1.2; margin:0 0 6px; }
-.custom-report-pdf .pdf-subtitle { font-size:12px; color:#555; }
+.custom-report-pdf .pdf-subtitle { display:inline-block; font-size:12px; color:#5f5f5f; background:#efefef; border-radius:12px; padding:8px 12px; margin-top:6px; }
 .custom-report-pdf .pdf-body { flex:1; min-height:0; overflow:hidden; }
-.custom-report-pdf h2 { font-size:19px; line-height:1.45; margin:0 0 14px; padding-bottom:28px; overflow-wrap:anywhere; }
+.custom-report-pdf h2 { font-size:20px; font-weight:600; line-height:1.45; margin:0 0 16px; overflow-wrap:anywhere; }
+.custom-report-pdf .pdf-section > h2::before { content:''; display:inline-block; vertical-align:middle; width:20px; height:20px; border-radius:6px; background:#e10600; margin-right:10px; }
 .custom-report-pdf p { font-size:12px; margin:0 0 8px; color:#555; }
-.custom-report-pdf .pdf-section { margin-bottom:24px; display:flow-root; }
+.custom-report-pdf .pdf-section { margin-bottom:16px; padding:18px; border:1px solid #dedede; border-radius:24px; background:white; display:flow-root; }
 .custom-report-pdf .pdf-columns { display:grid; grid-template-columns:minmax(0,1fr); gap:20px; align-items:start; }
-.custom-report-pdf table { width:100%; border-collapse:collapse; table-layout:auto; font-size:12px; line-height:1.5; }
+.custom-report-pdf table { width:100%; border-collapse:collapse; table-layout:auto; font-size:12px; line-height:1.5; margin-bottom:12px; }
 .custom-report-pdf th, .custom-report-pdf td { padding:9px 8px; border-bottom:1px solid #ddd; overflow-wrap:normal; vertical-align:top; text-align:right; }
 .custom-report-pdf th:first-child, .custom-report-pdf td:first-child { text-align:left; width:26%; overflow-wrap:anywhere; }
 .custom-report-pdf td:not(:first-child) { white-space:nowrap; }
 .custom-report-pdf th { background:#fff0f2; color:#970019; font-weight:600; }
 .custom-report-pdf .pdf-chart-row { margin-bottom:8px; font-size:12px; }
 .custom-report-pdf .pdf-chart-label { display:flex; justify-content:space-between; gap:8px; }
-.custom-report-pdf .pdf-track { height:7px; margin-top:4px; background:#eee; }
-.custom-report-pdf .pdf-bar { height:7px; background:#dc0018; }
-.custom-report-pdf .pdf-gallery-row { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:16px; margin-bottom:16px; }
-.custom-report-pdf figure { margin:0; padding:8px; border:1px solid #ddd; }
-.custom-report-pdf figure img { display:block; width:100%; height:220px; object-fit:contain; background:#fafafa; }
+.custom-report-pdf .pdf-track { height:10px; margin-top:6px; border-radius:8px; background:#eee; }
+.custom-report-pdf .pdf-bar { height:10px; border-radius:8px; background:#e10600; }
+.custom-report-pdf .pdf-gallery-row { display:block; margin-bottom:12px; }
+.custom-report-pdf figure { margin:0; padding:12px; border:1px solid #dedede; border-radius:16px; }
+.custom-report-pdf figure img { display:block; width:100%; height:270px; object-fit:contain; background:#fafafa; border-radius:12px; }
 .custom-report-pdf figcaption { font-size:12px; margin-top:6px; overflow-wrap:anywhere; }
-.custom-report-pdf .pdf-footer { flex:none; padding-top:10px; font-size:10px; color:#777; text-align:right; }
+.custom-report-pdf .pdf-footer { display:flex; align-items:center; justify-content:space-between; gap:12px; border-top:3px solid #e10600; padding-top:8px; font-size:10px; color:#777; }
+.custom-report-pdf .pdf-footer img { width:132px; height:24px; object-fit:contain; }
 `;
 
 /** Compose real pages first; each capture is exactly one complete PDF page. */
 export async function createCustomReportPdf(root: HTMLElement, onPage?: (image:string) => void) {
   const content = readCustomPdfContent(root);
   const host = el("div"); host.className = "custom-report-pdf";
+  host.style.fontFamily = getComputedStyle(root).fontFamily;
   const style = el("style",css);
   document.head.appendChild(style); document.body.appendChild(host);
   let body: HTMLDivElement;
@@ -149,8 +152,11 @@ export async function createCustomReportPdf(root: HTMLElement, onPage?: (image:s
     const subtitle = el("div",`${content.reportTitle} · ${content.dates}`); subtitle.className = "pdf-subtitle"; header.append(subtitle);
     body = el("div"); body.className = "pdf-body";
     const footer = el("footer"); footer.className = "pdf-footer";
+    const logo = el("img"); logo.src = "/locus-t-logo-25.png"; logo.alt = "LOCUS-T logo";
+    const pageNumber = el("span"); pageNumber.dataset.pdfPageNumber = "true";
+    footer.append(logo,el("span","LOCUS-T SDN BHD"),pageNumber);
     page.append(header,body,footer); host.append(page); pages.push(page);
-    body.style.height = `${1120 - 76 - header.offsetHeight - 12 - 24}px`;
+    body.style.height = `${1120 - 76 - header.offsetHeight - 16 - 40}px`;
   };
   const fits = () => body.scrollHeight <= body.clientHeight + 1;
   const appendBlock = (block: HTMLElement) => {
@@ -200,28 +206,30 @@ export async function createCustomReportPdf(root: HTMLElement, onPage?: (image:s
     for (const ad of groupAdsByCampaign(content.ads)) {
       newPage();
       body!.dataset.adLabel = ad.label;
+      let adContainer: HTMLElement;
       const adHeader = (continued = false) => {
-        body!.append(el("h2",ad.campaign));
-        body!.append(el("p",`Ad: ${ad.name}${continued ? " (continued)" : ""}`));
+        adContainer = el("section"); adContainer.className = "pdf-section"; body!.append(adContainer);
+        adContainer.append(el("h2",ad.campaign));
+        adContainer.append(el("p",`Ad: ${ad.name}${continued ? " (continued)" : ""}`));
         for (const indexes of metricColumnGroups(ad.headers.length)) {
           const table = el("table"), head = el("thead"), header = el("tr"), rows = el("tbody"), row = el("tr");
           indexes.forEach(index => header.append(el("th",ad.headers[index])));
           indexes.forEach(index => row.append(el("td",ad.values[index])));
-          head.append(header); rows.append(row); table.append(head,rows); table.style.marginBottom="16px"; body!.append(table);
+          head.append(header); rows.append(row); table.append(head,rows); table.style.marginBottom="16px"; adContainer.append(table);
         }
-        body!.append(el("h2",continued ? "Creatives (continued)" : "Creatives"));
+        adContainer.append(el("h2",continued ? "Creative (continued)" : "Creative"));
       };
       adHeader();
-      if (!ad.creatives.length) body!.append(el("p","No creative images available for this ad."));
+      if (!ad.creatives.length) adContainer!.append(el("p","No creative images available for this ad."));
       for (let index=0; index<ad.creatives.length; index+=2) {
         const row=el("div"); row.className="pdf-gallery-row";
-        for(const [creativeIndex,creative] of ad.creatives.slice(index,index+2).entries()) {
+        for(const creative of ad.creatives.slice(index,index+2)) {
           const card=el("figure"),image=el("img"); image.crossOrigin="anonymous"; image.src=creative.source; image.alt=creative.alt;
-          card.append(image,el("figcaption",`Creative ${index+creativeIndex+1} of ${ad.creatives.length}`)); row.append(card);
+          card.append(image,el("figcaption",creative.caption || "Representative creative — performance unavailable · Asset spend: —")); row.append(card);
         }
-        body!.append(row);
+        adContainer!.append(row);
         if(!fits()) {
-          row.remove(); newPage(); body!.dataset.adLabel=ad.label; adHeader(true); body!.append(row);
+          row.remove(); newPage(); body!.dataset.adLabel=ad.label; adHeader(true); adContainer!.append(row);
         }
         if(!fits()) throw new Error("An ad block is too tall for one PDF page.");
       }
@@ -249,14 +257,17 @@ export async function createCustomReportPdf(root: HTMLElement, onPage?: (image:s
         image.src=canvas.toDataURL("image/png");
         await image.decode();
       } catch {
-        const placeholder=el("div","Creative image unavailable");
-        placeholder.style.height="220px"; placeholder.style.background="#fafafa"; placeholder.style.display="grid"; placeholder.style.placeItems="center"; image.replaceWith(placeholder);
+        const footerImage = Boolean(image.closest(".pdf-footer"));
+        const placeholder=el("div",footerImage ? "LOCUS-T" : "Creative image unavailable");
+        placeholder.style.height=footerImage ? "24px" : "270px";
+        if (footerImage) placeholder.style.width="132px";
+        placeholder.style.background="#fafafa"; placeholder.style.display="grid"; placeholder.style.placeItems="center"; image.replaceWith(placeholder);
       }
     }
     const { jsPDF } = await import("jspdf");
     const pdf=new jsPDF({orientation:"portrait",unit:"mm",format:"a4",compress:true});
     for(const [index,page] of pages.entries()) {
-      page.querySelector("footer")!.textContent=`Page ${index+1} of ${pages.length}`;
+      page.querySelector('[data-pdf-page-number]')!.textContent=`Page ${index+1} of ${pages.length}`;
       let image: string;
       try {
         image=await toPng(page,{width:792,height:1120,pixelRatio:2,cacheBust:false,backgroundColor:"#ffffff"});

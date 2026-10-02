@@ -12,7 +12,8 @@ import { filterRowsByCampaignName, getCampaignNameOptions, type CampaignNameFilt
 import { levelTotals, matchesValueFilter, parseValueFilter, performanceValue, valueMetrics, type ValueFilter, type ValueMetric } from "@/lib/reporting/value-filter";
 import type { CampaignGroup, CampaignRow, PreviewAdGroupNode, PreviewReportPayload, PreviewPerformanceSummary, PreviewAdNode } from "@/lib/reporting/types";
 
-import { formatCpcRinggit } from "@/lib/reporting/format";
+import { formatAccountCurrency, formatCpcRinggit } from "@/lib/reporting/format";
+import { previewCreativeSource } from "@/lib/reporting/creative-preview";
 
 const tableMetrics = [...valueMetrics.slice(0, 4), "cpc", ...valueMetrics.slice(4)] as const;
 type Stage = { rows: PreviewAdGroupNode[]; warnings: string[]; error?: string; complete: boolean };
@@ -154,14 +155,13 @@ function MetricRow({ name, row, toggle, open, href, creative, showCreative }: { 
   return <tr data-pdf-summary-row={showCreative && !creative ? "true" : undefined} className="border-b"><td className="sticky left-0 z-10 bg-white px-4 py-4 text-left font-medium">{toggle ? <button className="flex items-start gap-2 text-left text-[#9f0019]" aria-label={`${open ? "Collapse" : "Expand"} ${name}`} aria-expanded={open} onClick={toggle}><span data-report-export-exclude="true">{open ? "⌄" : "›"}</span>{name}</button> : name}</td>{showCreative ? <td className="px-3 py-3"><CreativeImage ad={creative} /></td> : null}{tableMetrics.map((metric) => { const clicks = performanceValue(row, "clicks"), spend = performanceValue(row, "spend"); const value = metric === "cpc" ? (clicks != null && clicks > 0 && spend != null ? spend / clicks : null) : performanceValue(row, metric); return <td key={metric} className="px-3 py-4 text-right tabular-nums">{metric === "cpc" ? formatCpcRinggit(value) : value === null ? "—" : value.toLocaleString(undefined, { maximumFractionDigits: 2 })}</td>; })}<td className="px-3 py-4 text-center" data-report-export-exclude="true">{href ? <a className="text-[#9f0019] hover:underline" href={href} target="_blank" rel="noopener noreferrer">View ↗</a> : "—"}</td></tr>;
 }
 function CreativeImage({ ad }: { ad?: PreviewAdNode }) {
-  const source = ad?.creative?.posterUrl || ad?.creative?.imageUrl || ad?.creative?.thumbnailUrl || ad?.images?.[0]?.url;
-  const additional = [...new Set((ad?.images ?? []).map(image => image.url))].filter(url => url !== source);
-  const extraSources = additional.map(url => <span key={url} hidden data-pdf-creative-source={url} data-pdf-creative-alt={`${ad?.name ?? "Ad"} creative`} />);
-  const [failed, setFailed] = useState(false);
-  if (!source || failed) return <><span data-pdf-creative-source={source} data-pdf-creative-alt={`${ad?.name ?? "Ad"} creative`} className="text-neutral-500">—</span>{extraSources}</>;
+  const source = previewCreativeSource(ad);
+  const [failedSource, setFailedSource] = useState<string | null>(null);
+  if (!ad) return <span className="text-neutral-500">—</span>;
+  const failed = !source || failedSource === source;
   // Provider creatives must retain their native URL; video ads use a poster image.
   // eslint-disable-next-line @next/next/no-img-element
-  return <><img src={source} alt={`${ad?.name ?? "Ad"} creative`} className="h-24 w-32 rounded-md object-contain bg-neutral-50" onError={() => setFailed(true)} />{extraSources}</>;
+  return <div data-pdf-creative-meta="true">{failed ? <span data-pdf-creative-source={source} data-pdf-creative-alt={`${ad.name} creative`} className="text-neutral-500">Creative image unavailable</span> : <img src={source} alt={`${ad.name} creative`} className="h-24 w-32 rounded-md object-contain bg-neutral-50" onError={() => setFailedSource(source)} />}<p className="mt-2 text-xs text-neutral-500">Representative creative — performance unavailable</p><p className="text-xs">Asset spend: {formatAccountCurrency(ad.creative?.assetSpend, ad.creative?.assetCurrency ?? undefined)}</p></div>;
 }
 function adsManagerLink(query: string, campaignId: string, groupId?: string, adId?: string) {
   const params = new URLSearchParams(query);

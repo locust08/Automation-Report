@@ -67,6 +67,7 @@ async function downloadPdf(file) {
           return !heading || !table || heading.getBoundingClientRect().bottom<=table.getBoundingClientRect().top;
         })),
         numericFits:Array.from(host.querySelectorAll('td:not(:first-child)')).every(cell=>cell.scrollWidth<=cell.clientWidth+1),
+        dashboardDesign:pages.every(page=>getComputedStyle(page.querySelector('.pdf-header')).backgroundImage.includes('headerbackground.png') && Array.from(page.querySelectorAll('.pdf-section')).every(section=>parseFloat(getComputedStyle(section).borderRadius)>=20)),
       };
     });
     window.customPdfObserver.observe(document.body,{childList:true,subtree:true});
@@ -82,6 +83,7 @@ async function downloadPdf(file) {
     assert.ok(structure.adPages.every(page=>page.label && page.tables>=1 && page.tables<=2), 'each ad page has its own metrics and creative group');
     assert.ok(structure.layoutSafe,"wrapped headings stay above tables");
     assert.ok(structure.numericFits,"numeric values fit without wrapping or clipping");
+    assert.ok(structure.dashboardDesign,"dashboard header and styled cards preserved in composed pages");
     assert.equal(structure.tableImages, 0, 'performance tables contain no creative images');
     assert.ok(structure.headers.every(header => !header.includes('Creative') && !header.includes('Actions')));
   }  const download = await downloadPromise;
@@ -98,14 +100,38 @@ async function downloadPdf(file) {
 try {
   await page.goto(`${base}/demand-gen?googleAccountId=1234567890&platform=google&startDate=2026-09-01&endDate=2026-09-30`);
   await page.getByRole("cell", { name: "Furniture", exact: true }).waitFor();
+  if (process.env.REPORT_QA_CREATIVE_SELECTION === "1") {
+    demand.ads[0].imageUrls=Array.from({length:6},(_,index)=>`${creativeUrl}#${index}`);
+    demand.ads[0].selectedCreative={assetId:"2",assetResource:"customers/1234567890/assets/2",kind:"image",previewUrl:`${creativeUrl}#selected`,metrics:{...values,spend:2.34},performanceComplete:true,selection:"top_performing"};
+    await page.goto(`${base}/demand-gen?googleAccountId=1234567890&platform=google&startDate=2026-09-01&endDate=2026-09-30&metric=views`);
+    const ads=page.locator('[data-slot="card"]').filter({has:page.getByRole('heading',{name:'Ads',exact:true})});
+    await ads.getByText('Asset spend: RM 2.34',{exact:true}).waitFor();
+    assert.equal(await ads.getByRole('img').count(),1,'single selected preview on dashboard');
+    assert.ok((await ads.getByRole('img').getAttribute('src')).endsWith('#selected'),'selected asset identity retained');
+    assert.equal(await ads.getByRole('columnheader',{name:'Views',exact:true}).count(),0);
+    assert.equal(await ads.getByRole('button',{name:'Impressions',exact:true}).count(),1);
+    assert.equal(await ads.getByText('RM 5.00',{exact:true}).count(),1,'ad spend stays separate');
+    await page.route('**/locus-t-logo-25.png',route=>route.fulfill({status:404,body:'Fixture footer logo unavailable'}));
+    await downloadPdf('demand-selected-creative');
+    const pdf=await page.evaluate(()=>window.customPdfStructure);
+    assert.equal(pdf.creatives,1);
+    assert.ok(pdf.text.includes('Asset spend: RM 2.34') && pdf.text.includes('Ad spend') && pdf.text.includes('RM 5.00'));
+    assert.ok(pdf.text.includes('Top-performing creative') && !pdf.text.includes('Creative 1 of'));
+    assert.ok(pdf.fits && pdf.text.includes('LOCUS-T SDN BHD'),'failed footer logo preserves bounded fallback and page numbering');
+    await page.setViewportSize({width:390,height:844});
+    await downloadPdf('demand-selected-creative-mobile');
+    assert.equal(await ads.getByRole('img').count(),1,'export restores single screen preview');
+    console.log('Creative QA passed: legacy metric links, one selected image, ad/asset spend parity, portrait styled pages and mobile restoration.');
+    await browser.close(); process.exit(0);
+  }
   if (process.env.REPORT_QA_AD_SORT === "1") {
     const original=demand.ads[0];
-    demand.ads=[{...original,id:"a",name:"Ten",metrics:{...values,clicks:10,ctr:10,cpc:10,views:10}}, { ...original,id:"b",name:"Zero",metrics:{...values,clicks:0,ctr:0,cpc:0,views:0}}, {...original,id:"c",name:"Unavailable",metrics:{...values,clicks:null,ctr:null,cpc:null,views:null}}];
+    demand.ads=[{...original,id:"a",name:"Ten",metrics:{...values,clicks:10,ctr:10,cpc:10,impressions:10,spend:10}}, { ...original,id:"b",name:"Zero",metrics:{...values,clicks:0,ctr:0,cpc:0,impressions:0,spend:0}}, {...original,id:"c",name:"Unavailable",metrics:{...values,clicks:null,ctr:null,cpc:null,impressions:null,spend:null}}];
     await page.reload();
     const card=page.locator('[data-slot="card"]').filter({has:page.getByRole("heading",{name:"Ads",exact:true})});
     await card.getByRole("cell",{name:"Unavailable",exact:true}).waitFor();
     const before=demandRequests;
-    for(const metric of ["Clicks","CTR (%)","CPC","Views"]) {
+    for(const metric of ["Clicks","CTR (%)","CPC","Impressions","Ad spend"]) {
       await card.getByRole("button",{name:metric,exact:true}).click();
       assert.deepEqual(await card.locator('tbody tr td:first-child').allTextContents(),["Ten","Zero","Unavailable"]);
       await card.getByRole("button",{name:`${metric} ↓`,exact:true}).click();
@@ -136,8 +162,8 @@ try {
     await page.getByRole("cell", {name:"Furniture",exact:true}).waitFor();
     await downloadPdf("demand-height");
     const overflow = await page.evaluate(()=>window.customPdfStructure);
-    assert.equal(overflow.creatives,15,"all creatives preserved");
-    assert.ok(overflow.adPages.length>=4,"overflow continues for same ad");
+    assert.equal(overflow.creatives,2,"one representative creative per ad");
+    assert.equal(overflow.adPages.length,2,"each ad starts on its own page");
     assert.ok(overflow.adPages.at(-1).label.includes("Second distinct ad"),"next ad starts on own page");
     demand.inMarket = [];
     demand.affinity = [];

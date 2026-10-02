@@ -53,3 +53,9 @@ export function formatCompactNumber(value: number): string {
 export function formatCpcRinggit(value: number | null | undefined): string {
  return value == null || !Number.isFinite(value) ? "—" : `RM ${value.toLocaleString("en-MY", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
+
+export function formatAccountCurrency(value: number | null | undefined, currency?: string): string {
+  if (value == null || !Number.isFinite(value)) return "—";
+  const amount = value.toLocaleString("en-MY", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  return `${currency === "MYR" ? "RM" : currency || ""} ${amount}`.trim();
+}
