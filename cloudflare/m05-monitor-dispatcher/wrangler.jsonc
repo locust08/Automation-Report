@@ -1,6 +1,7 @@
 {
   "$schema": "../../node_modules/wrangler/config-schema.json",
   "name": "m05-monitor-dispatcher",
+  "account_id": "e7c515dde995479daacd82ad79dfc3e8",
   "main": "src/index.js",
   "compatibility_date": "2026-09-25",
   "triggers": { "crons": ["*/15 * * * *"] },

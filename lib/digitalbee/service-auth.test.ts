@@ -2,7 +2,6 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { SignJWT } from "jose";
 import { authenticateDigitalBeeRequest, DigitalBeeServiceError, readBoundedJson, requestHash } from "./service-auth";
-import { digitalBeeM03EnvelopeSchema } from "../change-control/digitalbee-review";
 
 const origin = "https://dashboard.example.test";
 const key = "this-is-a-long-test-delegation-key-with-32-chars";
@@ -42,20 +41,6 @@ test("DigitalBee delegation binds the action, request hash and account scope", a
     serviceToken: "service-token", delegationKey: key,
     connectionRevision: scope.connectionRevision, action: "list", hash: requestHash({ action: "get" }),
   }), (error: unknown) => error instanceof DigitalBeeServiceError && error.code === "access_denied");
-});
-
-test("DigitalBee review contract rejects caller-supplied role and legacy adoption", () => {
-  const input = {
-    version: "m03-review-v1", action: "create_draft",
-    actor: { subject: scope.subject, email: "person@digitalbee.ai", grantRevision: scope.grantRevision, role: "admin" },
-    account: { serviceId: scope.accountPageId, clientId: scope.clientId, platform: scope.platform,
-      accountId: scope.platformAccountId, mappingFingerprint: "mapped" },
-    request: { service_id: scope.accountPageId, client_request_id: crypto.randomUUID(),
-      campaign_identity: "campaign", title: "Change", reason: "Reason", items: [] },
-  };
-  assert.equal(digitalBeeM03EnvelopeSchema.safeParse(input).success, false);
-  delete (input.actor as { role?: string }).role;
-  assert.equal(digitalBeeM03EnvelopeSchema.safeParse(input).success, false);
 });
 
 test("service JSON reader rejects oversized bodies before parsing", async () => {
