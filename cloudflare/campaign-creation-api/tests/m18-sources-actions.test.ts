@@ -3,7 +3,7 @@ import {database} from './db';
 import {Store} from '../src/store';
 import {Sources} from '../src/sources';
 import {ActionStore} from '../src/action-store';
-import {Actions,actionAllowed,scheduleFor} from '../src/actions';
+import {Actions,actionAllowed,scheduleFor,stable} from '../src/actions';
 import {digest,type Scope,type Plan} from '../src/contracts';
 import {Google} from '../src/google';
 import {Meta} from '../src/meta';
@@ -126,4 +126,18 @@ it('rejects a reserved follow-up after backend connection drift without dispatch
  const provider=vi.fn();await processReservedCreation(env,receipt,{authorize:async()=>{},provider});
  expect((await ledger.get(receipt,scope))?.status).toBe('rejected');expect(provider).not.toHaveBeenCalled();
  expect((await store.operation(id,scope))?.status).toBe('verified');
+});
+it('processes a valid queued action with the exact scope property order serialized by DigitalBee',async()=>{
+ const raw:Scope={subject:scope.subject,grantRevision:scope.grantRevision,accountPageId:scope.accountPageId,platform:scope.platform,platformAccountId:scope.platformAccountId,connectionRevision:scope.connectionRevision,clientId:scope.clientId,providerRevision:scope.providerRevision};
+ const backend=await digest([env.GOOGLE_ADS_CONNECTION_REVISION,env.GOOGLE_ADS_CLIENT_ID,env.GOOGLE_ADS_CLIENT_SECRET,env.GOOGLE_ADS_REFRESH_TOKEN,env.GOOGLE_ADS_DEVELOPER_TOKEN]);
+ const w=await store.save(raw,plan,crypto.randomUUID(),backend);await store.status(w,'validated');const a=await store.prepare(w,'approve','hash','request');await store.approve(w,{challenge:a.token,confirmation_hash:'hash'});
+ const approved=(await store.workflow(w.id,raw))!,g=await store.prepare(approved,'gate1','hash','request'),parent=crypto.randomUUID();
+ await store.reserve(approved,{idempotency_key:parent,challenge:g.token,confirmation_hash:'hash'},'request',raw);await store.dispatched(parent);
+ const snapshot={campaign:{id:'1',resourceName:'customers/2315114913/campaigns/1',status:'PAUSED'},ad_group:{id:'2',resourceName:'customers/2315114913/adGroups/2',status:'PAUSED'},ad:{resourceName:'customers/2315114913/adGroupAds/2~3',status:'PAUSED'},targeting:[]};
+ await store.finish(approved,parent,'verified',snapshot);const current=(await store.workflow(w.id,raw))!,ledger=new ActionStore(f.db),schedule={mode:'scheduled',scheduled_at:'2099-10-12T16:00:00.000Z',timezone:plan.timezone};
+ const challenge=await ledger.prepare(current,raw,'gate2',parent,schedule,[],stable(snapshot),{},'request'),id=crypto.randomUUID();
+ await ledger.reserve(current,raw,'gate2',{idempotency_key:id,challenge:challenge.token,confirmation_hash:challenge.confirmation_hash,schedule},'request');
+ const scheduleWrite=vi.fn(async()=>{}),p:Provider={validate:async()=>{},create:async()=>[],qa:async()=>snapshot,schedule:scheduleWrite,readback:async()=>({...snapshot,campaign:{...snapshot.campaign,status:'ENABLED',startDateTime:'2099-10-13 00:00:00'},ad_group:{...snapshot.ad_group,status:'ENABLED'},ad:{...snapshot.ad,status:'ENABLED'}})};
+ await processReservedCreation(env,id,{authorize:async()=>{},provider:()=>p});
+ expect(scheduleWrite).toHaveBeenCalledTimes(1);expect((await ledger.get(id,raw))?.status).toBe('verified');
 });

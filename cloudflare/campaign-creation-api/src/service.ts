@@ -253,7 +253,10 @@ export async function processReservedCreation(env:Environment,operationId:string
   const store=new Store(env.DB),ledger=new ActionStore(env.DB);
   const pending=(await env.DB.withSession('first-primary').prepare('SELECT scope_json FROM m04_followup_operations WHERE id=?').bind(operationId).first<{scope_json:string}>());
   if(pending){
-    const scope=scopeSchema.parse(JSON.parse(pending.scope_json)),receipt=await ledger.get(operationId,scope),w=receipt?await store.workflow(receipt.workflow_id,scope):null;
+    // Hashes bind the facade's original JSON serialization, including key order.
+    // Validate the persisted scope without replacing it with Zod's reordered copy.
+    const scope=JSON.parse(pending.scope_json) as Scope;scopeSchema.parse(scope);
+    const receipt=await ledger.get(operationId,scope),w=receipt?await store.workflow(receipt.workflow_id,scope):null;
     if(receipt&&w){
       try{await sameScope(w,scope,await backendRevision(env,scope));}
       catch{if(receipt.status==='reserved')await ledger.finish(receipt,'rejected',{reason:'stale_revision',provider_action:false});return;}
