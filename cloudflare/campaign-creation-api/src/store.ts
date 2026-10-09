@@ -3,9 +3,9 @@ import {tikTokDiagnosticSchema,type TikTokDiagnostic} from './tiktok-diagnostics
 export interface Workflow {id: string; subject: string; service_id: string; account_id: string; permission_revision: number; connection_revision: string; provider_revision: string; scope_hash: string; mapping_hash:string; backend_revision:string; plan_json: string; plan_hash: string; revision_id: string; source_key: string; status: string; version: number; created_at: number; updated_at: number}
 export interface Operation {id: string; workflow_id: string; subject: string; service_id: string; request_hash: string; status: string; result_json: string | null; created_at: number; dispatched_at: number | null; updated_at: number}
 export interface Revision {revision_id:string;workflow_id:string;revision_number:number;plan_json:string;plan_hash:string;save_key:string;created_at:number}
-export interface ProviderStep {status:'started'|'confirmed';provider_id:string|null;provider_name:string}
+export interface ProviderStep {status:'started'|'confirmed';provider_id:string|null;provider_name:string;rejected:number}
 export class Store {
-  constructor(private db: D1Database) {}
+  constructor(private db: D1Database,private recoveryReceipt?:string) {}
   async appendTikTokDiagnostic(operationId:string,value:TikTokDiagnostic){
     const d=tikTokDiagnosticSchema.parse(value),db=this.primary();
     await db.batch([
@@ -31,12 +31,24 @@ export class Store {
   async source(id: string, s: Scope) {return this.primary().prepare('SELECT * FROM m04_workflows WHERE source_key=? AND subject=? AND service_id=?').bind(id, s.subject, s.accountPageId).first<Workflow>();}
   async revisions(id:string){return (await this.primary().prepare('SELECT revision_id,revision_number,plan_hash,plan_json,created_at FROM m04_revisions WHERE workflow_id=? ORDER BY revision_number').bind(id).all<Revision>()).results;}
   async providerStep(operationId:string,step:'campaign'|'adset'|'ad'){
-    return this.primary().prepare('SELECT status,provider_id,provider_name FROM m04_provider_steps WHERE operation_id=? AND step=?').bind(operationId,step).first<ProviderStep>();
+    return this.primary().prepare('SELECT status,provider_id,provider_name,rejected FROM m04_provider_steps WHERE operation_id=? AND step=?').bind(operationId,step).first<ProviderStep>();
   }
   async providerSteps(operationId:string){
-    return (await this.primary().prepare('SELECT step,status,provider_id,provider_name FROM m04_provider_steps WHERE operation_id=? ORDER BY created_at,step').bind(operationId).all<ProviderStep&{step:string}>()).results;
+    return (await this.primary().prepare('SELECT step,status,provider_id,provider_name,rejected FROM m04_provider_steps WHERE operation_id=? ORDER BY created_at,step').bind(operationId).all<ProviderStep&{step:string}>()).results;
   }
   async beginProviderStep(operationId:string,step:'campaign'|'adset'|'ad',providerName:string){
+    if(this.recoveryReceipt){
+      const prior=await this.providerStep(operationId,step);
+      if(prior?.status==='confirmed')return {...prior,claimed:false};
+      const db=this.primary(),guard=crypto.randomUUID(),ref=`${operationId}:${step}`;
+      await db.batch([
+       db.prepare('INSERT INTO m04_guard VALUES(?,CASE WHEN EXISTS(SELECT 1 FROM m04_recovery_steps WHERE receipt_id=? AND parent_receipt=? AND step=? AND consumed=0) AND NOT EXISTS(SELECT 1 FROM m04_provider_steps WHERE operation_id=? AND step=? AND (provider_id IS NOT NULL OR rejected=0)) THEN 1 ELSE 0 END)').bind(guard,this.recoveryReceipt,operationId,ref,operationId,step),
+       db.prepare('UPDATE m04_recovery_steps SET consumed=1 WHERE receipt_id=? AND step=?').bind(this.recoveryReceipt,ref),
+       db.prepare("INSERT INTO m04_provider_steps(operation_id,step,provider_name,status,created_at,updated_at,rejected) VALUES(?,?,?,'started',?,?,0) ON CONFLICT(operation_id,step) DO UPDATE SET rejected=0,updated_at=excluded.updated_at WHERE rejected=1 AND provider_id IS NULL").bind(operationId,step,providerName,Date.now(),Date.now()),
+       db.prepare('DELETE FROM m04_guard WHERE id=?').bind(guard),
+      ]);
+      return {status:'started' as const,provider_id:null,claimed:true};
+    }
     const now=Date.now();
     const inserted=await this.primary().prepare("INSERT INTO m04_provider_steps(operation_id,step,provider_name,status,created_at,updated_at) VALUES(?,?,?,'started',?,?) ON CONFLICT(operation_id,step) DO NOTHING")
       .bind(operationId,step,providerName,now,now).run();
@@ -44,6 +56,7 @@ export class Store {
     if(!row||row.provider_name!==providerName)throw new Error('provider_step_conflict');
     return {status:row.status,provider_id:row.provider_id,claimed:inserted.meta.changes===1};
   }
+  async rejectProviderStep(operationId:string,step:string){await this.primary().prepare("UPDATE m04_provider_steps SET rejected=1,updated_at=? WHERE operation_id=? AND step=? AND status='started' AND provider_id IS NULL").bind(Date.now(),operationId,step).run();}
   async confirmProviderStep(operationId:string,step:'campaign'|'adset'|'ad',providerId:string){
     if(!/^\d+$/.test(providerId))throw new Error('provider_step_conflict');
     await this.primary().prepare("UPDATE m04_provider_steps SET status='confirmed',provider_id=?,updated_at=? WHERE operation_id=? AND step=? AND (provider_id IS NULL OR provider_id=?)")
@@ -51,11 +64,12 @@ export class Store {
     const row=await this.providerStep(operationId,step);
     if(!row||row.status!=='confirmed'||row.provider_id!==providerId)throw new Error('provider_step_conflict');
   }
-  async saveRevision(w:Workflow,s:Scope,p:AnyPlan,key:string,expectedRevision:string){
+  async provenance(revisionId:string){return this.primary().prepare('SELECT source_json,source_hash FROM m04_workflow_sources WHERE revision_id=?').bind(revisionId).first<{source_json:string;source_hash:string}>();}
+  async saveRevision(w:Workflow,s:Scope,p:AnyPlan,key:string,expectedRevision:string,provenance:unknown={kind:'brief'}){
     const db=this.primary(),planHash=await digest(p),scopeHash=await digest(s);
     if(w.scope_hash!==scopeHash||w.account_id!==s.platformAccountId||w.permission_revision!==s.grantRevision||w.connection_revision!==s.connectionRevision||w.provider_revision!==s.providerRevision)throw new Error('stale_revision');
     const previous=await db.prepare('SELECT * FROM m04_revisions WHERE workflow_id=? AND save_key=?').bind(w.id,key).first<Revision>();
-    if(previous){if(previous.plan_hash!==planHash||previous.revision_id!==w.revision_id)throw new Error('idempotency_conflict');return w;}
+    if(previous){if(previous.plan_hash!==planHash||previous.revision_id!==w.revision_id||(await this.provenance(previous.revision_id))?.source_hash!==await digest(provenance))throw new Error('idempotency_conflict');return w;}
     if(w.revision_id!==expectedRevision||!['draft','validated','approved'].includes(w.status))throw new Error('stale_revision');
     const current=await db.prepare('SELECT revision_number FROM m04_revisions WHERE revision_id=? AND workflow_id=?').bind(w.revision_id,w.id).first<Revision>();
     if(!current)throw new Error('stale_revision');
@@ -63,6 +77,7 @@ export class Store {
     try{await db.batch([
       db.prepare("INSERT INTO m04_guard(id,valid) VALUES(?,CASE WHEN EXISTS(SELECT 1 FROM m04_workflows WHERE id=? AND version=? AND revision_id=? AND status IN ('draft','validated','approved')) AND NOT EXISTS(SELECT 1 FROM m04_operations WHERE workflow_id=?) THEN 1 ELSE 0 END)").bind(guard,w.id,w.version,expectedRevision,w.id),
       db.prepare('INSERT INTO m04_revisions(revision_id,workflow_id,revision_number,plan_json,plan_hash,save_key,created_at) VALUES(?,?,?,?,?,?,?)').bind(revision,w.id,current.revision_number+1,JSON.stringify(p),planHash,key,now),
+      db.prepare('INSERT INTO m04_workflow_sources VALUES(?,?,?,?)').bind(revision,w.id,JSON.stringify(provenance),await digest(provenance)),
       db.prepare("UPDATE m04_workflows SET plan_json=?,plan_hash=?,revision_id=?,status='draft',version=version+1,updated_at=? WHERE id=?").bind(JSON.stringify(p),planHash,revision,now,w.id),
       db.prepare('UPDATE m04_challenges SET used=1 WHERE workflow_id=?').bind(w.id),
       this.auditStatement(db,w,'save_revision','success'),db.prepare('DELETE FROM m04_guard WHERE id=?').bind(guard),
@@ -71,14 +86,15 @@ export class Store {
     if(!updated||updated.revision_id!==revision||updated.plan_hash!==planHash)throw new Error('conflict');
     return updated;
   }
-  async save(s: Scope, p: AnyPlan, key: string, backendRevision:string) {
+  async save(s: Scope, p: AnyPlan, key: string, backendRevision:string,provenance:unknown={kind:'brief'}) {
     const existing = await this.source(key, s), planHash = await digest(p), scopeHash=await digest(s);
-    if (existing) {if (existing.plan_hash !== planHash||existing.scope_hash!==scopeHash||existing.backend_revision!==backendRevision) throw new Error('idempotency_conflict'); return existing;}
+    if (existing) {if (existing.plan_hash !== planHash||existing.scope_hash!==scopeHash||existing.backend_revision!==backendRevision||(await this.provenance(existing.revision_id))?.source_hash!==await digest(provenance)) throw new Error('idempotency_conflict'); return existing;}
     const now = Date.now(), id = crypto.randomUUID(), revision = crypto.randomUUID(), db = this.primary();
     await db.batch([
       db.prepare("INSERT INTO m04_workflows(id,subject,service_id,account_id,permission_revision,connection_revision,provider_revision,scope_hash,mapping_hash,backend_revision,plan_json,plan_hash,revision_id,source_key,status,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,'draft',?,?) ON CONFLICT(subject,service_id,source_key) DO NOTHING")
         .bind(id, s.subject, s.accountPageId, s.platformAccountId, s.grantRevision, s.connectionRevision, s.providerRevision, scopeHash,await mappingDigest(s), backendRevision, JSON.stringify(p), planHash, revision, key, now, now),
       db.prepare('INSERT INTO m04_revisions(revision_id,workflow_id,revision_number,plan_json,plan_hash,save_key,created_at) SELECT ?,id,1,?,?,?,? FROM m04_workflows WHERE id=?').bind(revision,JSON.stringify(p),planHash,key,now,id),
+      db.prepare('INSERT INTO m04_workflow_sources SELECT ?,id,?,? FROM m04_workflows WHERE id=?').bind(revision,JSON.stringify(provenance),await digest(provenance),id),
       db.prepare("INSERT INTO m04_audit(id,workflow_id,subject,action,outcome,at) SELECT ?,id,subject,'save','success',? FROM m04_workflows WHERE id=?").bind(crypto.randomUUID(), now, id),
     ]);
     const row = await this.source(key, s);

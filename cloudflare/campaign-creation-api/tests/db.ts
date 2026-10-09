@@ -7,6 +7,8 @@ export async function database() {
   sqlite.exec(await readFile(new URL('../migrations/0003_creation_outbox.sql', import.meta.url), 'utf8'));
   sqlite.exec(await readFile(new URL('../migrations/0004_provider_steps.sql', import.meta.url), 'utf8'));
   sqlite.exec(await readFile(new URL('../migrations/0005_tiktok_diagnostics.sql', import.meta.url), 'utf8'));
+  sqlite.exec(await readFile(new URL('../migrations/0006_sources_and_actions.sql', import.meta.url), 'utf8'));
+  sqlite.exec(await readFile(new URL('../migrations/0007_curated_templates.sql', import.meta.url), 'utf8'));
   class Statement {
     values: any[] = [];
     constructor(readonly sql: string) {}

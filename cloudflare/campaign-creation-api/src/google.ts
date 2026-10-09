@@ -1,4 +1,4 @@
-import {boundedJson, type Plan, type Scope} from './contracts';
+import {boundedJson,planSchema, type Plan, type Scope} from './contracts';
 
 export interface GoogleCredentials {
   GOOGLE_ADS_CLIENT_ID: string;
@@ -173,25 +173,77 @@ export class Google {
       throw new ProviderError('unknown', 'creation_receipt_incomplete');
     return names;
   }
-  async readback(plan: Plan, workflowId: string) {
+  async qa(plan:Plan,workflowId:string){
+    await this.validate(plan,workflowId);
+    const data=await this.readback(plan,workflowId);
+    const policy=await this.query(`SELECT ad_group_ad.resource_name,ad_group_ad.policy_summary.approval_status FROM ad_group_ad WHERE ad_group.id = ${data.ad_group.id} AND ad_group_ad.status != 'REMOVED'`);
+    if(policy.length!==1||policy[0].adGroupAd.resourceName!==data.ad.resourceName||policy[0].adGroupAd.policySummary?.approvalStatus!=='APPROVED')throw new ProviderError('unavailable','google_qa_policy');
+    return {...data,conversion_configuration:await this.conversionConfiguration(String(data.campaign.id))};
+  }
+  async schedule(snapshot:Json,date:string){
+    const operations:Json[]=[
+      {campaignOperation:{update:{resourceName:snapshot.campaign.resourceName,status:'ENABLED',startDateTime:date+' 00:00:00'},updateMask:'status,start_date_time'}},
+      {adGroupOperation:{update:{resourceName:snapshot.ad_group.resourceName,status:'ENABLED'},updateMask:'status'}},
+      {adGroupAdOperation:{update:{resourceName:snapshot.ad.resourceName,status:'ENABLED'},updateMask:'status'}},
+      ...snapshot.targeting.filter((row:Json)=>['KEYWORD','LOCATION','LANGUAGE','AUDIENCE'].includes(row.adGroupCriterion.type)).map((row:Json)=>({adGroupCriterionOperation:{update:{resourceName:row.adGroupCriterion.resourceName,status:'ENABLED'},updateMask:'status'}})),
+    ];
+    if(operations.some(op=>{const value=Object.values(op)[0] as Json;return typeof value.update.resourceName!=='string'||!value.update.resourceName.startsWith(`customers/${this.scope.platformAccountId}/`);}))throw new ProviderError('rejected','schedule_ownership');
+    await this.request('googleAds:mutate',{mutateOperations:operations,partialFailure:false,validateOnly:false},true);
+  }
+  async clonePlan(campaignId:string){
+    if(!/^\d{1,20}$/.test(campaignId))throw new ProviderError('rejected','unsupported_structure');
+    const conversion=await this.conversionConfiguration(campaignId);
+    const rows=await this.query(`SELECT campaign.id,campaign.name,campaign.advertising_channel_type,campaign_budget.amount_micros,customer.currency_code,customer.time_zone FROM campaign WHERE campaign.id = ${campaignId}`);
+    if(rows.length!==1||!['SEARCH','DEMAND_GEN'].includes(rows[0].campaign.advertisingChannelType))throw new ProviderError('rejected','unsupported_structure');
+    const groups=await this.query(`SELECT ad_group.id,ad_group.name FROM ad_group WHERE campaign.id = ${campaignId} AND ad_group.status != 'REMOVED'`);
+    if(groups.length!==1)throw new ProviderError('rejected','unsupported_structure');
+    const group=groups[0].adGroup;
+    const ads=await this.query(`SELECT ad_group_ad.ad.type,ad_group_ad.ad.final_urls,ad_group_ad.ad.responsive_search_ad.headlines,ad_group_ad.ad.responsive_search_ad.descriptions,ad_group_ad.ad.demand_gen_multi_asset_ad.headlines,ad_group_ad.ad.demand_gen_multi_asset_ad.descriptions,ad_group_ad.ad.demand_gen_multi_asset_ad.business_name,ad_group_ad.ad.demand_gen_multi_asset_ad.marketing_images,ad_group_ad.ad.demand_gen_multi_asset_ad.square_marketing_images,ad_group_ad.ad.demand_gen_multi_asset_ad.logo_images FROM ad_group_ad WHERE ad_group.id = ${group.id} AND ad_group_ad.status != 'REMOVED'`);
+    if(ads.length!==1)throw new ProviderError('rejected','unsupported_structure');
+    const ad=ads[0].adGroupAd.ad,search=rows[0].campaign.advertisingChannelType==='SEARCH',creative=search?ad.responsiveSearchAd:ad.demandGenMultiAssetAd;
+    if(!creative||ad.finalUrls?.length!==1)throw new ProviderError('rejected','unsupported_structure');
+    const targets=await this.query(search?`SELECT campaign_criterion.type,campaign_criterion.location.geo_target_constant,campaign_criterion.language.language_constant FROM campaign_criterion WHERE campaign.id = ${campaignId}`:`SELECT ad_group_criterion.type,ad_group_criterion.location.geo_target_constant,ad_group_criterion.language.language_constant,ad_group_criterion.audience.audience FROM ad_group_criterion WHERE ad_group.id = ${group.id} AND ad_group_criterion.status != 'REMOVED'`);
+    const criteria=targets.map(row=>search?row.campaignCriterion:row.adGroupCriterion);
+    const keywords=search?await this.query(`SELECT ad_group_criterion.keyword.text FROM keyword_view WHERE ad_group.id = ${group.id} AND ad_group_criterion.status != 'REMOVED'`):[];
+    const plan=planSchema.parse({name:rows[0].campaign.name,campaign_type:search?'search':'demand_gen',currency:rows[0].customer.currencyCode,timezone:rows[0].customer.timeZone,
+      daily_budget:String(Number(rows[0].campaignBudget.amountMicros)/1e6),final_url:ad.finalUrls[0],ad_group_name:group.name,
+      locations:criteria.filter(c=>c.type==='LOCATION').map(c=>c.location.geoTargetConstant),languages:criteria.filter(c=>c.type==='LANGUAGE').map(c=>c.language.languageConstant),
+      headlines:creative.headlines.map((v:Json)=>v.text),descriptions:creative.descriptions.map((v:Json)=>v.text),
+      ...(search?{keywords:keywords.map(row=>row.adGroupCriterion.keyword.text)}:{business_name:creative.businessName,landscape_images:creative.marketingImages.map((v:Json)=>v.asset),square_images:creative.squareMarketingImages.map((v:Json)=>v.asset),logos:creative.logoImages.map((v:Json)=>v.asset),audience:criteria.find(c=>c.type==='AUDIENCE')?.audience.audience})});
+    // Only the exact supported paused single-group/single-ad structure is cloneable in V1.
+    const snapshot=await this.readback(plan,'',{campaignId});
+    return {plan,snapshot:{...snapshot,conversion_configuration:conversion}};
+  }
+  async conversionConfiguration(campaignId:string){
+    if(!/^\d+$/.test(campaignId))throw new ProviderError('rejected','conversion_ownership');
+    const rows=await this.query(`SELECT conversion_goal_campaign_config.campaign,conversion_goal_campaign_config.goal_config_level,conversion_goal_campaign_config.custom_conversion_goal FROM conversion_goal_campaign_config WHERE campaign.id = ${campaignId}`);
+    const config=rows[0]?.conversionGoalCampaignConfig;
+    if(rows.length!==1||config?.campaign!==`customers/${this.scope.platformAccountId}/campaigns/${campaignId}`||config.goalConfigLevel!=='CUSTOMER'||config.customConversionGoal)throw new ProviderError('rejected','unsupported_conversion_configuration');
+    const goals=await this.query('SELECT customer_conversion_goal.category,customer_conversion_goal.origin,customer_conversion_goal.biddable FROM customer_conversion_goal');
+    const actions=await this.query('SELECT conversion_action.resource_name,conversion_action.status,conversion_action.category,conversion_action.origin,conversion_action.primary_for_goal FROM conversion_action WHERE conversion_action.status != \'REMOVED\'');
+    return {config,goals:goals.sort((a,b)=>JSON.stringify(a).localeCompare(JSON.stringify(b))),actions:actions.sort((a,b)=>JSON.stringify(a).localeCompare(JSON.stringify(b)))};
+  }
+  async readback(plan: Plan, workflowId: string,options:{campaignId?:string;scheduledDate?:string}={}) {
     // A generated immutable UUID marker permits read-only reconciliation after a lost response.
     const name = providerName(plan, workflowId).replaceAll('\\', '\\\\').replaceAll("'", "\\'");
-    const campaigns = await this.query(`SELECT campaign.resource_name,campaign.id,campaign.name,campaign.status,campaign.advertising_channel_type,campaign.bidding_strategy_type,campaign.contains_eu_political_advertising,campaign.network_settings.target_google_search,campaign.network_settings.target_search_network,campaign.network_settings.target_content_network,campaign.network_settings.target_partner_search_network,campaign.campaign_budget,campaign_budget.resource_name,campaign_budget.amount_micros,campaign_budget.explicitly_shared,campaign_budget.reference_count,campaign_budget.period FROM campaign WHERE campaign.name = '${name}' AND campaign.status != 'REMOVED'`);
+    const campaigns = await this.query(`SELECT campaign.resource_name,campaign.id,campaign.name,campaign.status,${options.scheduledDate?'campaign.start_date_time,':''}campaign.advertising_channel_type,campaign.bidding_strategy_type,campaign.geo_target_type_setting.positive_geo_target_type,campaign.geo_target_type_setting.negative_geo_target_type,campaign.contains_eu_political_advertising,campaign.network_settings.target_google_search,campaign.network_settings.target_search_network,campaign.network_settings.target_content_network,campaign.network_settings.target_partner_search_network,campaign.campaign_budget,campaign_budget.resource_name,campaign_budget.amount_micros,campaign_budget.explicitly_shared,campaign_budget.reference_count,campaign_budget.period FROM campaign WHERE ${options.campaignId?`campaign.id = ${options.campaignId}`:`campaign.name = '${name}'`} AND campaign.status != 'REMOVED'`);
     if (campaigns.length !== 1) throw new ProviderError('unknown', 'creation_readback');
     const row = campaigns[0], campaign = row.campaign, budget = row.campaignBudget;
-    if (!/^\d+$/.test(String(campaign.id)) || campaign.status !== 'PAUSED' || campaign.advertisingChannelType !== (plan.campaign_type === 'search' ? 'SEARCH' : 'DEMAND_GEN') ||
+    const expectedStatus=options.scheduledDate?'ENABLED':'PAUSED';
+    if (options.scheduledDate&&campaign.startDateTime!==options.scheduledDate+' 00:00:00')throw new ProviderError('unknown','schedule_readback');
+    if (!/^\d+$/.test(String(campaign.id)) || campaign.status !== expectedStatus || campaign.advertisingChannelType !== (plan.campaign_type === 'search' ? 'SEARCH' : 'DEMAND_GEN') ||
       campaign.biddingStrategyType !== (plan.campaign_type === 'search' ? 'TARGET_SPEND' : 'MAXIMIZE_CONVERSIONS') ||
       campaign.containsEuPoliticalAdvertising !== 'DOES_NOT_CONTAIN_EU_POLITICAL_ADVERTISING' ||
       campaign.campaignBudget !== budget.resourceName || budget.explicitlyShared !== false || String(budget.referenceCount) !== '1' ||
       budget.period !== 'DAILY' || BigInt(budget.amountMicros) !== BigInt(Math.round(Number(plan.daily_budget) * 1e6)))
       throw new ProviderError('unknown', 'creation_readback');
     const groups = await this.query(`SELECT ad_group.resource_name,ad_group.id,ad_group.name,ad_group.status,ad_group.campaign FROM ad_group WHERE campaign.id = ${campaign.id} AND ad_group.status != 'REMOVED'`);
-    if (groups.length !== 1 || !/^\d+$/.test(String(groups[0].adGroup.id)) || groups[0].adGroup.status !== 'PAUSED' || groups[0].adGroup.campaign !== campaign.resourceName ||
+    if (groups.length !== 1 || !/^\d+$/.test(String(groups[0].adGroup.id)) || groups[0].adGroup.status !== expectedStatus || groups[0].adGroup.campaign !== campaign.resourceName ||
       groups[0].adGroup.name !== plan.ad_group_name) throw new ProviderError('unknown', 'creation_readback');
     const group = groups[0].adGroup;
     const adFields = plan.campaign_type === 'search' ? 'ad_group_ad.ad.responsive_search_ad.headlines,ad_group_ad.ad.responsive_search_ad.descriptions' : 'ad_group_ad.ad.demand_gen_multi_asset_ad.headlines,ad_group_ad.ad.demand_gen_multi_asset_ad.descriptions,ad_group_ad.ad.demand_gen_multi_asset_ad.business_name,ad_group_ad.ad.demand_gen_multi_asset_ad.marketing_images,ad_group_ad.ad.demand_gen_multi_asset_ad.square_marketing_images,ad_group_ad.ad.demand_gen_multi_asset_ad.logo_images';
     const ads = await this.query(`SELECT ad_group_ad.resource_name,ad_group_ad.status,ad_group_ad.ad.final_urls,ad_group_ad.ad.type,${adFields} FROM ad_group_ad WHERE ad_group.id = ${group.id} AND ad_group_ad.status != 'REMOVED'`);
-    if (ads.length !== 1 || ads[0].adGroupAd.status !== 'PAUSED' || ads[0].adGroupAd.ad.finalUrls?.[0] !== plan.final_url ||
+    if (ads.length !== 1 || ads[0].adGroupAd.status !== expectedStatus || ads[0].adGroupAd.ad.finalUrls?.[0] !== plan.final_url ||
       ads[0].adGroupAd.ad.type !== (plan.campaign_type === 'search' ? 'RESPONSIVE_SEARCH_AD' : 'DEMAND_GEN_MULTI_ASSET_AD'))
       throw new ProviderError('unknown', 'creation_readback');
     const equal = (a: string[], b: string[]) => Array.isArray(a) && a.length === b.length && JSON.stringify([...a].sort()) === JSON.stringify([...b].sort());
@@ -222,7 +274,7 @@ export class Google {
       if(!equal(actual,[...new Set(expected)])||derived.some(row=>!['ENABLED','PAUSED'].includes(row.adGroupCriterion.status)||row.adGroupCriterion.bidModifier!==undefined&&Number(row.adGroupCriterion.bidModifier)!==1))throw new ProviderError('unknown','targeting_readback');
     }
     const criteria = allCriteria.filter(row => !defaultTypes.has(row.adGroupCriterion.type)&&!derived.includes(row));
-    if (criteria.some(row => row.adGroupCriterion.status !== 'PAUSED' || row.adGroupCriterion.negative)) throw new ProviderError('unknown', 'targeting_readback');
+    if (criteria.some(row => row.adGroupCriterion.status !== expectedStatus || row.adGroupCriterion.negative)) throw new ProviderError('unknown', 'targeting_readback');
     if (plan.campaign_type === 'search') {
       const allTargeting = await this.query(`SELECT campaign_criterion.type,campaign_criterion.negative,campaign_criterion.bid_modifier,campaign_criterion.location.geo_target_constant,campaign_criterion.language.language_constant FROM campaign_criterion WHERE campaign.id = ${campaign.id}`);
       const devices = allTargeting.filter(row => row.campaignCriterion.type === 'DEVICE');
@@ -235,6 +287,7 @@ export class Google {
         criteria.length !== uniqueKeywords.length || criteria.some(row => row.adGroupCriterion.keyword?.matchType !== 'EXACT') ||
         !equal(criteria.map(row => row.adGroupCriterion.keyword?.text), uniqueKeywords) || targeting.length !== plan.locations.length + plan.languages.length)
         throw new ProviderError('unknown', 'targeting_readback');
+      if(campaign.geoTargetTypeSetting?.positiveGeoTargetType!=='PRESENCE'||campaign.geoTargetTypeSetting?.negativeGeoTargetType!=='PRESENCE')throw new ProviderError('unknown','targeting_readback');
       const network = campaign.networkSettings;
       if (!network?.targetGoogleSearch || network.targetSearchNetwork || network.targetContentNetwork || network.targetPartnerSearchNetwork)
         throw new ProviderError('unknown', 'network_readback');

@@ -1,6 +1,7 @@
 import {boundedJson,digest,type Scope,type MetaPlan} from './contracts';
 import {ProviderError} from './google';
 import {Store} from './store';
+import {ActionStore} from './action-store';
 
 // Preview URLs are signed afresh by Meta. The image hash, video ID and creative ID
 // bind the asset; a generated thumbnail URL is not a change to the approved creative.
@@ -44,6 +45,9 @@ export class Meta {
     try{payload=await boundedJson(response,262_144);}catch{throw new ProviderError(validateOnly?'unavailable':'unknown','meta_response');}
     if(!response.ok||payload.error){
       if(response.status===429||[4,17,32,613,80004].includes(Number(payload.error?.code)))throw new ProviderError(validateOnly?'unavailable':'unknown','meta_rate_limited');
+      // A server/transient/unstructured failure can follow a committed write.
+      // Only a structured, nontransient 4xx rejection authorizes a later replay.
+      if(!validateOnly&&(response.status>=500||response.status===408||response.status<400||!payload.error||payload.error.is_transient===true||[1,2].includes(Number(payload.error.code))||!Number.isFinite(Number(payload.error.code??payload.error.error_subcode))))throw new ProviderError('unknown','meta_response');
       const floor=payload.error?.error_subcode===1885272&&String(payload.error?.error_user_msg??'').match(new RegExp('more than '+this.currency+'\\s*([0-9]+(?:\\.[0-9]{2})?)','i'));
       const code=floor?`meta_budget_floor_${floor[1]}`:payload.error?.error_subcode?`meta_${payload.error.error_subcode}`:'meta_rejected';
       throw new ProviderError(validateOnly?'unavailable':'rejected',code);
@@ -179,6 +183,7 @@ export class Meta {
     try{id=String((await this.post(`act_${this.scope.platformAccountId}/${edge}`,values)).id);}
     catch(error){
       if(error instanceof ProviderError&&error.outcome==='unknown')return this.reconcile(store,operationId,step,name);
+      if(error instanceof ProviderError&&error.outcome==='rejected')await store.rejectProviderStep(operationId,step);
       throw error;
     }
     await store.confirmProviderStep(operationId,step,id);
@@ -234,5 +239,69 @@ export class Meta {
     await this.checkAd(ad.provider_id,names.ad,adset.provider_id,source.creative.id,source.creative.object_story_spec);
     return {platform:'Meta',account_id:this.scope.platformAccountId,campaign_id:campaign.provider_id,adset_id:adset.provider_id,ad_id:ad.provider_id,
       status:'PAUSED',daily_budget:plan.daily_budget,currency:plan.currency,source_ad_id:plan.source_ad_id,creative_id:source.creative.id};
+  }
+  async reconcileSteps(plan:MetaPlan,workflowId:string,operationId:string,store:Store){
+    this.deadline=Date.now()+25000;
+    const name=metaProviderName(plan,workflowId);
+    for(const row of await store.providerSteps(operationId)){
+      if(row.status==='started'&&!row.rejected&&['campaign','adset','ad'].includes(row.step)){
+        try{await this.reconcile(store,operationId,row.step as 'campaign'|'adset'|'ad',row.provider_name);}catch{/* Unresolved intent stays readback-only. */}
+      }
+    }
+  }
+  async qa(plan:MetaPlan,workflowId:string,operationId:string,store:Store){
+    const payload=await this.validate(plan,workflowId),data=await this.readback(plan,workflowId,operationId,store);
+    const actual=await this.get(data.adset_id,{fields:'id,account_id,campaign_id,daily_budget,status,targeting,billing_event,optimization_goal,bid_strategy,promoted_object,attribution_spec,destination_type,regional_regulation_identities'});
+    for(const key of ['targeting','billing_event','optimization_goal','bid_strategy','promoted_object','attribution_spec','destination_type','regional_regulation_identities'])
+      if(await digest(ordered(actual[key]??null))!==await digest(ordered(payload.adset[key]??null)))throw new ProviderError('unknown','meta_qa_mismatch');
+    const ad=await this.get(data.ad_id,{fields:'id,name,account_id,adset_id,status,issues_info,creative{id,account_id,object_story_spec}'});
+    if(ad.id!==data.ad_id||ad.issues_info?.length)throw new ProviderError('unavailable','meta_qa_issues');
+    const campaign=await this.get(data.campaign_id,{fields:'id,name,account_id,objective,status,special_ad_categories'});
+    return {...data,campaign_configuration:campaign,ad_configuration:ad,configuration:actual,source_fingerprint:plan.source_fingerprint};
+  }
+  private async update(id:string,values:Record<string,string>){
+    let response:Response;
+    try{response=await this.fetcher(`https://graph.facebook.com/${this.env.META_API_VERSION}/${id}`,{method:'POST',headers:{Authorization:`Bearer ${this.env.META_ACCESS_TOKEN}`,'Content-Type':'application/x-www-form-urlencoded'},body:new URLSearchParams(values),redirect:'manual',signal:this.signal()});}
+    catch{throw new ProviderError('unknown','meta_schedule_response');}
+    let body:Record<string,any>;try{body=await boundedJson(response,262144);}catch{throw new ProviderError('unknown','meta_schedule_response');}
+    if(!response.ok||body.success!==true)throw new ProviderError('unknown','meta_schedule_response');
+  }
+  async schedule(snapshot:Record<string,any>,scheduledAt:string,receipt:string,actions:ActionStore,check:()=>Promise<unknown>){
+    this.deadline=Date.now()+90000;
+    // Parent remains paused until every child and the future time have official readback.
+    const campaign=await this.get(snapshot.campaign_id,{fields:'id,account_id,status'});
+    if(campaign.id!==snapshot.campaign_id||campaign.account_id!==this.scope.platformAccountId||campaign.status!=='PAUSED')throw new ProviderError('unknown','meta_parent_not_paused');
+    for(const [step,id,values] of [
+      ['adset',snapshot.adset_id,{start_time:scheduledAt,status:'ACTIVE'}],
+      ['ad',snapshot.ad_id,{status:'ACTIVE'}],
+      ['campaign',snapshot.campaign_id,{status:'ACTIVE'}],
+    ] as const){
+      await check();
+      if(Date.parse(scheduledAt)<Date.now()+72*3600000)throw new ProviderError('unknown','meta_schedule_expired');
+      const parent=await this.get(snapshot.campaign_id,{fields:'id,account_id,status'});
+      if(parent.id!==snapshot.campaign_id||parent.account_id!==this.scope.platformAccountId||parent.status!=='PAUSED')throw new ProviderError('unknown','meta_parent_not_paused');
+      if(!await actions.claimStep(receipt,step,id))throw new ProviderError('unknown','meta_schedule_dispatched');
+      try{await this.update(id,values);}catch{/* Resolve this one attempt by official readback only. */}
+      const row=await this.get(id,{fields:'id,account_id,status'+(step==='adset'?',start_time':'')});
+      if(row.id!==id||row.account_id!==this.scope.platformAccountId||row.status!=='ACTIVE'||step==='adset'&&Date.parse(row.start_time)!==Date.parse(scheduledAt))throw new ProviderError('unknown','meta_schedule_readback');
+      await actions.confirmStep(receipt,step);
+    }
+    return this.readScheduled(snapshot,scheduledAt);
+  }
+  async readScheduled(snapshot:Record<string,any>,scheduledAt:string){
+    this.deadline=Date.now()+30000;
+    const campaign=await this.get(snapshot.campaign_id,{fields:'id,name,account_id,objective,status,special_ad_categories'}),
+      adset=await this.get(snapshot.adset_id,{fields:'id,name,account_id,campaign_id,daily_budget,status,start_time,targeting,billing_event,optimization_goal,bid_strategy,promoted_object,attribution_spec,destination_type,regional_regulation_identities'}),
+      ad=await this.get(snapshot.ad_id,{fields:'id,name,account_id,adset_id,status,issues_info,creative{id,account_id,object_story_spec}'});
+    if(campaign.id!==snapshot.campaign_id||adset.id!==snapshot.adset_id||ad.id!==snapshot.ad_id||
+      [campaign,adset,ad].some(row=>row.account_id!==this.scope.platformAccountId||row.status!=='ACTIVE')||
+      adset.campaign_id!==campaign.id||ad.adset_id!==adset.id||ad.creative?.id!==snapshot.creative_id||
+      Date.parse(adset.start_time)!==Date.parse(scheduledAt)||Number(adset.daily_budget)!==Math.round(Number(snapshot.daily_budget)*100))throw new ProviderError('unknown','meta_schedule_readback');
+    for(const key of ['targeting','billing_event','optimization_goal','bid_strategy','promoted_object','attribution_spec','destination_type','regional_regulation_identities'])
+      if(await digest(ordered(adset[key]??null))!==await digest(ordered(snapshot.configuration[key]??null)))throw new ProviderError('unknown','meta_qa_mismatch');
+    for(const key of ['name','objective','special_ad_categories'])
+      if(await digest(ordered(campaign[key]??null))!==await digest(ordered(snapshot.campaign_configuration[key]??null)))throw new ProviderError('unknown','meta_qa_mismatch');
+    if(ad.name!==snapshot.ad_configuration.name||ad.issues_info?.length||ad.creative?.account_id!==this.scope.platformAccountId||await storyDigest(ad.creative?.object_story_spec??{})!==await storyDigest(snapshot.ad_configuration.creative?.object_story_spec??{}))throw new ProviderError('unknown','meta_qa_mismatch');
+    return {platform:'Meta',campaign,adset,ad,scheduled_at:scheduledAt,verified_at:new Date().toISOString()};
   }
 }

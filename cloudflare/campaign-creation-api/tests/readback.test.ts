@@ -4,12 +4,12 @@ import type {Plan,Scope} from '../src/contracts';
 const scope:Scope={subject:'actor',grantRevision:1,accountPageId:'00000000-0000-4000-8000-000000000001',clientId:'00000000-0000-4000-8000-000000000002',platform:'Google',platformAccountId:'2315114913',connectionRevision:'test',providerRevision:'test'};
 const prefix='customers/2315114913';
 const plan:Plan={name:'Synthetic paused Search',campaign_type:'search',currency:'MYR',timezone:'Asia/Kuala_Lumpur',daily_budget:'10',final_url:'https://example.com/',locations:['geoTargetConstants/2458'],languages:['languageConstants/1000'],ad_group_name:'Synthetic group',keywords:['test'],headlines:['Test One','Test Two','Test Three'],descriptions:['Test description one.','Test description two.']};
-function fixture(biddingStrategyType='TARGET_SPEND'){
+function fixture(biddingStrategyType='TARGET_SPEND',geoTargetType='PRESENCE'){
   const google=new Google({GOOGLE_ADS_CLIENT_ID:'synthetic',GOOGLE_ADS_CLIENT_SECRET:'synthetic',GOOGLE_ADS_REFRESH_TOKEN:'synthetic'},scope);
   const groupCriteria=[{adGroupCriterion:{type:'KEYWORD',status:'PAUSED',keyword:{text:'test',matchType:'EXACT'}}},{adGroupCriterion:{type:'GENDER',status:'ENABLED',negative:false,bidModifier:1}}];
   const targetCriteria=[{campaignCriterion:{type:'LOCATION',location:{geoTargetConstant:plan.locations[0]}}},{campaignCriterion:{type:'LANGUAGE',language:{languageConstant:plan.languages[0]}}},{campaignCriterion:{type:'DEVICE',negative:false,bidModifier:1}}];
   vi.spyOn(google,'query').mockImplementation(async query=>{
-    if(query.includes('FROM campaign WHERE'))return [{campaign:{id:'99',resourceName:prefix+'/campaigns/99',status:'PAUSED',advertisingChannelType:'SEARCH',biddingStrategyType,containsEuPoliticalAdvertising:'DOES_NOT_CONTAIN_EU_POLITICAL_ADVERTISING',campaignBudget:prefix+'/campaignBudgets/101',networkSettings:{targetGoogleSearch:true}},campaignBudget:{resourceName:prefix+'/campaignBudgets/101',amountMicros:'10000000',explicitlyShared:false,referenceCount:'1',period:'DAILY'}}];
+    if(query.includes('FROM campaign WHERE'))return [{campaign:{id:'99',resourceName:prefix+'/campaigns/99',status:'PAUSED',advertisingChannelType:'SEARCH',biddingStrategyType,containsEuPoliticalAdvertising:'DOES_NOT_CONTAIN_EU_POLITICAL_ADVERTISING',campaignBudget:prefix+'/campaignBudgets/101',networkSettings:{targetGoogleSearch:true},geoTargetTypeSetting:{positiveGeoTargetType:geoTargetType,negativeGeoTargetType:'PRESENCE'}},campaignBudget:{resourceName:prefix+'/campaignBudgets/101',amountMicros:'10000000',explicitlyShared:false,referenceCount:'1',period:'DAILY'}}];
     if(query.includes('FROM ad_group WHERE'))return [{adGroup:{id:'100',resourceName:prefix+'/adGroups/100',campaign:prefix+'/campaigns/99',name:plan.ad_group_name,status:'PAUSED'}}];
     if(query.includes('FROM ad_group_ad WHERE'))return [{adGroupAd:{status:'PAUSED',ad:{type:'RESPONSIVE_SEARCH_AD',finalUrls:[plan.final_url],responsiveSearchAd:{headlines:plan.headlines.map(text=>({text})),descriptions:plan.descriptions.map(text=>({text}))}}}}];
     if(query.includes('FROM ad_group_criterion WHERE'))return groupCriteria;
@@ -62,4 +62,9 @@ it.each(['unknown_list','wrong_exclusion','missing_list','bid'])('rejects Demand
   if(mode==='missing_list')lists.pop();
   if(mode==='bid')Object.assign(lists[0].adGroupCriterion,{bidModifier:2});
   await expect(google.readback(demand,crypto.randomUUID())).rejects.toThrow('targeting_readback');
+});
+
+it('rejects Search geolocation semantics drift before cloning or Gate 2',async()=>{
+ const {google}=fixture('TARGET_SPEND','PRESENCE_OR_INTEREST');
+ await expect(google.readback(plan,crypto.randomUUID())).rejects.toThrow('targeting_readback');
 });

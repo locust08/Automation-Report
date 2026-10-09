@@ -1,6 +1,8 @@
 import {jwtVerify} from 'jose';
 import {boundedJson, digest, scopeSchema, type Scope} from './contracts';
 import {AuthorityError} from './preflight';
+import {actionAllowed} from './actions';
+import type {Environment} from './service';
 
 export interface AuthEnvironment {
   M04_ENABLED: string;
@@ -9,6 +11,12 @@ export interface AuthEnvironment {
   M04_PILOT_SERVICE: string;
   M04_PILOT_SUBJECT: string;
   M04_META_CREATION_ENABLED?:string;
+  M04_TEMPLATE_PLANNING_ENABLED?:string;
+  M04_CLONE_PLANNING_ENABLED?:string;
+  M04_RECOVERY_ENABLED?:string;
+  M04_GATE2_ENABLED?:string;
+  M04_GATE2_ALLOWLIST?:string;
+  M04_RECOVERY_ALLOWLIST?:string;
   M04_META_PILOT_ACCOUNT?:string;
   M04_META_PILOT_SERVICE?:string;
   M04_TIKTOK_CREATION_ENABLED?:string;
@@ -44,6 +52,8 @@ export async function authenticate(request: Request, env: AuthEnvironment, tool:
 }
 /** DigitalBee is the current permission authority, checked at every stage and again before dispatch. */
 export async function authorize(env: AuthEnvironment, scope: Scope, tool: string, fetcher?: typeof fetch) {
+  const action=['campaign_gate2_activate','campaign_action_prepare_gate2'].includes(tool)?'gate2':['campaign_creation_resume','campaign_action_prepare_resume'].includes(tool)?'resume':null;
+  if(action&&!actionAllowed(env as Environment,scope,action))throw new Error('provider_creation_disabled');
   if(scope.platform==='Meta'&&['campaign_gate1_create','campaign_action_prepare_gate1'].includes(tool)&&env.M04_META_CREATION_ENABLED!=='true')throw new Error('provider_creation_disabled');
   if(scope.platform==='TikTok'&&['campaign_gate1_create','campaign_action_prepare_gate1'].includes(tool)&&
     (env.M04_TIKTOK_CREATION_ENABLED!=='true'||env.M04_TIKTOK_PILOT_ACCOUNT!=='7647057541075271700'||
