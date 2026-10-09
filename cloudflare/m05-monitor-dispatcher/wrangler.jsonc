@@ -3,8 +3,9 @@
   "name": "m05-monitor-dispatcher",
   "account_id": "e7c515dde995479daacd82ad79dfc3e8",
   "main": "src/index.js",
-  "compatibility_date": "2026-09-25",
+  "compatibility_date": "2026-10-09",
+  "compatibility_flags": ["nodejs_compat"],
   "triggers": { "crons": ["*/15 * * * *"] },
   "vars": { "M05_SCHEDULER_MODE": "shadow" },
-  "observability": { "enabled": true }
+  "observability": { "enabled": true, "head_sampling_rate": 1 }
 }

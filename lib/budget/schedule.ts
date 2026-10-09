@@ -20,3 +20,8 @@ export function localYesterday(zone: string, now = new Date()): string {
   const date = new Intl.DateTimeFormat("en-CA", { timeZone: zone, year: "numeric", month: "2-digit", day: "2-digit" }).format(now);
   return dateBefore(date, 1);
 }
+
+export function pilotNotionAccountId(value: string | undefined): string | null {
+  const id = value?.trim() ?? "";
+  return /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(id) ? id : null;
+}

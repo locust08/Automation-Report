@@ -27,7 +27,7 @@ create table public.m05_ads_allocations (
   end_date date not null,
   approved_amount numeric(20,6) not null check (approved_amount >= 0),
   currency text not null check (currency ~ '^[A-Z]{3}$'),
-  approved_by uuid not null,
+  approved_by uuid not null references public.ad_automation_report_users(id) on delete restrict,
   approved_at timestamptz not null,
   source_revision text not null,
   created_at timestamptz not null default clock_timestamp(),
@@ -175,16 +175,17 @@ begin
     'm05_ads_followups','m05_ads_audit'
   ] loop
     execute format('alter table public.%I enable row level security',relation_name);
-    execute format('revoke all on public.%I from anon, authenticated',relation_name);
+    execute format('revoke all on public.%I from public, anon, authenticated',relation_name);
     execute format('grant select, insert on public.%I to service_role',relation_name);
   end loop;
 end $$;
 grant update on public.m05_ads_accounts,
-  public.m05_ads_daily_spend, public.m05_ads_missing_days, public.m05_ads_alerts,
+  public.m05_ads_allocations, public.m05_ads_daily_spend, public.m05_ads_missing_days,
+  public.m05_ads_monitor_runs, public.m05_ads_alerts,
   public.m05_ads_recommendations, public.m05_ads_followups to service_role;
 grant delete on public.m05_ads_daily_spend, public.m05_ads_missing_days to service_role;
-revoke all on sequence public.m05_ads_accounts_id_seq from anon, authenticated;
-revoke all on sequence public.m05_ads_audit_id_seq from anon, authenticated;
+revoke all on sequence public.m05_ads_accounts_id_seq from public, anon, authenticated;
+revoke all on sequence public.m05_ads_audit_id_seq from public, anon, authenticated;
 grant usage, select on sequence public.m05_ads_accounts_id_seq to service_role;
 grant usage, select on sequence public.m05_ads_audit_id_seq to service_role;
 
@@ -193,7 +194,7 @@ create or replace function public.m05_ads_record_daily_capture(
   p_currency text, p_snapshot_id text, p_captured_at timestamptz,
   p_daily jsonb, p_missing_days jsonb
 ) returns jsonb
-language plpgsql security definer set search_path = ''
+language plpgsql security invoker set search_path = ''
 as $$
 declare
   account_row public.m05_ads_accounts%rowtype;
@@ -296,7 +297,7 @@ grant execute on function public.m05_ads_record_daily_capture(text,bigint,date,d
 create or replace function public.m05_ads_capture_month_snapshot(
   p_account_id bigint, p_month_start date, p_allocation_id uuid default null
 ) returns jsonb
-language plpgsql security definer set search_path = ''
+language plpgsql security invoker set search_path = ''
 as $$
 declare
   account_row public.m05_ads_accounts%rowtype;
@@ -356,7 +357,7 @@ grant execute on function public.m05_ads_capture_month_snapshot(bigint,date,uuid
 
 create or replace function public.m05_ads_accept_verified_handoff(p_handoff_id bigint)
 returns jsonb
-language plpgsql security definer set search_path = ''
+language plpgsql security invoker set search_path = ''
 as $$
 declare
   source_row public.m04_ads_campaign_monitoring_handoffs%rowtype;
@@ -405,7 +406,7 @@ create or replace function public.m05_ads_record_monitor_run(
   p_slot_key text, p_account_id bigint, p_status text,
   p_observed_days integer, p_missing_days integer, p_error_code text default null
 ) returns jsonb
-language plpgsql security definer set search_path = ''
+language plpgsql security invoker set search_path = ''
 as $$
 declare run_row public.m05_ads_monitor_runs%rowtype;
 begin
@@ -430,3 +431,104 @@ begin
 end $$;
 revoke all on function public.m05_ads_record_monitor_run(text,bigint,text,integer,integer,text) from public,anon,authenticated;
 grant execute on function public.m05_ads_record_monitor_run(text,bigint,text,integer,integer,text) to service_role;
+
+-- Deliberately narrow pilot seed. It resolves the authoritative M04 row and
+-- operator inside one transaction, and refuses to rewrite conflicting rows.
+create or replace function public.m05_ads_seed_dscaff_pilot(
+  p_operator_id uuid, p_source_revision text, p_approved_at timestamptz
+) returns jsonb
+language plpgsql security invoker set search_path = ''
+as $$
+declare
+  source_row public.m04_ads_ad_accounts%rowtype;
+  operator_row public.ad_automation_report_users%rowtype;
+  account_row public.m05_ads_accounts%rowtype;
+  allocation_row public.m05_ads_allocations%rowtype;
+begin
+  if p_operator_id is null or p_source_revision is null
+    or length(btrim(p_source_revision)) not between 1 and 200
+    or p_approved_at is null or p_approved_at > clock_timestamp() then
+    raise exception 'Invalid Dscaff pilot seed provenance';
+  end if;
+
+  select * into source_row
+  from public.m04_ads_ad_accounts
+  where platform = 'google' and provider_account_id = '1998676917'
+  for share;
+  if not found or source_row.client_id <> '3584fcc4-f701-808a-b7aa-eae25eacf3a2'::uuid
+    or source_row.currency <> 'MYR' or source_row.timezone is null
+    or btrim(source_row.timezone) = '' or source_row.access_status <> 'verified'
+    or source_row.access_verified_at is null or source_row.is_active is not true
+    or source_row.access_evidence is null or source_row.access_evidence = '{}'::jsonb
+    or (source_row.access_evidence::text not like '%3666137525%'
+      and source_row.access_evidence::text not like '%366-613-7525%') then
+    raise exception 'Dscaff M04 account mapping is not verified';
+  end if;
+
+  select * into operator_row
+  from public.ad_automation_report_users
+  where id = p_operator_id
+  for share;
+  if not found or operator_row.is_active is not true or operator_row.role <> 'admin' then
+    raise exception 'Dscaff release operator is not an active admin';
+  end if;
+
+  select * into account_row
+  from public.m05_ads_accounts
+  where notion_account_id = '3584fcc4-f701-8003-843e-d7e3316fc758'::uuid
+  for update;
+  if found then
+    if account_row.m04_ad_account_id <> source_row.id
+      or account_row.client_id <> source_row.client_id
+      or account_row.platform <> 'google'
+      or account_row.provider_account_id <> '1998676917'
+      or account_row.currency <> source_row.currency
+      or account_row.timezone <> source_row.timezone
+      or account_row.google_access_mode <> 'manager'
+      or account_row.google_login_customer_id <> '3666137525' then
+      raise exception 'Conflicting Dscaff M05 account mapping';
+    end if;
+  else
+    insert into public.m05_ads_accounts(
+      notion_account_id,m04_ad_account_id,client_id,platform,provider_account_id,
+      currency,timezone,google_access_mode,google_login_customer_id,mapping_verified_at
+    ) values (
+      '3584fcc4-f701-8003-843e-d7e3316fc758',source_row.id,source_row.client_id,'google','1998676917',
+      source_row.currency,source_row.timezone,'manager','3666137525',source_row.access_verified_at
+    ) returning * into account_row;
+  end if;
+
+  select * into allocation_row
+  from public.m05_ads_allocations
+  where account_id = account_row.id
+    and notion_cycle_id = '35e4fcc4-f701-803c-92f6-f7cac2926a4f'::uuid
+    and source_revision = btrim(p_source_revision)
+  for update;
+  if found then
+    if allocation_row.plan_reference <> 'INV.GR-2605/004'
+      or allocation_row.start_date <> date '2026-10-01'
+      or allocation_row.end_date <> date '2026-10-31'
+      or allocation_row.approved_amount <> 7500.000000
+      or allocation_row.currency <> 'MYR'
+      or allocation_row.approved_by <> p_operator_id
+      or allocation_row.approved_at <> p_approved_at then
+      raise exception 'Conflicting Dscaff M05 allocation';
+    end if;
+  else
+    insert into public.m05_ads_allocations(
+      account_id,notion_cycle_id,plan_reference,start_date,end_date,approved_amount,
+      currency,approved_by,approved_at,source_revision
+    ) values (
+      account_row.id,'35e4fcc4-f701-803c-92f6-f7cac2926a4f','INV.GR-2605/004',
+      '2026-10-01','2026-10-31',7500.000000,'MYR',p_operator_id,p_approved_at,btrim(p_source_revision)
+    ) returning * into allocation_row;
+  end if;
+
+  return jsonb_build_object(
+    'status','verified','account_id',account_row.id,'allocation_id',allocation_row.id,
+    'notion_account_id',account_row.notion_account_id,'notion_cycle_id',allocation_row.notion_cycle_id,
+    'timezone',account_row.timezone,'source_revision',allocation_row.source_revision
+  );
+end $$;
+revoke all on function public.m05_ads_seed_dscaff_pilot(uuid,text,timestamptz) from public,anon,authenticated;
+grant execute on function public.m05_ads_seed_dscaff_pilot(uuid,text,timestamptz) to service_role;

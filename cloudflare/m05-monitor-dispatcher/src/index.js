@@ -1,5 +1,28 @@
 import { malaysiaSlot } from "./slots.js";
 
+async function boundedJson(response, limit = 64 * 1024) {
+  const declared = Number(response.headers.get("content-length"));
+  if (Number.isFinite(declared) && declared > limit) throw new Error("M05 dispatch response is too large.");
+  const reader = response.body?.getReader();
+  if (!reader) throw new Error("M05 dispatch response is empty.");
+  const chunks = [];
+  let size = 0;
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    size += value.byteLength;
+    if (size > limit) {
+      await reader.cancel();
+      throw new Error("M05 dispatch response is too large.");
+    }
+    chunks.push(value);
+  }
+  const bytes = new Uint8Array(size);
+  let offset = 0;
+  for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.byteLength; }
+  return JSON.parse(new TextDecoder().decode(bytes));
+}
+
 const worker = {
   async fetch() { return new Response("Not found", { status: 404 }); },
   async scheduled(controller, env) {
@@ -21,7 +44,7 @@ const worker = {
         kind: slot.kind, platforms: slot.platforms, mode: env.M05_SCHEDULER_MODE }),
     });
     if (!response.ok) throw new Error(`M05 dispatch returned ${response.status}.`);
-    const payload = await response.json();
+    const payload = await boundedJson(response);
     if (!payload || typeof payload !== "object" || typeof payload.failedAccounts !== "number" && slot.kind === "health") {
       throw new Error("M05 dispatch response is invalid.");
     }
@@ -33,3 +56,4 @@ const worker = {
 };
 
 export default worker;
+export { boundedJson };

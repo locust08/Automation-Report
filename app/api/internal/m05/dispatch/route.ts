@@ -2,7 +2,7 @@ import { timingSafeEqual } from "node:crypto";
 import { NextResponse } from "next/server";
 import { budgetRows, budgetRpc } from "@/lib/budget/repository";
 import { captureBudgetWindow } from "@/lib/budget/capture";
-import { budgetSlot, dateBefore, localYesterday } from "@/lib/budget/schedule";
+import { budgetSlot, dateBefore, localYesterday, pilotNotionAccountId } from "@/lib/budget/schedule";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -16,6 +16,10 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "access_denied" }, { status: 401 });
   }
   try {
+    const pilotAccountId = pilotNotionAccountId(process.env.M05_PILOT_NOTION_ACCOUNT_ID);
+    if (!pilotAccountId) {
+      return NextResponse.json({ error: "pilot_scope_unavailable" }, { status: 503 });
+    }
     const raw = await request.text();
     if (raw.length > 1024) return NextResponse.json({ error: "invalid_request" }, { status: 400 });
     const body = JSON.parse(raw) as Record<string, unknown>;
@@ -36,9 +40,12 @@ export async function POST(request: Request) {
       return NextResponse.json({ status: "shadow_skipped", slot, reason: "recommendation engine is not released" });
     }
     const rows = await budgetRows("m05_ads_accounts", {
-      select: "id,platform,timezone", platform: `in.(${slot.platforms.join(",")})`, order: "id.asc", limit: "101",
+      select: "id,notion_account_id,platform,timezone", notion_account_id: `eq.${pilotAccountId}`,
+      platform: `in.(${slot.platforms.join(",")})`, order: "id.asc", limit: "2",
     });
-    if (rows.length > 100) return NextResponse.json({ error: "account_limit" }, { status: 503 });
+    if (rows.length > 1 || rows.some((row) => row.notion_account_id !== pilotAccountId)) {
+      return NextResponse.json({ error: "pilot_scope_invalid" }, { status: 503 });
+    }
     const results: Array<{ accountId: number; status: string; observedDays?: number; missingDays?: number }> = [];
     for (const row of rows) {
       const accountId = Number(row.id);

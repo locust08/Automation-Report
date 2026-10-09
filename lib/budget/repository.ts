@@ -37,7 +37,7 @@ export async function budgetRows(table: string, filters: Record<string, string>)
   } finally { clearTimeout(timeout); }
 }
 
-export async function budgetRpc(name: "m05_ads_record_daily_capture" | "m05_ads_capture_month_snapshot" | "m05_ads_accept_verified_handoff" | "m05_ads_record_monitor_run", body: Record<string, unknown>): Promise<Row> {
+export async function budgetRpc(name: "m05_ads_record_daily_capture" | "m05_ads_capture_month_snapshot" | "m05_ads_accept_verified_handoff" | "m05_ads_record_monitor_run" | "m05_ads_seed_dscaff_pilot", body: Record<string, unknown>): Promise<Row> {
   const { base, key } = config();
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 10_000);

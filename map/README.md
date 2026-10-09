@@ -5,6 +5,7 @@ Reviewed 2026-10-02. This map describes the current source, ownership, behavior 
 | Area | Entry | Status |
 | --- | --- | --- |
 | Reporting and provider collection | [Reporting](reporting.md) | Implemented; native and connected acceptance partial |
+| Billing evidence and pacing | [M05 billing](billing.md) | Dscaff Google pilot implemented locally; production rollout gated |
 | Global fonts and export layouts | [Presentation](presentation.md) | Implemented; audience-heading export fix verified locally |
 | Today's verification work | [Acceptance](acceptance.md) | Open gates tracked separately from implementation |
 
