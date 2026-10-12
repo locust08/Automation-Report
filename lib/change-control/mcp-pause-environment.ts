@@ -1,6 +1,8 @@
 // Fetch only this service's credentials through the existing server Doppler identity.
 // Never copy them to browser-readable configuration or mutate global process.env.
 export async function m03PauseEnvironment(env: Record<string, string | undefined> = process.env, fetcher: typeof fetch = fetch) {
+  if (env.VERCEL_ENV && env.VERCEL_ENV !== "production") return { ...env, M03_PAUSE_MCP_ENABLED: "false" };
+  if (env.VERCEL_ENV === "production" && env.M03_PAUSE_MCP_ENABLED === "true" && env.M03_PAUSE_MCP_CREDENTIAL_SOURCE !== "doppler") throw Error("pause_credentials_unavailable");
   if (env.M03_PAUSE_MCP_ENABLED !== "true" || env.M03_PAUSE_MCP_CREDENTIAL_SOURCE !== "doppler") return env;
   const project = env.M03_PAUSE_MCP_SECRET_PROJECT, config = env.M03_PAUSE_MCP_SECRET_CONFIG;
   if (!project || !config || !env.DOPPLER_TOKEN) throw Error("pause_credentials_unavailable");

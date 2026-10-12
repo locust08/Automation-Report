@@ -10,4 +10,6 @@ test("disabled configuration never fetches; unavailable or incomplete secret sto
  let calls=0;await m03PauseEnvironment({...env,M03_PAUSE_MCP_ENABLED:"false"},async()=>{calls++;throw Error("unexpected");});assert.equal(calls,0);
  for(const fetcher of [async()=>new Response(null,{status:403}),async()=>Response.json({secrets:{}})])await assert.rejects(m03PauseEnvironment(env,fetcher));
  await assert.rejects(m03PauseEnvironment({...env,DOPPLER_TOKEN:undefined}));
+ const preview=await m03PauseEnvironment({...env,VERCEL_ENV:"preview"},async()=>{calls++;throw Error("unexpected");});assert.equal(preview.M03_PAUSE_MCP_ENABLED,"false");assert.equal(calls,0);
+ await assert.rejects(m03PauseEnvironment({...env,VERCEL_ENV:"production",M03_PAUSE_MCP_CREDENTIAL_SOURCE:undefined}));
 });
