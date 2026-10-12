@@ -12,16 +12,22 @@ export interface PauseTransport {
 
 // Independent narrow rollout gate: enabling it cannot unlock general publishing.
 export function assertScopedPause(detail: M03ChangeRequestDetail, context: TrustedRequestContext, env: Record<string, string | undefined> = process.env): PauseTarget {
-  let targets: PauseTarget[] = [];
-  try { targets = z.array(target).max(20).parse(JSON.parse(env.M03_PAUSE_ALLOWLIST ?? "[]")); } catch { throw new ProviderExecutionLockedError(); }
+  const selected = assertPauseTarget(detail.request, context, env);
   const r = detail.request;
-  const selected = targets.find(t => t.actor_id === context.actor_id && t.platform === r.platform && t.account_identity === r.account_identity && t.campaign_identity === r.campaign_identity);
-  if (env.M03_PAUSE_ENABLED !== "approved-test-pilot" || context.actor_role !== "admin" || !selected || detail.items.length !== 1
+  if (detail.items.length !== 1
     || !detail.source_verification || detail.source_verification.platform !== r.platform
     || detail.source_verification.provider_account_identity !== r.account_identity || detail.source_verification.provider_campaign_identity !== r.campaign_identity) throw new ProviderExecutionLockedError();
   const item = detail.items[0]!;
   if (item.entity_type !== "campaign" || item.entity_identity !== r.campaign_identity || item.field_path !== "campaign.status"
     || item.value_type !== "string" || item.proposed_value !== "PAUSED" || !["ACTIVE", "ENABLED", "PAUSED"].includes(String(item.baseline_value))) throw new ProviderExecutionLockedError();
+  return selected;
+}
+
+export function assertPauseTarget(r: { platform: string; account_identity: string; campaign_identity: string }, context: TrustedRequestContext, env: Record<string, string | undefined> = process.env): PauseTarget {
+  let targets: PauseTarget[] = [];
+  try { targets = z.array(target).max(20).parse(JSON.parse(env.M03_PAUSE_ALLOWLIST ?? "[]")); } catch { throw new ProviderExecutionLockedError(); }
+  const selected = targets.find(t => t.actor_id === context.actor_id && t.platform === r.platform && t.account_identity === r.account_identity && t.campaign_identity === r.campaign_identity);
+  if (env.M03_PAUSE_ENABLED !== "approved-test-pilot" || context.actor_role !== "admin" || !selected) throw new ProviderExecutionLockedError();
   return selected;
 }
 

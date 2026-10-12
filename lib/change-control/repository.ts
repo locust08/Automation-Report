@@ -91,6 +91,18 @@ export async function assertM03Operator(context: TrustedRequestContext): Promise
   await rpc("m03_ads_assert_operator_v1", contextBody(context));
 }
 
+export async function approveExactM03Pause(requestId: string, revisionId: string, revisionHash: string, key: string, context: TrustedRequestContext) {
+  return rpc("m03_ads_approve_exact_pause_v1", { p_request_id: requestId, p_revision_id: revisionId, p_revision_hash: revisionHash,
+    p_comment: "Confirmed exact revision in ChatGPT", ...contextBody(context), p_idempotency_key: key });
+}
+
+export async function getM03McpOperator(actorId: string): Promise<TrustedRequestContext | null> {
+  const rows = await request<JsonObject[]>(`ads_reporting_auth?select=user_id,email,full_name,role,is_active&user_id=eq.${encodeURIComponent(actorId)}&limit=1`, { method: "GET" });
+  const row = rows[0];
+  if (!row || row.is_active !== true || row.role !== "admin") return null;
+  return { actor_id: String(row.user_id), actor_email: String(row.email), actor_name: String(row.full_name), actor_role: "admin", trusted_ip: "", user_agent: "DigitalBee MCP" };
+}
+
 export async function editMockChangeRequest(id: string, input: M03MockChangeRequestEditInput, context: TrustedRequestContext): Promise<JsonObject> {
   return rpc("m03_ads_edit_mock_change_request_v2", {
     p_request_id: id, p_expected_lock_version: input.expected_lock_version, p_title: input.title, p_reason: input.reason,
@@ -164,8 +176,8 @@ export function createM03ExecutionStore(input: { requestId: string; revisionId: 
 function contextBody(context: TrustedRequestContext): JsonObject {
   return { p_actor_id: context.actor_id, p_trusted_ip: context.trusted_ip, p_trusted_user_agent: context.user_agent };
 }
-export async function getM03ExecutionReceipts(requestId: string, revisionId: string): Promise<Array<{ operation_key: string; operation_hash: string; claim_token: string; state: string }>> {
-  return request(`m03_ads_execution_operations?select=operation_key,operation_hash,claim_token,state&request_id=eq.${encodeURIComponent(requestId)}&revision_id=eq.${encodeURIComponent(revisionId)}`, { method: "GET" });
+export async function getM03ExecutionReceipts(requestId: string, revisionId: string): Promise<Array<{ operation_key: string; operation_hash: string; claim_token: string; state: string; updated_at?: string }>> {
+  return request(`m03_ads_execution_operations?select=operation_key,operation_hash,claim_token,state,updated_at&request_id=eq.${encodeURIComponent(requestId)}&revision_id=eq.${encodeURIComponent(revisionId)}`, { method: "GET" });
 }
 export async function reconcileM03PauseReceipt(input: { requestId: string; revisionId: string; revisionHash: string; operationKey: string; token: string; readback: M03ProviderReadback; context: TrustedRequestContext }) {
   return rpc("m03_ads_reconcile_pause_receipt_v1", { p_request_id: input.requestId, p_revision_id: input.revisionId, p_revision_hash: input.revisionHash, p_operation_key: input.operationKey, p_claim_token: input.token, p_readback_json: canonicalJson(input.readback), p_payload_json: canonicalJson(input.readback.canonical_payload), ...contextBody(input.context) });
