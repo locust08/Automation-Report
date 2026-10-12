@@ -1,5 +1,7 @@
 # Sentry error monitoring — October 12, 2026
 
+Superseded locally by the user-approved [PostHog replacement](posthog-monitoring-2026-10-12.md). This file preserves historical Sentry candidate evidence; it is not the current activation procedure.
+
 One Cloudflare project, [digitalbee-mcp](https://ai-hive-sdn-bhd.sentry.io/projects/digitalbee-mcp/), was created in the user-confirmed `ai-hive-sdn-bhd` organization (project ID `4512240528719952`). Error monitoring was selected; logs, tracing and application metrics were left off. No browser SDK was added. Production activation, source-map upload and connected event acceptance remain pending.
 
 ## Implementation and isolation
