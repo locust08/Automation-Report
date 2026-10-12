@@ -9,7 +9,7 @@ export type M03SourceBoundary =
   | { source_kind: "m04_verified_launch"; evidence: Record<string, unknown>; source_revision_hash: string }
   | { source_kind: "legacy_provider_adoption"; evidence: Record<string, unknown>; baseline: M03ProviderBaseline };
 
-export async function verifyM03SourceBoundary(input: M03MockChangeRequestInput): Promise<M03SourceBoundary> {
+export async function verifyM03SourceBoundary(input: M03MockChangeRequestInput, env: Record<string, string | undefined> = process.env): Promise<M03SourceBoundary> {
   const hasPlan = input.source_m04_plan_id != null;
   const hasRevision = input.source_m04_revision_id != null;
   if (hasPlan !== hasRevision) throw new M03RepositoryError("Enter both the M04 plan ID and revision ID, or leave both blank for audited legacy adoption.", 400);
@@ -23,7 +23,7 @@ export async function verifyM03SourceBoundary(input: M03MockChangeRequestInput):
   }
 
   const scopedPause = ["google", "meta"].includes(input.platform) && input.items.length === 1 && input.items[0]!.entity_type === "campaign" && input.items[0]!.entity_identity === input.campaign_identity && input.items[0]!.field_path === "campaign.status" && input.items[0]!.proposed_value === "PAUSED";
-  const baseline = scopedPause ? await pauseBaseline(input) : await retrieveOfficialM03Baseline(input.platform, {
+  const baseline = scopedPause ? await pauseBaseline(input, env) : await retrieveOfficialM03Baseline(input.platform, {
     accountIdentity: input.account_identity,
     campaignIdentity: input.campaign_identity,
     items: input.items,
@@ -45,9 +45,9 @@ export async function verifyM03SourceBoundary(input: M03MockChangeRequestInput):
   };
 }
 
-async function pauseBaseline(input: M03MockChangeRequestInput): Promise<M03ProviderBaseline> {
+async function pauseBaseline(input: M03MockChangeRequestInput, env: Record<string, string | undefined>): Promise<M03ProviderBaseline> {
   if (input.platform === "tiktok") throw new Error("TikTok pause is outside this pilot.");
-  const transport = await officialPauseTransport({ actor_id: "00000000-0000-4000-8000-000000000000", platform: input.platform, account_identity: input.account_identity, campaign_identity: input.campaign_identity });
+  const transport = await officialPauseTransport({ actor_id: "00000000-0000-4000-8000-000000000000", platform: input.platform, account_identity: input.account_identity, campaign_identity: input.campaign_identity }, env);
   const observed = await transport.read();
   if (observed.account_id !== input.account_identity || observed.campaign_id !== input.campaign_identity) throw new Error("Official pause adoption ownership mismatch.");
   const canonical_payload = { [m03BaselineKey(input.items[0]!)]: observed.status };

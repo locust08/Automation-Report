@@ -69,11 +69,11 @@ export async function mcpPauseService(request: Request, deps: McpPauseDependenci
     let requestId = body.request_id;
     if (!requestId) {
       if (body.action !== "prepare_approve" || !body.source) throw Error("request_id_required");
-      const observed = await (await deps.transport(assertPauseTarget(target, context!, env))).read();
+      const observed = await (await deps.transport(assertPauseTarget(target, context!, env), env)).read();
       if (observed.account_id !== target.account_identity || observed.campaign_id !== target.campaign_identity) throw Error("source_changed");
       const input = { ...target, platform: target.platform as "google" | "meta", workflow_mode: "mock" as const, title: "M18 campaign pause", reason: "User-reviewed pause of the exact M18 pilot through ChatGPT.", idempotency_key: body.idempotency_key,
         items: [{ entity_type: "campaign", entity_identity: body.campaign_id, field_path: "campaign.status", value_type: "string" as const, baseline_value: observed.status, proposed_value: "PAUSED", evidence: { m18_workflow_id: body.source.workflow_id, m18_revision_id: body.source.revision_id, m18_receipt_id: body.source.receipt_id } }] };
-      const source = await deps.boundary(input);
+      const source = await deps.boundary(input, env);
       await reauthorize();
       const created = await deps.create(input, { source_kind: source.source_kind, evidence: source.evidence, source_revision_hash: source.source_kind === "m04_verified_launch" ? source.source_revision_hash : null, baseline: source.source_kind === "legacy_provider_adoption" ? source.baseline : undefined }, context!);
       requestId = id.parse(created.request_id);
@@ -102,7 +102,7 @@ export async function mcpPauseService(request: Request, deps: McpPauseDependenci
         if (!detail.approvals.some(a => a.revision_id === revision.id && a.revision_hash === revision.payload_hash)) throw Error("approval_required");
         if ((await deps.receipts(requestId, revision.id)).length) throw Error("receipt_exists_read_only");
       }
-      const preview = await deps.preview(detail, createScopedPauseAdapter(assertPauseTarget(target, context!, env), await deps.transport(assertPauseTarget(target, context!, env)), async () => { await current(); }));
+      const preview = await deps.preview(detail, createScopedPauseAdapter(assertPauseTarget(target, context!, env), await deps.transport(assertPauseTarget(target, context!, env), env), async () => { await current(); }));
       if (preview.conflict_issues.length || preview.capability_issues.length) throw Error("baseline_or_capability_changed");
       await current();
       const token = await new SignJWT({ ...confirmation.parse({ request_id: requestId, revision_id: revision.id, revision_hash: revision.payload_hash, action, scope_hash: scopeHash, operation_key: body.idempotency_key }) })
@@ -114,10 +114,10 @@ export async function mcpPauseService(request: Request, deps: McpPauseDependenci
       // A live claim is allowed to finish; an interrupted claim is readback-only after
       // twice the service's 60-second execution window. Never dispatch a second pause.
       if (receipts.length && receipts.every(r => r.state !== "started" || Number.isFinite(Date.parse(r.updated_at ?? "")) && Date.parse(r.updated_at!) < Date.now() - 120000) && detail.request.status !== "verified") {
-        await deps.execute({ requestId, revisionId: revision.id, revisionHash: revision.payload_hash, context: context!, reconcileOnly: true, reauthorize });
+        await deps.execute({ requestId, revisionId: revision.id, revisionHash: revision.payload_hash, context: context!, reconcileOnly: true, reauthorize, env });
         detail = await current();
       }
-      const official = await (await deps.transport(assertPauseTarget(target, context!, env))).read();
+      const official = await (await deps.transport(assertPauseTarget(target, context!, env), env)).read();
       if (official.account_id !== target.account_identity || official.campaign_id !== body.campaign_id) throw Error("source_changed");
       await current();
       return json({ outcome: "success", display: display(detail), official_status: official.status, captured_at: new Date().toISOString(), receipts: (await deps.receipts(requestId, revision.id)).map(r => ({ operation_key: r.operation_key, state: r.state })), provider_action: false });
@@ -131,7 +131,7 @@ export async function mcpPauseService(request: Request, deps: McpPauseDependenci
     } else {
       if ((await deps.receipts(requestId, bound.revision_id)).some(r => r.state === "started")) return json({ outcome: "unknown", display: display(detail), provider_action: "uncertain", blocker: "execution_in_progress_read_receipt" });
       await current(); attempted = true;
-      await deps.execute({ requestId, revisionId: bound.revision_id, revisionHash: bound.revision_hash, context: context!, reconcileOnly: false, reauthorize });
+      await deps.execute({ requestId, revisionId: bound.revision_id, revisionHash: bound.revision_hash, context: context!, reconcileOnly: false, reauthorize, env });
     }
     detail = await current();
     return json({ outcome: "success", display: display(detail), provider_action: body.action === "pause" });

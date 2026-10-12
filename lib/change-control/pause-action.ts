@@ -7,11 +7,12 @@ import { canonicalM03Hash } from "./provider-contract";
 import { assertM03Operator, createM03ExecutionStore, finalizeM03Pause, getM03ExecutionReceipts, getM03RevisionIntegrityReceipt, getMockChangeRequest, M03RepositoryError, reconcileM03PauseReceipt, recordM03ProviderBaseline, recordM03ResourceMapping } from "./repository";
 import type { TrustedRequestContext } from "./types";
 
-export async function executeScopedPause(input: { requestId: string; revisionId: string; revisionHash: string; context: TrustedRequestContext; reconcileOnly: boolean; reauthorize: () => Promise<void> }) {
+export async function executeScopedPause(input: { requestId: string; revisionId: string; revisionHash: string; context: TrustedRequestContext; reconcileOnly: boolean; reauthorize: () => Promise<void>; env?: Record<string, string | undefined> }) {
+  const env = input.env ?? process.env;
   async function current() {
     await input.reauthorize(); await assertM03Operator(input.context);
     const detail = await getMockChangeRequest(input.requestId);
-    assertScopedPause(detail, input.context);
+    assertScopedPause(detail, input.context, env);
     const revision = detail.revisions[0];
     if (!revision || revision.id !== input.revisionId || revision.payload_hash !== input.revisionHash || !detail.approvals.some(a => a.revision_id === revision.id && a.revision_hash === revision.payload_hash)
       || !["approved", "ready_to_publish", "publishing", "partially_completed", "provider_execution_locked", "verified"].includes(detail.request.status)) throw new M03RepositoryError("The latest exact approved pause revision is required.", 409);
@@ -19,8 +20,8 @@ export async function executeScopedPause(input: { requestId: string; revisionId:
     assertM03ReviewedItems(detail, revision);
     return detail;
   }
-  const detail = await current(); const scope = assertScopedPause(detail, input.context);
-  const transport = await officialPauseTransport(scope);
+  const detail = await current(); const scope = assertScopedPause(detail, input.context, env);
+  const transport = await officialPauseTransport(scope, env);
   const recheck = async () => { await current(); };
   const adapter = createScopedPauseAdapter(scope, transport, recheck);
   const plan = adapter.planMutation({ requestId: input.requestId, revisionHash: input.revisionHash, items: detail.items });

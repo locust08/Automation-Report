@@ -1,16 +1,19 @@
 import { getCredentials } from "@/lib/reporting/env";
 import { resolveGoogleAccountsFromNotion } from "@/lib/reporting/notion";
-import { googleAdsClient } from "@/lib/google-ads/client";
+import { GoogleAdsRestClient } from "@/lib/google-ads/rest-client";
 import type { PauseTarget, PauseTransport } from "./scoped-pause";
 
 // Uses existing provider clients and access-path routing, without enabling the
 // broad legacy Google management-write switch. Mutations are attempted once.
-export async function officialPauseTransport(scope: PauseTarget): Promise<PauseTransport> {
+export async function officialPauseTransport(scope: PauseTarget, env: Record<string, string | undefined> = process.env): Promise<PauseTransport> {
   if (scope.platform === "google") {
     if (!/^\d{10}$/.test(scope.account_identity) || !/^\d+$/.test(scope.campaign_identity)) throw new Error("Invalid Google pause identity.");
     const credentials = getCredentials();
-    const resolved = await resolveGoogleAccountsFromNotion({ googleAccountIds: [scope.account_identity], googleLookupTerms: [scope.account_identity], notionAccessToken: credentials.notionAccessToken, notionDatabaseId: process.env.NOTION_AD_ACCOUNTS_DATABASE_ID?.trim() || credentials.notionDatabaseId, fallbackLoginCustomerId: credentials.googleLoginCustomerId });
-    const client = googleAdsClient(credentials); const options = { loginCustomerId: resolved.loginCustomerIdByAccount[scope.account_identity] ?? null };
+    const resolved = await resolveGoogleAccountsFromNotion({ googleAccountIds: [scope.account_identity], googleLookupTerms: [scope.account_identity], notionAccessToken: env.NOTION_TOKEN || credentials.notionAccessToken, notionDatabaseId: env.NOTION_AD_ACCOUNTS_DATABASE_ID?.trim() || credentials.notionDatabaseId, fallbackLoginCustomerId: credentials.googleLoginCustomerId });
+    const client = new GoogleAdsRestClient({ clientId: env.GOOGLE_OAUTH_CLIENT_ID || credentials.googleClientId, clientSecret: env.GOOGLE_OAUTH_CLIENT_SECRET || credentials.googleClientSecret, refreshToken: env.GOOGLE_OAUTH_REFRESH_TOKEN || credentials.googleRefreshToken, apiVersion: env.GOOGLE_ADS_API_VERSION || credentials.googleAdsApiVersion, timeoutMs: 10000, maxRetries: 0,
+      project: { id: env.GOOGLE_ADS_CLOUD_PROJECT_ID, number: env.GOOGLE_ADS_CLOUD_PROJECT_NUMBER, name: env.GOOGLE_ADS_CLOUD_PROJECT_NAME, accessLevel: env.GOOGLE_ADS_PROJECT_ACCESS_LEVEL },
+      fetch: (input, init) => { const headers = new Headers(init?.headers); if (new URL(String(input)).origin === "https://googleads.googleapis.com" && env.GOOGLE_ADS_DEVELOPER_TOKEN) headers.set("developer-token", env.GOOGLE_ADS_DEVELOPER_TOKEN); return fetch(input, { ...init, headers }); },
+    }); const options = { loginCustomerId: resolved.loginCustomerIdByAccount[scope.account_identity] ?? null };
     const resource = `customers/${scope.account_identity}/campaigns/${scope.campaign_identity}`;
     return {
       read: async () => {
@@ -24,8 +27,8 @@ export async function officialPauseTransport(scope: PauseTarget): Promise<PauseT
       },
     };
   }
-  const token = getCredentials().metaAccessToken;
-  const version = process.env.META_GRAPH_API_VERSION?.trim() || "v24.0";
+  const token = env.META_ACCESS_TOKEN || getCredentials().metaAccessToken;
+  const version = env.META_GRAPH_API_VERSION?.trim() || "v24.0";
   if (!token || !/^v\d+\.\d+$/.test(version) || !/^\d+$/.test(scope.campaign_identity)) throw new Error("Meta pause configuration unavailable.");
   const origin = `https://graph.facebook.com/${version}/${scope.campaign_identity}`;
   async function request(url: string, body?: URLSearchParams) {
