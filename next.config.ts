@@ -2,6 +2,8 @@ import { withSentryConfig } from "@sentry/nextjs/config";
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
+  // Optional common parent for linked dependencies in isolated worktrees.
+  ...(process.env.NEXT_TURBOPACK_ROOT ? { turbopack: { root: process.env.NEXT_TURBOPACK_ROOT } } : {}),
   typescript: {
     // Keep CI type safety via `npm run typecheck`; avoid Next.js internal spawn issue on this host.
     ignoreBuildErrors: true,

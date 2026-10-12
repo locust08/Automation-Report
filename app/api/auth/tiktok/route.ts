@@ -7,12 +7,11 @@ import {
   getTikTokBusinessCredentials,
   getTikTokBusinessRedirectUri,
   randomTikTokState,
+  TIKTOK_OAUTH_STATE_COOKIE,
 } from "@/lib/tiktok/oauth";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
-
-export const TIKTOK_OAUTH_STATE_COOKIE = "tiktok_business_oauth_state";
 
 export async function GET(request: Request) {
   const session = await getServerAuthSession();

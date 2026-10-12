@@ -3,7 +3,7 @@ import { NextResponse } from "next/server";
 
 import { getDopplerTarget, dopplerSetSecrets } from "@/lib/doppler";
 import { getServerAuthSession } from "@/lib/auth/server-session";
-import { TIKTOK_OAUTH_STATE_COOKIE } from "@/app/api/auth/tiktok/route";
+import { TIKTOK_OAUTH_STATE_COOKIE } from "@/lib/tiktok/oauth";
 import {
   exchangeTikTokBusinessCode,
   getAuthorizedTikTokAdvertisers,

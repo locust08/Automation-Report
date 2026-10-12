@@ -3,6 +3,9 @@ import { getServerAuthSession } from "@/lib/auth/server-session";
 import { buildTrustedRequestContext, M03AccessError } from "@/lib/change-control/request-context";
 import { assertM03Operator, getMockChangeRequest, M03RepositoryError } from "@/lib/change-control/repository";
 import { m03ProviderActionSchema } from "@/lib/change-control/schema";
+import { assertScopedPause } from "./scoped-pause";
+import { executeScopedPause } from "./pause-action";
+import { ProviderExecutionLockedError } from "./provider-execution-lock";
 
 export async function lockedProviderAction(request: Request, params: Promise<{ id: string }>, action: string) {
   const session = await getServerAuthSession();
@@ -19,7 +22,16 @@ export async function lockedProviderAction(request: Request, params: Promise<{ i
     if (!revision || revision.payload_hash !== parsed.data.revision_hash || !approval) {
       return NextResponse.json({ error: "Select the exact approved revision before this action." }, { status: 409 });
     }
-    // Return before any baseline retrieval or provider transport is constructed.
+    if (action === "Publish" || action === "Verify") {
+      try { assertScopedPause(detail, context); }
+      catch (error) { if (!(error instanceof ProviderExecutionLockedError)) throw error; return NextResponse.json({ error: "provider_execution_locked", code: "provider_execution_locked", message: "This campaign is not enabled for the approved pause pilot.", action }, { status: 423 }); }
+      const result = await executeScopedPause({ requestId: detail.request.id, revisionId: parsed.data.revision_id, revisionHash: parsed.data.revision_hash, context, reconcileOnly: action === "Verify", reauthorize: async () => {
+        const current = await getServerAuthSession();
+        if (!current || current.sub !== session.sub || current.role !== "admin") throw new M03AccessError("Current administrator authorization is required.");
+      } });
+      return NextResponse.json(result);
+    }
+    // Every other provider action remains locked before constructing transport.
     return NextResponse.json({
       error: "provider_execution_locked",
       code: "provider_execution_locked",
@@ -28,7 +40,7 @@ export async function lockedProviderAction(request: Request, params: Promise<{ i
     }, { status: 423 });
   } catch (error) {
     const status = error instanceof M03RepositoryError || error instanceof M03AccessError ? error.status : 500;
-    return NextResponse.json({ error: error instanceof Error ? error.message : `${action} failed.` }, { status });
+    return NextResponse.json({ error: error instanceof M03RepositoryError || error instanceof M03AccessError ? error.message : "Pause outcome requires reconciliation; use Verify before another action." }, { status });
   }
 }
 

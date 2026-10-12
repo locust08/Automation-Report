@@ -1,5 +1,7 @@
 import crypto from "node:crypto";
 
+export const TIKTOK_OAUTH_STATE_COOKIE = "tiktok_business_oauth_state";
+
 const TIKTOK_BUSINESS_AUTHORIZE_URL = "https://business-api.tiktok.com/portal/auth";
 const TIKTOK_BUSINESS_API_BASE = "https://business-api.tiktok.com/open_api/v1.3";
 

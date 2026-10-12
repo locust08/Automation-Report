@@ -197,7 +197,7 @@ export function useM03WorkspaceController({ scope = {}, prefill, prefillReason =
     finally { setBusy(false); }
   }
 
-  async function action(name: "validate" | "approve" | "cancel") {
+  async function action(name: "validate" | "approve" | "cancel" | "publish" | "verify") {
     if (!detail) return;
     setBusy(true); setError(null);
     try {
@@ -205,7 +205,8 @@ export function useM03WorkspaceController({ scope = {}, prefill, prefillReason =
         method: "POST",
         body: JSON.stringify({
           idempotency_key: crypto.randomUUID(),
-          ...(name === "approve" ? { revision_hash: detail.revisions[0]?.payload_hash } : {}),
+          ...(name === "approve" || name === "publish" || name === "verify" ? { revision_hash: detail.revisions[0]?.payload_hash } : {}),
+          ...(name === "publish" || name === "verify" ? { revision_id: detail.revisions[0]?.id } : {}),
         }),
       });
       await refreshDetail(detail.request.id); await load();

@@ -7,6 +7,9 @@ import type {
   WorkflowSettingMutation, WorkflowSettingsPayload,
 } from "@/lib/change-control/types";
 
+import { canonicalJson, canonicalM03Hash, type M03ProviderExecutionResult, type M03ProviderReadback } from "./provider-contract";
+import type { M03ExecutionStore, M03OperationReceipt } from "./durable-execution";
+
 type JsonObject = Record<string, unknown>;
 type RequestInit = { method: "GET" | "POST" | "PATCH"; body?: JsonObject };
 
@@ -132,8 +135,43 @@ export async function updateWorkflowSetting(input: WorkflowSettingMutation, cont
   });
 }
 
+export async function getM03RevisionIntegrityReceipt(requestId: string, revisionId: string, revisionHash: string) {
+  const row = await rpc("m03_ads_revision_integrity_receipt_v1", { p_request_id: requestId, p_revision_id: revisionId, p_revision_hash: revisionHash });
+  return { revision_id: stringValue(row, "revision_id"), payload_hash: stringValue(row, "payload_hash"), canonical_text: stringValue(row, "canonical_text") };
+}
+
+export function createM03ExecutionStore(input: { requestId: string; revisionId: string; revisionHash: string; context: TrustedRequestContext }): M03ExecutionStore {
+  const scope = { p_request_id: input.requestId, p_revision_id: input.revisionId, ...contextBody(input.context) };
+  return {
+    claim: async (operation) => {
+      const response = await rpc("m03_ads_claim_execution_operation_v1", { ...scope, p_revision_hash: input.revisionHash, p_operation_json: canonicalJson(operation), p_operation_hash: canonicalM03Hash(operation) });
+      const row = objectValue(response, "receipt");
+      const state = stringValue(row, "state");
+      if (!["started", "succeeded", "failed", "ambiguous", "verified"].includes(state) || typeof response.acquired !== "boolean") throw new M03RepositoryError("Invalid durable execution receipt.", 503);
+      const receipt: M03OperationReceipt = { operation_hash: stringValue(row, "operation_hash"), claim_token: stringValue(row, "claim_token"), state: state as M03OperationReceipt["state"],
+        result: row.result ? objectValue(row, "result") as M03ProviderExecutionResult : undefined, readback: row.readback ? objectValue(row, "readback") as M03ProviderReadback : undefined };
+      return { acquired: response.acquired, receipt };
+    },
+    recordResult: async (operation, token, result) => {
+      await rpc("m03_ads_record_execution_receipt_v1", { ...scope, p_operation_key: operation.operation_key, p_claim_token: token, p_result: result, p_readback_json: null, p_readback_payload_json: null });
+    },
+    recordReadback: async (operation, token, readback) => {
+      await rpc("m03_ads_record_execution_receipt_v1", { ...scope, p_operation_key: operation.operation_key, p_claim_token: token, p_result: null, p_readback_json: canonicalJson(readback), p_readback_payload_json: canonicalJson(readback.canonical_payload) });
+    },
+  };
+}
+
 function contextBody(context: TrustedRequestContext): JsonObject {
   return { p_actor_id: context.actor_id, p_trusted_ip: context.trusted_ip, p_trusted_user_agent: context.user_agent };
+}
+export async function getM03ExecutionReceipts(requestId: string, revisionId: string): Promise<Array<{ operation_key: string; operation_hash: string; claim_token: string; state: string }>> {
+  return request(`m03_ads_execution_operations?select=operation_key,operation_hash,claim_token,state&request_id=eq.${encodeURIComponent(requestId)}&revision_id=eq.${encodeURIComponent(revisionId)}`, { method: "GET" });
+}
+export async function reconcileM03PauseReceipt(input: { requestId: string; revisionId: string; revisionHash: string; operationKey: string; token: string; readback: M03ProviderReadback; context: TrustedRequestContext }) {
+  return rpc("m03_ads_reconcile_pause_receipt_v1", { p_request_id: input.requestId, p_revision_id: input.revisionId, p_revision_hash: input.revisionHash, p_operation_key: input.operationKey, p_claim_token: input.token, p_readback_json: canonicalJson(input.readback), p_payload_json: canonicalJson(input.readback.canonical_payload), ...contextBody(input.context) });
+}
+export async function finalizeM03Pause(input: { requestId: string; revisionId: string; revisionHash: string; context: TrustedRequestContext }) {
+  return rpc("m03_ads_finalize_pause_v1", { p_request_id: input.requestId, p_revision_id: input.revisionId, p_revision_hash: input.revisionHash, ...contextBody(input.context) });
 }
 async function rpc(name: string, body: JsonObject): Promise<JsonObject> { return request<JsonObject>(`rpc/${name}`, { method: "POST", body }); }
 

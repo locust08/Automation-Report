@@ -319,6 +319,10 @@ export function parseM03FormValue(value: unknown, type: M03ChangeItemInput["valu
 export function validateM03RequestFormValues(form: M03RequestForm): string[] {
   const issues: string[] = [];
   for (const item of form.items) {
+    const sourceKeys = ["m18_workflow_id", "m18_revision_id", "m18_receipt_id"];
+    if (sourceKeys.some(key => key in (item.evidence ?? {})) && !sourceKeys.every(key => typeof item.evidence?.[key] === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(item.evidence?.[key])))) {
+      issues.push("Provide all three valid M18 workflow, revision and receipt references, or leave all three blank.");
+    }
     const label = item.field_path || "the selected field";
     const value = item.proposed_value;
     if (item.value_type === "string" && (typeof value !== "string" || !value.trim())) {

@@ -99,3 +99,13 @@ function renderDetail(role: "admin" | "approver" | "pm", status: "draft" | "awai
     onAction: async () => undefined,
   }));
 }
+
+test("pause pilot renders only its narrow actions and non-admins cannot invoke them", () => {
+  const fixture = { request: { id: "request", title: "Pilot", status: "approved", platform: "google", account_identity: "2315114913", campaign_identity: "123" }, items: [], revisions: [{ id: "revision", revision_number: 1, payload_hash: "a".repeat(64) }], approvals: [], validations: [], baselines: [], resource_mappings: [], operation_resources: [], attempts: [], events: [], source_verification: null, pause_actions: { publish: true, verify: true } };
+  const render = (role: "admin" | "pm") => renderToStaticMarkup(detailModule.M03RequestDetailView({ detail: fixture as never, providerPreview: null, providerPreviewError: null, busy: false, role, onEdit: () => undefined, onAction: async () => undefined }));
+  const admin = render("admin"); assert.match(admin, /Campaign pause pilot/);
+  const pauseButton = admin.match(/<button[^>]*>Pause campaign<\/button>/)?.[0];
+  assert.ok(pauseButton); assert.doesNotMatch(pauseButton, /\sdisabled[=\s>]/);
+  assert.match(admin, /<button[^>]*disabled[^>]*>Retry<\/button>/);
+  assert.match(render("pm"), /<button[^>]*disabled[^>]*>Pause campaign<\/button>/);
+});

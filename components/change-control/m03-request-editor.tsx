@@ -146,6 +146,14 @@ export function M03RequestEditor({ form, setForm, editing, reconciliation, scope
     {!editing && !managed ? <ResourcePicker form={form} setForm={setForm} /> : null}
     <div className="space-y-3"><div className="flex items-center justify-between"><h3 className="font-semibold">Field changes</h3><Button size="sm" variant="outline" disabled={Boolean(managed && !managedResource)} onClick={addItem}><PlusIcon /> Add field</Button></div>
       {form.items.map((item, index) => <div key={index} className="grid gap-3 rounded-xl border bg-slate-50 p-4 md:grid-cols-2 lg:grid-cols-4">
+        {item.field_path === "campaign.status" && item.proposed_value === "PAUSED" ? <div className="grid gap-3 md:col-span-2 lg:col-span-4 md:grid-cols-3">{["workflow", "revision", "receipt"].map(reference => {
+          const key = `m18_${reference}_id`;
+          return <Field key={key} label={`M18 ${reference} reference (optional)`}><Input readOnly={Boolean(editing)} value={String(item.evidence?.[key] ?? "")} onChange={event => {
+            const evidence = { ...item.evidence }; const value = event.target.value.trim();
+            if (value) evidence[key] = value; else delete evidence[key];
+            updateItem(index, { evidence });
+          }} /></Field>;
+        })}</div> : null}
         <Field label="Entity"><Input disabled={managed} className="bg-white disabled:bg-muted" value={item.entity_type} onChange={(event) => updateItem(index, { entity_type: event.target.value })} /></Field>
         <Field label="Entity identity"><Input disabled={managed} className="bg-white disabled:bg-muted" value={item.entity_identity} onChange={(event) => updateItem(index, { entity_identity: event.target.value })} /></Field>
         <Field label="Field path"><FieldPathSelect platform={form.platform} item={item} entityType={managedResource?.entityType ?? (managed ? item.entity_type : undefined)} disabled={Boolean(managed && !managedResource)} onChange={(fieldPath, valueType) => changeItemField(index, fieldPath, valueType)} /></Field>

@@ -150,3 +150,7 @@ The durable order is replacement creative created and verified, replacement ad c
 - The response identifies `provider_execution_locked` and states that Meta execution is disabled for the deployment.
 - Read-only baseline and synchronized-resource discovery may use Meta; no POST or DELETE is permitted during this phase.
 - Enabling a future pilot still requires the deployment flag, the `meta` platform allowlist, the exact account allowlist, and the exact approved revision.
+
+## October 12 M18 pause candidate (not deployed)
+
+The scoped M18 acceptance extension permits only separately approved exact Google/Meta campaign pauses through the existing M03 dashboard. It retains current session/domain/operator checks, latest immutable approval, native ownership/status preflight, durable single-dispatch receipts and official readback. General publishing remains locked. Verify can reconcile an attempted pause without resending its provider mutation. Required M03-only migrations, local verification, exact production baseline, disabled rollout and rollback are documented in [the pause release evidence](../m18-m03-pause-release-2026-10-12.md).

@@ -154,6 +154,7 @@ export type M03ItemAttempt = {
 };
 
 export type M03ChangeRequestDetail = {
+  pause_actions?: { publish: boolean; verify: boolean };
   request: M03ChangeRequestSummary; items: M03ChangeItem[]; revisions: M03Revision[];
   validations: M03ValidationRecord[]; approvals: M03Approval[]; events: M03AuditEvent[];
   source_verification: M03SourceVerification | null;

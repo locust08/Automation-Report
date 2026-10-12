@@ -406,3 +406,15 @@ function createDetailItem(): M03ChangeRequestDetail["items"][number] {
     created_at: "2026-08-26T00:00:00.000Z",
   };
 }
+test("M18 pause references validate as a complete set and survive serialization", () => {
+  const form = buildM03RequestForm({});
+  form.items[0]!.entity_type = "campaign"; form.items[0]!.entity_identity = "123";
+  form.items[0]!.field_path = "campaign.status"; form.items[0]!.value_type = "string";
+  form.items[0]!.baseline_value = "ENABLED"; form.items[0]!.proposed_value = "PAUSED";
+  form.items[0]!.evidence = { m18_workflow_id: "10000000-0000-4000-8000-000000000001" };
+  assert.ok(validateM03RequestFormValues(form).some(issue => issue.includes("all three")));
+  form.items[0]!.evidence.m18_revision_id = "10000000-0000-4000-8000-000000000002";
+  form.items[0]!.evidence.m18_receipt_id = "10000000-0000-4000-8000-000000000003";
+  assert.deepEqual(validateM03RequestFormValues(form), []);
+  assert.deepEqual(serializeM03RequestForm(form).items[0]!.evidence, form.items[0]!.evidence);
+});
