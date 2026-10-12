@@ -1,3 +1,4 @@
+export {ErrorProbeEntrypoint} from './error-monitoring/probe';
 import {observeWorker,captureUnexpected} from './observability';
 import {authenticate} from './auth';
 import {boundedJson, endpoints, result} from './contracts';

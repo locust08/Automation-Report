@@ -4,7 +4,7 @@ import {directory,checkedManifest,save,checkedConfiguration} from './posthog-art
 // Run only after the deployment approval required by the repository contract.
 const manifest=checkedManifest();if(!manifest.uploaded)throw new Error('Upload source maps before activation.');
 const {path:configPath,value:config}=checkedConfiguration(manifest);
-if(config.name!==(manifest.service==='m04'?'digitalbee-m04-campaign-api':'digitalbee-mcp')||manifest.projectId!=='503297')throw new Error('Unexpected Worker or PostHog project target.');
+if(config.name!==(manifest.service==='m04'?'digitalbee-m04-campaign-api':manifest.service==='digitalbee-gateway'?'digitalbee-dashboard-domain':'digitalbee-mcp')||manifest.projectId!=='503297')throw new Error('Unexpected Worker or PostHog project target.');
 if(config.vars?.POSTHOG_RELEASE!==manifest.release||config.vars?.POSTHOG_ENVIRONMENT!=='production'||!config.vars?.POSTHOG_PROJECT_TOKEN?.startsWith('phc_')||config.vars?.POSTHOG_HOST!==manifest.cliHost.replace('.posthog.com','.i.posthog.com'))throw new Error('Deployment configuration does not match the prepared production release/region.');
 if(config.build?.command)throw new Error('Remove custom build commands from the approved snapshot: deploy must not rebuild.');
 checkedManifest();

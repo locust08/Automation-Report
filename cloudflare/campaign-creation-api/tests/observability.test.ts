@@ -3,7 +3,7 @@ import type {EventMessage} from 'posthog-node';
 const sdk=vi.hoisted(()=>({capture:vi.fn(),shutdown:vi.fn(),create:vi.fn()}));
 vi.mock('posthog-node/edge',()=>({PostHog:class {constructor(...args:unknown[]){sdk.create(...args);}captureException=sdk.capture;shutdown=sdk.shutdown;}}));
 import {captureUnexpected,expectedError,filterEvent,markExpected,observeWorker,releaseFor,posthogConfiguration} from '../src/observability';
-const env={POSTHOG_PROJECT_TOKEN:'phc_test',POSTHOG_HOST:'https://us.i.posthog.com',POSTHOG_ENVIRONMENT:'production',POSTHOG_RELEASE:'digitalbee-mcp@abcdef1'};
+const env={POSTHOG_PROJECT_TOKEN:'phc_test',POSTHOG_HOST:'https://us.i.posthog.com',POSTHOG_ENVIRONMENT:'production',POSTHOG_RELEASE:'digitalbee-mcp@abcdef1',ERROR_MONITORING_ENABLED:'true',ERROR_MONITOR:{getByName:()=>({fetch:async()=>new Response('{}')})}};
 const receipt='11111111-1111-4111-8111-111111111111';
 const ctx=()=>({waitUntil:vi.fn()});
 beforeEach(()=>{vi.resetAllMocks();sdk.shutdown.mockResolvedValue(undefined);});
