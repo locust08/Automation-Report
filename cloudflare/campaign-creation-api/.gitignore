@@ -11,3 +11,7 @@ worker-configuration.d.ts
 # Operator-only observability rollout configuration and mappings.
 .sentry-release*.jsonc
 .sentry-local/
+
+.posthog-release*.jsonc
+.posthog-local/
+.posthog-bundle/

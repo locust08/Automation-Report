@@ -1,7 +1,7 @@
 import {beforeEach,expect,it,vi} from 'vitest';
 import type {Environment} from '../src/service';
 const dependencies=vi.hoisted(()=>({capture:vi.fn(),authenticate:vi.fn(),execute:vi.fn(),process:vi.fn(),sweep:vi.fn()}));
-vi.mock('@sentry/cloudflare',()=>({isEnabled:()=>true,captureException:dependencies.capture,withScope:(callback:Function)=>callback({setTags:vi.fn()}),withSentry:(_options:unknown,handler:unknown)=>handler}));
+vi.mock('../src/observability',async importOriginal=>{const original=await importOriginal<typeof import('../src/observability')>();return {...original,captureUnexpected:(error:unknown)=>{if(!original.expectedError(error))dependencies.capture(error);},observeWorker:(_service:unknown,handler:unknown)=>handler};});
 vi.mock('../src/auth',()=>({authenticate:dependencies.authenticate}));
 vi.mock('../src/service',()=>({execute:dependencies.execute,processReservedCreation:dependencies.process,sweepCreationOutbox:dependencies.sweep}));
 import worker from '../src/index';
