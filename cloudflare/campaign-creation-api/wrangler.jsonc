@@ -41,7 +41,8 @@
     "POSTHOG_PROJECT_TOKEN": "",
     "POSTHOG_HOST": "https://us.i.posthog.com",
     "POSTHOG_ENVIRONMENT": "production",
-    "POSTHOG_RELEASE": ""
+    "POSTHOG_RELEASE": "",
+    "ERROR_MONITORING_ENABLED": "false"
   },
   "d1_databases": [
     {
@@ -70,6 +71,15 @@
   "triggers": {
     "crons": [
       "* * * * *"
+    ]
+  },
+  "durable_objects": {
+    "bindings": [
+      {
+        "class_name": "ErrorMonitor",
+        "script_name": "digitalbee-mcp",
+        "name": "ERROR_MONITOR"
+      }
     ]
   }
 }

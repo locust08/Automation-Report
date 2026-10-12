@@ -1,15 +1,17 @@
 import {AsyncLocalStorage} from 'node:async_hooks';
 import {PostHog} from 'posthog-node/edge';
 import type {EventMessage} from 'posthog-node';
+import {MONITOR_OBJECT,type ErrorMonitorBinding} from './error-monitoring/protocol';
 
 // Mirrored in the separately deployed M04 package. Keep the privacy policy identical.
 export interface ObservabilityEnv {
   POSTHOG_PROJECT_TOKEN?:string; POSTHOG_HOST?:string; POSTHOG_ENVIRONMENT?:string; POSTHOG_RELEASE?:string;
   CF_VERSION_METADATA?:{id:string};
+  ERROR_MONITOR?:ErrorMonitorBinding; ERROR_MONITORING_ENABLED?:string;
 }
-export type Service='digitalbee-mcp'|'m04';
-export type Operation='http.fetch'|'mcp.operation'|'oauth.exchange'|'scheduled.run'|'scheduled.bug_health'|'scheduled.snapshot_cleanup'|'telemetry.write'|'discovery.read'|'performance.read'|'inspection.read'|'diagnostics.read'|'budget.read'|'campaign.operation'|'campaign.audit'|'campaign.validate'|'campaign.queue_publish'|'campaign.preflight'|'campaign.dispatch_record'|'campaign.create'|'campaign.readback'|'queue.process'|'live_change.operation'|'diagnostic.synthetic';
-const operations=new Set<Operation>(['http.fetch','mcp.operation','oauth.exchange','scheduled.run','scheduled.bug_health','scheduled.snapshot_cleanup','telemetry.write','discovery.read','performance.read','inspection.read','diagnostics.read','budget.read','campaign.operation','campaign.audit','campaign.validate','campaign.queue_publish','campaign.preflight','campaign.dispatch_record','campaign.create','campaign.readback','queue.process','live_change.operation','diagnostic.synthetic']);
+export type Service='digitalbee-mcp'|'m04'|'digitalbee-gateway';
+export type Operation='http.fetch'|'mcp.operation'|'oauth.exchange'|'scheduled.run'|'scheduled.bug_health'|'scheduled.snapshot_cleanup'|'telemetry.write'|'discovery.read'|'performance.read'|'inspection.read'|'diagnostics.read'|'budget.read'|'campaign.operation'|'campaign.audit'|'campaign.validate'|'campaign.queue_publish'|'campaign.preflight'|'campaign.dispatch_record'|'campaign.create'|'campaign.readback'|'queue.process'|'live_change.operation'|'diagnostic.synthetic'|'rpc.authority'|'rpc.read'|'gateway.forward'|'changes.adapter'|'budget.connector';
+const operations=new Set<Operation>(['http.fetch','mcp.operation','oauth.exchange','scheduled.run','scheduled.bug_health','scheduled.snapshot_cleanup','telemetry.write','discovery.read','performance.read','inspection.read','diagnostics.read','budget.read','campaign.operation','campaign.audit','campaign.validate','campaign.queue_publish','campaign.preflight','campaign.dispatch_record','campaign.create','campaign.readback','queue.process','live_change.operation','diagnostic.synthetic','rpc.authority','rpc.read','gateway.forward','changes.adapter','budget.connector']);
 const uuid=/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i;
 const expectedOutcome=Symbol('expected-outcome');
 export function markExpected(error:unknown):void {
@@ -72,7 +74,7 @@ export function releaseFor(env:ObservabilityEnv,service:Service):string|undefine
 export function posthogConfiguration(env:ObservabilityEnv,service:Service){
   const release=releaseFor(env,service),environment=env.POSTHOG_ENVIRONMENT??'local';
   const host=env.POSTHOG_HOST,token=env.POSTHOG_PROJECT_TOKEN;
-  const enabled=!!token&&/^phc_[A-Za-z0-9_-]+$/.test(token)&&['https://us.i.posthog.com','https://eu.i.posthog.com'].includes(host??'')&&!!release&&['production','staging','development','local'].includes(environment);
+  const enabled=env.ERROR_MONITORING_ENABLED==='true'&&!!env.ERROR_MONITOR&&!!token&&/^phc_[A-Za-z0-9_-]+$/.test(token)&&host==='https://us.i.posthog.com'&&!!release&&['production','staging','development','local'].includes(environment);
   return {enabled,release,environment,host,token};
 }
 /** Rebuild, don't recursively redact: new SDK fields are excluded by default. */
@@ -106,7 +108,14 @@ export function observeWorker<E extends ObservabilityEnv,H extends object>(servi
       const config=posthogConfiguration(args[1] as E,service);
       if(!config.enabled)return Reflect.apply(original,this,args);
       let client:PostHog;
-      try{client=new PostHog(config.token!,{host:config.host,flushAt:1,flushInterval:0,fetchRetryCount:0,requestTimeout:5000,disableGeoip:true,disableSurveys:true,enableExceptionAutocapture:false,before_send:event=>event?filterEvent(event,service,config.environment,config.release!):null});}catch{return Reflect.apply(original,this,args);}
+      try{client=new PostHog(config.token!,{host:config.host,flushAt:1,flushInterval:0,fetchRetryCount:0,requestTimeout:5000,disableGeoip:true,disableSurveys:true,enableExceptionAutocapture:false,fetch:async(url,options)=>{
+        if(url!==config.host+'/batch/'||options.method!=='POST')throw new Error('Unexpected monitoring transport');
+        let stream=new Response(options.body as BodyInit).body!;if(new Headers(options.headers).get('content-encoding')==='gzip')stream=stream.pipeThrough(new DecompressionStream('gzip'));
+        const raw=await new Response(stream).text();if(raw.length>262144)throw new Error('Monitoring batch too large');const batch=JSON.parse(raw);
+        if(!Array.isArray(batch.batch)||batch.batch.length>100)throw new Error('Invalid monitoring batch');
+        for(const event of batch.batch){const result=await (args[1] as E).ERROR_MONITOR!.getByName(MONITOR_OBJECT).fetch('https://error-monitor.internal/submit',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(event)});if(!result.ok)throw new Error('Monitoring coordinator unavailable');}
+        return new Response('{}',{status:200});
+      },before_send:event=>event?filterEvent(event,service,config.environment,config.release!):null});}catch{return Reflect.apply(original,this,args);}
       const ctx=args[2] as ExecutionContext|undefined,receiver=this,pending:Promise<unknown>[]=[],handlerArgs=[...args];
       if(ctx?.waitUntil){handlerArgs[2]=new Proxy(ctx,{get(target,key){
         if(key==='waitUntil')return (promise:Promise<unknown>)=>{pending.push(Promise.resolve(promise).catch(error=>{captureUnexpected(error,name==='queue'?'queue.process':name==='scheduled'?'scheduled.run':'http.fetch');}));target.waitUntil(promise);};
@@ -122,4 +131,10 @@ export function observeWorker<E extends ObservabilityEnv,H extends object>(servi
     }});
   }
   return output;
+}
+
+/** RPC methods use the same invocation-local lifecycle as event handlers. */
+export async function observeRpc<T>(env:ObservabilityEnv,ctx:ExecutionContext,operation:Operation,run:()=>Promise<T>|T):Promise<T>{
+ const wrapped=observeWorker('digitalbee-mcp',{async fetch(){try{return await run();}catch(error){captureUnexpected(error,operation);throw error;}}});
+ return await Reflect.apply(wrapped.fetch,wrapped,[undefined,env,ctx]);
 }
