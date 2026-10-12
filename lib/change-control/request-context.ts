@@ -46,8 +46,15 @@ function m03ActionLabel(action: M03PermissionAction) {
   return action === "view" ? "view" : action === "create" ? "create" : action;
 }
 
-export function resolveTrustedIp(request: Request): string | null {
+export function resolveTrustedIp(request: Request, hosting?: "vercel"): string | null {
   if (process.env.NODE_ENV !== "production" && process.env.DEV_AUTH_BYPASS === "true") return "127.0.0.1";
+  // A Worker trace header does not identify the receiving host. Only the
+  // server-selected Vercel path may use Vercel's overwritten forwarding header.
+  if (hosting === "vercel") {
+    return request.headers.get("x-vercel-id")
+      ? cleanIp(request.headers.get("x-vercel-forwarded-for") || request.headers.get("x-forwarded-for"))
+      : null;
+  }
   if (request.headers.get("cf-ray")) return cleanIp(request.headers.get("cf-connecting-ip"));
   if (request.headers.get("x-vercel-id")) {
     return cleanIp(request.headers.get("x-vercel-forwarded-for") || request.headers.get("x-forwarded-for"));

@@ -3,6 +3,7 @@ import test from "node:test";
 import { createHash } from "node:crypto";
 import { SignJWT } from "jose";
 import { mcpPauseService, type McpPauseDependencies } from "./mcp-pause-service";
+import { resolveTrustedIp } from "./request-context";
 import type { M03ChangeRequestDetail } from "./types";
 
 const actor="00000000-0000-4000-8000-000000000001",requestId="00000000-0000-4000-8000-000000000002",revisionId="00000000-0000-4000-8000-000000000003",service="00000000-0000-4000-8000-000000000004";
@@ -23,7 +24,7 @@ function fixture(){
   const body={action,service_id:service,campaign_id:"123",request_id:requestId,idempotency_key:crypto.randomUUID(),...(token?{confirmation_token:token}:{}),...options.bodyPatch},raw=JSON.stringify(body);
   const scope={subject:"fixture-actor",grantRevision:1,accountPageId:service,clientId:service,platform:"Google",platformAccountId:"2315114913",campaignIdentity:"123",connectionRevision:"fixture",action:`m03_pause:${action}`,requestHash:createHash("sha256").update(raw).digest("base64url"),sessionBinding:"a".repeat(43),...options.scopePatch};
   const proof=await new SignJWT(scope).setProtectedHeader({alg:"HS256"}).setIssuer("digitalbee").setAudience("https://backend.example").setSubject("fixture-actor").setIssuedAt().setExpirationTime("30s").setJti(crypto.randomUUID()).sign(new TextEncoder().encode(env.M03_PAUSE_MCP_DELEGATION_KEY));
-  return (await mcpPauseService(new Request("https://backend.example/api/service/digitalbee/m03-pause",{method:"POST",headers:{Authorization:options.badBearer?"Bearer wrong":`Bearer ${env.M03_PAUSE_MCP_SERVICE_TOKEN}`,"X-DigitalBee-Delegation":proof,"X-Connection-Revision":"fixture","x-vercel-id":"fixture","x-forwarded-for":"127.0.0.1"},body:raw}),dependencies,{...env,...options.envPatch})).json();
+  return (await mcpPauseService(new Request("https://backend.example/api/service/digitalbee/m03-pause",{method:"POST",headers:{Authorization:options.badBearer?"Bearer wrong":`Bearer ${env.M03_PAUSE_MCP_SERVICE_TOKEN}`,"X-DigitalBee-Delegation":proof,"X-Connection-Revision":"fixture","x-vercel-id":"fixture","x-forwarded-for":"127.0.0.1",...(options.envPatch?.VERCEL==="1"?{"cf-ray":"fixture-worker-trace"}:{})},body:raw}),dependencies,{...env,...options.envPatch})).json();
  }
  return {call,detail,revoke:()=>{revoked=true;},counts:()=>({approvals,mutations}),setAmbiguous:()=>{receipts=[{operation_key:"fixture-operation",state:"ambiguous"}];detail.request.status="publishing";},setStarted:(age:number)=>{receipts=[{operation_key:"fixture-operation",state:"started",updated_at:new Date(Date.now()-age).toISOString()}];detail.request.status="publishing";}};
 }
@@ -33,6 +34,17 @@ test("two separate private confirmations retain exact revision authority and nev
  const pause=await f.call("prepare_pause");assert.equal(pause.outcome,"prepared");assert.equal(f.counts().mutations,0);
  assert.equal((await f.call("pause",pause.confirmation_token)).outcome,"success");assert.equal((await f.call("pause",pause.confirmation_token)).outcome,"success");assert.equal(f.counts().mutations,1);
  assert.equal((await f.call("read")).official_status,"PAUSED");assert.equal(f.counts().mutations,1);
+});
+test("Vercel-hosted MCP reads retain a trusted host address despite a Worker trace without a Cloudflare IP",async()=>{
+ const f=fixture(),read=await f.call("read",undefined,{envPatch:{VERCEL:"1"}});
+ assert.equal(read.outcome,"success");assert.equal(read.official_status,"PAUSED");assert.equal(read.provider_action,false);
+ assert.deepEqual(f.counts(),{approvals:0,mutations:0});
+ const request=(headers:Record<string,string>)=>new Request("https://backend.example",{headers});
+ assert.equal(resolveTrustedIp(request({"cf-ray":"worker-trace","x-vercel-id":"host","x-forwarded-for":"192.0.2.12"}),"vercel"),"192.0.2.12");
+ assert.equal(resolveTrustedIp(request({"cf-ray":"worker-trace","cf-connecting-ip":"198.51.100.22","x-vercel-id":"host","x-forwarded-for":"192.0.2.12"}),"vercel"),"192.0.2.12");
+ assert.equal(resolveTrustedIp(request({"cf-ray":"worker-trace","cf-connecting-ip":"198.51.100.22"}),"vercel"),null);
+ assert.equal(resolveTrustedIp(request({"x-vercel-id":"host","x-forwarded-for":"invalid"}),"vercel"),null);
+ assert.equal(resolveTrustedIp(request({"cf-ray":"worker-trace","x-vercel-id":"host","x-forwarded-for":"192.0.2.12"})),null);
 });
 test("rejects mismatched account/campaign, actor, action, session and disabled controls",async()=>{
  for(const options of [{badBearer:true},{bodyPatch:{campaign_id:"999"}},{scopePatch:{subject:"foreign"}},{scopePatch:{action:"m03_pause:pause"}},{envPatch:{M03_PAUSE_MCP_ENABLED:"false"}},{envPatch:{M03_PAUSE_ALLOWLIST:"[]"}}]){

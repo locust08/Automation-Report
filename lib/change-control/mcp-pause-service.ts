@@ -52,7 +52,7 @@ export async function mcpPauseService(request: Request, deps: McpPauseDependenci
     let context: TrustedRequestContext;
     async function reauthorize() {
       const actor = await deps.operator(id.parse(env.M03_PAUSE_MCP_ACTOR_ID));
-      const ip = resolveTrustedIp(request);
+      const ip = resolveTrustedIp(request, env.VERCEL === "1" ? "vercel" : undefined);
       if (!actor || !ip) throw Error("access_denied");
       context = { ...actor, trusted_ip: ip, user_agent: "DigitalBee MCP pause confirmation" };
       assertPauseTarget(target, context, env);
