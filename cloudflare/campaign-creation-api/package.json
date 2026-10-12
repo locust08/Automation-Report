@@ -5,14 +5,17 @@
   "scripts": {
     "test": "vitest run --maxWorkers=2",
     "typecheck": "tsc --noEmit",
-    "dry-run": "wrangler deploy --dry-run"
+    "dry-run": "wrangler deploy --dry-run",
+    "sentry:upload": "node scripts/sentry-upload.mjs"
   },
   "dependencies": {
+    "@sentry/cloudflare": "11.6.0",
     "jose": "6.1.0",
     "zod": "4.1.5"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "5.20260928.1",
+    "@sentry/cli": "3.8.0",
     "@types/node": "^26.6.3",
     "esbuild": "0.28.2",
     "typescript": "5.9.2",

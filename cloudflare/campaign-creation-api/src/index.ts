@@ -1,3 +1,4 @@
+import {observeWorker,captureUnexpected} from './observability';
 import {authenticate} from './auth';
 import {boundedJson, endpoints, result} from './contracts';
 import {inputs} from './inputs';
@@ -5,22 +6,22 @@ import {execute,processReservedCreation,sweepCreationOutbox,type Environment} fr
 import {ProviderError} from './google';
 import {campaignBlocker} from './blockers';
 
-export default {
+export default observeWorker('m04',{
   async fetch(request: Request, env: Environment): Promise<Response> {
     const url = new URL(request.url), prefix = '/v1/mcp/campaign-creation/';
     const endpoint = url.pathname.startsWith(prefix) ? endpoints[url.pathname.slice(prefix.length)] : undefined;
     if (!endpoint) return new Response('Not found', {status: 404});
     if (request.method !== endpoint.method) return new Response(null, {status: 405, headers: {Allow: endpoint.method}});
     try {
-      const body = endpoint.method === 'POST' ? await boundedJson(request, 32768) :
-        {request_hash: url.searchParams.get('request_hash'), input: JSON.parse(url.searchParams.get('input') ?? '')};
+      const body = await (async()=>{try{return endpoint.method === 'POST' ? await boundedJson(request, 32768) :
+        {request_hash: url.searchParams.get('request_hash'), input: JSON.parse(url.searchParams.get('input') ?? '')};}catch(error){if(error instanceof SyntaxError)throw new Error('invalid_request');throw error;}})();
       if (typeof body.request_hash !== 'string' || !/^[A-Za-z0-9_-]{43}$/.test(body.request_hash) ||
         new TextEncoder().encode(JSON.stringify(body.input)).length > 32768) throw new Error('invalid_request');
       const scope = await authenticate(request, env, endpoint.tool, body.input, body.request_hash);
       const input = inputs[endpoint.tool].parse(body.input) as Record<string, unknown>;
       let output;
       try { output = await execute(env, scope, endpoint.tool, input, body.request_hash); }
-      catch (error) {
+      catch (error) {captureUnexpected(error,'campaign.operation',{receiptId:input.idempotency_key});
         const diagnostic=error instanceof ProviderError?error.code:error instanceof Error&&['TimeoutError','AbortError','TypeError','RangeError'].includes(error.name)?error.name:error instanceof Error&&['invalid_request','response_limit','access_denied'].includes(error.message)?error.message:'request_failed';
         console.warn(JSON.stringify({event:'m04_backend_failure',tool:endpoint.tool,category:diagnostic}));
         if (error instanceof Error && error.message === 'access_denied') throw error;
@@ -29,7 +30,7 @@ export default {
       }
       return Response.json({version: 'm18-m04-v1', scope: {...scope, allowed: true}, request_hash: body.request_hash, result: output},
         {headers: {'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff'}});
-    } catch {
+    } catch(error) {captureUnexpected(error,'http.fetch');
       console.warn(JSON.stringify({event:'m04_backend_failure',tool:endpoint.tool,category:'authentication_or_input'}));
       return Response.json({error: 'access_denied_or_invalid_request'}, {status: 403, headers: {'Cache-Control': 'no-store'}});
     }
@@ -37,9 +38,9 @@ export default {
   async queue(batch:MessageBatch<{operationId:string}>,env:Environment):Promise<void>{
     for(const message of batch.messages){
       if(!/^[0-9a-f]{8}-[0-9a-f-]{27,}$/.test(message.body?.operationId??'')){message.ack();continue;}
-      await processReservedCreation(env,message.body.operationId);
+      try{await processReservedCreation(env,message.body.operationId);}catch(error){captureUnexpected(error,'queue.process',{receiptId:message.body.operationId});throw error;}
       message.ack();
     }
   },
   async scheduled(_event:ScheduledEvent,env:Environment):Promise<void>{await sweepCreationOutbox(env);},
-};
+});

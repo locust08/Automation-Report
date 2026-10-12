@@ -1,3 +1,4 @@
+import {captureUnexpected,type ObservabilityEnv} from './observability';
 import {authorize, type AuthEnvironment} from './auth';
 import {digest,mappingDigest, planSchema,metaPlanSchema,tiktokPlanSchema, scopeSchema, result, type Result, type Scope} from './contracts';
 import {buildOperations, Google, ProviderError, providerName, type GoogleCredentials} from './google';
@@ -10,7 +11,7 @@ import {preflightObservation,type PreflightStage} from './preflight';
 import {Sources} from './sources';
 import {Actions,actionAllowed} from './actions';
 import {ActionStore} from './action-store';
-export type Environment = AuthEnvironment & GoogleCredentials & MetaCredentials & TikTokCredentials & {DB:D1Database;CREATION_QUEUE?:Queue<{operationId:string}>};
+export type Environment = AuthEnvironment & GoogleCredentials & MetaCredentials & TikTokCredentials & ObservabilityEnv & {DB:D1Database;CREATION_QUEUE?:Queue<{operationId:string}>};
 export type Provider = Pick<Google, 'validate' | 'create'> & {
  readback(plan:Parameters<Google['readback']>[0],workflowId:string,options?:Parameters<Google['readback']>[2]):Promise<Record<string,any>>;
  qa?(plan:Parameters<Google['qa']>[0],workflowId:string):Promise<Record<string,any>>;
@@ -99,7 +100,7 @@ export async function execute(env: Environment, scope: Scope, tool: string, inpu
       const observations:Array<Record<string,unknown>>=[];
       const probe=async(stage:PreflightStage,fn:()=>Promise<unknown>)=>{
         try{await fn();observations.push({...preflightObservation(stage,null),category:'passed'});return true;}
-        catch(error){observations.push(preflightObservation(stage,error));return false;}
+        catch(error){captureUnexpected(error,'campaign.operation');observations.push(preflightObservation(stage,error));return false;}
       };
       const permitted=await probe('authorization_before',()=>deps.authorize(env,scope,'campaign_preflight_check'));
       if(permitted){
@@ -119,7 +120,7 @@ export async function execute(env: Environment, scope: Scope, tool: string, inpu
       try{
         const observations=await store.tikTokDiagnostics(operation.id,scope);
         return {diagnostics:{available:true,original_response_available:observations.some(d=>d.phase==='creation'),reconciliation_outcome:status==='verified'?'verified':status==='rejected'?'not_required':'unresolved',observations}};
-      }catch{return {diagnostics:{available:false,original_response_available:null,reconciliation_outcome:'unresolved',observations:[]}};}
+      }catch(error){captureUnexpected(error,'campaign.readback',{receiptId:operation.id});return {diagnostics:{available:false,original_response_available:null,reconciliation_outcome:'unresolved',observations:[]}};}
     };
     if (['dispatched', 'unknown'].includes(operation.status)) {
       try {
@@ -130,7 +131,7 @@ export async function execute(env: Environment, scope: Scope, tool: string, inpu
         await check();
         await store.finish(w, operation.id, 'verified', data);
         return result('success', {...reference(w), receipt_ref: operation.id, data: {status:'verified',readback:data,provider_action:false,...await diagnostics('verified')}});
-      } catch { /* Never repeat an uncertain provider mutation. */ }
+      } catch(error) { captureUnexpected(error,'campaign.readback',{receiptId:operation.id}); /* Never repeat an uncertain provider mutation. */ }
     }
     await check();
     return result(operation.status === 'verified' ? 'success' : operation.status === 'rejected' ? 'unavailable' : 'unknown',
@@ -158,7 +159,7 @@ export async function execute(env: Environment, scope: Scope, tool: string, inpu
   if (tool === 'campaign_draft_validate') {
     if (!['draft', 'validated'].includes(w.status)) throw new Error('conflict');
     try { if(scope.platform==='Meta')await meta.validate(metaPlanSchema.parse(plan),w.id);else if(scope.platform==='TikTok')await tiktok.validate(tiktokPlanSchema.parse(plan),w.id);else await google.validate(planSchema.parse(plan), w.id); }
-    catch (error) {
+    catch (error) {captureUnexpected(error,'campaign.operation');
       const budget=error instanceof ProviderError&&(error.code.includes('BUDGET_')||error.code==='meta_1885272');
       return result('clarification_required', {...reference(w), validation_issues: [{field:budget?'daily_budget':'configuration', code: error instanceof ProviderError ? error.code.slice(0,100) : 'validation_unavailable', message:budget?'The provider rejected this daily budget. Revise and validate before approval.':'Provider validation has not passed. Check assets and targeting before approval.'}]});
     }
@@ -242,7 +243,7 @@ export async function execute(env: Environment, scope: Scope, tool: string, inpu
     if(!env.CREATION_QUEUE)throw new Error('unavailable');
     await store.reserve(w, input, requestHash, scope);
     try{await env.CREATION_QUEUE.send({operationId:input.idempotency_key});await store.markEnqueued(input.idempotency_key);}
-    catch(error){console.warn(JSON.stringify({event:'m04_queue_publish_failure',operation_id:input.idempotency_key}));}
+    catch(error){captureUnexpected(error,'campaign.operation');console.warn(JSON.stringify({event:'m04_queue_publish_failure',operation_id:input.idempotency_key}));}
     return result('success', {...reference(w), receipt_ref: input.idempotency_key, allowed_next_actions:['campaign_operation_get'],data:{status:'reserved',provider_action:false}});
   }
   return result('unavailable');
@@ -278,7 +279,7 @@ export async function processReservedCreation(env:Environment,operationId:string
     ?await meta.readback(metaPlanSchema.parse(plan),w.id,operationId,store)
     :scope.platform==='TikTok'?await tiktok.readback(tiktokPlanSchema.parse(plan),w.id,operationId,store)
     :await google.readback(planSchema.parse(plan),w.id);
-    await store.finish(w,operationId,'verified',{...data,provider_action:true});}catch{/* A dispatched mutation is never repeated. */}};
+    await store.finish(w,operationId,'verified',{...data,provider_action:true});}catch(error){captureUnexpected(error,'campaign.readback',{receiptId:operationId});/* A dispatched mutation is never repeated. */}};
   if(['verified','rejected'].includes(operation.status))return;
   if(['dispatched','unknown'].includes(operation.status)){await readback();return;}
   if(operation.status!=='reserved')return;
@@ -294,16 +295,16 @@ export async function processReservedCreation(env:Environment,operationId:string
     else await google.validate(planSchema.parse(plan),w.id);
     stage='authorization_after';
     await deps.authorize(env,scope,'campaign_gate1_create');
-  }catch(error){
+  }catch(error){captureUnexpected(error,'campaign.operation');
     const observation=preflightObservation(stage,error);
     try{await store.rejectReserved(w,operationId,error instanceof ProviderError?error.code:'preflight_unavailable',observation);}
-    catch(storageError){console.warn(JSON.stringify({event:'m04_preflight_persistence_failure',operation_id:operationId,...observation}));throw storageError;}
+    catch(storageError){captureUnexpected(storageError,'campaign.audit',{receiptId:operationId});console.warn(JSON.stringify({event:'m04_preflight_persistence_failure',operation_id:operationId,...observation}));throw storageError;}
     return;
   }
-  try{await store.dispatched(operationId);}catch{await readback();return;}
+  try{await store.dispatched(operationId);}catch(error){captureUnexpected(error,'campaign.dispatch_record',{receiptId:operationId});await readback();return;}
   let resources:string[];
   try{resources=scope.platform==='Meta'?await meta.create(metaPlanSchema.parse(plan),w.id,operationId,store):scope.platform==='TikTok'?await tiktok.create(tiktokPlanSchema.parse(plan),w.id,operationId,store):await google.create(planSchema.parse(plan),w.id);}
-  catch(error){
+  catch(error){captureUnexpected(error,'campaign.operation');
     const partial=scope.platform!=='Google'&&Boolean((await store.providerStep(operationId,'campaign'))?.provider_id);
     const status=error instanceof ProviderError&&error.outcome==='rejected'&&!partial?'rejected':'unknown';
     await store.finish(w,operationId,status,{provider_action:status==='unknown'?'unknown':false,reason:error instanceof ProviderError?error.code:'provider_response',
@@ -313,7 +314,7 @@ export async function processReservedCreation(env:Environment,operationId:string
   }
   try{const data=scope.platform==='Meta'?await meta.readback(metaPlanSchema.parse(plan),w.id,operationId,store):scope.platform==='TikTok'?await tiktok.readback(tiktokPlanSchema.parse(plan),w.id,operationId,store):await google.readback(planSchema.parse(plan),w.id);
     await store.finish(w,operationId,'verified',{...data,provider_resources:resources,provider_action:true});}
-  catch{await store.finish(w,operationId,'unknown',{provider_resources:resources,provider_action:'accepted',verification:'pending'});}
+  catch(error){captureUnexpected(error,'campaign.readback',{receiptId:operationId});await store.finish(w,operationId,'unknown',{provider_resources:resources,provider_action:'accepted',verification:'pending'});}
 }
 
 export async function sweepCreationOutbox(env:Environment){
@@ -321,8 +322,8 @@ export async function sweepCreationOutbox(env:Environment){
   const store=new Store(env.DB);
   for(const action of await new ActionStore(env.DB).pending())await env.CREATION_QUEUE.send({operationId:action.id});
   for(const row of await store.pendingOutbox()){
-    await env.CREATION_QUEUE.send({operationId:row.operation_id});
-    await store.markEnqueued(row.operation_id);
+    try{await env.CREATION_QUEUE.send({operationId:row.operation_id});await store.markEnqueued(row.operation_id);}
+    catch(error){captureUnexpected(error,'campaign.queue_publish',{receiptId:row.operation_id});throw error;}
   }
 }
 
