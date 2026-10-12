@@ -41,8 +41,8 @@ export async function execute(env: Environment, scope: Scope, tool: string, inpu
   const followupAction=tool==='campaign_gate2_activate'?'gate2':tool==='campaign_creation_resume'?'resume':tool==='campaign_action_prepare'&&['resume','gate2'].includes(input.action)?input.action:null;
   if(followupAction&&!actionAllowed(env,scope,followupAction))return result('locked');
   if (tool === 'campaign_templates_list') {
-    if(scope.platform!=='TikTok'&&(input.cursor||input.source_ad_id))throw new Error('invalid_request');
-    const references=scope.platform==='Meta'?await meta.referenceAssets():scope.platform==='TikTok'?await tiktok.referenceAssets(input.source_ad_id,{limit:input.limit,cursor:input.cursor}):await new Google(env,scope).referenceAssets();
+    if(scope.platform!=='TikTok'&&input.cursor||scope.platform==='Google'&&input.source_ad_id)throw new Error('invalid_request');
+    const references=scope.platform==='Meta'?await meta.referenceAssets(input.source_ad_id):scope.platform==='TikTok'?await tiktok.referenceAssets(input.source_ad_id,{limit:input.limit,cursor:input.cursor}):await new Google(env,scope).referenceAssets();
     await check();
     const source='sources' in references?references.sources[0]:undefined;
     const unresolved=scope.platform==='TikTok'&&'discovery' in references&&references.discovery.unresolved_source_ad_id?references.source_checks.at(-1)?.issues[0]:undefined;

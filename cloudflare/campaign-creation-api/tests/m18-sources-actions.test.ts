@@ -16,6 +16,19 @@ let f:Awaited<ReturnType<typeof database>>,env:Environment,store:Store;
 beforeEach(async()=>{f=await database();store=new Store(f.db);env={DB:f.db,M04_ENABLED:'true',M04_TEMPLATE_PLANNING_ENABLED:'true',M04_CLONE_PLANNING_ENABLED:'true',M04_GATE2_ENABLED:'true',M04_RECOVERY_ENABLED:'true',M04_GATE2_ALLOWLIST:JSON.stringify([{subject:scope.subject,platform:scope.platform,account_id:scope.platformAccountId,service_id:scope.accountPageId}]),GOOGLE_ADS_CLIENT_ID:'synthetic',GOOGLE_ADS_CLIENT_SECRET:'synthetic',GOOGLE_ADS_REFRESH_TOKEN:'synthetic',CREATION_QUEUE:{send:async()=>{}}} as unknown as Environment;});
 afterEach(()=>{vi.restoreAllMocks();f.dispose();});
 const provider=()=>new Google(env,scope),meta=()=>new Meta(env,scope);
+it('refreshes the exact Meta source through readiness while rejecting unsupported selectors',async()=>{
+ const selected='120249693396710590',metaScope:Scope={...scope,platform:'Meta',platformAccountId:'321606578570386'};
+ const references={sources:[{source_ad_id:selected,source_campaign_id:'120249693396070590'}]};
+ const read=vi.spyOn(Meta.prototype,'referenceAssets').mockResolvedValue(references as any);
+ const authorize=vi.fn(async()=>{}),dep={authorize,provider:()=>({validate:async()=>{},create:async()=>[],readback:async()=>({})})};
+ const output=await execute(env,metaScope,'campaign_templates_list',{service_id:scope.accountPageId,source_ad_id:selected},'hash',dep);
+ expect(output.outcome).toBe('success');expect(output.data!.references).toEqual(references);
+ expect(read).toHaveBeenCalledExactlyOnceWith(selected);expect(authorize).toHaveBeenCalledTimes(2);
+ read.mockClear();
+ await expect(execute(env,metaScope,'campaign_templates_list',{service_id:scope.accountPageId,cursor:'cursor'},'hash',dep)).rejects.toThrow('invalid_request');
+ await expect(execute(env,scope,'campaign_templates_list',{service_id:scope.accountPageId,source_ad_id:selected},'hash',dep)).rejects.toThrow('invalid_request');
+ expect(read).not.toHaveBeenCalled();
+});
 it('lists immutable administrative templates and reflects disablement without rewriting the version',async()=>{
  const sources=new Sources(f.db,env),catalog=await sources.catalog(scope);
  expect(catalog).toHaveLength(2);expect(catalog[0]).toMatchObject({version:1,eligible:true});
