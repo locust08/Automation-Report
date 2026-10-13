@@ -26,6 +26,7 @@ export async function GET(request: Request): Promise<NextResponse> {
     startDate: context.startDate,
     endDate: context.endDate,
     campaignScope: context.campaignScope,
+      campaignNameFilter: context.campaignNameFilter,
   });
   const forceRefresh = searchParams.get("regenerate") === "1" || searchParams.get("refresh") === "1";
   const allowCache = searchParams.get("cache") === "1";
@@ -62,6 +63,7 @@ export async function GET(request: Request): Promise<NextResponse> {
         startDate: context.startDate,
         endDate: context.endDate,
         campaignScope: context.campaignScope,
+      campaignNameFilter: context.campaignNameFilter,
       })
         .then(async (payload) => {
           if (allowCache) {

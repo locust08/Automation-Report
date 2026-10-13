@@ -27,6 +27,7 @@ export async function GET(
       startDate: context.startDate,
       endDate: context.endDate,
       campaignScope: context.campaignScope,
+      campaignNameFilter: context.campaignNameFilter,
       cacheRefreshKey: searchParams.get("cacheRefresh") ?? searchParams.get("refresh"),
     });
 

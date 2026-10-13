@@ -371,6 +371,11 @@ export interface AdvancedReportPayload {
 export interface AdvancedReportJobResponse {
   status: "ready" | "generating" | "missing" | "error";
   cacheKey: string;
+  generationId?: string;
+  nextCursor?: string | null;
+  busy?: boolean;
+  steps?: Array<{ id: string; label: string; status: "pending" | "success" | "fallback" | "error" | "retrying"; message?: string }>;
+  availableSections?: string[];
   payload?: AdvancedReportPayload;
   message?: string;
 }

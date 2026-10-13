@@ -1,14 +1,15 @@
 "use client";
 
+import { campaignTotalChanges } from "@/lib/reporting/campaign-total-changes";
 import { Fragment, useMemo, useState } from "react";
 import Link from "next/link";
-import { ChevronDownIcon, ChevronLeftIcon, ChevronRightIcon, ExternalLinkIcon } from "lucide-react";
+import { ArrowUpIcon, ArrowDownIcon, ChevronDownIcon, ChevronLeftIcon, ChevronRightIcon, ExternalLinkIcon } from "lucide-react";
 
 import { CampaignNameFilterControl, CampaignScopeControl } from "@/components/reporting/campaign-name-filter-control";
 import { CampaignHierarchyTree } from "@/components/reporting/campaign-hierarchy-tree";
 import { Button } from "@/components/ui/button";
 import type { CampaignNameFilter, CampaignScope } from "@/lib/reporting/campaign-name-filter";
-import { filterRowsByCampaignName, getCampaignNameOptions } from "@/lib/reporting/campaign-name-filter";
+import { filterCampaignPeriods, getCampaignNameOptions } from "@/lib/reporting/campaign-name-filter";
 import { formatCompactNumber } from "@/lib/reporting/format";
 import { emptyCampaignRow, hasReportableCampaignSpend, mergeCampaignRows } from "@/lib/reporting/metrics";
 import { CampaignGroup, CampaignRow, Platform } from "@/lib/reporting/types";
@@ -44,19 +45,17 @@ export function OverallCampaignGroupsTable({
   );
   const visibleGroups = useMemo(() => {
     return groups
-      .map((group) => {
-        const rows = filterRowsByCampaignName(
-          withPositiveSpend(group.rows),
-          (row) => row.campaignName,
-          campaignNameFilter
-        );
+      .map((group): CampaignGroup | null => {
+        const periods = filterCampaignPeriods(withPositiveSpend(group.rows), withPositiveSpend(group.previousRows ?? []), campaignNameFilter);
+        const rows = periods.current;
         if (rows.length === 0) {
           return null;
         }
         return {
           ...group,
           rows,
-          totals: buildTotalsFromRows(rows, group.totals),
+          totals: { ...buildTotalsFromRows(rows, group.totals), totalChanges: campaignTotalChanges(buildTotalsFromRows(rows, group.totals),
+            group.previousRows === undefined ? undefined : periods.previous, rows.length) },
         };
       })
       .filter((group): group is CampaignGroup => Boolean(group));
@@ -276,13 +275,13 @@ export function OverallCampaignGroupsTable({
                   })}
                   <tr className="bg-[#f9f9f9] font-semibold">
                     <td className="px-1.5 py-2 align-top whitespace-normal break-words leading-5">Grand Total</td>
-                    <td className="px-1.5 py-2 text-center tabular-nums whitespace-nowrap">{formatCompactNumber(group.totals.impressions)}</td>
-                    <td className="px-1.5 py-2 text-center tabular-nums whitespace-nowrap">{formatCompactNumber(group.totals.clicks)}</td>
-                    <td className="px-1.5 py-2 text-center tabular-nums whitespace-nowrap">{formatCompactNumber(group.totals.ctr)}</td>
-                    <td className="px-1.5 py-2 text-center tabular-nums whitespace-nowrap">{formatCompactNumber(group.totals.cpm)}</td>
-                    <td className="px-1.5 py-2 text-center tabular-nums whitespace-nowrap">{formatOutcomeValue(group.totals, "results")}</td>
-                    <td className="px-1.5 py-2 text-center tabular-nums whitespace-nowrap">{formatOutcomeValue(group.totals, "costPerResult")}</td>
-                    <td className="px-1.5 py-2 text-center tabular-nums whitespace-nowrap">{formatCompactNumber(group.totals.spend)}</td>
+                    <td className="px-1.5 py-2 text-center tabular-nums whitespace-nowrap">{formatCompactNumber(group.totals.impressions)}<TotalChange value={group.totals.totalChanges?.["impressions"]} /></td>
+                    <td className="px-1.5 py-2 text-center tabular-nums whitespace-nowrap">{formatCompactNumber(group.totals.clicks)}<TotalChange value={group.totals.totalChanges?.["clicks"]} /></td>
+                    <td className="px-1.5 py-2 text-center tabular-nums whitespace-nowrap">{formatCompactNumber(group.totals.ctr)}<TotalChange value={group.totals.totalChanges?.["ctr"]} /></td>
+                    <td className="px-1.5 py-2 text-center tabular-nums whitespace-nowrap">{formatCompactNumber(group.totals.cpm)}<TotalChange value={group.totals.totalChanges?.["cpm"]} /></td>
+                    <td className="px-1.5 py-2 text-center tabular-nums whitespace-nowrap">{formatOutcomeValue(group.totals, "results")}<TotalChange value={group.totals.totalChanges?.["results"]} /></td>
+                    <td className="px-1.5 py-2 text-center tabular-nums whitespace-nowrap">{formatOutcomeValue(group.totals, "costPerResult")}<TotalChange value={group.totals.totalChanges?.["costPerResult"]} /></td>
+                    <td className="px-1.5 py-2 text-center tabular-nums whitespace-nowrap">{formatCompactNumber(group.totals.spend)}<TotalChange value={group.totals.totalChanges?.["spend"]} /></td>
                     <td
                       className="px-1.5 py-2 text-center whitespace-nowrap"
                       data-report-export-exclude="true"
@@ -529,7 +528,7 @@ function CampaignMobileCard({
         {CAMPAIGN_MOBILE_METRICS.map((metric) => (
           <div key={`${row.id}-${metric.key}`} className="space-y-0.5">
             <dt className="text-[#7a7a7a]">{mobileMetricLabel(row, metric.key, metric.label)}</dt>
-            <dd className="font-semibold text-[#37363e]">{formatMobileMetricValue(metric.value(row))}</dd>
+            <dd className="font-semibold text-[#37363e]">{formatMobileMetricValue(metric.value(row))}{row.totalChanges ? <TotalChange value={row.totalChanges[metric.key]} /> : null}</dd>
           </div>
         ))}
       </dl>
@@ -618,4 +617,12 @@ function supportsCampaignHierarchy(row: CampaignRow): boolean {
 
 function campaignHierarchyKey(row: CampaignRow): string {
   return `${row.platform}:${row.id}`;
+}
+
+function TotalChange({ value }: { value?: number | null }) {
+  if (value === undefined || value === null) return <span className="block text-[10px] font-normal text-[#777]" title="Comparison unavailable">—</span>;
+  const Icon = value < 0 ? ArrowDownIcon : ArrowUpIcon;
+  return <span className={`flex items-center justify-center gap-0.5 text-[10px] font-normal ${value > 0 ? "text-emerald-700" : value < 0 ? "text-red-700" : "text-[#777]"}`}>
+    {value !== 0 ? <Icon className="size-3" aria-hidden="true" /> : null}{value > 0 ? "+" : ""}{value.toFixed(1)}%
+  </span>;
 }

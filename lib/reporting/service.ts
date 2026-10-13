@@ -5,6 +5,8 @@ import { resolveDemandGenWithCache } from "@/lib/reporting/demand-gen-cache";
 
 import {
   filterRowsByCampaignScope,
+  filterCampaignPeriods,
+  type CampaignNameFilter,
   resolveEffectiveCampaignScope,
   type CampaignScope,
 } from "@/lib/reporting/campaign-name-filter";
@@ -103,6 +105,7 @@ export interface OverallInput {
   startDate: string | null;
   endDate: string | null;
   campaignScope?: CampaignScope;
+  campaignNameFilter?: CampaignNameFilter | null;
   diagnosticsMode?: boolean;
   cacheRefreshKey?: string | null;
   previewStage?: PreviewFetchStage;
@@ -196,6 +199,7 @@ interface OverallPerformanceData extends Omit<OverallReportBaseContext, "reportS
   tiktokCurrentTotals: TikTokCoreTotals;
   tiktokPreviousTotals: TikTokCoreTotals;
   tiktokUnavailable: boolean;
+  previousUnavailablePlatforms?: Platform[];
 }
 
 const GOOGLE_FETCH_CACHE_TTL_MS = parsePositiveIntegerEnv(
@@ -405,7 +409,7 @@ const MANUAL_AUCTION_INSIGHT_ROWS_BY_ACCOUNT: Record<string, AuctionInsightRow[]
 };
 
 export async function getOverallReport(input: OverallInput): Promise<OverallReportPayload> {
-  if (input.tiktokAccountId?.trim()) {
+  if (input.tiktokAccountId?.trim() || input.campaignNameFilter?.values.length) {
     const [summary, campaigns, audience] = await Promise.all([
       getOverallSummaryStage(input),
       getOverallCampaignPerformanceStage(input),
@@ -632,6 +636,10 @@ export async function getOverallReport(input: OverallInput): Promise<OverallRepo
   ];
 
   const campaignGroups = buildGroups([...metaCurrent, ...googleCurrent, ...youtubeCurrent]);
+  campaignGroups.forEach(group => {
+    const failed = group.platform === "meta" ? metaPreviousResult.warnings.length : googlePreviousResult.warnings.length;
+    if (!failed) group.previousRows = [...metaPrevious, ...googlePrevious, ...youtubePrevious].filter(r => r.platform === group.platform && r.campaignType === group.campaignType);
+  });
   const audienceClickBreakdown = mergeAudienceClickBreakdownResponses(
     metaAudienceBreakdownResult.breakdown,
     googleAudienceBreakdownResult.breakdown
@@ -670,6 +678,23 @@ export async function getOverallReport(input: OverallInput): Promise<OverallRepo
   };
 }
 
+function filterOverallPerformance(performance: OverallPerformanceData, filter?: CampaignNameFilter | null): OverallPerformanceData {
+  if (!filter?.values.length) return performance;
+  const meta = filterCampaignPeriods(performance.metaCurrent, performance.metaPrevious, filter);
+  const google = filterCampaignPeriods(performance.googleCurrent, performance.googlePrevious, filter);
+  const youtube = filterCampaignPeriods(performance.youtubeCurrent, performance.youtubePrevious, filter);
+  const tiktok = filterCampaignPeriods(performance.tiktokCurrent, performance.tiktokPrevious, filter);
+  const tiktokCurrent = tiktok.current;
+  const tiktokPrevious = tiktok.previous;
+  const totals = (rows: CampaignRow[]): TikTokCoreTotals => ({
+    spend: rows.reduce((v,r) => v+r.spend,0), impressions: rows.reduce((v,r) => v+r.impressions,0), clicks: rows.reduce((v,r) => v+r.clicks,0), reach: null,
+  });
+  return { ...performance, metaCurrent: meta.current, metaPrevious: meta.previous,
+    googleCurrent: google.current, googlePrevious: google.previous,
+    youtubeCurrent: youtube.current, youtubePrevious: youtube.previous,
+    tiktokCurrent, tiktokPrevious, tiktokCurrentTotals: totals(tiktokCurrent), tiktokPreviousTotals: totals(tiktokPrevious) };
+}
+
 export async function getOverallSummaryStage(
   input: OverallInput
 ): Promise<OverallSummaryStagePayload> {
@@ -703,7 +728,8 @@ export async function getOverallSummaryStage(
     companyName: performance.companyName,
     dateRange: performance.dateRange,
     accountIds: buildOverallAccountIds(performance.resolvedAccountIds),
-    summaries,
+    summaries: summaries.map(section => performance.previousUnavailablePlatforms?.includes(section.platform)
+      ? { ...section, metrics: section.metrics.map(metric => ({ ...metric, previousValue: null, delta: null })) } : section),
     warnings: dedupeWarnings(performance.warnings),
     diagnostics: performance.diagnostics,
     tiktokAccounts: performance.tiktokAccounts,
@@ -720,13 +746,19 @@ export async function getOverallCampaignPerformanceStage(input: OverallInput): P
 async function getOverallCampaignPerformanceStageUncached(
   input: OverallInput
 ): Promise<OverallCampaignPerformanceStagePayload> {
-  const performance = await getOverallPerformanceStageData(input);
+  const performance = await getOverallPerformanceStageData({ ...input, campaignNameFilter: null });
   const campaignGroups = buildGroups([
     ...performance.metaCurrent,
     ...performance.googleCurrent,
     ...performance.youtubeCurrent,
     ...performance.tiktokCurrent,
   ]);
+  const previous = [...performance.metaPrevious, ...performance.googlePrevious, ...performance.youtubePrevious, ...performance.tiktokPrevious];
+  campaignGroups.forEach(group => {
+    if (!performance.previousUnavailablePlatforms?.includes(group.platform)) {
+      group.previousRows = previous.filter(row => row.platform === group.platform && row.campaignType === group.campaignType);
+    }
+  });
   const warnings = [...performance.warnings];
 
   if (campaignGroups.length === 0 && warnings.length === 0) {
@@ -765,6 +797,9 @@ export async function getOverallAudienceBreakdownStage(
     tiktokAccountIds: resolvedAccountIds.tiktokAccountIds,
   });
 
+  const performance = input.campaignNameFilter?.values.length ? await getOverallPerformanceStageData(input) : null;
+  const metaIds = performance ? performance.metaCurrent.map(r => r.id) : undefined;
+  const googleIds = performance ? [...performance.googleCurrent, ...performance.youtubeCurrent].map(r => r.id) : undefined;
   const [metaAudienceBreakdownResult, googleAudienceBreakdownResult] = await Promise.all([
     timeOverallReportStage(reportRequestId, diagnostics, "meta_audience", () =>
       tryFetchMetaAudienceBreakdownForAccounts(
@@ -772,7 +807,7 @@ export async function getOverallAudienceBreakdownStage(
         credentials.metaAccessToken,
         dateRange.startDate,
         dateRange.endDate,
-        effectiveCampaignScope
+        effectiveCampaignScope, metaIds
       )
     ),
     timeOverallReportStage(reportRequestId, diagnostics, "google_audience", () =>
@@ -787,7 +822,7 @@ export async function getOverallAudienceBreakdownStage(
         googleManagerContext.accessPathByAccount,
         credentials.googleLoginCustomerId,
         dateRange.startDate,
-        dateRange.endDate
+        dateRange.endDate, googleIds
       )
     ),
   ]);
@@ -843,10 +878,10 @@ async function getOverallPerformanceStageData(input: OverallInput): Promise<Over
     }
   );
   if (!refreshKey) {
-    return performance;
+    return filterOverallPerformance(performance, input.campaignNameFilter);
   }
 
-  return readThroughMemoryCache(
+  return filterOverallPerformance(await readThroughMemoryCache(
     overallPerformanceStageCache,
     baseCacheKey,
     async () => performance,
@@ -854,7 +889,7 @@ async function getOverallPerformanceStageData(input: OverallInput): Promise<Over
       ttlMs: OVERALL_PERFORMANCE_CACHE_TTL_MS,
       maxEntries: OVERALL_PERFORMANCE_CACHE_MAX_ENTRIES,
     }
-  );
+  ), input.campaignNameFilter);
 }
 
 async function fetchOverallPerformanceStageData(input: OverallInput): Promise<OverallPerformanceData> {
@@ -1005,6 +1040,10 @@ async function fetchOverallPerformanceStageData(input: OverallInput): Promise<Ov
     warnings: dedupeWarnings(warnings),
     diagnostics,
     reportRequestId,
+    previousUnavailablePlatforms: [
+      ...(metaPreviousResult.warnings.length ? ["meta" as const] : []),
+      ...(googlePreviousResult.warnings.length ? ["google" as const, "googleYoutube" as const] : []),
+      ...(tiktokPreviousResult.warnings.length ? ["tiktok" as const] : [])],
     metaCurrent: filterRowsByCampaignScope(
       normalizeMetaMonthlyCampaignRows(metaCurrentResult.rows),
       (row) => row.campaignName,
@@ -2043,8 +2082,10 @@ async function tryFetchMetaAudience(
   accessToken: string | null,
   startDate: string,
   endDate: string,
-  campaignScope: CampaignScope = "all"
+  campaignScope: CampaignScope = "all",
+  campaignIds?: string[]
 ): Promise<{ breakdown: AudienceClickBreakdownResponse; warnings: string[] }> {
+  if (campaignIds?.length === 0) return { breakdown: createEmptyAudienceClickBreakdownResponse(), warnings: [] };
   if (!accountId) {
     return { breakdown: createEmptyAudienceClickBreakdownResponse(), warnings: [] };
   }
@@ -2064,6 +2105,7 @@ async function tryFetchMetaAudience(
       startDate,
       endDate,
       campaignScope,
+      campaignIds,
     });
     return { breakdown, warnings: [] };
   } catch (error) {
@@ -2319,8 +2361,10 @@ async function tryFetchGoogleAudience(
   accessPath: string | null,
   fallbackLoginCustomerId: string | null,
   startDate: string,
-  endDate: string
+  endDate: string,
+  campaignIds?: string[]
 ): Promise<{ breakdown: AudienceClickBreakdownResponse; warnings: string[] }> {
+  if (campaignIds?.length === 0) return { breakdown: createEmptyAudienceClickBreakdownResponse(), warnings: [] };
   if (!customerId) {
     return { breakdown: createEmptyAudienceClickBreakdownResponse(), warnings: [] };
   }
@@ -2346,6 +2390,7 @@ async function tryFetchGoogleAudience(
     fallbackLoginCustomerId,
     startDate,
     endDate,
+    campaignIds: campaignIds?.join(","),
     credentials: fingerprintGoogleCredentials(
       accessToken,
       refreshToken,
@@ -2371,6 +2416,7 @@ async function tryFetchGoogleAudience(
           fallbackLoginCustomerId,
           startDate,
           endDate,
+          campaignIds,
         });
         return { breakdown, warnings: [] };
       },
@@ -2927,8 +2973,10 @@ async function tryFetchMetaAudienceBreakdownForAccounts(
   accessToken: string | null,
   startDate: string,
   endDate: string,
-  campaignScope: CampaignScope = "all"
+  campaignScope: CampaignScope = "all",
+  campaignIds?: string[]
 ): Promise<{ breakdown: AudienceClickBreakdownResponse; warnings: string[] }> {
+  if (campaignIds?.length === 0) return { breakdown: createEmptyAudienceClickBreakdownResponse(), warnings: [] };
   if (accountIds.length === 0) {
     return { breakdown: createEmptyAudienceClickBreakdownResponse(), warnings: [] };
   }
@@ -2937,7 +2985,7 @@ async function tryFetchMetaAudienceBreakdownForAccounts(
   const warnings: string[] = [];
 
   for (const accountId of accountIds) {
-    const result = await tryFetchMetaAudience(accountId, accessToken, startDate, endDate, campaignScope);
+    const result = await tryFetchMetaAudience(accountId, accessToken, startDate, endDate, campaignScope, campaignIds);
     breakdown = mergeAudienceClickBreakdownResponses(breakdown, result.breakdown);
     warnings.push(
       ...result.warnings.map((warning) => annotateWarningWithAccount(warning, "meta", accountId))
@@ -2958,8 +3006,10 @@ async function tryFetchGoogleAudienceBreakdownForAccounts(
   accessPathByAccount: Record<string, string | null>,
   fallbackLoginCustomerId: string | null,
   startDate: string,
-  endDate: string
+  endDate: string,
+  campaignIds?: string[]
 ): Promise<{ breakdown: AudienceClickBreakdownResponse; warnings: string[] }> {
+  if (campaignIds?.length === 0) return { breakdown: createEmptyAudienceClickBreakdownResponse(), warnings: [] };
   if (accountIds.length === 0) {
     return { breakdown: createEmptyAudienceClickBreakdownResponse(), warnings: [] };
   }
@@ -2980,7 +3030,7 @@ async function tryFetchGoogleAudienceBreakdownForAccounts(
         accessPathByAccount[accountId] ?? null,
         fallbackLoginCustomerId,
         startDate,
-        endDate
+        endDate, campaignIds
       );
       breakdown = mergeAudienceClickBreakdownResponses(breakdown, result.breakdown);
       const accountWarnings = result.warnings.map((warning) =>

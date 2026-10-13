@@ -1,140 +1,91 @@
 import { NextResponse } from "next/server";
-
-import { readAdvancedReportCache, writeAdvancedReportCache } from "@/lib/reporting/advanced-cache";
-import {
-  buildAdvancedReportCacheKey,
-  generateAdvancedReport,
-  getAdvancedReportCountry,
-  refreshAdvancedReportVolatileMedia,
-} from "@/lib/reporting/advanced-report";
+import { readAdvancedReportCache } from "@/lib/reporting/advanced-cache";
+import { readAdvancedGeneration, saveAdvancedGeneration } from "@/lib/reporting/advanced-generation-store";
+import { advanceAdvancedGeneration, advancedAvailableSections, createAdvancedGeneration, snapshotAdvancedGeneration,
+  retryAdvancedChunk, buildAdvancedReportCacheKey, getAdvancedReportCountry, refreshAdvancedReportVolatileMedia,
+  type AdvancedGenerationState } from "@/lib/reporting/advanced-report";
 import { buildDateRange } from "@/lib/reporting/date";
-
 export const dynamic = "force-dynamic";
+export const runtime = "nodejs";
+export const maxDuration = 120;
 
-const inFlightAdvancedReports = new Map<string, Promise<void>>();
-const failedAdvancedReports = new Map<string, { message: string; failedAt: string }>();
-
-export async function GET(request: Request): Promise<NextResponse> {
-  const url = new URL(request.url);
-  const input = parseAdvancedReportRequest(url.searchParams);
-  if (!isAdvancedReportMode(input)) {
-    return NextResponse.json(
-      { status: "error", message: "Advanced report generation requires reportMode/reportType=advanced." },
-      { status: 400 }
-    );
-  }
-  if (!input.accountId) {
-    return NextResponse.json(
-      { status: "error", message: "Ad Account ID is required." },
-      { status: 400 }
-    );
-  }
-
-  const cacheKey = resolveCacheKey(input);
-  const cached = await readAdvancedReportCache(cacheKey);
-  if (!cached) {
-    const inFlight = inFlightAdvancedReports.get(cacheKey);
-    if (inFlight) {
-      console.info(
-        `[advanced-report] cache generating report_type=advanced account_id=${input.accountId} period=${resolvePeriodLabel(input)} pdf_status=not_requested email_status=not_requested ai_status=pending`
-      );
-      return NextResponse.json({ status: "generating", cacheKey });
-    }
-
-    const failed = failedAdvancedReports.get(cacheKey);
-    if (failed) {
-      console.error(
-        `[advanced-report] cache failed report_type=advanced account_id=${input.accountId} period=${resolvePeriodLabel(input)} pdf_status=not_requested email_status=not_requested ai_status=failed error=${failed.message}`
-      );
-      return NextResponse.json(
-        { status: "error", cacheKey, message: failed.message, failedAt: failed.failedAt },
-        { status: 500 }
-      );
-    }
-
-    console.info(
-      `[advanced-report] cache missing report_type=advanced account_id=${input.accountId} period=${resolvePeriodLabel(input)} pdf_status=not_requested email_status=not_requested ai_status=not_started skipped_reason="cache missing"`
-    );
-    return NextResponse.json({ status: "missing", cacheKey });
-  }
-
-  const payload = await refreshAdvancedReportVolatileMedia(cached);
-  if (payload !== cached) {
-    await writeAdvancedReportCache(cacheKey, payload);
-  }
-  console.info(
-    `[advanced-report] cache ready report_type=advanced account_id=${input.accountId} period=${resolvePeriodLabel(input)} pdf_status=not_requested email_status=not_requested ai_status=${payload.diagnostics.openAi.responseId ? "ready" : "fallback"}`
-  );
-  return NextResponse.json({ status: "ready", cacheKey, payload });
+function describe(state: AdvancedGenerationState) {
+  const ready = state.cursor >= state.steps.length;
+  return { status: ready ? "ready" : "generating", cacheKey: state.cacheKey, generationId: state.generationId,
+    nextCursor: ready ? null : state.steps[state.cursor].id, busy: state.leaseUntil > Date.now(),
+    steps: state.steps.filter(step => step.active !== false).map(({ id, label, status, message }) => ({ id, label, status, message })),
+    availableSections: advancedAvailableSections(state), payload: structuredClone(state.completePayload ?? snapshotAdvancedGeneration(state)) };
 }
-
-export async function POST(request: Request): Promise<NextResponse> {
-  const url = new URL(request.url);
-  const body = await request.json().catch(() => ({} as Record<string, unknown>));
-  const bodyParams = new URLSearchParams();
-  Object.entries(body).forEach(([key, value]) => {
-    if (typeof value === "string") {
-      bodyParams.set(key, value);
-    }
-  });
-  const input = parseAdvancedReportRequest(bodyParams, url.searchParams);
-  const force = url.searchParams.get("regenerate") === "1" || body.regenerate === true;
-
-  if (!isAdvancedReportMode(input)) {
-    return NextResponse.json(
-      { status: "error", message: "Advanced report generation requires reportMode/reportType=advanced." },
-      { status: 400 }
-    );
-  }
-
-  if (!input.accountId) {
-    return NextResponse.json(
-      { status: "error", message: "Ad Account ID is required." },
-      { status: 400 }
-    );
-  }
-
-  const cacheKey = resolveCacheKey(input);
-
-  if (!force) {
-    const cached = await readAdvancedReportCache(cacheKey);
-    if (cached) {
-      const payload = await refreshAdvancedReportVolatileMedia(cached);
-      if (payload !== cached) {
-        await writeAdvancedReportCache(cacheKey, payload);
+export async function GET(request: Request): Promise<NextResponse> {
+  try {
+    const input = parseAdvancedReportRequest(new URL(request.url).searchParams);
+    if (!isAdvancedReportMode(input) || !input.accountId) return NextResponse.json({ status: "error", message: "Ad account and advanced report mode are required." }, { status: 400 });
+    const key = resolveCacheKey(input);
+    const stored = await readAdvancedGeneration(key);
+    if (stored) {
+      const job = describe(stored.state);
+      if (job.status === "ready") {
+        job.payload = await refreshAdvancedReportVolatileMedia(job.payload);
+        job.payload.metadata.cached = true;
       }
-      return NextResponse.json({ status: "ready", cacheKey, payload });
+      return NextResponse.json(job);
     }
+    const payload = await readAdvancedReportCache(key);
+    return NextResponse.json(payload ? { status: "ready", cacheKey: key, payload: await refreshAdvancedReportVolatileMedia(payload) } : { status: "missing", cacheKey: key });
+  } catch (error) {
+    return failure(error);
   }
-
-  failedAdvancedReports.delete(cacheKey);
-
-  let generationPromise = inFlightAdvancedReports.get(cacheKey);
-  if (!generationPromise) {
-    console.info(
-      `[advanced-report] generation queued report_type=advanced account_id=${input.accountId} period=${resolvePeriodLabel(input)} pdf_status=not_requested email_status=not_requested ai_status=queued`
-    );
-    generationPromise = generateAdvancedReport(input)
-      .then(async (payload) => {
-        await writeAdvancedReportCache(cacheKey, payload);
-      })
-      .catch((error: unknown) => {
-        const message = error instanceof Error ? error.message : "Advanced report generation failed.";
-        console.error(
-          `[advanced-report] generation failed report_type=advanced account_id=${input.accountId} period=${resolvePeriodLabel(input)} pdf_status=not_requested email_status=not_requested ai_status=failed error=${message}`
-        );
-        failedAdvancedReports.set(cacheKey, {
-          message,
-          failedAt: new Date().toISOString(),
-        });
-      })
-      .finally(() => {
-        inFlightAdvancedReports.delete(cacheKey);
-      });
-    inFlightAdvancedReports.set(cacheKey, generationPromise);
-  }
-
-  return NextResponse.json({ status: "generating", cacheKey });
+}
+export async function POST(request: Request): Promise<NextResponse> {
+  try {
+    const body = await request.json() as Record<string, unknown>;
+    const params = new URLSearchParams();
+    Object.entries(body).forEach(([k,v]) => { if (typeof v === "string") params.set(k,v); });
+    const url = new URL(request.url);
+    const input = parseAdvancedReportRequest(params, url.searchParams);
+    if (!isAdvancedReportMode(input) || !input.accountId) return NextResponse.json({ status: "error", message: "Ad account and advanced report mode are required." }, { status: 400 });
+    const key = resolveCacheKey(input);
+    const stored = await readAdvancedGeneration(key);
+    const force = body.regenerate === true || url.searchParams.get("regenerate") === "1";
+    if (!stored && !force) {
+      const cached = await readAdvancedReportCache(key);
+      if (cached) return NextResponse.json({ status: "ready", cacheKey: key, payload: await refreshAdvancedReportVolatileMedia(cached) });
+    }
+    if (!stored || force) {
+      const state = createAdvancedGeneration(input);
+      let expected = stored?.revision ?? null;
+      let revision = await saveAdvancedGeneration(state, expected);
+      for (let attempt = 0; force && !revision && attempt < 2; attempt += 1) {
+        expected = (await readAdvancedGeneration(key))?.revision ?? null;
+        revision = await saveAdvancedGeneration(state, expected);
+      }
+      if (!revision) return NextResponse.json({ status: "error", cacheKey: key, message: "Generation changed concurrently. Please retry." }, { status: 409 });
+      return NextResponse.json(describe(state));
+    }
+    const { state } = stored;
+    // Compatibility: POST without a cursor advances the persisted next chunk for automation.
+    if (body.generationId && body.generationId !== state.generationId) return NextResponse.json(describe(state), { status: 409 });
+    if (state.leaseUntil > Date.now()) return NextResponse.json(describe(state));
+    const retry = typeof body.retryStepId === "string" ? body.retryStepId : null;
+    if (!retry && body.cursor && body.cursor !== state.steps[state.cursor]?.id) return NextResponse.json(describe(state), { status: 409 });
+    if (retry) retryAdvancedChunk(state, retry);
+    if (state.cursor >= state.steps.length) return NextResponse.json(describe(state));
+    // Claim the revision before provider work. Expired leases recover interrupted invocations.
+    state.leaseUntil = Date.now() + 150_000;
+    const claim = await saveAdvancedGeneration(state, stored.revision);
+    if (!claim) return NextResponse.json({ status: "generating", cacheKey: key, message: "Another request advanced this report." });
+    await advanceAdvancedGeneration(state);
+    state.leaseUntil = 0;
+    if (!await saveAdvancedGeneration(state, claim)) {
+      const current = await readAdvancedGeneration(key);
+      return NextResponse.json(current ? describe(current.state) : { status: "missing", cacheKey: key }, { status: 409 });
+    }
+    return NextResponse.json(describe(state));
+  } catch (error) { return failure(error); }
+}
+function failure(error: unknown) {
+  console.error("[advanced-report] chunk request failed", error instanceof Error ? error.message : error);
+  return NextResponse.json({ status: "error", message: error instanceof Error ? error.message : "Report generation failed." }, { status: 500 });
 }
 
 function parseAdvancedReportRequest(
@@ -147,8 +98,10 @@ function parseAdvancedReportRequest(
   endDate: string | null;
   reportMode: string | null;
   reportType: string | null;
+  platform: "google" | "meta" | null;
 } {
   return {
+    platform: getValue(primary, fallback, "platform") === "meta" ? "meta" : getValue(primary, fallback, "platform") === "google" ? "google" : null,
     accountId: getValue(primary, fallback, "accountId"),
     country: getValue(primary, fallback, "country"),
     startDate: getValue(primary, fallback, "startDate"),
@@ -173,6 +126,7 @@ function getValue(primary: URLSearchParams, fallback: URLSearchParams | undefine
 }
 
 function resolveCacheKey(input: {
+  platform?: "google" | "meta" | null;
   accountId: string | null;
   country: string | null;
   startDate: string | null;
@@ -181,13 +135,9 @@ function resolveCacheKey(input: {
   const dateRange = buildDateRange(input.startDate, input.endDate);
   const country = getAdvancedReportCountry(input.country);
   return buildAdvancedReportCacheKey({
+    platform: input.platform,
     accountId: input.accountId ?? "",
     country: country.code,
     dateRange,
   });
-}
-
-function resolvePeriodLabel(input: { startDate: string | null; endDate: string | null }): string {
-  const dateRange = buildDateRange(input.startDate, input.endDate);
-  return `${dateRange.startDate}_${dateRange.endDate}`;
 }

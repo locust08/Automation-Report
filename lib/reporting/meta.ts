@@ -768,7 +768,8 @@ export async function fetchMetaAudienceBreakdown({
   startDate,
   endDate,
   campaignScope = "all",
-}: MetaFetchInput & { campaignScope?: CampaignScope }): Promise<AudienceClickBreakdownResponse> {
+  campaignIds,
+}: MetaFetchInput & { campaignScope?: CampaignScope; campaignIds?: string[] }): Promise<AudienceClickBreakdownResponse> {
   const [age, gender, country, region] = await Promise.all([
     fetchMetaAudienceBreakdownDimension({
       accountId,
@@ -777,6 +778,7 @@ export async function fetchMetaAudienceBreakdown({
       endDate,
       dimension: "age",
       campaignScope,
+      campaignIds,
     }),
     fetchMetaAudienceBreakdownDimension({
       accountId,
@@ -785,6 +787,7 @@ export async function fetchMetaAudienceBreakdown({
       endDate,
       dimension: "gender",
       campaignScope,
+      campaignIds,
     }),
     fetchMetaAudienceBreakdownDimension({
       accountId,
@@ -793,6 +796,7 @@ export async function fetchMetaAudienceBreakdown({
       endDate,
       dimension: "country",
       campaignScope,
+      campaignIds,
     }),
     fetchMetaAudienceBreakdownDimension({
       accountId,
@@ -801,6 +805,7 @@ export async function fetchMetaAudienceBreakdown({
       endDate,
       dimension: "region",
       campaignScope,
+      campaignIds,
     }),
   ]);
 
@@ -1800,6 +1805,7 @@ async function fetchMetaAudienceBreakdownDimension(input: {
   endDate: string;
   dimension: "age" | "gender" | "country" | "region" | "city";
   campaignScope: CampaignScope;
+  campaignIds?: string[];
 }): Promise<AudienceClickBreakdownItem[]> {
   const breakdownLabel = `[audience-breakdown][meta][${input.dimension}]`;
 
@@ -1810,11 +1816,11 @@ async function fetchMetaAudienceBreakdownDimension(input: {
       startDate: input.startDate,
       endDate: input.endDate,
       breakdowns: [input.dimension],
-      fields: input.campaignScope === "lt" ? ["clicks", "campaign_name"] : ["clicks"],
+      fields: input.campaignIds || input.campaignScope === "lt" ? ["clicks", "campaign_name", "campaign_id"] : ["clicks"],
     });
 
     const items = sortAudienceItems(
-      aggregateMetaAudienceItems(rows, input.dimension, input.campaignScope),
+      aggregateMetaAudienceItems(input.campaignIds ? rows.filter(row => input.campaignIds!.includes(row.campaign_id ?? "")) : rows, input.dimension, input.campaignScope),
       input.dimension
     );
     console.info(`${breakdownLabel} accountId=${input.accountId} rows=${items.length}`);
