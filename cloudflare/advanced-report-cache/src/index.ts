@@ -6,6 +6,7 @@ interface Env {
 
 interface D1Database {
   prepare(query: string): D1PreparedStatement;
+  batch(statements: D1PreparedStatement[]): Promise<unknown[]>;
 }
 
 interface D1PreparedStatement {
@@ -77,6 +78,19 @@ const worker = {
     }
 
     const url = new URL(request.url);
+    const generationMatch = url.pathname.match(/^\/advanced-report-generation\/(.+)$/);
+    if (generationMatch) {
+      const key = `generation/${decodeURIComponent(generationMatch[1])}`;
+      if (request.method === "GET") {
+        const row = await env.ADVANCED_REPORT_DB.prepare("SELECT cache_key, r2_key FROM advanced_report_cache WHERE cache_key = ?").bind(key).first<CacheRow>();
+        if (!row) return json({ error: "Not found" }, 404);
+        const body = await env.ADVANCED_REPORTS.get(row.r2_key);
+        if (!body) return json({ error: "Generation state missing" }, 503);
+        return new Response(await body.text(), { headers: { "Content-Type": "application/json", "Cache-Control": "no-store", ETag: row.r2_key } });
+      }
+      if (request.method === "PUT") return handleGenerationPut(key, request, env);
+      return json({ error: "Method not allowed" }, 405);
+    }
     const advancedMatch = url.pathname.match(/^\/advanced-report-cache\/(.+)$/);
     const overallMatch = url.pathname.match(/^\/overall-report-cache\/(.+)$/);
     const tiktokMatch = url.pathname.match(/^\/tiktok-insights-cache\/(.+)$/);
@@ -360,4 +374,35 @@ function json(payload: unknown, status = 200): Response {
       "Cache-Control": "no-store",
     },
   });
+}
+
+// R2 object keys are immutable. D1 compare-and-swap publishes exactly one revision.
+async function handleGenerationPut(key: string, request: Request, env: Env): Promise<Response> {
+  const expected = request.headers.get("If-Match");
+  if (expected === null) return json({ error: "If-Match is required" }, 428);
+  const text = await request.text();
+  const state = JSON.parse(text) as { generationId?: string; cacheKey?: string; completePayload?: AdvancedReportPayload };
+  if (!state.generationId || !state.cacheKey) return json({ error: "Invalid generation state" }, 400);
+  const revision = `generation-revisions/${crypto.randomUUID()}.json`;
+  const now = new Date().toISOString();
+  await env.ADVANCED_REPORTS.put(revision, text, { httpMetadata: { contentType: "application/json" } });
+  const statement = expected === "*"
+    ? env.ADVANCED_REPORT_DB.prepare(`INSERT INTO advanced_report_cache (cache_key,r2_key,account_id,country,report_period,schema_version,generated_at,created_at,updated_at)
+      VALUES (?,?,'generation','MY','generation',9,?,?,?) ON CONFLICT(cache_key) DO NOTHING`).bind(key, revision, now, now, now)
+    : env.ADVANCED_REPORT_DB.prepare("UPDATE advanced_report_cache SET r2_key = ?, updated_at = ? WHERE cache_key = ? AND r2_key = ?").bind(revision, now, key, expected);
+  let result: { meta?: { changes?: number } };
+  if (state.completePayload) {
+    const payloadKey = `${revision}/complete.json`;
+    await env.ADVANCED_REPORTS.put(payloadKey, JSON.stringify(state.completePayload), { httpMetadata: { contentType: "application/json" } });
+    const metadata = state.completePayload.metadata ?? {};
+    const publish = env.ADVANCED_REPORT_DB.prepare(`INSERT INTO advanced_report_cache (cache_key,r2_key,account_id,country,report_period,schema_version,generated_at,created_at,updated_at)
+      SELECT ?,?,?,?,?,?,?,?,? WHERE EXISTS (SELECT 1 FROM advanced_report_cache WHERE cache_key = ? AND r2_key = ?)
+      ON CONFLICT(cache_key) DO UPDATE SET r2_key=excluded.r2_key, generated_at=excluded.generated_at, updated_at=excluded.updated_at`)
+      .bind(state.cacheKey, payloadKey, metadata.accountId ?? "unknown", metadata.country?.code ?? "MY",
+        `${metadata.dateRange?.startDate}_${metadata.dateRange?.endDate}`, metadata.schemaVersion ?? 9, metadata.generatedAt ?? now, now, now, key, revision);
+    const results = await env.ADVANCED_REPORT_DB.batch([statement, publish]);
+    result = results[0] as { meta?: { changes?: number } };
+  } else result = await statement.run() as { meta?: { changes?: number } };
+  if (result.meta?.changes !== 1) return json({ error: "Generation revision changed" }, 409);
+  return new Response(JSON.stringify({ ok: true }), { headers: { "Content-Type": "application/json", ETag: revision } });
 }

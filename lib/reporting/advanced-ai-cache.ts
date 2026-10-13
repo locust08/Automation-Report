@@ -44,7 +44,7 @@ export function buildAdvancedCreativeAiCacheKey(input: {
   const digest = createHash("sha256")
     .update(
       [
-        "advanced-creative-ai-v1",
+        "advanced-creative-ai-v2",
         accountId,
         input.platform,
         creativeRef,
@@ -60,7 +60,7 @@ export function buildAdvancedCreativeAiCacheKey(input: {
   return [
     "advanced",
     "creative-ai",
-    "v1",
+    "v2",
     input.platform,
     accountId,
     `${input.dateRange.startDate}_${input.dateRange.endDate}`,

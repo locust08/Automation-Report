@@ -4,7 +4,7 @@ import type { OverallReportPayload } from "@/lib/reporting/types";
 import type { CampaignScope } from "@/lib/reporting/campaign-name-filter";
 import { clonePlainData, MemoryCacheEntry, readThroughMemoryCache } from "@/lib/reporting/memory-cache";
 
-const OVERALL_REPORT_CACHE_SCHEMA_VERSION = 6;
+const OVERALL_REPORT_CACHE_SCHEMA_VERSION = 7;
 const localOverallReportCache = new Map<string, MemoryCacheEntry<OverallReportPayload>>();
 const DEFAULT_OVERALL_REPORT_CACHE_TTL_MS = 0;
 
@@ -42,6 +42,7 @@ export function buildOverallReportCacheKey(input: {
   startDate: string | null;
   endDate: string | null;
   campaignScope?: CampaignScope;
+  campaignNameFilter?: import("@/lib/reporting/campaign-name-filter").CampaignNameFilter | null;
 }): string {
   const payload = {
     version: OVERALL_REPORT_CACHE_SCHEMA_VERSION,
@@ -52,6 +53,7 @@ export function buildOverallReportCacheKey(input: {
     startDate: normalizeCacheValue(input.startDate),
     endDate: normalizeCacheValue(input.endDate),
     campaignScope: input.campaignScope ?? "all",
+    campaignNameFilter: input.campaignNameFilter ? { mode: input.campaignNameFilter.mode, values: [...input.campaignNameFilter.values].sort() } : null,
   };
   return `overall-v${OVERALL_REPORT_CACHE_SCHEMA_VERSION}-${createHash("sha256")
     .update(JSON.stringify(payload))

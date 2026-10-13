@@ -1994,6 +1994,15 @@ async function renderAdvancedPdfWithBrowserRun(env: Env, reportUrl: string): Pro
     await scrollAdvancedReportForMedia(page);
     await waitForPageImages(page, 30000);
     await downsampleLargeImagesForPdf(page);
+    await page.evaluate(() => {
+      document.querySelectorAll<HTMLElement>("[data-advanced-report-section='true']").forEach(section => {
+        const width = Math.max(0, ...Array.from(section.querySelectorAll("table")).map(table => table.scrollWidth));
+        if (width) section.style.width = `${Math.max(section.scrollWidth, width + 64)}px`;
+        section.querySelectorAll<HTMLElement>(".overflow-auto, .overflow-x-auto").forEach(container => {
+          container.style.overflow = "visible"; container.style.maxHeight = "none";
+        });
+      });
+    });
     const pageSize = await page.$eval("[data-report-capture-root='true']", (element) => {
       const target = element as HTMLElement;
       const rect = target.getBoundingClientRect();
@@ -2086,7 +2095,6 @@ async function ensureAdvancedReportReady(reportUrl: string): Promise<void> {
   const accountId = apiUrlParts.searchParams.get("accountId") ?? "missing";
   const period = `${apiUrlParts.searchParams.get("startDate") ?? "missing"}_${apiUrlParts.searchParams.get("endDate") ?? "missing"}`;
   const startedAt = Date.now();
-  let generationStarted = false;
   let lastStatus = "unknown";
   let lastMessage: string | null = null;
 
@@ -2102,12 +2110,11 @@ async function ensureAdvancedReportReady(reportUrl: string): Promise<void> {
       return;
     }
 
-    if ((ready.status === "missing" || ready.status === "error") && !generationStarted) {
-      console.info(
-        `[monthly-report-automation] advanced generation requested report_type=advanced account_id=${accountId} period=${period} ai_status=queued previous_status=${ready.status} message=${ready.message ?? "none"}`
-      );
+    if (["missing", "generating"].includes(ready.status)) {
+      // Each request awaits one persisted chunk; GET only reads progress.
       await startAdvancedReportGeneration(apiUrl);
-      generationStarted = true;
+    } else if (ready.status === "error") {
+      throw new Error(ready.message ?? "Advanced report generation failed.");
     }
 
     await sleep(ADVANCED_REPORT_READY_POLL_MS);
@@ -2121,6 +2128,8 @@ async function ensureAdvancedReportReady(reportUrl: string): Promise<void> {
 function buildAdvancedReportApiUrl(reportUrl: string): string {
   const url = new URL(reportUrl);
   const apiUrl = new URL("/api/reporting/advanced", url.origin);
+  const platform = url.searchParams.get("platform");
+  if (platform) apiUrl.searchParams.set("platform", platform);
   const accountId = url.searchParams.get("accountId");
   const country = url.searchParams.get("country");
   const startDate = url.searchParams.get("startDate");
@@ -2160,6 +2169,7 @@ async function readAdvancedReportReadyState(apiUrl: string): Promise<{ status: s
 async function startAdvancedReportGeneration(apiUrl: string): Promise<void> {
   const url = new URL(apiUrl);
   const body = {
+    platform: url.searchParams.get("platform"),
     accountId: url.searchParams.get("accountId"),
     country: url.searchParams.get("country") ?? "MY",
     startDate: url.searchParams.get("startDate"),
@@ -2633,7 +2643,9 @@ function buildReportUrl(
   if (reportType === "advanced") {
     url.searchParams.set("reportMode", "advanced");
     url.searchParams.set("reportType", "advanced");
-    const accountId = googleAccountId ?? metaAccountId;
+    const advancedPlatform = shouldUseMetaOnly ? "meta" : shouldUseGoogleOnly ? "google" : googleAccountId ? "google" : "meta";
+    const accountId = advancedPlatform === "google" ? googleAccountId : metaAccountId;
+    url.searchParams.set("platform", advancedPlatform);
     if (accountId) {
       url.searchParams.set("accountId", accountId);
     }

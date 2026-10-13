@@ -487,7 +487,7 @@ export function ReportFiltersBar({
           <div
             className={
               compact
-                ? "flex w-full flex-row gap-2 sm:w-auto sm:items-start"
+                ? "grid w-full grid-cols-2 gap-2 sm:flex sm:w-auto sm:items-start"
                 : "flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:items-start"
             }
           >

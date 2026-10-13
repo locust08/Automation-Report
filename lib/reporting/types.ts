@@ -29,6 +29,7 @@ export interface SummarySection {
 }
 
 export interface CampaignRow {
+  totalChanges?: Record<string, number | null>;
   videoViews?: number | null;
   id: string;
   platform: Platform;
@@ -55,6 +56,7 @@ export interface CampaignGroup {
   campaignType: string;
   rows: CampaignRow[];
   totals: CampaignRow;
+  previousRows?: CampaignRow[];
 }
 
 export type AudienceClickBreakdownPlatform = "google" | "meta";
@@ -716,6 +718,7 @@ export interface RequestContext {
   endDate: string | null;
   campaignType: string | null;
   platform: Platform | null;
+  campaignNameFilter?: import("@/lib/reporting/campaign-name-filter").CampaignNameFilter | null;
   campaignScope: import("@/lib/reporting/campaign-name-filter").CampaignScope;
   source: "api" | "meta_csv";
 }

@@ -31,3 +31,10 @@ Create the D1 database and R2 bucket, update `wrangler.toml`, then run:
 doppler run -- npx wrangler d1 migrations apply automation-advanced-report-cache --remote
 doppler run -- npx wrangler deploy
 ```
+
+
+## Resumable Advanced Report generation
+
+`GET /advanced-report-generation/:cacheKey` returns persisted generation state and its ETag. `PUT` requires `If-Match` with that revision (`*` means create only if absent). A conflicting revision returns 409. Immutable R2 objects and conditional D1 pointer publication prevent stale generations from replacing current state or complete report results. The existing advanced_report_cache table is reused; no new migration is required.
+
+Deploy this backward-compatible Worker before the paired application and monthly automation driver. Production generation requires the cache URL and secret; development fixtures can use isolated memory. Application POST awaits one bounded chunk; GET reads progress. Complete snapshots retain the existing cached report contract. See docs/dashboard-report-fixes-2026-10-13.md for verification and rollback boundaries.

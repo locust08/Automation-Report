@@ -1,3 +1,4 @@
+import { completeCreativeReason } from "@/lib/reporting/creative-reason";
 import { createHash } from "node:crypto";
 
 import {
@@ -31,8 +32,9 @@ import {
   writeAdvancedCreativeAiCache,
   type AdvancedCreativeAiStatus,
 } from "@/lib/reporting/advanced-ai-cache";
+import { createEmptyAudienceClickBreakdownResponse } from "@/lib/reporting/audience-breakdown";
 import { buildDateRange } from "@/lib/reporting/date";
-import { getCredentials, resolveCompanyNameFromAccountId } from "@/lib/reporting/env";
+import { getCredentials } from "@/lib/reporting/env";
 import {
   extractNotionDatabaseId,
   getNotionPropertyText,
@@ -46,7 +48,9 @@ import {
   getGoogleAdvancedVideoCreativeRows,
   getMetaAdvancedCreativeRows,
   getOverallReport,
-  getTopKeywordsReport,
+  getOverallSummaryStage,
+  getOverallCampaignPerformanceStage,
+  getOverallAudienceBreakdownStage,
 } from "@/lib/reporting/service";
 import type {
   AuctionInsightRow,
@@ -59,10 +63,10 @@ import type {
   TopKeywordRow,
 } from "@/lib/reporting/types";
 
-const ADVANCED_REPORT_SCHEMA_VERSION = 8;
+const ADVANCED_REPORT_SCHEMA_VERSION = 9;
 const OPENAI_RESPONSES_ENDPOINT = "https://api.openai.com/v1/responses";
 const OPENROUTER_CHAT_COMPLETIONS_ENDPOINT = "https://openrouter.ai/api/v1/chat/completions";
-const ADVANCED_REPORT_AI_TIMEOUT_MS = 1000 * 8;
+const ADVANCED_REPORT_AI_TIMEOUT_MS = 60_000;
 const DATAFORSEO_BASE_URL = "https://api.dataforseo.com";
 const DEFAULT_CONTENT_DATABASE_ID = "d82e7aec250645e2bbe7f37fa92feb03";
 const CREATIVE_THEME_STOP_WORDS = new Set([
@@ -102,6 +106,7 @@ const ADVANCED_REPORT_COUNTRIES: Record<AdvancedReportCountryCode, AdvancedRepor
 type LanguageName = AdvancedLanguageTrend["language"];
 
 interface AdvancedGenerationInput {
+  platform?: "google" | "meta" | null;
   accountId: string | null;
   country: string | null;
   startDate: string | null;
@@ -200,6 +205,7 @@ export function getAdvancedReportCountries(): AdvancedReportCountry[] {
 
 export function buildAdvancedReportCacheKey(input: {
   accountId: string;
+  platform?: "google" | "meta" | "unknown" | null;
   country: AdvancedReportCountryCode;
   dateRange: DateRangeConfig;
 }): string {
@@ -208,6 +214,7 @@ export function buildAdvancedReportCacheKey(input: {
       [
         `v${ADVANCED_REPORT_SCHEMA_VERSION}`,
         input.accountId.trim().toLowerCase(),
+        input.platform ?? inferAccountPlatform(input.accountId),
         input.country,
         input.dateRange.startDate,
         input.dateRange.endDate,
@@ -219,157 +226,250 @@ export function buildAdvancedReportCacheKey(input: {
   return `advanced/v${ADVANCED_REPORT_SCHEMA_VERSION}/${input.country}/${input.dateRange.startDate}_${input.dateRange.endDate}/${digest}.json`;
 }
 
-export async function generateAdvancedReport(input: AdvancedGenerationInput): Promise<AdvancedReportPayload> {
+export type AdvancedChunkKind = "summary" | "basic-campaigns" | "basic-audience" | "usage" | "auction" | "meta-source" | "image-source" | "video-source" | "meta-creative" | "image-creative" | "video-creative" | "discovery" | "volumes" | "discovery-review" | "questions" | "social" | "finalize";
+export interface AdvancedChunk {
+  id: string;
+  kind: AdvancedChunkKind;
+  label: string;
+  index: number;
+  attempt: number;
+  status: "pending" | "success" | "fallback" | "error" | "retrying";
+  message?: string;
+  batch?: KeywordCandidateBatch;
+  volumeRows?: DataForSeoKeywordResult[];
+  questionRows?: string[];
+  active?: boolean;
+}
+export interface AdvancedGenerationState {
+  generationId: string;
+  cacheKey: string;
+  input: AdvancedGenerationInput;
+  steps: AdvancedChunk[];
+  cursor: number;
+  leaseUntil: number;
+  accountId: string;
+  accountPlatform: "google" | "meta" | "unknown";
+  country: AdvancedReportCountry;
+  dateRange: DateRangeConfig;
+  companyName: string;
+  warnings: string[];
+  googleUsage: { keywordRows: TopKeywordRow[]; finalUrlRows: GoogleFinalUrlSpendRow[]; warnings: string[] };
+  basicOverallReport?: OverallReportPayload;
+  auctionRows: AuctionInsightRow[];
+  metaCreativeRows: MetaCreativePerformanceRow[];
+  googleImageCreativeRows: GoogleImageCreativePerformanceRow[];
+  googleVideoCreativeRows: GoogleVideoCreativePerformanceRow[];
+  metaCreativeAnalysis?: AdvancedMetaCreativeAnalysisSection;
+  googleVisualCreativeAnalysis?: AdvancedGoogleVisualCreativeSection;
+  googleVideoCreativeAnalysis?: AdvancedGoogleVideoCreativeSection;
+  discovery: MarketDiscovery;
+  keywordCandidates: string[];
+  keywordData: DataForSeoKeywordResult[];
+  peopleAlsoAskTerms: string[];
+  socialCalendar: { posters: AdvancedSocialCalendarItem[]; stories: AdvancedSocialCalendarItem[] };
+  marketReady: boolean;
+  completePayload?: AdvancedReportPayload;
+}
+function chunk(kind: AdvancedChunkKind, label: string, index = 0, batch?: KeywordCandidateBatch): AdvancedChunk {
+  return { id: crypto.randomUUID(), kind, label, index, batch, attempt: 0, status: "pending" };
+}
+export function createAdvancedGeneration(input: AdvancedGenerationInput): AdvancedGenerationState {
   const accountId = input.accountId?.trim() ?? "";
-  const dateRange = buildDateRange(input.startDate, input.endDate);
   const country = getAdvancedReportCountry(input.country);
-  const cacheKey = buildAdvancedReportCacheKey({ accountId, country: country.code, dateRange });
-  const accountPlatform = inferAccountPlatform(accountId);
-  const warnings: string[] = [];
-  const sectionStatuses = createDefaultSectionStatuses();
-  const aiKeyStatus = resolveAdvancedAiKeyStatus();
-
-  console.info(
-    `[advanced-report] generation started report_type=advanced account_id=${accountId || "missing"} period=${dateRange.startDate}_${dateRange.endDate} platform=${accountPlatform} ai_status=${aiKeyStatus}`
-  );
-
-  const googleUsage =
-    accountPlatform === "google"
-      ? await fetchGoogleAdvancedUsage(accountId, dateRange).catch((error: unknown) => {
-          warnings.push(toWarning("Google Ads usage", error));
-          return {
-            keywordRows: [] as TopKeywordRow[],
-            finalUrlRows: [] as GoogleFinalUrlSpendRow[],
-            warnings: [] as string[],
-          };
-        })
-      : {
-          keywordRows: [] as TopKeywordRow[],
-          finalUrlRows: [] as GoogleFinalUrlSpendRow[],
-          warnings: [] as string[],
-        };
-  warnings.push(...googleUsage.warnings);
-
-  const basicOverallReport = await fetchBasicOverallReport({
-    accountId,
-    accountPlatform,
-    dateRange,
-  }).catch((error: unknown) => {
-    warnings.push(toWarning("Basic Overall Report", error));
-    return undefined;
+  const dateRange = buildDateRange(input.startDate, input.endDate);
+  return {
+    generationId: crypto.randomUUID(), cacheKey: buildAdvancedReportCacheKey({ accountId, country: country.code, dateRange, platform: input.platform }),
+    input, accountId, accountPlatform: input.platform ?? inferAccountPlatform(accountId), country, dateRange,
+    companyName: "", cursor: 0, leaseUntil: 0, warnings: [],
+    steps: [chunk("summary", "Account and performance summary"), chunk("usage", "Final URL performance"), chunk("auction", "Auction insights"),
+      chunk("meta-source", "Meta creative metrics"), chunk("image-source", "Image creative metrics"), chunk("video-source", "Video creative metrics"),
+      chunk("discovery", "Market discovery", 1), chunk("social", "Social calendar"), chunk("basic-campaigns", "Performance campaign rows"), chunk("basic-audience", "Performance audience data"), chunk("finalize", "Complete report")],
+    googleUsage: { keywordRows: [], finalUrlRows: [], warnings: [] }, auctionRows: [], metaCreativeRows: [], googleImageCreativeRows: [], googleVideoCreativeRows: [],
+    discovery: buildFallbackDiscovery(accountId), keywordCandidates: [], keywordData: [], peopleAlsoAskTerms: [],
+    socialCalendar: { posters: [], stories: [] }, marketReady: false,
+  };
+}
+export function isTransientAdvancedError(error: unknown): boolean {
+  return /timed? out|timeout|abort|fetch failed|network|429|status 5\d\d/i.test(error instanceof Error ? error.message : String(error));
+}
+// Each invocation performs at most one provider operation; retries use another HTTP request.
+export async function advanceAdvancedGeneration(state: AdvancedGenerationState): Promise<void> {
+  const step = state.steps[state.cursor];
+  if (!step) return;
+  step.attempt += 1;
+  try {
+    await runAdvancedChunk(state, step);
+    step.status = "success";
+    delete step.message;
+  } catch (error) {
+    step.message = error instanceof Error ? error.message : String(error);
+    if (step.attempt < 2 && isTransientAdvancedError(error)) {
+      step.status = "retrying";
+      return;
+    }
+    step.status = "fallback";
+    if (step.kind.endsWith("-creative")) await runAdvancedChunk(state, step, true);
+    else if (step.kind === "discovery") scheduleDiscoveryVolumes(state, step);
+  }
+  state.cursor += 1;
+}
+function insertNext(state: AdvancedGenerationState, steps: AdvancedChunk[]) {
+  state.steps.splice(state.cursor + 1, 0, ...steps);
+}
+function scheduleDiscoveryVolumes(state: AdvancedGenerationState, step: AdvancedChunk) {
+  state.keywordCandidates = buildKeywordCandidates(state.discovery, state.googleUsage, state.country);
+  const batches = buildKeywordCandidateBatches(state.discovery, state.googleUsage, state.country);
+  state.keywordData = [];
+  state.steps.forEach(previous => {
+    if (["volumes", "discovery-review", "questions"].includes(previous.kind) && previous.index < step.index) previous.active = false;
   });
-  const companyName = await resolveAdvancedCompanyName(accountId, accountPlatform, dateRange, basicOverallReport);
-  const finalUrlPerformance = buildFinalUrlPerformanceSection(googleUsage.finalUrlRows);
-  const auctionInsightRows =
-    accountPlatform === "google"
-      ? await fetchGoogleAdvancedAuctionRows(accountId, dateRange).catch((error: unknown) => {
-          logAdvancedAuctionHiddenReason(accountId, toWarning("Google Ads auction insights", error));
-          return [] as AuctionInsightRow[];
-        })
-      : [];
-  const auctionVisibility = buildAuctionVisibilitySection({
-    accountId,
-    accountPlatform,
-    auctionRows: auctionInsightRows,
-    finalUrlRows: googleUsage.finalUrlRows,
-  });
-  const metaCreativeRows =
-    accountPlatform === "meta"
-      ? await fetchMetaAdvancedCreatives(accountId, dateRange).catch((error: unknown) => {
-          warnings.push(toWarning("Meta creative analysis", error));
-          return [] as MetaCreativePerformanceRow[];
-        })
-      : [];
-  const metaCreativeAnalysis = await buildMetaCreativeAnalysisSection({
-    accountId,
-    dateRange,
-    rows: metaCreativeRows,
-  });
-  const googleImageCreativeRows =
-    accountPlatform === "google"
-      ? await fetchGoogleAdvancedImageCreatives(accountId, dateRange).catch((error: unknown) => {
-          warnings.push(toWarning("Google visual creative analysis", error));
-          return [] as GoogleImageCreativePerformanceRow[];
-        })
-      : [];
-  const googleVisualCreativeAnalysis = await buildGoogleVisualCreativeSection({
-    accountId,
-    dateRange,
-    rows: googleImageCreativeRows,
-  });
-  const googleVideoCreativeRows =
-    accountPlatform === "google"
-      ? await fetchGoogleAdvancedVideoCreatives(accountId, dateRange).catch((error: unknown) => {
-          warnings.push(toWarning("Google video creative analysis", error));
-          return [] as GoogleVideoCreativePerformanceRow[];
-        })
-      : [];
-  const googleVideoCreativeAnalysis = await buildGoogleVideoCreativeSection({
-    accountId,
-    dateRange,
-    rows: googleVideoCreativeRows,
-  });
-
-  let discovery = await discoverMarket({
-    companyName,
-    country,
-    googleUsage,
-    warnings,
-  }).catch((error: unknown) => {
-    warnings.push(toWarning("OpenAI market discovery", error));
-    return buildFallbackDiscovery(companyName);
-  });
-
-  const socialCalendarPromise = fetchSocialCalendar(companyName, warnings).catch((error: unknown) => {
-      warnings.push(toWarning("Notion social content", error));
-      return { posters: [], stories: [] };
-  });
-
-  let keywordCandidates = buildKeywordCandidates(discovery, googleUsage, country);
-  let keywordBatches = buildKeywordCandidateBatches(discovery, googleUsage, country);
-  let keywordData = await fetchKeywordVolumes(keywordBatches, country, dateRange, warnings).catch((error: unknown) => {
-    warnings.push(toWarning("DataForSEO search volume", error));
-    return [] as DataForSeoKeywordResult[];
-  });
-
-  for (let attempt = 2; attempt <= 3 && shouldRetryKeywordDiscovery(keywordCandidates, keywordData); attempt += 1) {
-    const feedback = buildMarketDiscoveryFeedback(attempt, keywordCandidates, keywordData);
-    const retryDiscovery = await discoverMarket({
-      companyName,
-      country,
-      googleUsage,
-      warnings,
-      feedback,
-    }).catch((error: unknown) => {
-      warnings.push(toWarning(`OpenAI market discovery retry ${attempt}`, error));
-      return null;
-    });
-
-    if (!retryDiscovery) {
+  insertNext(state, [...batches.map((batch) => chunk("volumes", `${batch.language} keyword volume: ${batch.sourceGroup}`, step.index, batch)),
+    chunk("discovery-review", "Check market coverage", step.index)]);
+}
+async function runAdvancedChunk(state: AdvancedGenerationState, step: AdvancedChunk, fallback = false): Promise<void> {
+  const { accountId, accountPlatform, dateRange, country } = state;
+  const aiMode = fallback ? "fallback" : "strict";
+  switch (step.kind) {
+    case "summary": {
+      const summary = await getOverallSummaryStage({ accountId: accountPlatform === "unknown" ? accountId : null, metaAccountId: accountPlatform === "meta" ? accountId : null,
+        googleAccountId: accountPlatform === "google" ? accountId : null, startDate: dateRange.startDate, endDate: dateRange.endDate });
+      state.basicOverallReport = { ...summary, campaignGroups: state.basicOverallReport?.campaignGroups ?? [], audienceClickBreakdown: state.basicOverallReport?.audienceClickBreakdown ?? createEmptyAudienceClickBreakdownResponse() };
+      state.companyName = summary.companyName;
+      state.discovery = buildFallbackDiscovery(state.companyName);
       break;
     }
-
-    discovery = mergeMarketDiscoveries(discovery, retryDiscovery);
-    keywordCandidates = buildKeywordCandidates(discovery, googleUsage, country);
-    keywordBatches = buildKeywordCandidateBatches(discovery, googleUsage, country);
-    keywordData = await fetchKeywordVolumes(keywordBatches, country, dateRange, warnings).catch((error: unknown) => {
-      warnings.push(toWarning(`DataForSEO search volume retry ${attempt}`, error));
-      return keywordData;
-    });
+    case "basic-campaigns": {
+      const data = await getOverallCampaignPerformanceStage({ accountId: accountPlatform === "unknown" ? accountId : null, metaAccountId: accountPlatform === "meta" ? accountId : null,
+        googleAccountId: accountPlatform === "google" ? accountId : null, startDate: dateRange.startDate, endDate: dateRange.endDate });
+      if (state.basicOverallReport) state.basicOverallReport.campaignGroups = data.campaignGroups;
+      break;
+    }
+    case "basic-audience": {
+      const data = await getOverallAudienceBreakdownStage({ accountId: accountPlatform === "unknown" ? accountId : null, metaAccountId: accountPlatform === "meta" ? accountId : null,
+        googleAccountId: accountPlatform === "google" ? accountId : null, startDate: dateRange.startDate, endDate: dateRange.endDate });
+      if (state.basicOverallReport) state.basicOverallReport.audienceClickBreakdown = data.audienceClickBreakdown;
+      break;
+    }
+    case "usage":
+      if (accountPlatform === "google") state.googleUsage = await fetchGoogleAdvancedUsage(accountId, dateRange);
+      break;
+    case "auction":
+      if (accountPlatform === "google") state.auctionRows = await fetchGoogleAdvancedAuctionRows(accountId, dateRange);
+      break;
+    case "meta-source":
+      if (accountPlatform === "meta") {
+        state.metaCreativeRows = selectTopMetaCreatives(await fetchMetaAdvancedCreatives(accountId, dateRange));
+        insertNext(state, state.metaCreativeRows.map((_, i) => chunk("meta-creative", `Meta creative ${i + 1}`, i)));
+      }
+      break;
+    case "image-source":
+      if (accountPlatform === "google") {
+        state.googleImageCreativeRows = selectTopGoogleVisualCreatives(await fetchGoogleAdvancedImageCreatives(accountId, dateRange));
+        insertNext(state, state.googleImageCreativeRows.map((_, i) => chunk("image-creative", `Image creative ${i + 1}`, i)));
+      }
+      break;
+    case "video-source":
+      if (accountPlatform === "google") {
+        state.googleVideoCreativeRows = selectTopGoogleVideoCreatives(await fetchGoogleAdvancedVideoCreatives(accountId, dateRange));
+        insertNext(state, state.googleVideoCreativeRows.map((_, i) => chunk("video-creative", `Video creative ${i + 1}`, i)));
+      }
+      break;
+    case "meta-creative": {
+      const section = await buildMetaCreativeAnalysisSection({ accountId, dateRange, rows: [state.metaCreativeRows[step.index]], aiMode });
+      if (section) state.metaCreativeAnalysis = { ...section, rows: [...(state.metaCreativeAnalysis?.rows ?? []).filter(r => r.id !== section.rows[0].id), ...section.rows].sort((left, right) => state.metaCreativeRows.findIndex(row => row.id === left.id) - state.metaCreativeRows.findIndex(row => row.id === right.id)) };
+      break;
+    }
+    case "image-creative": {
+      const section = await buildGoogleVisualCreativeSection({ accountId, dateRange, rows: [state.googleImageCreativeRows[step.index]], aiMode });
+      if (section) state.googleVisualCreativeAnalysis = { ...section, rows: [...(state.googleVisualCreativeAnalysis?.rows ?? []).filter(r => r.id !== section.rows[0].id), ...section.rows].sort((left, right) => state.googleImageCreativeRows.findIndex(row => row.id === left.id) - state.googleImageCreativeRows.findIndex(row => row.id === right.id)) };
+      break;
+    }
+    case "video-creative": {
+      const section = await buildGoogleVideoCreativeSection({ accountId, dateRange, rows: [state.googleVideoCreativeRows[step.index]], aiMode });
+      if (section) state.googleVideoCreativeAnalysis = { ...section, rows: [...(state.googleVideoCreativeAnalysis?.rows ?? []).filter(r => r.id !== section.rows[0].id), ...section.rows].sort((left, right) => state.googleVideoCreativeRows.findIndex(row => row.id === left.id) - state.googleVideoCreativeRows.findIndex(row => row.id === right.id)) };
+      break;
+    }
+    case "discovery": {
+      const discovery = await discoverMarket({ companyName: state.companyName || accountId, country, googleUsage: state.googleUsage, warnings: state.warnings,
+        feedback: step.index > 1 ? buildMarketDiscoveryFeedback(step.index, state.keywordCandidates, state.keywordData) : undefined });
+      state.discovery = step.index > 1 ? mergeMarketDiscoveries(state.discovery, discovery) : discovery;
+      scheduleDiscoveryVolumes(state, step);
+      break;
+    }
+    case "volumes":
+      step.volumeRows = await fetchKeywordVolumes(step.batch ? [step.batch] : [], country, dateRange, state.warnings);
+      state.keywordData = state.steps.filter(s => s.kind === "volumes" && s.index === step.index).flatMap(s => s.volumeRows ?? []);
+      break;
+    case "discovery-review":
+      if (step.index < 3 && shouldRetryKeywordDiscovery(state.keywordCandidates, state.keywordData) && !state.steps.some(s => s.kind === "discovery" && s.index === step.index && s.status === "fallback")) {
+        insertNext(state, [chunk("discovery", `Broaden market discovery (${step.index + 1}/3)`, step.index + 1)]);
+      } else {
+        state.marketReady = true;
+        insertNext(state, state.keywordCandidates.slice(0, 4).map((_, i) => chunk("questions", `Customer questions ${i + 1}`, i)));
+      }
+      break;
+    case "questions":
+      step.questionRows = await fetchPeopleAlsoAskTerms([state.keywordCandidates[step.index]], country, state.warnings);
+      state.peopleAlsoAskTerms = dedupeStrings(state.steps.flatMap(s => s.questionRows ?? []));
+      break;
+    case "social":
+      state.socialCalendar = await fetchSocialCalendar(state.companyName || accountId, state.warnings);
+      break;
+    case "finalize": state.completePayload = snapshotAdvancedGeneration(state); break;
   }
+}
+export function retryAdvancedChunk(state: AdvancedGenerationState, stepId: string): void {
+  delete state.completePayload;
+  const index = state.steps.findIndex(s => s.id === stepId);
+  if (index < 0 || state.steps[index].active === false || !["fallback", "error"].includes(state.steps[index].status)) throw new Error("Only failed or fallback steps can be retried.");
+  const target = state.steps[index];
+  target.status = "pending";
+  target.attempt = 0;
+  delete target.message;
+  // Move only the failed operation to the end. Completed provider work is retained.
+  state.steps = state.steps.filter(s => s.id !== target.id && s.kind !== "finalize");
+  const position = state.steps.length;
+  state.steps.push(target);
+  if (["discovery", "summary", "usage"].includes(target.kind)) {
+    state.marketReady = false;
+    state.peopleAlsoAskTerms = [];
+    state.steps = state.steps.filter(s => s.id === target.id || !["discovery", "volumes", "discovery-review", "questions"].includes(s.kind));
+    state.cursor = state.steps.indexOf(target);
+    if (target.kind !== "discovery") state.steps.push(chunk("discovery", "Refresh market discovery", 1));
+    else target.index = 1;
+  } else state.cursor = position;
+  state.steps.push(chunk("finalize", "Complete report"));
 
-  const [peopleAlsoAskTerms, socialCalendar] = await Promise.all([
-    fetchPeopleAlsoAskTerms(keywordCandidates.slice(0, 6), country, warnings).catch((error: unknown) => {
-      warnings.push(toWarning("DataForSEO People Also Ask", error));
-      return [] as string[];
-    }),
-    socialCalendarPromise,
-  ]);
+}
+export function advancedAvailableSections(state: AdvancedGenerationState): string[] {
+  const completed = (kind: AdvancedChunkKind) => state.steps.some(s => s.kind === kind && ["success", "fallback"].includes(s.status));
+  return [
+    ...(completed("usage") ? ["final-url-performance"] : []), ...(completed("auction") ? ["auction-visibility"] : []),
+    ...(state.metaCreativeAnalysis?.rows.length ? ["meta-creative"] : []),
+    ...(state.googleVisualCreativeAnalysis?.rows.length ? ["google-image-creative"] : []),
+    ...(state.googleVideoCreativeAnalysis?.rows.length ? ["google-video-creative"] : []),
+    ...(state.marketReady ? ["market", "competitors", "customers", "opportunities"] : []),
+    ...(completed("social") ? ["social-calendar"] : []), ...(state.cursor >= state.steps.length ? ["decisions"] : [])];
+}
 
+export async function generateAdvancedReport(input: AdvancedGenerationInput): Promise<AdvancedReportPayload> {
+  const state = createAdvancedGeneration(input);
+  while (state.cursor < state.steps.length) await advanceAdvancedGeneration(state);
+  return snapshotAdvancedGeneration(state);
+}
+export function snapshotAdvancedGeneration(state: AdvancedGenerationState): AdvancedReportPayload {
+  const { accountId, accountPlatform, country, dateRange, cacheKey, googleUsage, basicOverallReport, metaCreativeRows,
+    googleImageCreativeRows, googleVideoCreativeRows, metaCreativeAnalysis, googleVisualCreativeAnalysis,
+    googleVideoCreativeAnalysis, discovery, keywordCandidates, keywordData, peopleAlsoAskTerms, socialCalendar } = state;
+  const companyName = state.companyName || accountId;
+  const warnings = [...state.warnings, ...googleUsage.warnings, ...state.steps.filter(s => s.active !== false && s.message).map(s => `${s.label}: ${s.message}`)];
+  const sectionStatuses = createDefaultSectionStatuses();
+  const finalUrlPerformance = buildFinalUrlPerformanceSection(googleUsage.finalUrlRows);
+  const auctionVisibility = buildAuctionVisibilitySection({ accountId, accountPlatform, auctionRows: state.auctionRows, finalUrlRows: googleUsage.finalUrlRows });
   const googleSpendByKeyword = new Map(
     googleUsage.keywordRows.map((row) => [normalizeKeyword(row.keyword), row.cost])
   );
-  if (keywordCandidates.length > 0 && keywordData.length === 0) {
+  if (state.marketReady && keywordCandidates.length > 0 && keywordData.length === 0) {
     warnings.push(
       "DataForSEO returned no keyword volume rows for the discovered keyword set. Regenerate after broadening the discovered market keywords or checking DataForSEO task output."
     );
@@ -454,10 +554,6 @@ export async function generateAdvancedReport(input: AdvancedGenerationInput): Pr
     warnings: dedupeStrings(warnings),
     sectionStatuses,
   };
-
-  console.info(
-    `[advanced-report] generation finished report_type=advanced account_id=${accountId || "missing"} period=${dateRange.startDate}_${dateRange.endDate} google_keyword_rows=${googleUsage.keywordRows.length} google_final_url_rows=${googleUsage.finalUrlRows.length} meta_creative_rows=${metaCreativeRows.length} google_image_creative_rows=${googleImageCreativeRows.length} google_video_creative_rows=${googleVideoCreativeRows.length} ai_status=${summarizeAdvancedAiStatus(payload)} warning_count=${payload.warnings.length}`
-  );
 
   return payload;
 }
@@ -658,6 +754,7 @@ export function buildAuctionVisibilitySection(input: {
 async function buildMetaCreativeAnalysisSection(input: {
   accountId: string;
   dateRange: DateRangeConfig;
+  aiMode?: "strict" | "fallback";
   rows: MetaCreativePerformanceRow[];
 }): Promise<AdvancedMetaCreativeAnalysisSection | null> {
   const selectedRows = selectTopMetaCreatives(input.rows);
@@ -667,16 +764,17 @@ async function buildMetaCreativeAnalysisSection(input: {
 
   const analyzedRows = await Promise.all(selectedRows.map(async (row): Promise<AdvancedMetaCreativeAnalysisRow> => {
     let analysisSource: AdvancedMetaCreativeAnalysisRow["analysisSource"] = "metric_fallback";
-    let aiStatus: AdvancedCreativeAiStatus = "skipped";
+    let aiStatus: AdvancedCreativeAiStatus = input.aiMode === "fallback" ? "fallback" : "skipped";
     let analysis = buildMetricMetaCreativeAnalysis(row);
 
-    if (row.mediaType === "image" && canUseOpenAiMetaImageAnalysis(row) && process.env.OPENAI_API_KEY?.trim()) {
+    if (input.aiMode !== "fallback" && row.mediaType === "image" && canUseOpenAiMetaImageAnalysis(row) && process.env.OPENAI_API_KEY?.trim()) {
       const result = await resolveCachedMetaCreativeAnalysis({
         accountId: input.accountId,
         dateRange: input.dateRange,
         row,
         fallback: analysis,
         generator: () => generateMetaImageCreativeAnalysis(row, analysis),
+        strict: input.aiMode === "strict",
         logLabel: "OpenAI Meta image creative analysis",
       });
       analysis = result.analysis;
@@ -685,7 +783,7 @@ async function buildMetaCreativeAnalysisSection(input: {
           analysisSource = "openai_image";
       }
     } else if (
-      row.mediaType === "video" &&
+      input.aiMode !== "fallback" && row.mediaType === "video" &&
       canUseOpenRouterMetaVideoAnalysis(row) &&
       process.env.OPENROUTER_API_KEY?.trim()
     ) {
@@ -695,6 +793,7 @@ async function buildMetaCreativeAnalysisSection(input: {
         row,
         fallback: analysis,
         generator: () => generateMetaVideoCreativeAnalysis(row, analysis),
+        strict: input.aiMode === "strict",
         logLabel: "OpenRouter Gemini Meta video creative analysis",
       });
       analysis = result.analysis;
@@ -783,6 +882,7 @@ function compareMetaCreatives(
 async function buildGoogleVisualCreativeSection(input: {
   accountId: string;
   dateRange: DateRangeConfig;
+  aiMode?: "strict" | "fallback";
   rows: GoogleImageCreativePerformanceRow[];
 }): Promise<AdvancedGoogleVisualCreativeSection | null> {
   const selectedRows = selectTopGoogleVisualCreatives(input.rows);
@@ -792,9 +892,9 @@ async function buildGoogleVisualCreativeSection(input: {
 
   const analyzedRows = await Promise.all(selectedRows.map(async (row): Promise<AdvancedGoogleVisualCreativeRow> => {
     let analysisSource: AdvancedGoogleVisualCreativeRow["analysisSource"] = "metric_fallback";
-    let aiStatus: AdvancedCreativeAiStatus = "skipped";
+    let aiStatus: AdvancedCreativeAiStatus = input.aiMode === "fallback" ? "fallback" : "skipped";
     let reasons = buildMetricCreativeReasons(row);
-    if (canUseOpenAiImageAnalysis(row) && process.env.OPENAI_API_KEY?.trim()) {
+    if (input.aiMode !== "fallback" && canUseOpenAiImageAnalysis(row) && process.env.OPENAI_API_KEY?.trim()) {
       const result = await resolveCachedGoogleCreativeReasons({
         accountId: input.accountId,
         dateRange: input.dateRange,
@@ -805,6 +905,7 @@ async function buildGoogleVisualCreativeSection(input: {
         mediaUrl: row.imageUrl,
         fallback: reasons,
         generator: () => generateGoogleVisualCreativeReasons(row),
+        strict: input.aiMode === "strict",
         logLabel: "OpenAI Google image creative analysis",
       });
       reasons = result.reasons;
@@ -890,6 +991,7 @@ function compareGoogleVisualCreatives(
 async function buildGoogleVideoCreativeSection(input: {
   accountId: string;
   dateRange: DateRangeConfig;
+  aiMode?: "strict" | "fallback";
   rows: GoogleVideoCreativePerformanceRow[];
 }): Promise<AdvancedGoogleVideoCreativeSection | null> {
   const selectedRows = selectTopGoogleVideoCreatives(input.rows);
@@ -899,9 +1001,9 @@ async function buildGoogleVideoCreativeSection(input: {
 
   const analyzedRows = await Promise.all(selectedRows.map(async (row): Promise<AdvancedGoogleVideoCreativeRow> => {
     let analysisSource: AdvancedGoogleVideoCreativeRow["analysisSource"] = "metric_fallback";
-    let aiStatus: AdvancedCreativeAiStatus = "skipped";
+    let aiStatus: AdvancedCreativeAiStatus = input.aiMode === "fallback" ? "fallback" : "skipped";
     let reasons = buildMetricVideoCreativeReasons(row);
-    if (canUseOpenRouterVideoAnalysis(row) && process.env.OPENROUTER_API_KEY?.trim()) {
+    if (input.aiMode !== "fallback" && canUseOpenRouterVideoAnalysis(row) && process.env.OPENROUTER_API_KEY?.trim()) {
       const result = await resolveCachedGoogleCreativeReasons({
         accountId: input.accountId,
         dateRange: input.dateRange,
@@ -912,6 +1014,7 @@ async function buildGoogleVideoCreativeSection(input: {
         mediaUrl: row.videoUrl,
         fallback: reasons,
         generator: () => generateGoogleVideoCreativeReasons(row),
+        strict: input.aiMode === "strict",
         logLabel: "OpenRouter Gemini Google video creative analysis",
       });
       reasons = result.reasons;
@@ -1008,6 +1111,7 @@ async function resolveCachedMetaCreativeAnalysis(input: {
   row: MetaCreativePerformanceRow;
   fallback: MetaCreativeAnalysis;
   generator: () => Promise<MetaCreativeAnalysis>;
+  strict?: boolean;
   logLabel: string;
 }): Promise<{ analysis: MetaCreativeAnalysis; aiStatus: AdvancedCreativeAiStatus }> {
   const mediaUrl = input.row.mediaType === "image" ? input.row.imageUrl : input.row.videoUrl;
@@ -1042,6 +1146,7 @@ async function resolveCachedMetaCreativeAnalysis(input: {
     }, generated);
     return { analysis: generated, aiStatus: "generated" };
   } catch (error) {
+    if (input.strict) throw error;
     logAdvancedAiError(input.logLabel, input.accountId, input.row.id, error);
     return { analysis: normalizedFallback, aiStatus: "fallback" };
   }
@@ -1057,6 +1162,7 @@ async function resolveCachedGoogleCreativeReasons(input: {
   mediaUrl: string | null;
   fallback: string[];
   generator: () => Promise<string[]>;
+  strict?: boolean;
   logLabel: string;
 }): Promise<{ reasons: string[]; aiStatus: AdvancedCreativeAiStatus }> {
   const cacheKey = buildAdvancedCreativeAiCacheKey(input);
@@ -1074,6 +1180,7 @@ async function resolveCachedGoogleCreativeReasons(input: {
     await writeAdvancedCreativeAiCache(cacheKey, input, { reasons: generated });
     return { reasons: generated, aiStatus: "generated" };
   } catch (error) {
+    if (input.strict) throw error;
     logAdvancedAiError(input.logLabel, input.accountId, input.creativeId || input.adId || "creative", error);
     return { reasons: normalizedFallback, aiStatus: "fallback" };
   }
@@ -1395,7 +1502,7 @@ async function generateGoogleVideoCreativeReasons(
                 `Conversions: ${formatReasonNumber(row.conversions)}`,
                 `CPA: ${formatReasonCurrency(row.cpa)}`,
                 `Metric fallback options if video reading is limited: ${metricFallback.join(" ")}`,
-                "Return JSON only with exactly 3 reasons.",
+                "Return JSON only with exactly 3 concise, complete reasons. Never end a reason with an ellipsis.",
               ].join("\n"),
             },
             {
@@ -1496,7 +1603,7 @@ function buildMetaCreativeAnalysisPrompt(
 ): string {
   return [
     instruction,
-    "Each reason must be 1 sentence, client-friendly, and based on the creative plus the supplied metrics.",
+    "Each reason must be one concise, complete sentence, client-friendly, and based on the creative plus the supplied metrics.",
     "Extract creative keyword themes only from the primary text, headline, and description; do not call them search keywords.",
     "Do not invent visual details; if media analysis is limited, rely on metrics and ad copy instead.",
     "Return strict JSON only with exactly this shape: {\"themes\":[\"...\",\"...\",\"...\"],\"reasons\":[\"...\",\"...\",\"...\"]}.",
@@ -1573,13 +1680,7 @@ function dedupeReasons(values: string[]): string[] {
 }
 
 function sanitizeReasonSentence(value: string): string {
-  const normalized = value.replace(/\s+/g, " ").trim();
-  if (!normalized) {
-    return "";
-  }
-  const firstSentence = normalized.match(/^.*?[.!?](?:\s|$)/)?.[0]?.trim() ?? normalized;
-  const shortened = firstSentence.length > 180 ? `${firstSentence.slice(0, 177).trim()}...` : firstSentence;
-  return /[.!?]$/.test(shortened) ? shortened : `${shortened}.`;
+  return completeCreativeReason(value);
 }
 
 function buildMetricCreativeReasons(row: GoogleImageCreativePerformanceRow): string[] {
@@ -1849,34 +1950,6 @@ function logAdvancedAiError(scope: string, accountId: string, creativeId: string
   );
 }
 
-function resolveAdvancedAiKeyStatus(): string {
-  const statuses = [
-    process.env.OPENAI_API_KEY?.trim() ? "openai_configured" : "openai_missing",
-    process.env.OPENROUTER_API_KEY?.trim() ? "openrouter_configured" : "openrouter_missing",
-    getDataForSeoCredentials() ? "dataforseo_configured" : "dataforseo_missing",
-  ];
-  return statuses.join(",");
-}
-
-function summarizeAdvancedAiStatus(payload: AdvancedReportPayload): string {
-  const creativeStatuses = [
-    ...(payload.metaCreativeAnalysis?.rows.map((row) => row.aiStatus) ?? []),
-    ...(payload.googleVisualCreativeAnalysis?.rows.map((row) => row.aiStatus) ?? []),
-    ...(payload.googleVideoCreativeAnalysis?.rows.map((row) => row.aiStatus) ?? []),
-  ];
-  const counts = creativeStatuses.reduce<Record<string, number>>((acc, status) => {
-    acc[status] = (acc[status] ?? 0) + 1;
-    return acc;
-  }, {});
-  const creativeSummary =
-    Object.entries(counts)
-      .map(([status, count]) => `${status}:${count}`)
-      .join(",") || "creative_ai:none";
-  const discoveryStatus = payload.diagnostics.openAi.responseId ? "market_discovery:generated" : "market_discovery:fallback";
-
-  return `${discoveryStatus};${creativeSummary}`;
-}
-
 function normalizeNullableNumber(value: number | null | undefined): number | null {
   return Number.isFinite(value) ? Number(value) : null;
 }
@@ -1989,50 +2062,6 @@ export async function refreshAdvancedReportVolatileMedia(
     },
     warnings: dedupeStrings([...payload.warnings, ...warnings]),
   };
-}
-
-async function resolveAdvancedCompanyName(
-  accountId: string,
-  accountPlatform: "google" | "meta" | "unknown",
-  dateRange: DateRangeConfig,
-  basicOverallReport?: OverallReportPayload
-): Promise<string> {
-  const credentials = getCredentials();
-  const mapped = resolveCompanyNameFromAccountId(
-    {
-      companyName: credentials.companyName,
-      companyNameMap: credentials.companyNameMap,
-      accountId,
-      metaAccountId: accountPlatform === "meta" ? accountId : null,
-      googleAccountId: accountPlatform === "google" ? accountId : null,
-    },
-    { fallback: false }
-  );
-
-  if (mapped) {
-    return mapped;
-  }
-
-  const basicCompanyName = getResolvedCompanyName(basicOverallReport?.companyName);
-  if (basicCompanyName) {
-    return basicCompanyName;
-  }
-
-  if (accountPlatform === "google") {
-    const keywordReport = await getTopKeywordsReport({
-      accountId: null,
-      metaAccountId: null,
-      googleAccountId: accountId,
-      startDate: dateRange.startDate,
-      endDate: dateRange.endDate,
-    }).catch(() => null);
-
-    if (keywordReport?.companyName && !keywordReport.companyName.startsWith("Account ")) {
-      return keywordReport.companyName;
-    }
-  }
-
-  return accountId ? `Account ${accountId}` : credentials.companyName;
 }
 
 async function fetchGoogleAdvancedUsage(
@@ -2341,14 +2370,13 @@ async function discoverMarket(input: {
   };
 }
 
-async function fetchWithTimeout(url: string, init: RequestInit): Promise<Response> {
+export async function fetchWithTimeout(url: string, init: RequestInit): Promise<Response> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), getAdvancedAiTimeoutMs());
   try {
-    return await fetch(url, {
-      ...init,
-      signal: controller.signal,
-    });
+    const response = await fetch(url, { ...init, signal: controller.signal });
+    const body = await response.arrayBuffer();
+    return new Response(body, { status: response.status, statusText: response.statusText, headers: response.headers });
   } catch (error) {
     if (controller.signal.aborted) {
       throw new Error(`AI request timed out after ${getAdvancedAiTimeoutMs()}ms.`);
@@ -2361,7 +2389,7 @@ async function fetchWithTimeout(url: string, init: RequestInit): Promise<Respons
 
 function getAdvancedAiTimeoutMs(): number {
   const configured = Number(process.env.ADVANCED_REPORT_AI_TIMEOUT_MS);
-  return Number.isFinite(configured) && configured > 0 ? configured : ADVANCED_REPORT_AI_TIMEOUT_MS;
+  return Number.isFinite(configured) && configured > 0 ? Math.min(configured, 90_000) : ADVANCED_REPORT_AI_TIMEOUT_MS;
 }
 
 function extractOpenAIOutputText(response: { output?: Array<Record<string, unknown>>; output_text?: string }): string | null {
@@ -2430,7 +2458,7 @@ async function fetchKeywordVolumes(
   const dateTo = getDataForSeoDateTo(dateRange.endDate);
   for (const batch of cleanBatches) {
     for (const keywordChunk of chunkArray(batch.keywords, 1000)) {
-      const response = await fetch(`${DATAFORSEO_BASE_URL}/v3/keywords_data/google_ads/search_volume/live`, {
+      const response = await fetchWithTimeout(`${DATAFORSEO_BASE_URL}/v3/keywords_data/google_ads/search_volume/live`, {
         method: "POST",
         headers: {
           Authorization: `Basic ${Buffer.from(`${credentials.login}:${credentials.password}`).toString("base64")}`,
@@ -2499,7 +2527,7 @@ async function fetchPeopleAlsoAskTerms(
 
   const terms: string[] = [];
   for (const keyword of keywords.slice(0, 4)) {
-    const response = await fetch(`${DATAFORSEO_BASE_URL}/v3/serp/google/organic/live/advanced`, {
+    const response = await fetchWithTimeout(`${DATAFORSEO_BASE_URL}/v3/serp/google/organic/live/advanced`, {
       method: "POST",
       headers: {
         Authorization: `Basic ${Buffer.from(`${credentials.login}:${credentials.password}`).toString("base64")}`,

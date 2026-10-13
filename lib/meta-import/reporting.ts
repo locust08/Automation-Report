@@ -1,3 +1,4 @@
+import { filterCampaignPeriods } from "@/lib/reporting/campaign-name-filter";
 import { createEmptyAudienceClickBreakdownResponse } from "@/lib/reporting/audience-breakdown";
 import { buildDateRange } from "@/lib/reporting/date";
 import { buildGroups, computeDelta, emptyCampaignRow, mergeCampaignRows } from "@/lib/reporting/metrics";
@@ -28,8 +29,9 @@ export async function getImportedOverallReport(input: OverallInput): Promise<Ove
     queryMetaImportedRows({ accountIds, startDate: dateRange.startDate, endDate: dateRange.endDate }),
     queryMetaImportedRows({ accountIds, startDate: dateRange.previousStartDate, endDate: dateRange.previousEndDate }),
   ]);
-  const currentRows = importedRowsToCampaignRows(currentImported);
-  const previousRows = importedRowsToCampaignRows(previousImported);
+  const periods = filterCampaignPeriods(importedRowsToCampaignRows(currentImported), importedRowsToCampaignRows(previousImported), input.campaignNameFilter);
+  const currentRows = periods.current;
+  const previousRows = periods.previous;
   const warnings = buildImportedWarnings(currentImported, previousImported, accountIds);
   return {
     companyName: currentImported.find((row) => row.accountName)?.accountName ?? `Account ${accountIds[0] ?? ""}`,
@@ -48,7 +50,7 @@ export async function getImportedOverallReport(input: OverallInput): Promise<Ove
         metrics: buildMetaSummary(currentRows, previousRows),
       },
     ],
-    campaignGroups: buildGroups(currentRows),
+    campaignGroups: buildGroups(currentRows).map(group => ({ ...group, previousRows: previousRows.filter(row => row.campaignType === group.campaignType) })),
     audienceClickBreakdown: createEmptyAudienceClickBreakdownResponse(),
     warnings,
     dataSource: "meta_csv",
@@ -61,7 +63,7 @@ export async function getImportedOverallSummaryStage(input: OverallInput): Promi
 }
 
 export async function getImportedOverallCampaignStage(input: OverallInput): Promise<OverallCampaignPerformanceStagePayload> {
-  const report = await getImportedOverallReport(input);
+  const report = await getImportedOverallReport({ ...input, campaignNameFilter: null });
   return {
     companyName: report.companyName,
     dateRange: report.dateRange,

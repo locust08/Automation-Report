@@ -135,3 +135,11 @@ export function getCampaignNameOptions(values: Array<string | null | undefined>)
 function normalizeCampaignNameSearchText(value: string): string {
   return value.trim().toLocaleLowerCase();
 }
+
+/** Resolve selected names to campaign identities across both periods, including renames. */
+export function filterCampaignPeriods<T extends { id: string; campaignName: string }>(current: T[], previous: T[], filter: CampaignNameFilter | null | undefined): { current: T[]; previous: T[] } {
+  if (!filter?.values.length) return { current, previous };
+  const identities = new Set([...current, ...previous].filter(row => campaignNameMatchesFilter(row.campaignName, { ...filter, mode: "include" })).map(row => row.id));
+  const selected = (rows: T[]) => rows.filter(row => filter.mode === "exclude" ? !identities.has(row.id) : identities.has(row.id));
+  return { current: selected(current), previous: selected(previous) };
+}

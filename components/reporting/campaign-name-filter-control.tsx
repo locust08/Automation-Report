@@ -53,14 +53,16 @@ export function CampaignNameFilterControl({
     }
 
     function handlePointerDown(event: PointerEvent) {
-      if (!rootRef.current?.contains(event.target as Node)) {
+      const portalOwner = event.target instanceof Element
+        ? event.target.closest("[data-campaign-filter-owner]")?.getAttribute("data-campaign-filter-owner") : null;
+      if (!rootRef.current?.contains(event.target as Node) && portalOwner !== popoverId) {
         setOpen(false);
       }
     }
 
     document.addEventListener("pointerdown", handlePointerDown);
     return () => document.removeEventListener("pointerdown", handlePointerDown);
-  }, [open]);
+  }, [open, popoverId]);
 
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -159,7 +161,7 @@ export function CampaignNameFilterControl({
               <SelectTrigger className="h-10 w-full">
                 <SelectValue />
               </SelectTrigger>
-              <SelectContent>
+              <SelectContent data-campaign-filter-owner={popoverId}>
                 <SelectItem value="include">Includes</SelectItem>
                 <SelectItem value="exclude">Does not include</SelectItem>
               </SelectContent>
