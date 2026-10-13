@@ -1,4 +1,5 @@
 "use client";
+import { safeReportUrl } from "@/lib/reporting/safe-report-url";
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
@@ -555,10 +556,27 @@ async function createAdvancedPdfBlob(root: HTMLElement): Promise<Blob> {
 
     const captures = [];
     for (const element of elements) {
-      const width = Math.ceil(element.scrollWidth);
-      const height = Math.ceil(element.scrollHeight);
-      const dataUrl = await captureElementPng(element, "pdf");
-      captures.push({ dataUrl, width, height });
+      const scrollContainers = Array.from(element.querySelectorAll<HTMLElement>(".overflow-auto, .overflow-x-auto"));
+      const changed = [element, ...scrollContainers].map(node => ({ node, style: node.getAttribute("style") }));
+      try {
+        // Expand nested scrolling tables before capture so every column and row is exported.
+        const tableWidth = Math.max(0, ...Array.from(element.querySelectorAll<HTMLTableElement>("table")).map(table => table.scrollWidth));
+        element.style.width = `${Math.max(element.scrollWidth, tableWidth + 64)}px`;
+        scrollContainers.forEach(node => { node.style.overflow = "visible"; node.style.maxHeight = "none"; });
+        const width = Math.ceil(element.scrollWidth);
+        const height = Math.ceil(element.scrollHeight);
+        const dataUrl = await captureElementPng(element, "pdf");
+        const bounds = element.getBoundingClientRect();
+        const links = Array.from(element.querySelectorAll<HTMLAnchorElement>("a[href]")).flatMap(anchor => {
+          const href = safeReportUrl(anchor.getAttribute("href"));
+          if (!href) return [];
+          return Array.from(anchor.getClientRects()).filter(rect => rect.width && rect.height).map(rect => ({ href,
+            x: rect.left - bounds.left, y: rect.top - bounds.top, width: rect.width, height: rect.height }));
+        });
+        captures.push({ dataUrl, width, height, links });
+      } finally {
+        changed.forEach(({ node, style }) => style === null ? node.removeAttribute("style") : node.setAttribute("style", style));
+      }
     }
 
     const { jsPDF } = await import("jspdf");
@@ -586,6 +604,7 @@ async function createAdvancedPdfBlob(root: HTMLElement): Promise<Blob> {
         `advanced-report-section-${index}`,
         "FAST"
       );
+      capture.links.forEach(link => pdf.link(link.x, link.y, link.width, link.height, { url: link.href }));
     });
 
     return pdf.output("blob");

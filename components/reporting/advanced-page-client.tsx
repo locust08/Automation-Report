@@ -1,6 +1,7 @@
 "use client";
 
-import { Fragment, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { completeCreativeReason } from "@/lib/reporting/creative-reason";
+import { Fragment, type ReactNode, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import {
   AlertTriangleIcon,
@@ -10,20 +11,24 @@ import {
   EyeOffIcon,
   FileTextIcon,
   LightbulbIcon,
-  PlayIcon,
   RefreshCwIcon,
   SearchIcon,
   SparklesIcon,
   UsersIcon,
 } from "lucide-react";
 
+import { CreativeVideoPreview } from "@/components/reporting/creative-video-preview";
+import { safeReportUrl } from "@/lib/reporting/safe-report-url";
 import { CampaignNameFilterControl } from "@/components/reporting/campaign-name-filter-control";
 import { AdvancedLoadingPanel } from "@/components/reporting/advanced-loading-panel";
 import { ReportDownloadButton } from "@/components/reporting/screenshot-mode-toggle";
 import { ReportFiltersBar } from "@/components/reporting/report-filters-bar";
 import { AccountReportContent } from "@/components/reporting/overall-page-client";
+import { ReportHeaderMonthPicker } from "@/components/reporting/report-header-month-picker";
+import { buildDateRange } from "@/lib/reporting/date";
+import { readRememberedReportAccount } from "@/lib/reporting/remembered-report-account";
 import { ReportShell } from "@/components/reporting/report-shell";
-import { useReportSectionQuery, useTikTokInsightsStage } from "@/components/reporting/use-report-data";
+import { useTikTokInsightsStage } from "@/components/reporting/use-report-data";
 import { TikTokInsightsPanel } from "@/components/reporting/tiktok-insights-panel";
 import { useScreenshotMode } from "@/components/reporting/use-screenshot-mode";
 import {
@@ -84,10 +89,38 @@ export function AdvancedPageClient({
   initialPlatform,
   ...props
 }: AdvancedPageClientProps) {
-  if (initialTikTokAccountId && initialPlatform === "tiktok") {
-    return <TikTokAdvancedPageClient {...props} initialAccountId={initialTikTokAccountId} initialPlatform="tiktok" />;
+  const key = [initialTikTokAccountId ?? props.initialAccountId, initialPlatform, props.initialStartDate, props.initialEndDate, props.initialCountry, props.initialCampaignNameFilterMode, JSON.stringify(props.initialCampaignNameFilterValues)].join("|");
+  if ((initialTikTokAccountId || props.initialAccountId) && initialPlatform === "tiktok") {
+    return <TikTokAdvancedPageClient key={key} {...props} initialAccountId={initialTikTokAccountId ?? props.initialAccountId} initialPlatform="tiktok" />;
   }
-  return <LegacyAdvancedPageClient {...props} initialPlatform={initialPlatform} />;
+  return <LegacyAdvancedPageClient key={key} {...props} initialPlatform={initialPlatform} />;
+}
+
+function useAdvancedHeader(props: AdvancedPageClientProps, resolvedName?: string) {
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+  const range = buildDateRange(props.initialStartDate ?? null, props.initialEndDate ?? null);
+  const selectedName = useSyncExternalStore((notify) => {
+    window.addEventListener("storage", notify);
+    return () => window.removeEventListener("storage", notify);
+  }, () => {
+    const remembered = readRememberedReportAccount(window.localStorage);
+    if (remembered?.accountId.replace(/\D/g, "") !== props.initialAccountId?.replace(/\D/g, "")) return "";
+    const name = remembered?.displayName.split(" | ")[0].trim() ?? "";
+    return name.replace(/\D/g, "") !== props.initialAccountId?.replace(/\D/g, "") ? name : "";
+  }, () => "");
+  const name = resolvedName && resolvedName !== props.initialAccountId ? resolvedName : selectedName;
+  return {
+    title: props.initialAccountId ? `${name || props.initialAccountId} | ${props.initialAccountId}` : "Advanced Report",
+    titleLoading: Boolean(props.initialAccountId && !name),
+    dateLabel: range.currentLabel,
+    dateControl: <ReportHeaderMonthPicker startDate={range.startDate} endDate={range.endDate} onChange={(dates) => {
+      const params = new URLSearchParams(searchParams.toString());
+      params.set("startDate", dates.startDate); params.set("endDate", dates.endDate);
+      router.push(`${pathname}?${params.toString()}`);
+    }} />,
+  };
 }
 
 function AdvancedAccountFilters({
@@ -100,23 +133,26 @@ function AdvancedAccountFilters({
 }: AdvancedPageClientProps & { footerContent?: ReactNode }) {
   const router = useRouter();
   const countryRef = useRef(initialCountry ?? "MY");
+  const searchParams = useSearchParams();
+  const dateRange = buildDateRange(initialStartDate ?? null, initialEndDate ?? null);
   const platform = normalizeAdvancedPlatform(initialPlatform, initialAccountId);
   const filters = useMemo<ReportFilters>(() => ({
     accountId: "",
     metaAccountId: platform === "meta" ? initialAccountId ?? "" : "",
     googleAccountId: platform === "google" ? initialAccountId ?? "" : "",
     tiktokAccountId: platform === "tiktok" ? initialAccountId ?? "" : "",
-    startDate: initialStartDate ?? "",
-    endDate: initialEndDate ?? "",
+    startDate: dateRange.startDate,
+    endDate: dateRange.endDate,
     platform,
     campaignNameFilterMode: "include",
     campaignNameFilterValues: [],
     campaignScope: "all",
     source: "api",
-  }), [initialAccountId, initialEndDate, initialStartDate, platform]);
+  }), [initialAccountId, dateRange.endDate, dateRange.startDate, platform]);
 
   function openAccount(next: Partial<ReportFilters>) {
-    const params = new URLSearchParams();
+    const params = new URLSearchParams(searchParams.toString());
+    ["accountId", "metaAccountId", "googleAccountId", "tiktokAccountId"].forEach(key => params.delete(key));
     const nextPlatform = next.platform === "googleYoutube" ? "google" : next.platform ?? platform;
     const accountId =
       nextPlatform === "google"
@@ -128,8 +164,8 @@ function AdvancedAccountFilters({
     params.set(`${nextPlatform}AccountId`, accountId);
     params.set("platform", nextPlatform);
     params.set("country", countryRef.current);
-    if (next.startDate) params.set("startDate", next.startDate);
-    if (next.endDate) params.set("endDate", next.endDate);
+    params.set("startDate", next.startDate || dateRange.startDate);
+    params.set("endDate", next.endDate || dateRange.endDate);
     router.push(`/advanced?${params.toString()}`);
   }
 
@@ -181,11 +217,14 @@ function TikTokAdvancedPageClient({
     Boolean(initialAccountId),
   );
 
+  const header = useAdvancedHeader({ initialAccountId, initialCountry, initialStartDate, initialEndDate }, data?.account.advertiserName);
   return (
     <ReportShell
       wideContent
-      title={data?.account.advertiserName ? `${data.account.advertiserName} TikTok Insights` : "TikTok Ads Advanced Report"}
-      dateLabel={initialStartDate && initialEndDate ? `${initialStartDate} â€“ ${initialEndDate}` : "Selected period"}
+      title={header.title}
+      titleLoading={header.titleLoading}
+      headerDateControl={header.dateControl}
+      dateLabel={header.dateLabel}
       activeQuery={queryString}
       reportReady={Boolean(data && !loading)}
       headerBottomControl={
@@ -248,6 +287,8 @@ function LegacyAdvancedPageClient({
   }, [campaignNameFilter, queryString]);
 
   const [payload, setPayload] = useState<AdvancedReportPayload | null>(null);
+  const [job, setJob] = useState<AdvancedReportJobResponse | null>(null);
+  const requestController = useRef<AbortController | null>(null);
   const [loading, setLoading] = useState(Boolean(initialAccountId));
   const [regenerating, setRegenerating] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -263,108 +304,64 @@ function LegacyAdvancedPageClient({
     },
     [pathname, router, searchParams]
   );
-  const advancedStageQueryString = useMemo(() => {
-    const params = new URLSearchParams();
-    if (initialStartDate) params.set("startDate", initialStartDate);
-    if (initialEndDate) params.set("endDate", initialEndDate);
-    if (initialCountry) params.set("country", initialCountry);
-    return params.toString();
-  }, [initialCountry, initialEndDate, initialStartDate]);
-  const advancedAccountKey = initialAccountId ?? "-";
-  const finalUrlStage = useReportSectionQuery<{
-    section: AdvancedFinalUrlPerformanceSection;
-    warnings: string[];
-  }>(
-    `/api/advanced/${encodeURIComponent(advancedAccountKey)}/final-url-performance`,
-    advancedStageQueryString,
-    Boolean(initialAccountId),
-    "Unable to load Final URL Destination Performance."
-  );
-  const auctionStage = useReportSectionQuery<{
-    section: AdvancedAuctionVisibilitySection | null;
-    warnings: string[];
-  }>(
-    `/api/advanced/${encodeURIComponent(advancedAccountKey)}/auction-insight`,
-    advancedStageQueryString,
-    Boolean(initialAccountId),
-    "Unable to load Auction Insight."
-  );
+  const finalUrlStage = { data: payload?.finalUrlPerformance ? { section: payload.finalUrlPerformance, warnings: [] } : null,
+    loading: false, error: null, retry: () => void loadReport() };
+  const auctionStage = { data: payload?.auctionVisibility ? { section: payload.auctionVisibility, warnings: [] } : null,
+    loading: false, error: null, retry: () => void loadReport() };
   const headerCampaignOptions = useMemo(
     () => buildAdvancedCampaignOptions(payload, finalUrlStage.data?.section),
     [finalUrlStage.data?.section, payload]
   );
 
-  const loadReport = useCallback(
-    async (options?: { regenerate?: boolean }) => {
-      if (!initialAccountId) {
-        setLoading(false);
-        return;
+  const loadReport = useCallback(async (options?: { regenerate?: boolean; retryStepId?: string }) => {
+    requestController.current?.abort();
+    const controller = new AbortController();
+    requestController.current = controller;
+    const signal = controller.signal;
+    if (!initialAccountId) { setLoading(false); return; }
+    setError(null); setApiDebugRecords([]); setLoading(true); setRegenerating(Boolean(options?.regenerate));
+    const record = (entry: ApiDebugRecord) => { if (!signal.aborted) setApiDebugRecords(current => [...current.slice(-30), entry]); };
+    const generatedBody = { platform: normalizeAdvancedPlatform(initialPlatform, initialAccountId), accountId: initialAccountId, country: initialCountry ?? "MY", startDate: initialStartDate, endDate: initialEndDate, reportMode: "advanced", reportType: "advanced" };
+    try {
+      const initial = await requestAdvancedApi("GET", `/api/reporting/advanced?${queryString}`, undefined, record, signal);
+      let current = initial.data as AdvancedReportJobResponse;
+      if (!initial.ok) throw new Error(current.message ?? "Unable to load report progress.");
+      if (options?.regenerate || options?.retryStepId || current.status === "missing") {
+        const response = await requestAdvancedApi("POST", "/api/reporting/advanced", {
+          ...generatedBody, regenerate: Boolean(options?.regenerate), retryStepId: options?.retryStepId,
+          generationId: options?.retryStepId ? current.generationId : undefined,
+        }, record, signal);
+        current = response.data as AdvancedReportJobResponse;
+        if (!response.ok && !["ready", "generating"].includes(current.status)) throw new Error(current.message ?? "Unable to start report.");
       }
-
-      const shouldRegenerate = Boolean(options?.regenerate);
-      setError(null);
-      setApiDebugRecords([]);
-      setLoading(!shouldRegenerate);
-      setRegenerating(shouldRegenerate);
-
-      try {
-        const record = (entry: ApiDebugRecord) => {
-          setApiDebugRecords((current) => [...current, entry]);
-        };
-        const cached = shouldRegenerate
-          ? null
-          : await requestAdvancedApi("GET", `/api/reporting/advanced?${queryString}`, undefined, record);
-
-        if (cached?.ok) {
-          const cachedData = cached.data as AdvancedReportJobResponse;
-          if (cachedData.status === "ready" && cachedData.payload) {
-            setPayload(cachedData.payload);
-            return;
-          }
+      while (!signal.aborted) {
+        setJob(current);
+        if (current.payload) setPayload(current.payload);
+        if (current.status === "ready") break;
+        if (current.status === "error") throw new Error(current.message ?? "Report generation failed.");
+        if (current.busy || !current.nextCursor) {
+          await sleep(2500);
+          if (signal.aborted) return;
+          const response = await requestAdvancedApi("GET", `/api/reporting/advanced?${queryString}`, undefined, record, signal);
+          current = response.data as AdvancedReportJobResponse;
+          if (!response.ok) throw new Error(current.message ?? "Unable to read progress.");
+        } else {
+          const response = await requestAdvancedApi("POST", "/api/reporting/advanced", { ...generatedBody, generationId: current.generationId, cursor: current.nextCursor }, record, signal);
+          current = response.data as AdvancedReportJobResponse;
+          if (!response.ok && !["ready", "generating"].includes(current.status)) throw new Error(current.message ?? "Unable to load section.");
         }
-
-        const generatedBody = {
-          accountId: initialAccountId,
-          country: initialCountry ?? "MY",
-          startDate: initialStartDate,
-          endDate: initialEndDate,
-          reportMode: "advanced",
-          reportType: "advanced",
-          regenerate: shouldRegenerate,
-        };
-        const generated = await requestAdvancedApi(
-          "POST",
-          `/api/reporting/advanced${shouldRegenerate ? "?regenerate=1" : ""}`,
-          generatedBody,
-          record
-        );
-        const generatedData = generated.data as AdvancedReportJobResponse;
-        if (!generated.ok || generatedData.status === "error") {
-          throw new Error(generatedData.message ?? "Unable to start advanced report generation.");
-        }
-        if (generatedData.status === "ready" && generatedData.payload) {
-          setPayload(generatedData.payload);
-          return;
-        }
-        setPayload(await pollAdvancedReport(queryString, record));
-      } catch (loadError) {
-        setError(loadError instanceof Error ? loadError.message : "Unable to generate advanced report.");
-      } finally {
-        setLoading(false);
-        setRegenerating(false);
       }
-    },
-    [initialAccountId, initialCountry, initialEndDate, initialStartDate, queryString]
-  );
-
-  useEffect(() => {
-    void loadReport();
-  }, [loadReport]);
-
-  const title = payload
-    ? `${payload.metadata.companyName} Advanced Report`
-    : "Advanced Report";
-  const dateLabel = payload?.metadata.dateRange.currentLabel ?? "Last month";
+    } catch (error) {
+      if (!signal.aborted) setError(error instanceof Error ? error.message : "Unable to generate advanced report.");
+    } finally {
+      if (!signal.aborted) { setLoading(false); setRegenerating(false); }
+    }
+  }, [initialAccountId, initialPlatform, initialCountry, initialEndDate, initialStartDate, queryString]);
+  useEffect(() => { void loadReport(); return () => requestController.current?.abort(); }, [loadReport]);
+  const header = useAdvancedHeader({ initialAccountId, initialCountry, initialStartDate, initialEndDate }, payload?.metadata.companyName);
+  const title = header.title;
+  const dateLabel = header.dateLabel;
+  const ready = job?.status === "ready" && !loading;
   const diagnosticsPayload = buildTroubleshootingPayload(payload, error, apiDebugRecords);
 
   return (
@@ -372,6 +369,9 @@ function LegacyAdvancedPageClient({
       wideContent
       title={title}
       dateLabel={dateLabel}
+      titleLoading={header.titleLoading}
+      headerDateControl={header.dateControl}
+      reportReady={ready}
       activeQuery={activeQueryString}
       headerBottomControl={
         <div className="space-y-3">
@@ -383,11 +383,7 @@ function LegacyAdvancedPageClient({
               initialEndDate={initialEndDate}
             />
             {initialAccountId ? (
-            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-              <div className="rounded-2xl bg-white/15 px-4 py-3 text-sm font-medium text-white">
-                {payload ? `${payload.metadata.country.emoji} ${payload.metadata.country.label} market analysis` : "Advanced report"}
-                {payload ? (payload.metadata.cached ? " Â· loaded from cache" : " Â· freshly generated") : ""}
-              </div>
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-end">
               <div className="flex flex-col gap-3 sm:flex-row">
                 <CampaignNameFilterControl
                   filter={campaignNameFilter}
@@ -397,13 +393,13 @@ function LegacyAdvancedPageClient({
                 <Button
                   type="button"
                   className="h-11 bg-white text-[#9f0019] hover:bg-white/90"
-                  disabled={regenerating}
+                  disabled={loading || regenerating}
                   onClick={() => void loadReport({ regenerate: true })}
                 >
                   <RefreshCwIcon className={regenerating ? "animate-spin" : ""} />
                   {regenerating ? "Regenerating" : "Regenerate Report"}
                 </Button>
-                <ReportDownloadButton fileNamePrefix={title} />
+                {ready ? <ReportDownloadButton fileNamePrefix={title} /> : null}
               </div>
             </div>
             ) : null}
@@ -431,8 +427,16 @@ function LegacyAdvancedPageClient({
         </div>
       ) : null}
 
+      {job?.steps?.filter(step => ["fallback", "error"].includes(step.status)).map(step => (
+        <div key={step.id} className="my-3 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm" data-report-export-exclude="true">
+          <p>{step.label}: {step.message ?? "Showing available data."}</p>
+          <Button variant="outline" disabled={loading} onClick={() => void loadReport({ retryStepId: step.id })}>Retry {step.label}</Button>
+        </div>
+      ))}
       {payload ? (
         <AdvancedReportContent
+          ready={ready}
+          availableSections={job?.availableSections}
           payload={payload}
           regenerating={regenerating}
           screenshotMode={screenshotMode}
@@ -449,11 +453,6 @@ function LegacyAdvancedPageClient({
           onCampaignNameFilterChange={handleCampaignNameFilterChange}
         />
       ) : null}
-      {payload ? (
-        <div className="fixed bottom-5 right-5 z-40" data-report-export-exclude="true">
-          <ReportDownloadButton fileNamePrefix={title} />
-        </div>
-      ) : null}
       {debugModalOpen ? (
         <TroubleshootingModal payload={diagnosticsPayload} onClose={() => setDebugModalOpen(false)} />
       ) : null}
@@ -465,9 +464,11 @@ async function requestAdvancedApi(
   method: "GET" | "POST",
   url: string,
   body: Record<string, unknown> | undefined,
-  onDebug: (entry: ApiDebugRecord) => void
+  onDebug: (entry: ApiDebugRecord) => void,
+  signal?: AbortSignal
 ): Promise<{ ok: boolean; data: unknown }> {
   const response = await fetch(url, {
+    signal,
     method,
     headers: method === "POST" ? { "Content-Type": "application/json" } : undefined,
     body: body ? JSON.stringify(body) : undefined,
@@ -484,26 +485,6 @@ async function requestAdvancedApi(
     recordedAt: new Date().toISOString(),
   });
   return { ok: response.ok, data };
-}
-
-async function pollAdvancedReport(
-  queryString: string,
-  onDebug: (entry: ApiDebugRecord) => void
-): Promise<AdvancedReportPayload> {
-  const startedAt = Date.now();
-  while (Date.now() - startedAt < 300_000) {
-    await sleep(2_500);
-    const result = await requestAdvancedApi("GET", `/api/reporting/advanced?${queryString}`, undefined, onDebug);
-    const data = result.data as AdvancedReportJobResponse;
-    if (result.ok && data.status === "ready" && data.payload) {
-      return data.payload;
-    }
-    if (!result.ok || data.status === "error") {
-      throw new Error(data.message ?? "Advanced report generation failed.");
-    }
-  }
-
-  throw new Error("Advanced report generation is taking longer than expected. Please try again shortly.");
 }
 
 function sleep(milliseconds: number): Promise<void> {
@@ -677,6 +658,8 @@ function AdvancedSourceStages({
 }
 
 function AdvancedReportContent({
+  ready = true,
+  availableSections,
   payload,
   regenerating,
   screenshotMode,
@@ -684,6 +667,8 @@ function AdvancedReportContent({
   campaignOptions,
   onCampaignNameFilterChange,
 }: {
+  ready?: boolean;
+  availableSections?: string[];
   payload: AdvancedReportPayload;
   regenerating: boolean;
   screenshotMode: boolean;
@@ -756,6 +741,7 @@ function AdvancedReportContent({
       key: "google-video-creative",
       node: (sectionNumber) => (
         <GoogleVideoCreativeAnalysisSection
+          screenshotMode={screenshotMode}
           sectionNumber={sectionNumber}
           section={payload.googleVideoCreativeAnalysis}
           campaignNameFilter={campaignNameFilter}
@@ -769,6 +755,7 @@ function AdvancedReportContent({
       key: "meta-creative",
       node: (sectionNumber) => (
         <MetaCreativeAnalysisSection
+          screenshotMode={screenshotMode}
           sectionNumber={sectionNumber}
           section={payload.metaCreativeAnalysis}
           campaignNameFilter={campaignNameFilter}
@@ -942,7 +929,7 @@ function AdvancedReportContent({
     <div
       className="space-y-5 pt-6"
       data-advanced-report-content="true"
-      data-advanced-report-ready="true"
+      data-advanced-report-ready={ready ? "true" : undefined}
       data-report-mode="advanced"
       data-report-type="advanced"
     >
@@ -962,7 +949,7 @@ function AdvancedReportContent({
         />
       ) : null}
 
-      {reportSections.map((section, index) => (
+      {reportSections.filter(section => !availableSections || availableSections.includes(section.key)).map((section, index) => (
         <Fragment key={section.key}>{section.node(formatSectionNumber(index + 1))}</Fragment>
       ))}
     </div>
@@ -1368,8 +1355,10 @@ function MetaCreativeAnalysisSection({
   sectionNumber,
   section,
   campaignNameFilter = null,
+  screenshotMode = false,
 }: {
   sectionNumber: string;
+  screenshotMode?: boolean;
   section?: AdvancedMetaCreativeAnalysisSection;
   campaignNameFilter?: CampaignNameFilter | null;
 }) {
@@ -1411,25 +1400,7 @@ function MetaCreativeAnalysisSection({
               <div className="bg-[#f3f3f3] p-3">
                 <div className="aspect-[1.91/1] overflow-x-auto rounded-xl border border-[#d8d8d8] bg-white">
                   {row.mediaType === "video" && row.videoUrl ? (
-                    <a href={row.videoUrl} target="_blank" rel="noreferrer" className="group relative block size-full">
-                      {row.thumbnailUrl || row.imageUrl ? (
-                        /* eslint-disable-next-line @next/next/no-img-element */
-                        <img
-                          src={row.thumbnailUrl || row.imageUrl || ""}
-                          alt=""
-                          className="size-full object-cover"
-                          loading="eager"
-                          decoding="async"
-                        />
-                      ) : (
-                        <div className="flex size-full items-center justify-center p-4 text-center text-xs font-semibold uppercase tracking-wide text-[#777]">
-                          Video preview unavailable
-                        </div>
-                      )}
-                      <span className="absolute inset-0 flex items-center justify-center bg-black/10 text-xs font-semibold uppercase tracking-wide text-white">
-                        Video
-                      </span>
-                    </a>
+                    <CreativeVideoPreview url={row.videoUrl} poster={row.thumbnailUrl || row.imageUrl} exportMode={screenshotMode} />
                   ) : row.imageUrl ? (
                     /* eslint-disable-next-line @next/next/no-img-element */
                     <img
@@ -1498,7 +1469,7 @@ function MetaCreativeAnalysisSection({
                     {formatCreativeReasons(row.reasons).map((reason, reasonIndex) => (
                       <li key={`${row.id}-reason-${reasonIndex}`} className="flex gap-2">
                         <span className="font-bold text-[#9f0019]">{reasonIndex + 1}.</span>
-                        <span>{reason}</span>
+                        <span className="min-w-0 break-words">{reason}</span>
                       </li>
                     ))}
                   </ol>
@@ -1626,7 +1597,7 @@ function GoogleVisualCreativeAnalysisSection({
                         <span className="flex size-5 shrink-0 items-center justify-center rounded-full bg-[#e10600] text-[11px] font-bold leading-none text-white">
                           {reasonIndex + 1}
                         </span>
-                        <span>{reason}</span>
+                        <span className="min-w-0 break-words">{reason}</span>
                       </li>
                     ))}
                   </ol>
@@ -1644,8 +1615,10 @@ function GoogleVideoCreativeAnalysisSection({
   sectionNumber,
   section,
   campaignNameFilter = null,
+  screenshotMode = false,
 }: {
   sectionNumber: string;
+  screenshotMode?: boolean;
   section?: AdvancedGoogleVideoCreativeSection;
   campaignNameFilter?: CampaignNameFilter | null;
 }) {
@@ -1693,38 +1666,7 @@ function GoogleVideoCreativeAnalysisSection({
             <div className="grid gap-0 lg:grid-cols-[minmax(300px,390px)_1fr]">
               <div className="bg-[#f7f7f7] p-4">
                 <div className="mx-auto aspect-video w-full max-w-[360px] overflow-hidden rounded-lg border border-[#d8d8d8] bg-white shadow-inner">
-                  {row.thumbnailUrl ? (
-                    row.videoUrl ? (
-                      <a href={row.videoUrl} target="_blank" rel="noreferrer" className="group relative block size-full">
-                        {/* eslint-disable-next-line @next/next/no-img-element */}
-                        <img
-                          src={row.thumbnailUrl}
-                          alt=""
-                          className="size-full object-cover"
-                          loading="eager"
-                          decoding="async"
-                        />
-                        <span className="absolute inset-0 flex items-center justify-center bg-black/20 text-white transition group-hover:bg-black/30">
-                          <span className="flex size-12 items-center justify-center rounded-full bg-white/95 text-[#111] shadow-lg">
-                            <PlayIcon className="ml-0.5 size-5 fill-current" />
-                          </span>
-                        </span>
-                      </a>
-                    ) : (
-                      /* eslint-disable-next-line @next/next/no-img-element */
-                      <img
-                        src={row.thumbnailUrl}
-                        alt=""
-                        className="size-full object-cover"
-                        loading="eager"
-                        decoding="async"
-                      />
-                    )
-                  ) : (
-                    <div className="flex size-full items-center justify-center p-4 text-center text-xs font-semibold uppercase tracking-wide text-[#777]">
-                      Preview unavailable
-                    </div>
-                  )}
+                  <CreativeVideoPreview url={row.videoUrl} youtubeId={row.youtubeVideoId} poster={row.thumbnailUrl} exportMode={screenshotMode} />
                 </div>
                 <CreativeDestinationLink url={row.finalUrl} />
               </div>
@@ -1773,7 +1715,7 @@ function GoogleVideoCreativeAnalysisSection({
                         <span className="flex size-5 shrink-0 items-center justify-center rounded-full bg-[#e10600] text-[11px] font-bold leading-none text-white">
                           {reasonIndex + 1}
                         </span>
-                        <span>{reason}</span>
+                        <span className="min-w-0 break-words">{reason}</span>
                       </li>
                     ))}
                   </ol>
@@ -1843,18 +1785,7 @@ function CreativeDestinationLink({ url }: { url: string | null | undefined }) {
 }
 
 function getReachableUrlHref(value: string | null | undefined): string | null {
-  const trimmed = value?.trim();
-  if (!trimmed || trimmed === "Not available") {
-    return null;
-  }
-
-  const candidate = /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
-  try {
-    const url = new URL(candidate);
-    return url.protocol === "http:" || url.protocol === "https:" ? url.toString() : null;
-  } catch {
-    return null;
-  }
+  return safeReportUrl(value);
 }
 
 function ClientFriendlyNote({ children }: { children: React.ReactNode }) {
@@ -1979,17 +1910,11 @@ function formatCreativeReasons(reasons: string[]): string[] {
     "It gives the team a clear benchmark for future creative direction.",
     "It should be compared against a fresh variation in the next round.",
   ];
-  return dedupeDisplayStrings([...reasons.map(toShortSentence), ...pads]).slice(0, 3);
+  return dedupeDisplayStrings([...reasons.map(toShortSentence).filter(Boolean), ...pads]).slice(0, 3);
 }
 
 function toShortSentence(value: string): string {
-  const normalized = value.replace(/\s+/g, " ").trim();
-  if (!normalized) {
-    return "";
-  }
-  const firstSentence = normalized.match(/^.*?[.!?](?:\s|$)/)?.[0]?.trim() ?? normalized;
-  const shortened = firstSentence.length > 140 ? `${firstSentence.slice(0, 137).trim()}...` : firstSentence;
-  return /[.!?]$/.test(shortened) ? shortened : `${shortened}.`;
+  return completeCreativeReason(value);
 }
 
 function dedupeDisplayStrings(values: string[]): string[] {

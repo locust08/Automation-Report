@@ -4,17 +4,19 @@ import { createHash } from "node:crypto";
 import { SignJWT } from "jose";
 import { mcpPauseService, type McpPauseDependencies } from "./mcp-pause-service";
 import { resolveTrustedIp } from "./request-context";
+import { buildM03ProviderWorkflowPreview } from "./provider-workflow";
 import type { M03ChangeRequestDetail } from "./types";
 
 const actor="00000000-0000-4000-8000-000000000001",requestId="00000000-0000-4000-8000-000000000002",revisionId="00000000-0000-4000-8000-000000000003",service="00000000-0000-4000-8000-000000000004";
 const env={M03_PAUSE_MCP_ENABLED:"true",M03_PAUSE_MCP_SERVICE_TOKEN:"s".repeat(40),M03_PAUSE_MCP_DELEGATION_KEY:"d".repeat(40),M03_PAUSE_MCP_SUBJECT:"fixture-actor",M03_PAUSE_MCP_ACTOR_ID:actor,M03_PAUSE_MCP_CONNECTION_REVISION:"fixture",M03_PAUSE_ENABLED:"approved-test-pilot",M03_PAUSE_ALLOWLIST:JSON.stringify([{actor_id:actor,platform:"google",account_identity:"2315114913",campaign_identity:"123"}]),DIGITALBEE_GRANT_VERIFY_URL:"https://digitalbee.example/v1/internal/grants/verify",DIGITALBEE_GRANT_VERIFY_TOKEN:"g".repeat(40)};
-function fixture(){
+function fixture(realPreview=false,failures:{preview?:Error;grant?:Error}={}){
  const item={id:"item",entity_type:"campaign",entity_identity:"123",field_path:"campaign.status",value_type:"string",baseline_value:"PAUSED",proposed_value:"PAUSED",evidence:{},platform_resource_mapping:{}};
  const payload={platform:"google",account_identity:"2315114913",campaign_identity:"123",items:[item]},canonical=JSON.stringify(payload),hash=createHash("sha256").update(canonical).digest("hex");
  const detail={request:{id:requestId,platform:"google",account_identity:"2315114913",campaign_identity:"123",status:"awaiting_approval"},items:[item],source_verification:{platform:"google",provider_account_identity:"2315114913",provider_campaign_identity:"123"},revisions:[{id:revisionId,payload_hash:hash,canonical_payload:payload}],approvals:[]} as unknown as M03ChangeRequestDetail;
  let approvals=0,mutations=0,revoked=false,receipts:Array<{operation_key:string;state:string;updated_at?:string}>=[];
- const dependencies={operator:async()=>revoked?null:{actor_id:actor,actor_email:"fixture@example.test",actor_name:"Fixture",actor_role:"admin",trusted_ip:"",user_agent:"fixture"},assertOperator:async()=>{},get:async()=>structuredClone(detail),integrity:async()=>({revision_id:revisionId,payload_hash:hash,canonical_text:canonical}),fetch:async(_url:unknown,init:RequestInit)=>Response.json({allowed:!revoked,...JSON.parse(String(init.body)),email:"fixture@example.test"}),
-  preview:async()=>({conflict_issues:[],capability_issues:[]}),transport:async()=>({read:async()=>({account_id:"2315114913",campaign_id:"123",status:"PAUSED"}),pause:async()=>{throw Error("Transport bypass forbidden");}}),
+ let providerStatus="PAUSED",providerReads=0,providerPauses=0;
+ const dependencies={operator:async()=>revoked?null:{actor_id:actor,actor_email:"fixture@example.test",actor_name:"Fixture",actor_role:"admin",trusted_ip:"",user_agent:"fixture"},assertOperator:async()=>{},get:async()=>structuredClone(detail),integrity:async()=>({revision_id:revisionId,payload_hash:hash,canonical_text:canonical}),fetch:async(_url:unknown,init:RequestInit)=>{if(failures.grant)throw failures.grant;return Response.json({allowed:!revoked,...JSON.parse(String(init.body)),email:"fixture@example.test"});},
+  preview:async(...args:Parameters<typeof buildM03ProviderWorkflowPreview>)=>{if(failures.preview)throw failures.preview;return realPreview?buildM03ProviderWorkflowPreview(...args):{conflict_issues:[],capability_issues:[]};},transport:async()=>({read:async()=>{providerReads++;return {account_id:"2315114913",campaign_id:"123",status:providerStatus};},pause:async()=>{providerPauses++;throw Error("Transport bypass forbidden");}}),
   receipts:async()=>receipts,
   approve:async(_r:string,rev:string,h:string)=>{assert.equal(rev,revisionId);assert.equal(h,hash);approvals++;detail.request.status="approved";detail.approvals=[{revision_id:revisionId,revision_hash:hash}] as typeof detail.approvals;return{};},
   execute:async(input:{reconcileOnly:boolean;reauthorize:()=>Promise<void>})=>{await input.reauthorize();if(!input.reconcileOnly&&!receipts.length)mutations++;receipts=[{operation_key:"fixture-operation",state:"verified"}];detail.request.status="verified";return{};},
@@ -26,8 +28,53 @@ function fixture(){
   const proof=await new SignJWT(scope).setProtectedHeader({alg:"HS256"}).setIssuer("digitalbee").setAudience("https://backend.example").setSubject("fixture-actor").setIssuedAt().setExpirationTime("30s").setJti(crypto.randomUUID()).sign(new TextEncoder().encode(env.M03_PAUSE_MCP_DELEGATION_KEY));
   return (await mcpPauseService(new Request("https://backend.example/api/service/digitalbee/m03-pause",{method:"POST",headers:{Authorization:options.badBearer?"Bearer wrong":`Bearer ${env.M03_PAUSE_MCP_SERVICE_TOKEN}`,"X-DigitalBee-Delegation":proof,"X-Connection-Revision":"fixture","x-vercel-id":"fixture","x-forwarded-for":"127.0.0.1",...(options.envPatch?.VERCEL==="1"?{"cf-ray":"fixture-worker-trace"}:{})},body:raw}),dependencies,{...env,...options.envPatch})).json();
  }
- return {call,detail,revoke:()=>{revoked=true;},counts:()=>({approvals,mutations}),setAmbiguous:()=>{receipts=[{operation_key:"fixture-operation",state:"ambiguous"}];detail.request.status="publishing";},setStarted:(age:number)=>{receipts=[{operation_key:"fixture-operation",state:"started",updated_at:new Date(Date.now()-age).toISOString()}];detail.request.status="publishing";}};
+ return {call,detail,revoke:()=>{revoked=true;},counts:()=>({approvals,mutations}),transportCounts:()=>({reads:providerReads,pauses:providerPauses}),setProviderStatus:(status:string)=>{providerStatus=status;},setAmbiguous:()=>{receipts=[{operation_key:"fixture-operation",state:"ambiguous"}];detail.request.status="publishing";},setStarted:(age:number)=>{receipts=[{operation_key:"fixture-operation",state:"started",updated_at:new Date(Date.now()-age).toISOString()}];detail.request.status="publishing";}};
 }
+test("approval preparation uses the real scoped provider preview and preserves exact PAUSED-to-PAUSED authority without mutation",async()=>{
+ const f=fixture(true),result=await f.call("prepare_approve",undefined,{envPatch:{VERCEL:"1"}});
+ assert.equal(result.outcome,"prepared");assert.match(result.correlation_id,/^[a-f0-9-]{36}$/);
+ assert.equal(result.display.request_id,requestId);assert.equal(result.display.revision_id,revisionId);
+ assert.equal(result.display.revision_hash,f.detail.revisions[0]!.payload_hash);
+ assert.equal(result.display.action,"approve");assert.equal(result.display.status,"awaiting_approval");
+ assert.equal(result.display.baseline,"PAUSED");assert.equal(result.display.proposed,"PAUSED");
+ assert.equal(typeof result.confirmation_token,"string");
+ assert.deepEqual(f.counts(),{approvals:0,mutations:0});assert.deepEqual(f.transportCounts(),{reads:1,pauses:0});
+});
+test("real preparation preview blocks official baseline drift and retains a diagnostic correlation before any approval or pause",async()=>{
+ const f=fixture(true);f.setProviderStatus("ENABLED");
+ const result=await f.call("prepare_approve",undefined,{envPatch:{VERCEL:"1"}});
+ assert.equal(result.outcome,"blocked");assert.equal(result.blocker,"baseline_or_capability_changed");
+ assert.match(result.correlation_id,/^[a-f0-9-]{36}$/);assert.equal(result.provider_action,false);
+ assert.equal(result.confirmation_token,undefined);assert.equal(f.detail.request.status,"awaiting_approval");
+ assert.deepEqual(f.counts(),{approvals:0,mutations:0});assert.deepEqual(f.transportCounts(),{reads:1,pauses:0});
+});
+test("preparation state and operator denial remain distinct from provider preview failures without provider dispatch",async()=>{
+ for(const blocker of ["state_changed","access_denied"]){
+  const f=fixture(true);if(blocker==="state_changed")f.detail.request.status="approved";else f.revoke();
+  const result=await f.call("prepare_approve",undefined,{envPatch:{VERCEL:"1"}});
+  assert.equal(result.outcome,"blocked");assert.equal(result.blocker,blocker);assert.equal(result.provider_action,false);
+  assert.match(result.correlation_id,/^[a-f0-9-]{36}$/);assert.equal(result.confirmation_token,undefined);
+  assert.deepEqual(f.counts(),{approvals:0,mutations:0});assert.deepEqual(f.transportCounts(),{reads:0,pauses:0});
+ }
+});
+test("unexpected preparation failures retain only safe stage/category and correlation in response and log",async()=>{
+ const warnings:string[]=[],originalWarn=console.warn;
+ console.warn=(value:unknown)=>{warnings.push(String(value));};
+ try{
+  for(const failure of [{stage:"provider_preview",category:"unexpected",options:{preview:Error("Bearer private-upstream-token")}},
+   {stage:"grant_verification",category:"timeout",options:{grant:Object.assign(Error("private-grant-url-and-token"),{name:"TimeoutError"})}}]){
+   const f=fixture(true,failure.options),result=await f.call("prepare_approve",undefined,{envPatch:{VERCEL:"1"}});
+   assert.equal(result.outcome,"blocked");assert.equal(result.blocker,"request_failed");assert.equal(result.provider_action,false);
+   assert.deepEqual(result.diagnostic,{stage:failure.stage,category:failure.category});
+   assert.match(result.correlation_id,/^[a-f0-9-]{36}$/);
+   const warning=JSON.parse(warnings.at(-1)!);
+   assert.equal(warning.event,"m03_pause_failure");assert.equal(warning.correlation_id,result.correlation_id);
+   assert.deepEqual(warning.diagnostic,result.diagnostic);
+   assert.doesNotMatch(JSON.stringify({result,warning}),/private-upstream-token|private-grant-url|confirmation_token|Authorization|Bearer/);
+   assert.deepEqual(f.counts(),{approvals:0,mutations:0});assert.equal(f.transportCounts().pauses,0);
+  }
+ }finally{console.warn=originalWarn;}
+});
 test("two separate private confirmations retain exact revision authority and never resend pause",async()=>{
  const f=fixture(),approve=await f.call("prepare_approve");assert.equal(approve.outcome,"prepared");assert.deepEqual(f.counts(),{approvals:0,mutations:0});
  assert.equal((await f.call("approve",approve.confirmation_token)).outcome,"success");assert.equal((await f.call("approve",approve.confirmation_token)).outcome,"success");assert.equal(f.counts().approvals,1);

@@ -1,0 +1,14 @@
+artifacts/
+out/
+output/
+outputs/
+tmp/
+map/
+.agents/
+**/.wrangler/
+**/__pycache__/
+**/.venv/
+data/*.sqlite*
+.env*
+*.tsbuildinfo
+npm-ci.log

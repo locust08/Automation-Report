@@ -1,5 +1,5 @@
 import { Platform, RequestContext } from "@/lib/reporting/types";
-import { parseCampaignScope } from "@/lib/reporting/campaign-name-filter";
+import { parseCampaignNameFilter, parseCampaignScope } from "@/lib/reporting/campaign-name-filter";
 
 export function parseRequestContext(searchParams: URLSearchParams): RequestContext {
   return {
@@ -11,6 +11,7 @@ export function parseRequestContext(searchParams: URLSearchParams): RequestConte
     endDate: getValue(searchParams, "endDate"),
     campaignType: getValue(searchParams, "campaignType"),
     platform: toPlatform(getValue(searchParams, "platform")),
+    campaignNameFilter: parseCampaignNameFilter(searchParams),
     campaignScope: parseCampaignScope(searchParams.get("campaignScope")),
     source: searchParams.get("source") === "meta_csv" ? "meta_csv" : "api",
   };

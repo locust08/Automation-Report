@@ -135,16 +135,16 @@ export function OverallPageClient({
   }, [campaignNameFilter, queryString]);
   const stageQueryString = useMemo(() => {
     if (refreshKey <= 0) {
-      return queryString;
+      return activeQueryString;
     }
-    const params = new URLSearchParams(queryString);
+    const params = new URLSearchParams(activeQueryString);
     params.set("refresh", String(refreshKey));
     return params.toString();
-  }, [queryString, refreshKey]);
+  }, [activeQueryString, refreshKey]);
 
   const accountReportEntries = useMemo(
-    () => buildAccountReportEntries(filters, queryString),
-    [filters, queryString]
+    () => buildAccountReportEntries(filters, activeQueryString),
+    [filters, activeQueryString]
   );
   const splitByAccount = accountReportEntries.length > 1;
 

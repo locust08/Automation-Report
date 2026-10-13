@@ -46,6 +46,7 @@ import {
 } from "@/lib/reporting/google-access-path";
 
 interface GoogleFetchInput {
+  campaignIds?: string[];
   customerId: string;
   apiVersion: string;
   accessToken: string | null;
@@ -1297,6 +1298,7 @@ export async function fetchGoogleAudienceBreakdown(
     loginCustomerId: context.loginCustomerId,
     startDate: input.startDate,
     endDate: input.endDate,
+    campaignIds: input.campaignIds,
   };
   const [age, gender, location] = await Promise.all([
     fetchGoogleAudienceAgeBreakdown(scopedInput),
@@ -1319,7 +1321,7 @@ async function fetchGoogleAudienceAgeBreakdown(
   input: Omit<GoogleFetchInput, "accessPath" | "fallbackLoginCustomerId">
 ): Promise<AudienceClickBreakdownItem[]> {
   const label = "[audience-breakdown][google][age]";
-  const query = buildGoogleAudienceAgeQuery(input.startDate, input.endDate);
+  const query = scopeGoogleAudienceQuery(buildGoogleAudienceAgeQuery(input.startDate, input.endDate), input.campaignIds);
 
   try {
     logGoogleAudienceGaql(`${label}[gaql]`, input.customerId, input.loginCustomerId, query);
@@ -1361,7 +1363,7 @@ async function fetchGoogleAudienceGenderBreakdown(
   input: Omit<GoogleFetchInput, "accessPath" | "fallbackLoginCustomerId">
 ): Promise<AudienceClickBreakdownItem[]> {
   const label = "[audience-breakdown][google][gender]";
-  const query = buildGoogleAudienceGenderQuery(input.startDate, input.endDate);
+  const query = scopeGoogleAudienceQuery(buildGoogleAudienceGenderQuery(input.startDate, input.endDate), input.campaignIds);
 
   try {
     logGoogleAudienceGaql(`${label}[gaql]`, input.customerId, input.loginCustomerId, query);
@@ -1454,7 +1456,7 @@ async function fetchGoogleAudienceGeoSegmentBreakdown(
   dimension: "region" | "city"
 ): Promise<GoogleGeoSegmentBreakdown> {
   const label = `[audience-breakdown][google][location-${dimension}]`;
-  const query = buildGoogleAudienceGeoSegmentQuery(input.startDate, input.endDate, dimension);
+  const query = scopeGoogleAudienceQuery(buildGoogleAudienceGeoSegmentQuery(input.startDate, input.endDate, dimension), input.campaignIds);
 
   try {
     logGoogleAudienceGaql(`${label}[gaql]`, input.customerId, input.loginCustomerId, query);
@@ -1496,7 +1498,7 @@ async function fetchGoogleTargetLocationBreakdown(
   dimension: "country" | "region" | "city"
 ): Promise<AudienceClickBreakdownItem[]> {
   const label = `[audience-breakdown][google][target-location-${dimension}]`;
-  const query = buildGoogleAudienceLocationViewQuery(input.startDate, input.endDate);
+  const query = scopeGoogleAudienceQuery(buildGoogleAudienceLocationViewQuery(input.startDate, input.endDate), input.campaignIds);
 
   try {
     logGoogleAudienceGaql(`${label}[gaql]`, input.customerId, input.loginCustomerId, query);
@@ -5864,4 +5866,10 @@ function pickSitelinks(...assetGroups: GoogleAssetLinkResult[][]): PreviewSiteli
 
 function isMarketingImageField(fieldType: string): boolean {
   return fieldType === "MARKETING_IMAGE" || fieldType === "SQUARE_MARKETING_IMAGE";
+}
+
+export function scopeGoogleAudienceQuery(query: string, campaignIds?: string[]): string {
+  if (campaignIds === undefined) return query;
+  if (campaignIds.some(id => !/^\d+$/.test(id))) throw new Error("Invalid audience campaign ID.");
+  return `${query.trim()} AND campaign.id IN (${campaignIds.length ? campaignIds.join(",") : "0"})`;
 }

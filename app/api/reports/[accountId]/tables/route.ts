@@ -27,6 +27,7 @@ export async function GET(
       startDate: context.startDate,
       endDate: context.endDate,
       campaignScope: context.campaignScope,
+      campaignNameFilter: context.campaignNameFilter,
     });
 
     return NextResponse.json(payload);
