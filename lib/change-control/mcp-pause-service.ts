@@ -34,6 +34,7 @@ export async function mcpPauseService(request: Request, deps: McpPauseDependenci
   if (request.method !== "POST") return json({ outcome: "unavailable" }, 405);
   if (env.M03_PAUSE_MCP_ENABLED !== "true" || !env.M03_PAUSE_MCP_SERVICE_TOKEN || env.M03_PAUSE_MCP_SERVICE_TOKEN.length < 32 || !env.M03_PAUSE_MCP_DELEGATION_KEY || env.M03_PAUSE_MCP_DELEGATION_KEY.length < 32) return json({ outcome: "locked" }, 503);
   let attempted = false;
+  let stage = "request_validation";
   try {
     const reader = request.body?.getReader(); if (!reader) throw Error("invalid_request");
     let bytes = 0; const parts: Uint8Array[] = [];
@@ -51,23 +52,27 @@ export async function mcpPauseService(request: Request, deps: McpPauseDependenci
     const target = { platform: scope.platform.toLowerCase(), account_identity: scope.platformAccountId, campaign_identity: scope.campaignIdentity };
     let context: TrustedRequestContext;
     async function reauthorize() {
+      stage = "operator_authorization";
       const actor = await deps.operator(id.parse(env.M03_PAUSE_MCP_ACTOR_ID));
       const ip = resolveTrustedIp(request, env.VERCEL === "1" ? "vercel" : undefined);
       if (!actor || !ip) throw Error("access_denied");
       context = { ...actor, trusted_ip: ip, user_agent: "DigitalBee MCP pause confirmation" };
       assertPauseTarget(target, context, env);
+      stage = "grant_verification";
       const url = new URL(env.DIGITALBEE_GRANT_VERIFY_URL ?? "");
       if (url.protocol !== "https:" || url.pathname !== "/v1/internal/grants/verify" || url.username || url.password || url.search || url.hash || !env.DIGITALBEE_GRANT_VERIFY_TOKEN || env.DIGITALBEE_GRANT_VERIFY_TOKEN.length < 32) throw Error("access_denied");
       const grant = Object.fromEntries(Object.entries(scope).filter(([key]) => !["requestHash", "sessionBinding"].includes(key)));
       const response = await deps.fetch(url, { method: "POST", redirect: "manual", signal: AbortSignal.timeout(5000), headers: { Authorization: `Bearer ${env.DIGITALBEE_GRANT_VERIFY_TOKEN}`, "Content-Type": "application/json" }, body: JSON.stringify(grant) });
       const decision = await response.json();
       if (!response.ok || decision.allowed !== true || decision.email?.toLowerCase() !== actor.actor_email.toLowerCase() || Object.entries(grant).some(([k, v]) => decision[k] !== v)) throw Error("access_denied");
+      stage = "operator_authorization";
       await deps.assertOperator(context);
     }
     await reauthorize();
     const scopeHash = canonicalM03Hash({ ...target, subject: scope.subject, actor_id: context!.actor_id, grantRevision: scope.grantRevision, service_id: body.service_id, client_id: scope.clientId, connectionRevision: scope.connectionRevision, sessionBinding: scope.sessionBinding });
     let requestId = body.request_id;
     if (!requestId) {
+      stage = "source_adoption";
       if (body.action !== "prepare_approve" || !body.source) throw Error("request_id_required");
       const observed = await (await deps.transport(assertPauseTarget(target, context!, env), env)).read();
       if (observed.account_id !== target.account_identity || observed.campaign_id !== target.campaign_identity) throw Error("source_changed");
@@ -80,15 +85,19 @@ export async function mcpPauseService(request: Request, deps: McpPauseDependenci
     }
     async function current() {
       await reauthorize();
+      stage = "request_load";
       const detail = await deps.get(requestId!);
+      stage = "request_scope";
       assertScopedPause(detail, context!, env);
       if (detail.request.platform !== target.platform || detail.request.account_identity !== target.account_identity || detail.request.campaign_identity !== target.campaign_identity) throw Error("scope_changed");
       return detail;
     }
     let detail = await current();
     if (body.action === "prepare_approve" && ["draft", "validation_failed"].includes(detail.request.status)) {
+      stage = "revision_validation";
       await deps.validate(requestId, `${body.idempotency_key}:validate`, context!); detail = await current();
     }
+    stage = "revision_validation";
     const revision = detail.revisions[0];
     if (!revision) throw Error("validated_revision_required");
     assertM03RevisionIntegrity(revision, await deps.integrity(requestId, revision.id, revision.payload_hash));
@@ -96,20 +105,24 @@ export async function mcpPauseService(request: Request, deps: McpPauseDependenci
     const display = (d: M03ChangeRequestDetail) => ({ request_id: requestId, revision_id: revision.id, revision_hash: revision.payload_hash, platform: scope.platform, account_id: target.account_identity, campaign_id: body.campaign_id, status: d.request.status,
       baseline: d.items[0]!.baseline_value, proposed: "PAUSED", operator: context!.actor_name });
     if (body.action.startsWith("prepare_")) {
+      stage = "preparation_state";
       const action = body.action === "prepare_approve" ? "approve" : "pause";
       if (detail.request.status !== (action === "approve" ? "awaiting_approval" : "approved")) throw Error("state_changed");
       if (action === "pause") {
         if (!detail.approvals.some(a => a.revision_id === revision.id && a.revision_hash === revision.payload_hash)) throw Error("approval_required");
         if ((await deps.receipts(requestId, revision.id)).length) throw Error("receipt_exists_read_only");
       }
+      stage = "provider_preview";
       const preview = await deps.preview(detail, createScopedPauseAdapter(assertPauseTarget(target, context!, env), await deps.transport(assertPauseTarget(target, context!, env), env), async () => { await current(); }));
       if (preview.conflict_issues.length || preview.capability_issues.length) throw Error("baseline_or_capability_changed");
       await current();
+      stage = "confirmation_creation";
       const token = await new SignJWT({ ...confirmation.parse({ request_id: requestId, revision_id: revision.id, revision_hash: revision.payload_hash, action, scope_hash: scopeHash, operation_key: body.idempotency_key }) })
         .setProtectedHeader({ alg: "HS256" }).setIssuer("m03-pause-confirmation").setAudience("digitalbee-m03-pause").setSubject(scope.subject).setIssuedAt().setExpirationTime("5m").setJti(crypto.randomUUID()).sign(key);
       return json({ outcome: "prepared", display: { ...display(detail), action, expires_at: new Date(Date.now() + 300000).toISOString() }, confirmation_token: token });
     }
     if (body.action === "read") {
+      stage = "receipt_read";
       const receipts = await deps.receipts(requestId, revision.id);
       // A live claim is allowed to finish; an interrupted claim is readback-only after
       // twice the service's 60-second execution window. Never dispatch a second pause.
@@ -117,26 +130,31 @@ export async function mcpPauseService(request: Request, deps: McpPauseDependenci
         await deps.execute({ requestId, revisionId: revision.id, revisionHash: revision.payload_hash, context: context!, reconcileOnly: true, reauthorize, env });
         detail = await current();
       }
+      stage = "official_read";
       const official = await (await deps.transport(assertPauseTarget(target, context!, env), env)).read();
       if (official.account_id !== target.account_identity || official.campaign_id !== body.campaign_id) throw Error("source_changed");
       await current();
       return json({ outcome: "success", display: display(detail), official_status: official.status, captured_at: new Date().toISOString(), receipts: (await deps.receipts(requestId, revision.id)).map(r => ({ operation_key: r.operation_key, state: r.state })), provider_action: false });
     }
+    stage = "confirmation_validation";
     const signed = await jwtVerify(body.confirmation_token ?? "", key, { algorithms: ["HS256"], issuer: "m03-pause-confirmation", audience: "digitalbee-m03-pause", maxTokenAge: "5m", requiredClaims: ["sub", "iat", "exp", "jti"] });
     const bound = confirmation.parse(signed.payload);
     if (signed.payload.sub !== scope.subject || bound.scope_hash !== scopeHash || bound.action !== body.action || bound.request_id !== requestId || bound.revision_id !== revision.id || bound.revision_hash !== revision.payload_hash) throw Error("stale_confirmation");
     if (body.action === "approve") {
-      if (detail.request.status === "awaiting_approval") { await current(); await deps.approve(requestId, bound.revision_id, bound.revision_hash, bound.operation_key, context!); }
+      if (detail.request.status === "awaiting_approval") { await current(); stage = "approval_commit"; await deps.approve(requestId, bound.revision_id, bound.revision_hash, bound.operation_key, context!); }
       else if (!detail.approvals.some(a => a.revision_id === bound.revision_id && a.revision_hash === bound.revision_hash)) throw Error("state_changed");
     } else {
       if ((await deps.receipts(requestId, bound.revision_id)).some(r => r.state === "started")) return json({ outcome: "unknown", display: display(detail), provider_action: "uncertain", blocker: "execution_in_progress_read_receipt" });
-      await current(); attempted = true;
+      await current(); attempted = true; stage = "pause_execution";
       await deps.execute({ requestId, revisionId: bound.revision_id, revisionHash: bound.revision_hash, context: context!, reconcileOnly: false, reauthorize, env });
     }
     detail = await current();
     return json({ outcome: "success", display: display(detail), provider_action: body.action === "pause" });
   } catch (error) {
     const known = error instanceof Error && /^(access_denied|invalid_request|request_id_required|source_changed|scope_changed|validated_revision_required|approval_required|state_changed|baseline_or_capability_changed|receipt_exists_read_only|stale_confirmation)$/.test(error.message) ? error.message : "request_failed";
-    return json({ outcome: attempted ? "unknown" : "blocked", blocker: known, correlation_id: crypto.randomUUID(), provider_action: attempted ? "uncertain" : false }, 200);
+    const category = error instanceof z.ZodError ? "invalid_data" : error instanceof Error && ["TimeoutError", "AbortError"].includes(error.name) ? "timeout" : known !== "request_failed" ? "guard" : "unexpected";
+    const evidence = { outcome: attempted ? "unknown" : "blocked", blocker: known, correlation_id: crypto.randomUUID(), provider_action: attempted ? "uncertain" : false, diagnostic: { stage, category } };
+    console.warn(JSON.stringify({ event: "m03_pause_failure", ...evidence }));
+    return json(evidence, 200);
   }
 }

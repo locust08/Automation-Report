@@ -9,14 +9,14 @@ import type { M03ChangeRequestDetail } from "./types";
 
 const actor="00000000-0000-4000-8000-000000000001",requestId="00000000-0000-4000-8000-000000000002",revisionId="00000000-0000-4000-8000-000000000003",service="00000000-0000-4000-8000-000000000004";
 const env={M03_PAUSE_MCP_ENABLED:"true",M03_PAUSE_MCP_SERVICE_TOKEN:"s".repeat(40),M03_PAUSE_MCP_DELEGATION_KEY:"d".repeat(40),M03_PAUSE_MCP_SUBJECT:"fixture-actor",M03_PAUSE_MCP_ACTOR_ID:actor,M03_PAUSE_MCP_CONNECTION_REVISION:"fixture",M03_PAUSE_ENABLED:"approved-test-pilot",M03_PAUSE_ALLOWLIST:JSON.stringify([{actor_id:actor,platform:"google",account_identity:"2315114913",campaign_identity:"123"}]),DIGITALBEE_GRANT_VERIFY_URL:"https://digitalbee.example/v1/internal/grants/verify",DIGITALBEE_GRANT_VERIFY_TOKEN:"g".repeat(40)};
-function fixture(realPreview=false){
+function fixture(realPreview=false,failures:{preview?:Error;grant?:Error}={}){
  const item={id:"item",entity_type:"campaign",entity_identity:"123",field_path:"campaign.status",value_type:"string",baseline_value:"PAUSED",proposed_value:"PAUSED",evidence:{},platform_resource_mapping:{}};
  const payload={platform:"google",account_identity:"2315114913",campaign_identity:"123",items:[item]},canonical=JSON.stringify(payload),hash=createHash("sha256").update(canonical).digest("hex");
  const detail={request:{id:requestId,platform:"google",account_identity:"2315114913",campaign_identity:"123",status:"awaiting_approval"},items:[item],source_verification:{platform:"google",provider_account_identity:"2315114913",provider_campaign_identity:"123"},revisions:[{id:revisionId,payload_hash:hash,canonical_payload:payload}],approvals:[]} as unknown as M03ChangeRequestDetail;
  let approvals=0,mutations=0,revoked=false,receipts:Array<{operation_key:string;state:string;updated_at?:string}>=[];
  let providerStatus="PAUSED",providerReads=0,providerPauses=0;
- const dependencies={operator:async()=>revoked?null:{actor_id:actor,actor_email:"fixture@example.test",actor_name:"Fixture",actor_role:"admin",trusted_ip:"",user_agent:"fixture"},assertOperator:async()=>{},get:async()=>structuredClone(detail),integrity:async()=>({revision_id:revisionId,payload_hash:hash,canonical_text:canonical}),fetch:async(_url:unknown,init:RequestInit)=>Response.json({allowed:!revoked,...JSON.parse(String(init.body)),email:"fixture@example.test"}),
-  preview:realPreview?buildM03ProviderWorkflowPreview:async()=>({conflict_issues:[],capability_issues:[]}),transport:async()=>({read:async()=>{providerReads++;return {account_id:"2315114913",campaign_id:"123",status:providerStatus};},pause:async()=>{providerPauses++;throw Error("Transport bypass forbidden");}}),
+ const dependencies={operator:async()=>revoked?null:{actor_id:actor,actor_email:"fixture@example.test",actor_name:"Fixture",actor_role:"admin",trusted_ip:"",user_agent:"fixture"},assertOperator:async()=>{},get:async()=>structuredClone(detail),integrity:async()=>({revision_id:revisionId,payload_hash:hash,canonical_text:canonical}),fetch:async(_url:unknown,init:RequestInit)=>{if(failures.grant)throw failures.grant;return Response.json({allowed:!revoked,...JSON.parse(String(init.body)),email:"fixture@example.test"});},
+  preview:async(...args:Parameters<typeof buildM03ProviderWorkflowPreview>)=>{if(failures.preview)throw failures.preview;return realPreview?buildM03ProviderWorkflowPreview(...args):{conflict_issues:[],capability_issues:[]};},transport:async()=>({read:async()=>{providerReads++;return {account_id:"2315114913",campaign_id:"123",status:providerStatus};},pause:async()=>{providerPauses++;throw Error("Transport bypass forbidden");}}),
   receipts:async()=>receipts,
   approve:async(_r:string,rev:string,h:string)=>{assert.equal(rev,revisionId);assert.equal(h,hash);approvals++;detail.request.status="approved";detail.approvals=[{revision_id:revisionId,revision_hash:hash}] as typeof detail.approvals;return{};},
   execute:async(input:{reconcileOnly:boolean;reauthorize:()=>Promise<void>})=>{await input.reauthorize();if(!input.reconcileOnly&&!receipts.length)mutations++;receipts=[{operation_key:"fixture-operation",state:"verified"}];detail.request.status="verified";return{};},
@@ -56,6 +56,24 @@ test("preparation state and operator denial remain distinct from provider previe
   assert.match(result.correlation_id,/^[a-f0-9-]{36}$/);assert.equal(result.confirmation_token,undefined);
   assert.deepEqual(f.counts(),{approvals:0,mutations:0});assert.deepEqual(f.transportCounts(),{reads:0,pauses:0});
  }
+});
+test("unexpected preparation failures retain only safe stage/category and correlation in response and log",async()=>{
+ const warnings:string[]=[],originalWarn=console.warn;
+ console.warn=(value:unknown)=>{warnings.push(String(value));};
+ try{
+  for(const failure of [{stage:"provider_preview",category:"unexpected",options:{preview:Error("Bearer private-upstream-token")}},
+   {stage:"grant_verification",category:"timeout",options:{grant:Object.assign(Error("private-grant-url-and-token"),{name:"TimeoutError"})}}]){
+   const f=fixture(true,failure.options),result=await f.call("prepare_approve",undefined,{envPatch:{VERCEL:"1"}});
+   assert.equal(result.outcome,"blocked");assert.equal(result.blocker,"request_failed");assert.equal(result.provider_action,false);
+   assert.deepEqual(result.diagnostic,{stage:failure.stage,category:failure.category});
+   assert.match(result.correlation_id,/^[a-f0-9-]{36}$/);
+   const warning=JSON.parse(warnings.at(-1)!);
+   assert.equal(warning.event,"m03_pause_failure");assert.equal(warning.correlation_id,result.correlation_id);
+   assert.deepEqual(warning.diagnostic,result.diagnostic);
+   assert.doesNotMatch(JSON.stringify({result,warning}),/private-upstream-token|private-grant-url|confirmation_token|Authorization|Bearer/);
+   assert.deepEqual(f.counts(),{approvals:0,mutations:0});assert.equal(f.transportCounts().pauses,0);
+  }
+ }finally{console.warn=originalWarn;}
 });
 test("two separate private confirmations retain exact revision authority and never resend pause",async()=>{
  const f=fixture(),approve=await f.call("prepare_approve");assert.equal(approve.outcome,"prepared");assert.deepEqual(f.counts(),{approvals:0,mutations:0});
