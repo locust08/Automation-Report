@@ -1,4 +1,5 @@
 import { fetchNotionRead } from "./notion-read-request";
+import { m03BoundedText } from "../change-control/bounded-response";
 import { normalizeGoogleAccountId } from "@/lib/reporting/env";
 import {
   formatGoogleAdsCustomerId,
@@ -173,6 +174,7 @@ export async function resolveGoogleAccountsFromNotion(input: {
   notionAccessToken: string | null;
   notionDatabaseId: string | null;
   fallbackLoginCustomerId?: string | null;
+  quietBounded?: boolean;
 }): Promise<GoogleAccountResolution> {
   const uniqueGoogleAccountIds = Array.from(new Set(input.googleAccountIds.filter(Boolean)));
   const uniqueGoogleLookupTerms = Array.from(
@@ -192,8 +194,8 @@ export async function resolveGoogleAccountsFromNotion(input: {
     const notionConfig = resolveNotionConfig({
       notionAccessToken: input.notionAccessToken,
       notionDatabaseId: input.notionDatabaseId,
-    });
-    const records = await fetchGoogleAdAccountRecords(notionConfig);
+    }, { log: !input.quietBounded });
+    const records = await fetchGoogleAdAccountRecords(notionConfig, input.quietBounded);
     const recordsByAccountId = new Map(records.map((record) => [record.accountId, record]));
     const recordsByAccountName = new Map(
       records
@@ -215,7 +217,7 @@ export async function resolveGoogleAccountsFromNotion(input: {
       );
 
       if (matchedRecord) {
-        const route = resolveGoogleAdsRoute(matchedRecord, input.fallbackLoginCustomerId ?? null);
+        const route = resolveGoogleAdsRoute(matchedRecord, input.fallbackLoginCustomerId ?? null, !input.quietBounded);
         pushUnique(resolvedGoogleAccountIds, route.accountId);
         loginCustomerIdByAccount[route.accountId] = route.loginCustomerId;
         accessPathByAccount[route.accountId] = route.originalAccessPath;
@@ -288,9 +290,9 @@ export async function resolveGoogleAccountsFromNotion(input: {
 }
 
 async function fetchGoogleAdAccountRecords(
-  config: NotionConfig
+  config: NotionConfig, quietBounded = false
 ): Promise<AdAccountRecord[]> {
-  const cacheKey = `${config.databaseId}:${config.notionAccessToken}`;
+  const cacheKey = `${config.databaseId}:${config.notionAccessToken}:${quietBounded ? "bounded" : "default"}`;
   const cached = notionAccountRecordsCache.get(cacheKey);
   if (cached && cached.expiresAt > Date.now()) {
     return cached.promise;
@@ -299,14 +301,16 @@ async function fetchGoogleAdAccountRecords(
   const promise = (async () => {
     const records: AdAccountRecord[] = [];
     let nextCursor: string | null = null;
-    const dataSourceId = await resolveNotionDataSourceId(config);
+    const dataSourceId = await resolveNotionDataSourceId(config, { log: !quietBounded, bounded: quietBounded });
+    let pages = 0;
 
     do {
       const endpoint = `${NOTION_API_BASE_URL}/data_sources/${dataSourceId}/query`;
-      console.info(
+      if (quietBounded && ++pages > 20) throw new Error("notion_page_bound");
+      if (!quietBounded) console.info(
         `[notion] query database_id=${config.databaseId} data_source_id=${dataSourceId} endpoint=${endpoint}`
       );
-      logNotionRequest("POST", endpoint, config.databaseId, config.hasToken);
+      if (!quietBounded) logNotionRequest("POST", endpoint, config.databaseId, config.hasToken);
       const response: Response = await fetchNotionRead(endpoint, {
         method: "POST",
         headers: {
@@ -319,14 +323,15 @@ async function fetchGoogleAdAccountRecords(
           start_cursor: nextCursor ?? undefined,
         }),
         cache: "no-store",
+        ...(quietBounded ? { redirect: "manual" as const, signal: AbortSignal.timeout(10000) } : {}),
       });
 
-      const bodyText: string = await response.text().catch(() => "");
+      const bodyText: string = quietBounded ? await m03BoundedText(response, 1048576) : await response.text().catch(() => "");
       const json: NotionQueryResponse | null = parseNotionJson<NotionQueryResponse>(bodyText);
 
       if (!response.ok) {
         const body = json?.message ?? (bodyText.trim() || null);
-        logNotionFailure(response.status, endpoint, body);
+        if (!quietBounded) logNotionFailure(response.status, endpoint, body);
         if (response.status === 401) {
           throw new NotionIntegrationError(
             {
@@ -379,9 +384,9 @@ async function fetchGoogleAdAccountRecords(
 
 async function resolveNotionDataSourceId(
   config: NotionConfig,
-  options?: { log?: boolean }
+  options?: { log?: boolean; bounded?: boolean }
 ): Promise<string> {
-  const cacheKey = `${config.databaseId}:${config.notionAccessToken}`;
+  const cacheKey = `${config.databaseId}:${config.notionAccessToken}:${options?.bounded ? "bounded" : "default"}`;
   const cached = notionDataSourceIdCache.get(cacheKey);
   if (cached && cached.expiresAt > Date.now()) {
     return cached.promise;
@@ -401,14 +406,15 @@ async function resolveNotionDataSourceId(
       "Notion-Version": NOTION_API_VERSION,
     },
     cache: "no-store",
+    ...(options?.bounded ? { redirect: "manual" as const, signal: AbortSignal.timeout(10000) } : {}),
   });
 
-  const bodyText = await response.text().catch(() => "");
+  const bodyText = options?.bounded ? await m03BoundedText(response, 1048576) : await response.text().catch(() => "");
   const json = parseNotionJson<NotionDatabaseResponse>(bodyText);
   const body = json?.message ?? (bodyText.trim() || null);
 
   if (!response.ok) {
-    logNotionFailure(response.status, endpoint, body);
+    if (options?.log !== false) logNotionFailure(response.status, endpoint, body);
     if (response.status === 401) {
       throw new NotionIntegrationError(
         {
@@ -950,7 +956,7 @@ function isGoogleAdAccountRecord(record: AdAccountRecord): boolean {
 
 function resolveGoogleAdsRoute(
   record: AdAccountRecord,
-  fallbackLoginCustomerId: string | null
+  fallbackLoginCustomerId: string | null, log = true
 ): GoogleAdsRouteResolution {
   try {
     const route = resolveGoogleAdsAccessPath({
@@ -967,7 +973,7 @@ function resolveGoogleAdsRoute(
       mode: route.resolutionMode,
       loginCustomerId: route.loginCustomerId,
     };
-    logGoogleAdsRouteResolution(resolution);
+    if (log) logGoogleAdsRouteResolution(resolution);
     return resolution;
   } catch (error) {
     throw createGoogleAdsRoutingError(

@@ -1,3 +1,4 @@
+import { m03BoundedText } from "./bounded-response";
 // Fetch only this service's credentials through the existing server Doppler identity.
 // Never copy them to browser-readable configuration or mutate global process.env.
 export async function m03PauseEnvironment(env: Record<string, string | undefined> = process.env, fetcher: typeof fetch = fetch) {
@@ -12,9 +13,9 @@ export async function m03PauseEnvironment(env: Record<string, string | undefined
   const names = [...required, ...provider];
   const url = new URL("https://api.doppler.com/v3/configs/config/secrets");
   url.searchParams.set("project", project); url.searchParams.set("config", config); url.searchParams.set("secrets", names.join(","));
-  const response = await fetcher(url, { headers: { Authorization: `Bearer ${token}`, Accept: "application/json" }, cache: "no-store", redirect: "error", signal: AbortSignal.timeout(5000) });
+  const response = await fetcher(url, { headers: { Authorization: `Bearer ${token}`, Accept: "application/json" }, cache: "no-store", redirect: "manual", signal: AbortSignal.timeout(5000) });
   if (!response.ok) { await response.body?.cancel(); throw Error("pause_credentials_unavailable"); }
-  const values = await response.json(); const scoped = { ...env };
+  const values = JSON.parse(await m03BoundedText(response, 65536)); const scoped = { ...env };
   for (const name of names) {
     const record = values.secrets?.[name];
     const value = typeof record === "string" ? record : record?.computed ?? record?.raw;

@@ -36,15 +36,15 @@ function sanitizeSecret(value: string | undefined): string | null {
   return trimmed;
 }
 
-function resolveEnvValue(name: string): string | undefined {
-  const direct = process.env[name];
+function resolveEnvValue(name: string, env: Record<string, string | undefined>): string | undefined {
+  const direct = env[name];
   if (direct !== undefined) {
     return direct;
   }
 
   const normalized = name.toUpperCase();
-  const fallbackKey = Object.keys(process.env).find((key) => key.toUpperCase() === normalized);
-  return fallbackKey ? process.env[fallbackKey] : undefined;
+  const fallbackKey = Object.keys(env).find((key) => key.toUpperCase() === normalized);
+  return fallbackKey ? env[fallbackKey] : undefined;
 }
 
 function buildCandidateNames(names: string[]): string[] {
@@ -55,16 +55,16 @@ function buildCandidateNames(names: string[]): string[] {
   );
 }
 
-function getDopplerHint(): string {
-  return process.env.DOPPLER_CONFIG || process.env.DOPPLER_ENVIRONMENT
+function getDopplerHint(env: Record<string, string | undefined>): string {
+  return env.DOPPLER_CONFIG || env.DOPPLER_ENVIRONMENT
     ? "Doppler runtime detected but required secret is missing."
     : "Doppler runtime not detected. Run via `doppler run -- <command>` or inject env vars in deployment.";
 }
 
-function readSecret(names: string[], required = true): string | null {
+function readEnvironmentSecret(names: string[], required: boolean, env: Record<string, string | undefined>): string | null {
   const candidateNames = buildCandidateNames(names);
   const value = candidateNames
-    .map((name) => resolveEnvValue(name))
+    .map((name) => resolveEnvValue(name, env))
     .map((item) => sanitizeSecret(item))
     .find((item): item is string => Boolean(item));
 
@@ -76,10 +76,11 @@ function readSecret(names: string[], required = true): string | null {
     return null;
   }
 
-  throw new Error(`Missing credential (${candidateNames.join(" | ")}). ${getDopplerHint()}`);
+  throw new Error(`Missing credential (${candidateNames.join(" | ")}). ${getDopplerHint(env)}`);
 }
 
-export function getCredentials(): Credentials {
+export function getCredentials(env: Record<string, string | undefined> = process.env): Credentials {
+  const readSecret = (names: string[], required = true) => readEnvironmentSecret(names, required, env);
   const googleAccessToken = readSecret(
     ["GOOGLE_ADS_ACCESS_TOKEN", "GOOGLE_OAUTH_ACCESS_TOKEN", "GOOGLE_WORKSPACE_OAUTH_ACCESS_TOKEN"],
     false

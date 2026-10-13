@@ -10,6 +10,7 @@ import { executeScopedPause } from "./pause-action";
 import { buildM03ProviderWorkflowPreview } from "./provider-workflow";
 import { canonicalM03Hash } from "./provider-contract";
 import type { M03ChangeRequestDetail, TrustedRequestContext } from "./types";
+import { m03BoundedText } from "./bounded-response";
 
 const id = z.string().uuid(), numeric = z.string().regex(/^\d{1,30}$/);
 const refs = z.object({ workflow_id: id, revision_id: id, receipt_id: id }).strict();
@@ -20,7 +21,8 @@ export const pauseBody = z.object({
 }).strict();
 const delegation = z.object({ subject: z.string().min(1).max(255), grantRevision: z.number().int().nonnegative(), accountPageId: id, clientId: id,
   platform: z.enum(["Google", "Meta"]), platformAccountId: numeric, campaignIdentity: numeric,
-  connectionRevision: z.string().min(1).max(255), action: z.string(), requestHash: z.string(), sessionBinding: z.string().regex(/^[A-Za-z0-9_-]{43}$/) });
+  connectionRevision: z.string().min(1).max(255), action: z.string(), requestHash: z.string(), sessionBinding: z.string().regex(/^[A-Za-z0-9_-]{43}$/),
+  networkContext: z.object({ source: z.literal("cloudflare-ingress"), ip: z.union([z.ipv4(), z.ipv6()]) }).strict().optional() });
 const confirmation = z.object({ request_id: id, revision_id: id, revision_hash: z.string().regex(/^[a-f0-9]{64}$/), action: z.enum(["approve", "pause"]), scope_hash: z.string(), operation_key: id });
 const real = { operator: getM03McpOperator, assertOperator: assertM03Operator, get: getMockChangeRequest, create: createPostLaunchChangeRequest,
   validate: validateMockChangeRequest, approve: approveExactM03Pause, integrity: getM03RevisionIntegrityReceipt, boundary: verifyM03SourceBoundary, transport: officialPauseTransport,
@@ -30,7 +32,8 @@ const digest = async (text: string) => Buffer.from(await crypto.subtle.digest("S
 const json = (value: Record<string, unknown>, status = 200) => Response.json({ correlation_id: crypto.randomUUID(), ...value }, { status, headers: { "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff" } });
 
 // Cookie-independent service boundary; domain workflow remains usable after dashboard retirement.
-export async function mcpPauseService(request: Request, deps: McpPauseDependencies = real, env: Record<string, string | undefined> = process.env): Promise<Response> {
+export type McpPauseRuntime = { canonicalOrigin?: string; requireSignedNetwork?: boolean; grantFetch?: typeof fetch };
+export async function mcpPauseService(request: Request, deps: McpPauseDependencies = real, env: Record<string, string | undefined> = process.env, runtime: McpPauseRuntime = {}): Promise<Response> {
   if (request.method !== "POST") return json({ outcome: "unavailable" }, 405);
   if (env.M03_PAUSE_MCP_ENABLED !== "true" || !env.M03_PAUSE_MCP_SERVICE_TOKEN || env.M03_PAUSE_MCP_SERVICE_TOKEN.length < 32 || !env.M03_PAUSE_MCP_DELEGATION_KEY || env.M03_PAUSE_MCP_DELEGATION_KEY.length < 32) return json({ outcome: "locked" }, 503);
   let attempted = false;
@@ -44,7 +47,7 @@ export async function mcpPauseService(request: Request, deps: McpPauseDependenci
     const auth = request.headers.get("Authorization") ?? "";
     if (await digest(auth) !== await digest(`Bearer ${env.M03_PAUSE_MCP_SERVICE_TOKEN}`)) throw Error("access_denied");
     const key = new TextEncoder().encode(env.M03_PAUSE_MCP_DELEGATION_KEY);
-    const { payload } = await jwtVerify(request.headers.get("X-DigitalBee-Delegation") ?? "", key, { algorithms: ["HS256"], issuer: "digitalbee", audience: new URL(request.url).origin, maxTokenAge: "30s", requiredClaims: ["sub", "iat", "exp", "jti"] });
+    const { payload } = await jwtVerify(request.headers.get("X-DigitalBee-Delegation") ?? "", key, { algorithms: ["HS256"], issuer: "digitalbee", audience: runtime.canonicalOrigin ?? new URL(request.url).origin, maxTokenAge: "30s", requiredClaims: ["sub", "iat", "exp", "jti"] });
     const scope = delegation.parse(payload), body = pauseBody.parse(JSON.parse(raw));
     if (payload.sub !== scope.subject || scope.subject !== env.M03_PAUSE_MCP_SUBJECT || scope.requestHash !== await digest(raw)
       || scope.accountPageId !== body.service_id || scope.campaignIdentity !== body.campaign_id || scope.action !== `m03_pause:${body.action}`
@@ -54,22 +57,25 @@ export async function mcpPauseService(request: Request, deps: McpPauseDependenci
     async function reauthorize() {
       stage = "operator_authorization";
       const actor = await deps.operator(id.parse(env.M03_PAUSE_MCP_ACTOR_ID));
-      const ip = resolveTrustedIp(request, env.VERCEL === "1" ? "vercel" : undefined);
+      // Private service fetch does not attest the browser's IP. Only the signed
+      // MCP ingress claim may carry it; raw forwarding/CF headers are ignored.
+      const ip = runtime.requireSignedNetwork ? scope.networkContext?.ip : resolveTrustedIp(request, env.VERCEL === "1" ? "vercel" : undefined);
       if (!actor || !ip) throw Error("access_denied");
       context = { ...actor, trusted_ip: ip, user_agent: "DigitalBee MCP pause confirmation" };
       assertPauseTarget(target, context, env);
       stage = "grant_verification";
       const url = new URL(env.DIGITALBEE_GRANT_VERIFY_URL ?? "");
       if (url.protocol !== "https:" || url.pathname !== "/v1/internal/grants/verify" || url.username || url.password || url.search || url.hash || !env.DIGITALBEE_GRANT_VERIFY_TOKEN || env.DIGITALBEE_GRANT_VERIFY_TOKEN.length < 32) throw Error("access_denied");
-      const grant = Object.fromEntries(Object.entries(scope).filter(([key]) => !["requestHash", "sessionBinding"].includes(key)));
-      const response = await deps.fetch(url, { method: "POST", redirect: "manual", signal: AbortSignal.timeout(5000), headers: { Authorization: `Bearer ${env.DIGITALBEE_GRANT_VERIFY_TOKEN}`, "Content-Type": "application/json" }, body: JSON.stringify(grant) });
-      const decision = await response.json();
+      const grant = Object.fromEntries(Object.entries(scope).filter(([key]) => !["requestHash", "sessionBinding", "networkContext"].includes(key)));
+      const response = await (runtime.grantFetch ?? deps.fetch)(url, { method: "POST", redirect: "manual", signal: AbortSignal.timeout(5000), headers: { Authorization: `Bearer ${env.DIGITALBEE_GRANT_VERIFY_TOKEN}`, "Content-Type": "application/json" }, body: JSON.stringify(grant) });
+      const decision = JSON.parse(await m03BoundedText(response, 32768));
       if (!response.ok || decision.allowed !== true || decision.email?.toLowerCase() !== actor.actor_email.toLowerCase() || Object.entries(grant).some(([k, v]) => decision[k] !== v)) throw Error("access_denied");
       stage = "operator_authorization";
       await deps.assertOperator(context);
     }
     await reauthorize();
-    const scopeHash = canonicalM03Hash({ ...target, subject: scope.subject, actor_id: context!.actor_id, grantRevision: scope.grantRevision, service_id: body.service_id, client_id: scope.clientId, connectionRevision: scope.connectionRevision, sessionBinding: scope.sessionBinding });
+    const scopeHash = canonicalM03Hash({ ...target, subject: scope.subject, actor_id: context!.actor_id, grantRevision: scope.grantRevision, service_id: body.service_id, client_id: scope.clientId, connectionRevision: scope.connectionRevision, sessionBinding: scope.sessionBinding,
+      ...(runtime.requireSignedNetwork ? { networkContext: scope.networkContext, canonicalOrigin: runtime.canonicalOrigin } : {}) });
     let requestId = body.request_id;
     if (!requestId) {
       stage = "source_adoption";

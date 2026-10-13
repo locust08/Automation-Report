@@ -9,6 +9,8 @@ import type {
 
 import { canonicalJson, canonicalM03Hash, type M03ProviderExecutionResult, type M03ProviderReadback } from "./provider-contract";
 import type { M03ExecutionStore, M03OperationReceipt } from "./durable-execution";
+import { m03RuntimeEnvironment } from "./runtime-environment";
+import { m03BoundedText } from "./bounded-response";
 
 type JsonObject = Record<string, unknown>;
 type RequestInit = { method: "GET" | "POST" | "PATCH"; body?: JsonObject };
@@ -188,15 +190,17 @@ export async function finalizeM03Pause(input: { requestId: string; revisionId: s
 async function rpc(name: string, body: JsonObject): Promise<JsonObject> { return request<JsonObject>(`rpc/${name}`, { method: "POST", body }); }
 
 function config() {
-  const origin = process.env.SUPABASE_URL?.trim() || process.env.NEXT_PUBLIC_SUPABASE_URL?.trim();
-  const key = process.env.SUPABASE_SECRET_KEY?.trim() || process.env.SUPABASE_SERVICE_ROLE_KEY?.trim();
-  if (!origin || !key || new URL(origin).hostname !== "gsmxeosdjsbujhiwhbzk.supabase.co") throw new M03RepositoryError("M03 requires the approved CRM08 Supabase project.", 503);
-  return { rest: `${new URL(origin).origin}/rest/v1`, key };
+  const env = m03RuntimeEnvironment();
+  const origin = env.SUPABASE_URL?.trim() || env.NEXT_PUBLIC_SUPABASE_URL?.trim();
+  const key = env.SUPABASE_SECRET_KEY?.trim() || env.SUPABASE_SERVICE_ROLE_KEY?.trim();
+  const url = origin ? new URL(origin) : null;
+  if (!url || !key || url.protocol !== "https:" || url.hostname !== "gsmxeosdjsbujhiwhbzk.supabase.co" || url.port || url.username || url.password || url.search || url.hash || url.pathname !== "/") throw new M03RepositoryError("M03 requires the approved CRM08 Supabase project.", 503);
+  return { rest: `${url.origin}/rest/v1`, key };
 }
 async function request<T>(path: string, init: RequestInit): Promise<T> {
   const { rest, key } = config();
-  const response = await fetch(`${rest}/${path}`, { method: init.method, headers: { apikey: key, authorization: `Bearer ${key}`, "content-type": "application/json", accept: "application/json" }, body: init.body ? JSON.stringify(init.body) : undefined, cache: "no-store", signal: AbortSignal.timeout(10_000) });
-  const text = await response.text(); let payload: unknown = null;
+  const response = await fetch(`${rest}/${path}`, { method: init.method, headers: { apikey: key, authorization: `Bearer ${key}`, "content-type": "application/json", accept: "application/json" }, body: init.body ? JSON.stringify(init.body) : undefined, cache: "no-store", redirect: "manual", signal: AbortSignal.timeout(10_000) });
+  const text = await m03BoundedText(response, 1048576); let payload: unknown = null;
   try { payload = text ? JSON.parse(text) : null; } catch { payload = null; }
   if (!response.ok) {
     const value = payload && typeof payload === "object" ? payload as JsonObject : {};
