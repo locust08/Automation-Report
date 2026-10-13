@@ -32,7 +32,7 @@ const digest = async (text: string) => Buffer.from(await crypto.subtle.digest("S
 const json = (value: Record<string, unknown>, status = 200) => Response.json({ correlation_id: crypto.randomUUID(), ...value }, { status, headers: { "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff" } });
 
 // Cookie-independent service boundary; domain workflow remains usable after dashboard retirement.
-export type McpPauseRuntime = { canonicalOrigin?: string; requireSignedNetwork?: boolean; grantFetch?: typeof fetch };
+export type McpPauseRuntime = { canonicalOrigin?: string; requireSignedNetwork?: boolean; grantFetch?: typeof fetch; onUnexpected?: (error: unknown, correlationId: string) => void };
 export async function mcpPauseService(request: Request, deps: McpPauseDependencies = real, env: Record<string, string | undefined> = process.env, runtime: McpPauseRuntime = {}): Promise<Response> {
   if (request.method !== "POST") return json({ outcome: "unavailable" }, 405);
   if (env.M03_PAUSE_MCP_ENABLED !== "true" || !env.M03_PAUSE_MCP_SERVICE_TOKEN || env.M03_PAUSE_MCP_SERVICE_TOKEN.length < 32 || !env.M03_PAUSE_MCP_DELEGATION_KEY || env.M03_PAUSE_MCP_DELEGATION_KEY.length < 32) return json({ outcome: "locked" }, 503);
@@ -160,6 +160,7 @@ export async function mcpPauseService(request: Request, deps: McpPauseDependenci
     const known = error instanceof Error && /^(access_denied|invalid_request|request_id_required|source_changed|scope_changed|validated_revision_required|approval_required|state_changed|baseline_or_capability_changed|receipt_exists_read_only|stale_confirmation)$/.test(error.message) ? error.message : "request_failed";
     const category = error instanceof z.ZodError ? "invalid_data" : error instanceof Error && ["TimeoutError", "AbortError"].includes(error.name) ? "timeout" : known !== "request_failed" ? "guard" : "unexpected";
     const evidence = { outcome: attempted ? "unknown" : "blocked", blocker: known, correlation_id: crypto.randomUUID(), provider_action: attempted ? "uncertain" : false, diagnostic: { stage, category } };
+    if (category === "unexpected" || category === "timeout") { try { runtime.onUnexpected?.(error, evidence.correlation_id); } catch { /* Monitoring cannot change the result. */ } }
     console.warn(JSON.stringify({ event: "m03_pause_failure", ...evidence }));
     return json(evidence, 200);
   }

@@ -9,7 +9,7 @@ test("request listing scopes summary and page rows at the REST boundary", async 
   const originalKey = process.env.SUPABASE_SECRET_KEY;
   const paths: string[] = [];
   process.env.SUPABASE_URL = "https://gsmxeosdjsbujhiwhbzk.supabase.co";
-  process.env.SUPABASE_SECRET_KEY = "test-key";
+  process.env.SUPABASE_SECRET_KEY = "sb_secret_fixture_only";
   globalThis.fetch = (async (input) => {
     const path = String(input);
     paths.push(path);

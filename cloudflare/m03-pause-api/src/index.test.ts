@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { createHash } from "node:crypto";
 import { SignJWT } from "jose";
-import { handle, type Env } from "./index";
+import { handle, type Env } from "./handler";
 import type { McpPauseDependencies } from "../../../lib/change-control/mcp-pause-service";
 import { getM03McpOperator, assertM03Operator, createM03ExecutionStore } from "../../../lib/change-control/repository";
 import { withM03RuntimeEnvironment, m03RuntimeEnvironment } from "../../../lib/change-control/runtime-environment";
@@ -59,17 +59,17 @@ test("request-local environment does not leak concurrent Supabase/provider crede
 });
 test("Supabase server credentials cannot be sent to another project, insecure origin, or redirect",async()=>{
  for(const url of ["http://gsmxeosdjsbujhiwhbzk.supabase.co", "https://other.supabase.co", "https://gsmxeosdjsbujhiwhbzk.supabase.co/path", "https://user:pass@gsmxeosdjsbujhiwhbzk.supabase.co"])
-  await assert.rejects(withM03RuntimeEnvironment({SUPABASE_URL:url,SUPABASE_SECRET_KEY:"synthetic-key"},()=>getM03McpOperator(actor)));
+  await assert.rejects(withM03RuntimeEnvironment({SUPABASE_URL:url,SUPABASE_SECRET_KEY:"sb_secret_synthetic_key_for_tests_only"},()=>getM03McpOperator(actor)));
  const original=globalThis.fetch;let calls=0;
  globalThis.fetch=async(_input,init)=>{calls++;assert.equal(init?.redirect,"manual");return new Response("",{status:302,headers:{Location:"https://other.example"}});};
- try{await assert.rejects(withM03RuntimeEnvironment({SUPABASE_URL:"https://gsmxeosdjsbujhiwhbzk.supabase.co",SUPABASE_SECRET_KEY:"synthetic-key"},()=>getM03McpOperator(actor)));assert.equal(calls,1);}finally{globalThis.fetch=original;}
+ try{await assert.rejects(withM03RuntimeEnvironment({SUPABASE_URL:"https://gsmxeosdjsbujhiwhbzk.supabase.co",SUPABASE_SECRET_KEY:"sb_secret_synthetic_key_for_tests_only"},()=>getM03McpOperator(actor)));assert.equal(calls,1);}finally{globalThis.fetch=original;}
 });
 test("Supabase operator/network/claim RPC contracts use the same project, context and deterministic operation hashes",async()=>{
  const previous=globalThis.fetch,calls:{url:string;init:RequestInit}[]=[];
  globalThis.fetch=async(input,init)=>{calls.push({url:String(input),init:init!});if(String(input).includes("ads_reporting_auth?"))return Response.json([{user_id:actor,email:"fixture@example.test",full_name:"Fixture",role:"admin",is_active:true}]);if(String(input).includes("claim_execution"))return Response.json({acquired:false,receipt:{state:"verified",operation_hash:"hash",claim_token:"existing"}});return Response.json({});};
- try {await withM03RuntimeEnvironment({SUPABASE_URL:"https://gsmxeosdjsbujhiwhbzk.supabase.co",SUPABASE_SECRET_KEY:"synthetic-key"},async()=>{
+ try {await withM03RuntimeEnvironment({SUPABASE_URL:"https://gsmxeosdjsbujhiwhbzk.supabase.co",SUPABASE_SECRET_KEY:"sb_secret_synthetic_key_for_tests_only"},async()=>{
   const context=(await getM03McpOperator(actor))!;context.trusted_ip="203.0.113.8";await assertM03Operator(context);
   const store=createM03ExecutionStore({requestId,revisionId,revisionHash:"h".repeat(64),context});const operation={operation_key:"stable-operation",depends_on:[]} as unknown as Parameters<typeof store.claim>[0];const result=await store.claim(operation);assert.equal(result.acquired,false);
- });assert(calls.every(c=>c.url.startsWith("https://gsmxeosdjsbujhiwhbzk.supabase.co/rest/v1/")));assert.equal(JSON.parse(String(calls[1]!.init.body)).p_trusted_ip,"203.0.113.8");assert.equal(JSON.parse(String(calls[2]!.init.body)).p_request_id,requestId);assert.match(JSON.parse(String(calls[2]!.init.body)).p_operation_hash,/^[a-f0-9]{64}$/);assert.equal(new Headers(calls[0]!.init.headers).get("apikey"),"synthetic-key");}
+ });assert(calls.every(c=>c.url.startsWith("https://gsmxeosdjsbujhiwhbzk.supabase.co/rest/v1/")));assert.equal(JSON.parse(String(calls[1]!.init.body)).p_trusted_ip,"203.0.113.8");assert.equal(JSON.parse(String(calls[2]!.init.body)).p_request_id,requestId);assert.match(JSON.parse(String(calls[2]!.init.body)).p_operation_hash,/^[a-f0-9]{64}$/);assert.equal(new Headers(calls[0]!.init.headers).get("apikey"),"sb_secret_synthetic_key_for_tests_only");}
  finally{globalThis.fetch=previous;}
 });
