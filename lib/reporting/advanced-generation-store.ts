@@ -17,7 +17,7 @@ export async function readAdvancedGeneration(key: string): Promise<StoredAdvance
   });
   if (response.status === 404) return null;
   if (!response.ok) throw new Error(`Generation state read failed (${response.status}).`);
-  const revision = response.headers.get("ETag");
+  const revision = readGenerationRevision(response.headers);
   if (!revision) throw new Error("Generation cache does not support revision checks.");
   return { state: await response.json() as AdvancedGenerationState, revision };
 }
@@ -30,12 +30,23 @@ export async function saveAdvancedGeneration(state: AdvancedGenerationState, exp
     return revision;
   }
   const response = await fetch(`${worker.base}/advanced-report-generation/${encodeURIComponent(state.cacheKey)}`, {
-    method: "PUT", headers: { Authorization: `Bearer ${worker.secret}`, "Content-Type": "application/json", "If-Match": expected ?? "*" },
+    method: "PUT", headers: { Authorization: `Bearer ${worker.secret}`, "Content-Type": "application/json", "If-Match": expected ? JSON.stringify(expected) : "*" },
     body: JSON.stringify(state), cache: "no-store", signal: AbortSignal.timeout(10_000),
   });
   if (response.status === 409) return null;
   if (!response.ok) throw new Error(`Generation state save failed (${response.status}).`);
-  const revision = response.headers.get("ETag");
+  const revision = readGenerationRevision(response.headers);
   if (!revision) throw new Error("Generation cache did not confirm persistence.");
+  return revision;
+}
+
+function readGenerationRevision(headers: Headers): string | null {
+  // Hosting proxies can remove or weaken ETag; the explicit CAS revision must survive transport.
+  const explicit = headers.get("X-Advanced-Generation-Revision");
+  if (explicit) return explicit;
+  const validator = headers.get("ETag")?.replace(/^W\//, "");
+  if (!validator) return null;
+  const revision = validator.startsWith('"') ? JSON.parse(validator) : validator;
+  if (typeof revision !== "string") throw new Error("Generation cache returned an invalid revision.");
   return revision;
 }

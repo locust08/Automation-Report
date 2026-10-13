@@ -58,3 +58,10 @@ Read-only follow-up established that Git-connected exact-source3af196a preview d
 Cache compatibility is additionally checked through four read-only legacy Worker fixtures with zero writes, a safe old-app cache-miss probe, unchanged legacy handlers and independent artifact/configuration readback. Browser-User-Agent unauthenticated Worker probes return the expected401 JSON; the earlier Python-default-User-Agent403 was not a changed Worker authentication contract. Authenticated live cached-account retrieval and native customer PDF acceptance remain separate.
 
 Fresh combined tests/typecheck/build/scoped lint and production-source preservation checks precede rollout. Deploy using the Git-connected checkpoint's exact source and production environment; do not treat a direct preview promotion as a production-environment rebuild. Preserve existing runtime guards/settings. Final actual deployment receipts will follow verification.
+
+
+## Live transport repair
+
+Checkpoint21bc7f0 rebuilt through the connected Git deployment into production dpl_HuhhYBdWY9XcXHuWv7PPJtw5hQU6, with locust08 attribution, production environment and no access block. Live alias/source, empty-selection header/date picker, homepage200, anonymous monitoring401 and durable generation-miss read200 passed. Monthly Workerfce147f0-9299-4050-a44d-4dfa5491aeda was deployed with existing schedules and vars retained.
+
+A real persisted-generation resume probe then exposed a missing ETag on the hosted cache response. Initialization persisted state, but a subsequent read failed revision validation. The transport repair uses a dedicated explicit revision header, standards-compliant quoted ETags/If-Match, and compatibility parsing for existing raw validators. Revision compare-and-swap and stale-write protection remain mandatory. A new regression strips ETag across the actual Worker/client fixture and verifies successful resume/update, stale-write rejection and quoted-ETag fallback. No cache schema or existing report contract changes are needed; previously persisted work can resume.

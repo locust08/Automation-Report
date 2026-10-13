@@ -86,7 +86,7 @@ const worker = {
         if (!row) return json({ error: "Not found" }, 404);
         const body = await env.ADVANCED_REPORTS.get(row.r2_key);
         if (!body) return json({ error: "Generation state missing" }, 503);
-        return new Response(await body.text(), { headers: { "Content-Type": "application/json", "Cache-Control": "no-store", ETag: row.r2_key } });
+        return new Response(await body.text(), { headers: generationRevisionHeaders(row.r2_key) });
       }
       if (request.method === "PUT") return handleGenerationPut(key, request, env);
       return json({ error: "Method not allowed" }, 405);
@@ -378,8 +378,13 @@ function json(payload: unknown, status = 200): Response {
 
 // R2 object keys are immutable. D1 compare-and-swap publishes exactly one revision.
 async function handleGenerationPut(key: string, request: Request, env: Env): Promise<Response> {
-  const expected = request.headers.get("If-Match");
-  if (expected === null) return json({ error: "If-Match is required" }, 428);
+  const validator = request.headers.get("If-Match");
+  if (validator === null) return json({ error: "If-Match is required" }, 428);
+  let expected = validator;
+  if (validator.startsWith('"')) {
+    try { expected = JSON.parse(validator); } catch { return json({ error: "Invalid revision validator" }, 400); }
+    if (typeof expected !== "string") return json({ error: "Invalid revision validator" }, 400);
+  }
   const text = await request.text();
   const state = JSON.parse(text) as { generationId?: string; cacheKey?: string; completePayload?: AdvancedReportPayload };
   if (!state.generationId || !state.cacheKey) return json({ error: "Invalid generation state" }, 400);
@@ -404,5 +409,10 @@ async function handleGenerationPut(key: string, request: Request, env: Env): Pro
     result = results[0] as { meta?: { changes?: number } };
   } else result = await statement.run() as { meta?: { changes?: number } };
   if (result.meta?.changes !== 1) return json({ error: "Generation revision changed" }, 409);
-  return new Response(JSON.stringify({ ok: true }), { headers: { "Content-Type": "application/json", ETag: revision } });
+  return new Response(JSON.stringify({ ok: true }), { headers: generationRevisionHeaders(revision) });
+}
+
+function generationRevisionHeaders(revision: string): Record<string, string> {
+  return { "Content-Type": "application/json", "Cache-Control": "no-store", ETag: JSON.stringify(revision),
+    "X-Advanced-Generation-Revision": revision };
 }

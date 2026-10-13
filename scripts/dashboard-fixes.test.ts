@@ -239,3 +239,41 @@ test("overlapping unique outcomes do not get invented aggregate changes", () => 
   assert.equal(campaignTotalChanges(row,[row,row],2).costPerResult,null);
   assert.equal(campaignTotalChanges(row,[row],1).results,0);
 });
+
+
+test("durable revisions survive stripped ETag and accept quoted validators without stale writes", async () => {
+  const previousUrl = process.env.ADVANCED_REPORT_CACHE_WORKER_URL;
+  const previousSecret = process.env.ADVANCED_REPORT_CACHE_SECRET;
+  process.env.ADVANCED_REPORT_CACHE_WORKER_URL = "https://fixture";
+  process.env.ADVANCED_REPORT_CACHE_SECRET = "fixture";
+  const { env } = fakeCache();
+  const state = createAdvancedGeneration({ ...input, accountId: "transport-fixture" });
+  state.cacheKey = "report";
+  mock.method(globalThis, "fetch", async (url: string, options: RequestInit) => {
+    const response = await worker.fetch(new Request(url, options), env as never);
+    if (response.ok) {
+      assert.match(response.headers.get("ETag") ?? "", /^".+"$/);
+      assert.ok(response.headers.get("X-Advanced-Generation-Revision"));
+    }
+    const headers = new Headers(response.headers);
+    headers.delete("ETag");
+    return new Response(await response.text(), { status: response.status, headers });
+  });
+  try {
+    const initial = await saveAdvancedGeneration(state, null);
+    assert.ok(initial);
+    assert.equal((await readAdvancedGeneration("report"))?.revision, initial);
+    const next = await saveAdvancedGeneration(state, initial);
+    assert.ok(next);
+    assert.notEqual(next, initial);
+    assert.equal(await saveAdvancedGeneration(state, initial), null);
+    assert.equal((await readAdvancedGeneration("report"))?.revision, next);
+    mock.restoreAll();
+    mock.method(globalThis, "fetch", async () => Response.json(state, { headers: { ETag: JSON.stringify(next) } }));
+    assert.equal((await readAdvancedGeneration("report"))?.revision, next);
+  } finally {
+    mock.restoreAll();
+    if (previousUrl === undefined) delete process.env.ADVANCED_REPORT_CACHE_WORKER_URL; else process.env.ADVANCED_REPORT_CACHE_WORKER_URL = previousUrl;
+    if (previousSecret === undefined) delete process.env.ADVANCED_REPORT_CACHE_SECRET; else process.env.ADVANCED_REPORT_CACHE_SECRET = previousSecret;
+  }
+});
