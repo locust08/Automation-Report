@@ -7,4 +7,3 @@ export function completeCreativeReason(value: string): string {
   return /[.!?]$/.test(normalized) ? normalized : `${normalized}.`;
 
 }
-
