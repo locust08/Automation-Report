@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { createHash } from "node:crypto";
-import { SignJWT } from "jose";
+import { SignJWT, jwtVerify } from "jose";
 import { handle, type Env } from "./handler";
 import type { McpPauseDependencies } from "../../../lib/change-control/mcp-pause-service";
 import { getM03McpOperator, assertM03Operator, createM03ExecutionStore } from "../../../lib/change-control/repository";
@@ -39,8 +39,8 @@ test("missing/malformed network, body/action/revision/subject/audience/session t
  for(const options of [{scope:{networkContext:undefined}},{scope:{networkContext:{source:"cloudflare-ingress",ip:"127.0.0.1,1.2.3.4"}}},{scope:{networkContext:{source:"user",ip:"203.0.113.8"}}},{scope:{action:"m03_pause:pause"}},{scope:{connectionRevision:"stale"}},{scope:{subject:"other"}},{scope:{requestHash:"wrong"}},{audience:"https://other.example"},{bearer:"Bearer wrong"}]) {
   const f=fixture(),r=await f.call("prepare_approve",undefined,options);assert.equal(r.outcome,"blocked");assert.equal(r.provider_action,false);assert.equal(r.confirmation_token,undefined);assert.deepEqual(f.counts(),{approvals:0,mutations:0,reads:0});
  }
- const f=fixture(),p=await f.call("prepare_approve");const r=await f.call("approve",p.confirmation_token,{scope:{sessionBinding:"b".repeat(43)}});assert.equal(r.blocker,"stale_confirmation");assert.equal(f.counts().approvals,0);
- const moved=await f.call("approve",p.confirmation_token,{scope:{networkContext:{source:"cloudflare-ingress",ip:"203.0.113.9"}}});assert.equal(moved.blocker,"stale_confirmation");assert.equal(f.counts().approvals,0);
+ const f=fixture(),p=await f.call("prepare_approve");const r=await f.call("approve",p.confirmation_token,{scope:{sessionBinding:"b".repeat(43)}});assert.equal(r.blocker,"stale_confirmation");assert.deepEqual(r.binding_mismatch,["session"]);assert.equal(f.counts().approvals,0);
+ const moved=await f.call("approve",p.confirmation_token,{scope:{networkContext:{source:"cloudflare-ingress",ip:"203.0.113.9"}}});assert.equal(moved.blocker,"stale_confirmation");assert.deepEqual(moved.binding_mismatch,["ingress_ip"]);assert.doesNotMatch(JSON.stringify(moved),/203\.0\.113|binding_tags|binding_nonce|scope_hash/);assert.equal(f.counts().approvals,0);
 });
 test("current operator/domain policy, grant revocation and operator revocation remain mandatory",async()=>{
  for(const deny of ["denyOperator","denyGrant","revoke"] as const){const f=fixture();f[deny]();const r=await f.call("read");assert.equal(r.outcome,"blocked");assert.equal(r.provider_action,false);assert.equal(f.counts().reads,0);}
@@ -72,4 +72,21 @@ test("Supabase operator/network/claim RPC contracts use the same project, contex
   const store=createM03ExecutionStore({requestId,revisionId,revisionHash:"h".repeat(64),context});const operation={operation_key:"stable-operation",depends_on:[]} as unknown as Parameters<typeof store.claim>[0];const result=await store.claim(operation);assert.equal(result.acquired,false);
  });assert(calls.every(c=>c.url.startsWith("https://gsmxeosdjsbujhiwhbzk.supabase.co/rest/v1/")));assert.equal(JSON.parse(String(calls[1]!.init.body)).p_trusted_ip,"203.0.113.8");assert.equal(JSON.parse(String(calls[2]!.init.body)).p_request_id,requestId);assert.match(JSON.parse(String(calls[2]!.init.body)).p_operation_hash,/^[a-f0-9]{64}$/);assert.equal(new Headers(calls[0]!.init.headers).get("apikey"),"sb_secret_synthetic_key_for_tests_only");}
  finally{globalThis.fetch=previous;}
+});
+
+test("diagnostic tags remain private and legacy tokens retain exact-IP validation",async()=>{
+ const f=fixture(),p=await f.call("prepare_approve"),key=new TextEncoder().encode(String(f.env.M03_PAUSE_MCP_DELEGATION_KEY));
+ const {payload}=await jwtVerify(p.confirmation_token,key);const {binding_tags,binding_nonce,...legacy}=payload;
+ assert.equal(typeof binding_nonce,"string");assert.equal(Object.keys(binding_tags as object).length,15);
+ const token=await new SignJWT(legacy).setProtectedHeader({alg:"HS256"}).sign(key);
+ const moved=await f.call("approve",token,{scope:{networkContext:{source:"cloudflare-ingress",ip:"203.0.113.9"}}});
+ assert.equal(moved.blocker,"stale_confirmation");assert.deepEqual(moved.binding_mismatch,["scope_hash"]);assert.equal(f.counts().approvals,0);
+ assert.equal((await f.call("approve",token)).outcome,"success");assert.equal(f.counts().approvals,1);assert.equal(f.counts().mutations,0);
+});
+test("fresh diagnostic confirmations retain grant and expiry checks without provider mutation",async()=>{
+ const f=fixture(),p=await f.call("prepare_approve");
+ const changed=await f.call("approve",p.confirmation_token,{scope:{grantRevision:2}});assert.equal(changed.blocker,"stale_confirmation");assert.deepEqual(changed.binding_mismatch,["grant_revision"]);
+ const key=new TextEncoder().encode(String(f.env.M03_PAUSE_MCP_DELEGATION_KEY)),{payload}=await jwtVerify(p.confirmation_token,key);
+ const expired=await new SignJWT({...payload,iat:Math.floor(Date.now()/1000)-400,exp:Math.floor(Date.now()/1000)-100}).setProtectedHeader({alg:"HS256"}).sign(key);
+ assert.equal((await f.call("approve",expired)).outcome,"blocked");assert.equal(f.counts().approvals,0);assert.equal(f.counts().mutations,0);
 });

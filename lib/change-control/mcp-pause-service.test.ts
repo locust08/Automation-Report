@@ -18,7 +18,7 @@ function fixture(realPreview=false,failures:{preview?:Error;grant?:Error}={}){
  const dependencies={operator:async()=>revoked?null:{actor_id:actor,actor_email:"fixture@example.test",actor_name:"Fixture",actor_role:"admin",trusted_ip:"",user_agent:"fixture"},assertOperator:async()=>{},get:async()=>structuredClone(detail),integrity:async()=>({revision_id:revisionId,payload_hash:hash,canonical_text:canonical}),fetch:async(_url:unknown,init:RequestInit)=>{if(failures.grant)throw failures.grant;return Response.json({allowed:!revoked,...JSON.parse(String(init.body)),email:"fixture@example.test"});},
   preview:async(...args:Parameters<typeof buildM03ProviderWorkflowPreview>)=>{if(failures.preview)throw failures.preview;return realPreview?buildM03ProviderWorkflowPreview(...args):{conflict_issues:[],capability_issues:[]};},transport:async()=>({read:async()=>{providerReads++;return {account_id:"2315114913",campaign_id:"123",status:providerStatus};},pause:async()=>{providerPauses++;throw Error("Transport bypass forbidden");}}),
   receipts:async()=>receipts,
-  approve:async(_r:string,rev:string,h:string)=>{assert.equal(rev,revisionId);assert.equal(h,hash);approvals++;detail.request.status="approved";detail.approvals=[{revision_id:revisionId,revision_hash:hash}] as typeof detail.approvals;return{};},
+  approve:async(_r:string,rev:string,h:string)=>{assert.equal(rev,revisionId);assert.equal(h,hash);approvals++;detail.request.status="approved";detail.approvals=[{id:actor,decision:"approved",created_at:"2026-10-14T00:00:00.000Z",revision_id:revisionId,revision_hash:hash}] as typeof detail.approvals;return{};},
   execute:async(input:{reconcileOnly:boolean;reauthorize:()=>Promise<void>})=>{await input.reauthorize();if(!input.reconcileOnly&&!receipts.length)mutations++;receipts=[{operation_key:"fixture-operation",state:"verified"}];detail.request.status="verified";return{};},
   create:async()=>{throw Error("No create expected");},validate:async()=>{throw Error("Already validated");},boundary:async()=>{throw Error("No adoption expected");},
  } as unknown as McpPauseDependencies;
@@ -113,4 +113,12 @@ test("concurrent confirmation waits for its active claim; interrupted claims rec
  assert.equal((await f.call("read")).display.status,"publishing");assert.equal(f.counts().mutations,0);
  f.setStarted(180000);const recovered=await f.call("read");
  assert.equal(recovered.display.status,"verified");assert.equal(recovered.provider_action,false);assert.equal(f.counts().mutations,0);
+});
+
+test("approval evidence is read from one durable row and stays distinct from provider receipts",async()=>{
+ const f=fixture(),p=await f.call("prepare_approve"),confirmed=await f.call("approve",p.confirmation_token);
+ assert.deepEqual(confirmed.approval_evidence,{approval_id:actor,revision_id:revisionId,revision_hash:f.detail.revisions[0]!.payload_hash,created_at:"2026-10-14T00:00:00.000Z"});
+ const repeat=await f.call("approve",p.confirmation_token),read=await f.call("read");
+ assert.deepEqual(repeat.approval_evidence,confirmed.approval_evidence);assert.deepEqual(read.approval_evidence,confirmed.approval_evidence);
+ assert.equal(read.display.status,"approved");assert.equal(read.official_status,"PAUSED");assert.deepEqual(read.receipts,[]);assert.deepEqual(f.counts(),{approvals:1,mutations:0});assert.equal(f.transportCounts().pauses,0);
 });

@@ -11,6 +11,7 @@ import { buildM03ProviderWorkflowPreview } from "./provider-workflow";
 import { canonicalM03Hash } from "./provider-contract";
 import type { M03ChangeRequestDetail, TrustedRequestContext } from "./types";
 import { m03BoundedText } from "./bounded-response";
+import {compareConfirmationBinding, confirmationBindingTags, tagConfirmationBinding, type ConfirmationBindingValues} from "./confirmation-binding";
 
 const id = z.string().uuid(), numeric = z.string().regex(/^\d{1,30}$/);
 const refs = z.object({ workflow_id: id, revision_id: id, receipt_id: id }).strict();
@@ -23,7 +24,10 @@ const delegation = z.object({ subject: z.string().min(1).max(255), grantRevision
   platform: z.enum(["Google", "Meta"]), platformAccountId: numeric, campaignIdentity: numeric,
   connectionRevision: z.string().min(1).max(255), action: z.string(), requestHash: z.string(), sessionBinding: z.string().regex(/^[A-Za-z0-9_-]{43}$/),
   networkContext: z.object({ source: z.literal("cloudflare-ingress"), ip: z.union([z.ipv4(), z.ipv6()]) }).strict().optional() });
-const confirmation = z.object({ request_id: id, revision_id: id, revision_hash: z.string().regex(/^[a-f0-9]{64}$/), action: z.enum(["approve", "pause"]), scope_hash: z.string(), operation_key: id });
+const confirmation = z.object({ request_id: id, revision_id: id, revision_hash: z.string().regex(/^[a-f0-9]{64}$/), action: z.enum(["approve", "pause"]), scope_hash: z.string(), operation_key: id,
+  binding_nonce: id.optional(), binding_tags: confirmationBindingTags.optional(),
+}).refine(value => Boolean(value.binding_nonce) === Boolean(value.binding_tags), "Incomplete binding diagnostics");
+const approvalEvidenceSchema = z.object({approval_id:id,revision_id:id,revision_hash:z.string().regex(/^[a-f0-9]{64}$/),created_at:z.string().datetime({offset:true})});
 const real = { operator: getM03McpOperator, assertOperator: assertM03Operator, get: getMockChangeRequest, create: createPostLaunchChangeRequest,
   validate: validateMockChangeRequest, approve: approveExactM03Pause, integrity: getM03RevisionIntegrityReceipt, boundary: verifyM03SourceBoundary, transport: officialPauseTransport,
   execute: executeScopedPause, receipts: getM03ExecutionReceipts, preview: buildM03ProviderWorkflowPreview, fetch: globalThis.fetch };
@@ -38,6 +42,7 @@ export async function mcpPauseService(request: Request, deps: McpPauseDependenci
   if (env.M03_PAUSE_MCP_ENABLED !== "true" || !env.M03_PAUSE_MCP_SERVICE_TOKEN || env.M03_PAUSE_MCP_SERVICE_TOKEN.length < 32 || !env.M03_PAUSE_MCP_DELEGATION_KEY || env.M03_PAUSE_MCP_DELEGATION_KEY.length < 32) return json({ outcome: "locked" }, 503);
   let attempted = false;
   let stage = "request_validation";
+  let bindingMismatch: string[] | undefined;
   try {
     const reader = request.body?.getReader(); if (!reader) throw Error("invalid_request");
     let bytes = 0; const parts: Uint8Array[] = [];
@@ -74,6 +79,7 @@ export async function mcpPauseService(request: Request, deps: McpPauseDependenci
       await deps.assertOperator(context);
     }
     await reauthorize();
+    const bindingActor = context!.actor_id;
     const scopeHash = canonicalM03Hash({ ...target, subject: scope.subject, actor_id: context!.actor_id, grantRevision: scope.grantRevision, service_id: body.service_id, client_id: scope.clientId, connectionRevision: scope.connectionRevision, sessionBinding: scope.sessionBinding,
       ...(runtime.requireSignedNetwork ? { networkContext: scope.networkContext, canonicalOrigin: runtime.canonicalOrigin } : {}) });
     let requestId = body.request_id;
@@ -110,6 +116,14 @@ export async function mcpPauseService(request: Request, deps: McpPauseDependenci
     assertM03ReviewedItems(detail, revision);
     const display = (d: M03ChangeRequestDetail) => ({ request_id: requestId, revision_id: revision.id, revision_hash: revision.payload_hash, platform: scope.platform, account_id: target.account_identity, campaign_id: body.campaign_id, status: d.request.status,
       baseline: d.items[0]!.baseline_value, proposed: "PAUSED", operator: context!.actor_name });
+    const bindingValues = (action: string): ConfirmationBindingValues => ({subject:scope.subject,actor:bindingActor,grant_revision:scope.grantRevision,service:body.service_id,client:scope.clientId,connection_revision:scope.connectionRevision,session:scope.sessionBinding,target,
+      canonical_origin:runtime.requireSignedNetwork ? runtime.canonicalOrigin : null,network_source:runtime.requireSignedNetwork ? scope.networkContext?.source : null,ingress_ip:runtime.requireSignedNetwork ? scope.networkContext?.ip : null,
+      action,request:requestId,revision:revision.id,revision_hash:revision.payload_hash});
+    const approvalEvidence = (d: M03ChangeRequestDetail) => {
+      const row=d.approvals.find(a=>a.decision==="approved"&&a.revision_id===revision.id&&a.revision_hash===revision.payload_hash);
+      const parsed=approvalEvidenceSchema.safeParse(row&&{approval_id:row.id,revision_id:row.revision_id,revision_hash:row.revision_hash,created_at:row.created_at});
+      return parsed.success ? parsed.data : undefined;
+    };
     if (body.action.startsWith("prepare_")) {
       stage = "preparation_state";
       const action = body.action === "prepare_approve" ? "approve" : "pause";
@@ -123,8 +137,10 @@ export async function mcpPauseService(request: Request, deps: McpPauseDependenci
       if (preview.conflict_issues.length || preview.capability_issues.length) throw Error("baseline_or_capability_changed");
       await current();
       stage = "confirmation_creation";
-      const token = await new SignJWT({ ...confirmation.parse({ request_id: requestId, revision_id: revision.id, revision_hash: revision.payload_hash, action, scope_hash: scopeHash, operation_key: body.idempotency_key }) })
-        .setProtectedHeader({ alg: "HS256" }).setIssuer("m03-pause-confirmation").setAudience("digitalbee-m03-pause").setSubject(scope.subject).setIssuedAt().setExpirationTime("5m").setJti(crypto.randomUUID()).sign(key);
+      const nonce=crypto.randomUUID();
+      const token = await new SignJWT({ ...confirmation.parse({ request_id: requestId, revision_id: revision.id, revision_hash: revision.payload_hash, action, scope_hash: scopeHash, operation_key: body.idempotency_key,
+        binding_nonce:nonce,binding_tags:await tagConfirmationBinding(bindingValues(action),key,nonce) }) })
+        .setProtectedHeader({ alg: "HS256" }).setIssuer("m03-pause-confirmation").setAudience("digitalbee-m03-pause").setSubject(scope.subject).setIssuedAt().setExpirationTime("5m").setJti(nonce).sign(key);
       return json({ outcome: "prepared", display: { ...display(detail), action, expires_at: new Date(Date.now() + 300000).toISOString() }, confirmation_token: token });
     }
     if (body.action === "read") {
@@ -139,13 +155,18 @@ export async function mcpPauseService(request: Request, deps: McpPauseDependenci
       stage = "official_read";
       const official = await (await deps.transport(assertPauseTarget(target, context!, env), env)).read();
       if (official.account_id !== target.account_identity || official.campaign_id !== body.campaign_id) throw Error("source_changed");
-      await current();
-      return json({ outcome: "success", display: display(detail), official_status: official.status, captured_at: new Date().toISOString(), receipts: (await deps.receipts(requestId, revision.id)).map(r => ({ operation_key: r.operation_key, state: r.state })), provider_action: false });
+      detail = await current();
+      return json({ outcome: "success", display: display(detail), approval_evidence:approvalEvidence(detail), official_status: official.status, captured_at: new Date().toISOString(), receipts: (await deps.receipts(requestId, revision.id)).map(r => ({ operation_key: r.operation_key, state: r.state })), provider_action: false });
     }
     stage = "confirmation_validation";
     const signed = await jwtVerify(body.confirmation_token ?? "", key, { algorithms: ["HS256"], issuer: "m03-pause-confirmation", audience: "digitalbee-m03-pause", maxTokenAge: "5m", requiredClaims: ["sub", "iat", "exp", "jti"] });
     const bound = confirmation.parse(signed.payload);
-    if (signed.payload.sub !== scope.subject || bound.scope_hash !== scopeHash || bound.action !== body.action || bound.request_id !== requestId || bound.revision_id !== revision.id || bound.revision_hash !== revision.payload_hash) throw Error("stale_confirmation");
+    if (signed.payload.sub !== scope.subject || bound.scope_hash !== scopeHash || bound.action !== body.action || bound.request_id !== requestId || bound.revision_id !== revision.id || bound.revision_hash !== revision.payload_hash) {
+      if(bound.binding_tags&&bound.binding_nonce)bindingMismatch=await compareConfirmationBinding(bound.binding_tags,bindingValues(body.action),key,bound.binding_nonce);
+      else bindingMismatch=[...(signed.payload.sub!==scope.subject?["subject"]:[]),...(bound.scope_hash!==scopeHash?["scope_hash"]:[]),...(bound.action!==body.action?["action"]:[]),...(bound.request_id!==requestId?["request"]:[]),...(bound.revision_id!==revision.id?["revision"]:[]),...(bound.revision_hash!==revision.payload_hash?["revision_hash"]:[])];
+      if(!bindingMismatch.length)bindingMismatch=["scope_hash"];
+      throw Error("stale_confirmation");
+    }
     if (body.action === "approve") {
       if (detail.request.status === "awaiting_approval") { await current(); stage = "approval_commit"; await deps.approve(requestId, bound.revision_id, bound.revision_hash, bound.operation_key, context!); }
       else if (!detail.approvals.some(a => a.revision_id === bound.revision_id && a.revision_hash === bound.revision_hash)) throw Error("state_changed");
@@ -155,11 +176,11 @@ export async function mcpPauseService(request: Request, deps: McpPauseDependenci
       await deps.execute({ requestId, revisionId: bound.revision_id, revisionHash: bound.revision_hash, context: context!, reconcileOnly: false, reauthorize, env });
     }
     detail = await current();
-    return json({ outcome: "success", display: display(detail), provider_action: body.action === "pause" });
+    return json({ outcome: "success", display: display(detail), approval_evidence:approvalEvidence(detail), provider_action: body.action === "pause" });
   } catch (error) {
     const known = error instanceof Error && /^(access_denied|invalid_request|request_id_required|source_changed|scope_changed|validated_revision_required|approval_required|state_changed|baseline_or_capability_changed|receipt_exists_read_only|stale_confirmation)$/.test(error.message) ? error.message : "request_failed";
     const category = error instanceof z.ZodError ? "invalid_data" : error instanceof Error && ["TimeoutError", "AbortError"].includes(error.name) ? "timeout" : known !== "request_failed" ? "guard" : "unexpected";
-    const evidence = { outcome: attempted ? "unknown" : "blocked", blocker: known, correlation_id: crypto.randomUUID(), provider_action: attempted ? "uncertain" : false, diagnostic: { stage, category } };
+    const evidence = { outcome: attempted ? "unknown" : "blocked", blocker: known, correlation_id: crypto.randomUUID(), provider_action: attempted ? "uncertain" : false, diagnostic: { stage, category }, ...(bindingMismatch ? {binding_mismatch:bindingMismatch} : {}) };
     if (category === "unexpected" || category === "timeout") { try { runtime.onUnexpected?.(error, evidence.correlation_id); } catch { /* Monitoring cannot change the result. */ } }
     console.warn(JSON.stringify({ event: "m03_pause_failure", ...evidence }));
     return json(evidence, 200);
