@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { createHash } from "node:crypto";
 import { SignJWT, jwtVerify } from "jose";
+import {canonicalM03Hash} from "../../../lib/change-control/provider-contract";
 import { handle, type Env } from "./handler";
 import type { McpPauseDependencies } from "../../../lib/change-control/mcp-pause-service";
 import { getM03McpOperator, assertM03Operator, createM03ExecutionStore } from "../../../lib/change-control/repository";
@@ -13,19 +14,20 @@ function fixture() {
  const env:Env={M03_WORKER_ENABLED:"true",M03_CANONICAL_ORIGIN:"https://m03.example",M03_PAUSE_MCP_ENABLED:"true",M03_PAUSE_MCP_SERVICE_TOKEN:"s".repeat(40),M03_PAUSE_MCP_DELEGATION_KEY:"d".repeat(40),M03_PAUSE_MCP_SUBJECT:"fixture",M03_PAUSE_MCP_ACTOR_ID:actor,M03_PAUSE_MCP_CONNECTION_REVISION:"fixture",M03_PAUSE_ENABLED:"approved-test-pilot",M03_PAUSE_ALLOWLIST:JSON.stringify([{actor_id:actor,platform:"google",account_identity:"2315114913",campaign_identity:"123"}]),DIGITALBEE_GRANT_VERIFY_URL:"https://authority.example/v1/internal/grants/verify",DIGITALBEE_GRANT_VERIFY_TOKEN:"g".repeat(40)};
  const item={id:"item",entity_type:"campaign",entity_identity:"123",field_path:"campaign.status",value_type:"string",baseline_value:"PAUSED",proposed_value:"PAUSED",evidence:{},platform_resource_mapping:{}};
  const payload={platform:"google",account_identity:"2315114913",campaign_identity:"123",items:[item]},canonical=JSON.stringify(payload),hash=createHash("sha256").update(canonical).digest("hex");
- const detail={request:{id:requestId,platform:"google",account_identity:"2315114913",campaign_identity:"123",status:"awaiting_approval"},items:[item],source_verification:{platform:"google",provider_account_identity:"2315114913",provider_campaign_identity:"123"},revisions:[{id:revisionId,payload_hash:hash,canonical_payload:payload}],approvals:[] as {revision_id:string;revision_hash:string}[]};
+ const detail={request:{id:requestId,platform:"google",account_identity:"2315114913",campaign_identity:"123",status:"awaiting_approval"},items:[item],source_verification:{platform:"google",provider_account_identity:"2315114913",provider_campaign_identity:"123"},revisions:[{id:revisionId,payload_hash:hash,canonical_payload:payload}],approvals:[] as {id:string;decision:"approved";created_at:string;revision_id:string;revision_hash:string}[]};
+ let authorizedActor=actor;
  let approvals=0,mutations=0,reads=0,operatorAllowed=true,grantAllowed=true,revoked=false,claims=false;
  const ips:string[]=[],grants:Record<string,unknown>[]=[];
  env.DIGITALBEE_AUTHORITY={fetch:async(input,init)=>{assert.equal(String(input),env.DIGITALBEE_GRANT_VERIFY_URL);const g=JSON.parse(String(init?.body));assert.equal(g.networkContext,undefined);grants.push(g);return Response.json({...g,allowed:grantAllowed,email:"fixture@example.test"});}};
- const deps={operator:async()=>revoked?null:{actor_id:actor,actor_email:"fixture@example.test",actor_name:"Fixture",actor_role:"admin",trusted_ip:"",user_agent:"fixture"},assertOperator:async(ctx:{trusted_ip:string})=>{ips.push(ctx.trusted_ip);if(!operatorAllowed)throw Error("access_denied");},get:async()=>structuredClone(detail),integrity:async()=>({revision_id:revisionId,payload_hash:hash,canonical_text:canonical}),fetch:async()=>{throw Error("Public authority fallback forbidden");},preview:async()=>({conflict_issues:[],capability_issues:[]}),transport:async()=>({read:async()=>{reads++;return {account_id:"2315114913",campaign_id:"123",status:"PAUSED"};},pause:async()=>{throw Error("Bypass forbidden");}}),receipts:async()=>claims?[{operation_key:"fixture-operation",state:"verified"}]:[],approve:async()=>{approvals++;detail.request.status="approved";detail.approvals=[{revision_id:revisionId,revision_hash:hash}];},execute:async(input:{reauthorize:()=>Promise<void>;reconcileOnly:boolean})=>{await input.reauthorize();if(!claims&&!input.reconcileOnly)mutations++;claims=true;detail.request.status="verified";},create:async()=>{throw Error("unexpected adoption");},validate:async()=>{throw Error("unexpected validate");},boundary:async()=>{throw Error("unexpected source");}} as unknown as McpPauseDependencies;
- async function call(action:string,token?:string,options:{scope?:Record<string,unknown>;body?:Record<string,unknown>;audience?:string;env?:Record<string,unknown>;bearer?:string}={}) {
+ const deps={operator:async()=>revoked?null:{actor_id:authorizedActor,actor_email:"fixture@example.test",actor_name:"Fixture",actor_role:"admin",trusted_ip:"",user_agent:"fixture"},assertOperator:async(ctx:{trusted_ip:string})=>{ips.push(ctx.trusted_ip);if(!operatorAllowed||!["203.0.113.8","203.0.113.9"].includes(ctx.trusted_ip))throw Error("access_denied");},get:async()=>structuredClone(detail),integrity:async()=>({revision_id:revisionId,payload_hash:hash,canonical_text:canonical}),fetch:async()=>{throw Error("Public authority fallback forbidden");},preview:async()=>({conflict_issues:[],capability_issues:[]}),transport:async()=>({read:async()=>{reads++;return {account_id:"2315114913",campaign_id:"123",status:"PAUSED"};},pause:async()=>{throw Error("Bypass forbidden");}}),receipts:async()=>claims?[{operation_key:"fixture-operation",state:"verified"}]:[],approve:async()=>{approvals++;detail.request.status="approved";detail.approvals=[{id:actor,decision:"approved",created_at:"2026-10-14T00:00:00+00:00",revision_id:revisionId,revision_hash:hash}];},execute:async(input:{reauthorize:()=>Promise<void>;reconcileOnly:boolean})=>{await input.reauthorize();if(!claims&&!input.reconcileOnly)mutations++;claims=true;detail.request.status="verified";},create:async()=>{throw Error("unexpected adoption");},validate:async()=>{throw Error("unexpected validate");},boundary:async()=>{throw Error("unexpected source");}} as unknown as McpPauseDependencies;
+ async function call(action:string,token?:string,options:{scope?:Record<string,unknown>;body?:Record<string,unknown>;audience?:string;env?:Record<string,unknown>;bearer?:string;unsigned?:boolean}={}) {
   const raw=JSON.stringify({action,service_id:service,campaign_id:"123",request_id:requestId,idempotency_key:crypto.randomUUID(),...(token?{confirmation_token:token}:{}),...options.body});
   const scope={subject:"fixture",grantRevision:1,accountPageId:service,clientId:service,platform:"Google",platformAccountId:"2315114913",campaignIdentity:"123",connectionRevision:"fixture",action:`m03_pause:${action}`,requestHash:createHash("sha256").update(raw).digest("base64url"),sessionBinding:"a".repeat(43),networkContext:{source:"cloudflare-ingress",ip:"203.0.113.8"},...options.scope};
   const proof=await new SignJWT(scope).setProtectedHeader({alg:"HS256"}).setIssuer("digitalbee").setAudience(options.audience??"https://m03.example").setSubject("fixture").setIssuedAt().setExpirationTime("30s").setJti(crypto.randomUUID()).sign(new TextEncoder().encode(String(env.M03_PAUSE_MCP_DELEGATION_KEY)));
-  const response=await handle(new Request("https://private-binding.invalid/api/service/digitalbee/m03-pause",{method:"POST",headers:{Authorization:options.bearer??`Bearer ${env.M03_PAUSE_MCP_SERVICE_TOKEN}`,"X-DigitalBee-Delegation":proof,"X-Connection-Revision":"fixture","cf-ray":"spoof","cf-connecting-ip":"127.0.0.1","x-vercel-id":"spoof","x-forwarded-for":"127.0.0.1"},body:raw}),{...env,...options.env},deps);
+  const response=await handle(new Request("https://private-binding.invalid/api/service/digitalbee/m03-pause",{method:"POST",headers:{Authorization:options.bearer??`Bearer ${env.M03_PAUSE_MCP_SERVICE_TOKEN}`,"X-DigitalBee-Delegation":options.unsigned?"unsigned":proof,"X-Connection-Revision":"fixture","cf-ray":"spoof","cf-connecting-ip":"127.0.0.1","x-vercel-id":"spoof","x-forwarded-for":"127.0.0.1"},body:raw}),{...env,...options.env},deps);
   return response.json();
  }
- return {env,call,detail,ips,grants,denyOperator:()=>operatorAllowed=false,denyGrant:()=>grantAllowed=false,revoke:()=>revoked=true,counts:()=>({approvals,mutations,reads})};
+ return {env,call,detail,ips,grants,changeActor:()=>authorizedActor=service,denyOperator:()=>operatorAllowed=false,denyGrant:()=>grantAllowed=false,revoke:()=>revoked=true,counts:()=>({approvals,mutations,reads})};
 }
 test("private binding uses canonical audience, signed network and current authority; separate cards retain exact immutable state",async()=>{
  const f=fixture();const read=await f.call("read");assert.equal(read.outcome,"success");assert.equal(read.display.revision_hash,f.detail.revisions[0]!.payload_hash);
@@ -40,7 +42,7 @@ test("missing/malformed network, body/action/revision/subject/audience/session t
   const f=fixture(),r=await f.call("prepare_approve",undefined,options);assert.equal(r.outcome,"blocked");assert.equal(r.provider_action,false);assert.equal(r.confirmation_token,undefined);assert.deepEqual(f.counts(),{approvals:0,mutations:0,reads:0});
  }
  const f=fixture(),p=await f.call("prepare_approve");const r=await f.call("approve",p.confirmation_token,{scope:{sessionBinding:"b".repeat(43)}});assert.equal(r.blocker,"stale_confirmation");assert.deepEqual(r.binding_mismatch,["session"]);assert.equal(f.counts().approvals,0);
- const moved=await f.call("approve",p.confirmation_token,{scope:{networkContext:{source:"cloudflare-ingress",ip:"203.0.113.9"}}});assert.equal(moved.blocker,"stale_confirmation");assert.deepEqual(moved.binding_mismatch,["ingress_ip"]);assert.doesNotMatch(JSON.stringify(moved),/203\.0\.113|binding_tags|binding_nonce|scope_hash/);assert.equal(f.counts().approvals,0);
+ const moved=await f.call("approve",p.confirmation_token,{scope:{networkContext:{source:"cloudflare-ingress",ip:"203.0.113.9"}}});assert.equal(moved.outcome,"success");assert.equal(f.counts().approvals,1);assert.equal(f.counts().mutations,0);
 });
 test("current operator/domain policy, grant revocation and operator revocation remain mandatory",async()=>{
  for(const deny of ["denyOperator","denyGrant","revoke"] as const){const f=fixture();f[deny]();const r=await f.call("read");assert.equal(r.outcome,"blocked");assert.equal(r.provider_action,false);assert.equal(f.counts().reads,0);}
@@ -76,11 +78,14 @@ test("Supabase operator/network/claim RPC contracts use the same project, contex
 
 test("diagnostic tags remain private and legacy tokens retain exact-IP validation",async()=>{
  const f=fixture(),p=await f.call("prepare_approve"),key=new TextEncoder().encode(String(f.env.M03_PAUSE_MCP_DELEGATION_KEY));
- const {payload}=await jwtVerify(p.confirmation_token,key);const {binding_tags,binding_nonce,...legacy}=payload;
- assert.equal(typeof binding_nonce,"string");assert.equal(Object.keys(binding_tags as object).length,15);
+ const {payload}=await jwtVerify(p.confirmation_token,key);const {binding_tags,binding_nonce,version,...legacy}=payload;
+ legacy.scope_hash=canonicalM03Hash({platform:"google",account_identity:"2315114913",campaign_identity:"123",subject:"fixture",actor_id:actor,grantRevision:1,service_id:service,client_id:service,connectionRevision:"fixture",sessionBinding:"a".repeat(43),networkContext:{source:"cloudflare-ingress",ip:"203.0.113.8"},canonicalOrigin:"https://m03.example"});
+ assert.equal(version,2);assert.equal(typeof binding_nonce,"string");assert.equal(Object.keys(binding_tags as object).length,15);
  const token=await new SignJWT(legacy).setProtectedHeader({alg:"HS256"}).sign(key);
  const moved=await f.call("approve",token,{scope:{networkContext:{source:"cloudflare-ingress",ip:"203.0.113.9"}}});
  assert.equal(moved.blocker,"stale_confirmation");assert.deepEqual(moved.binding_mismatch,["scope_hash"]);assert.equal(f.counts().approvals,0);
+ const diagnosticLegacy=await new SignJWT({...legacy,binding_tags,binding_nonce}).setProtectedHeader({alg:"HS256"}).sign(key);
+ const diagnosticMoved=await f.call("approve",diagnosticLegacy,{scope:{networkContext:{source:"cloudflare-ingress",ip:"203.0.113.9"}}});assert.deepEqual(diagnosticMoved.binding_mismatch,["ingress_ip"]);assert.equal(diagnosticMoved.blocker,"stale_confirmation");
  assert.equal((await f.call("approve",token)).outcome,"success");assert.equal(f.counts().approvals,1);assert.equal(f.counts().mutations,0);
 });
 test("fresh diagnostic confirmations retain grant and expiry checks without provider mutation",async()=>{
@@ -89,4 +94,28 @@ test("fresh diagnostic confirmations retain grant and expiry checks without prov
  const key=new TextEncoder().encode(String(f.env.M03_PAUSE_MCP_DELEGATION_KEY)),{payload}=await jwtVerify(p.confirmation_token,key);
  const expired=await new SignJWT({...payload,iat:Math.floor(Date.now()/1000)-400,exp:Math.floor(Date.now()/1000)-100}).setProtectedHeader({alg:"HS256"}).sign(key);
  assert.equal((await f.call("approve",expired)).outcome,"blocked");assert.equal(f.counts().approvals,0);assert.equal(f.counts().mutations,0);
+});
+
+test("v2 permits separately authorized proxy rotation while keeping unapproved/unsigned ingress and stop controls blocked",async()=>{
+ const f=fixture(),p=await f.call("prepare_approve"),key=new TextEncoder().encode(String(f.env.M03_PAUSE_MCP_DELEGATION_KEY)),{payload}=await jwtVerify(p.confirmation_token,key);
+ assert.equal(payload.version,2);
+ for(const options of [{unsigned:true},{scope:{networkContext:{source:"cloudflare-ingress",ip:"203.0.113.10"}}},{scope:{networkContext:undefined}},{scope:{networkContext:{source:"spoofed",ip:"203.0.113.9"}}},{env:{M03_WORKER_ENABLED:"false"}},{env:{M03_PAUSE_MCP_ENABLED:"false"}}]){
+  const rejected=await f.call("approve",p.confirmation_token,options);assert.notEqual(rejected.outcome,"success");assert.equal(f.counts().approvals,0);assert.equal(f.counts().mutations,0);
+ }
+ const moved=await f.call("approve",p.confirmation_token,{scope:{networkContext:{source:"cloudflare-ingress",ip:"203.0.113.9"}}});assert.equal(moved.outcome,"success");
+ await f.call("approve",p.confirmation_token);assert.equal(f.counts().approvals,1);assert.equal(f.counts().mutations,0);assert(f.ips.includes("203.0.113.8")&&f.ips.includes("203.0.113.9"));
+ const read=await f.call("read");assert.deepEqual(read.approval_evidence,moved.approval_evidence);assert.equal(read.approval_evidence.approval_id,actor);assert.equal(read.approval_evidence.revision_id,revisionId);assert.equal(read.display.status,"approved");assert.equal(read.official_status,"PAUSED");assert.deepEqual(read.receipts,[]);assert.equal(read.provider_action,false);
+});
+test("v2 rotation cannot authorize changed stable bindings or immutable evidence",async()=>{
+ for(const scope of [{sessionBinding:"b".repeat(43)},{grantRevision:2},{clientId:actor},{campaignIdentity:"999"},{subject:"other"},{connectionRevision:"changed"}]){
+  const f=fixture(),p=await f.call("prepare_approve");const result=await f.call("approve",p.confirmation_token,{scope:{...scope,networkContext:{source:"cloudflare-ingress",ip:"203.0.113.9"}}});assert.equal(result.outcome,"blocked");assert.equal(f.counts().approvals,0);assert.equal(f.counts().mutations,0);
+  assert(!result.binding_mismatch?.includes("ingress_ip"));
+ }
+ const f=fixture(),p=await f.call("prepare_approve");f.detail.revisions[0]!.id=actor;assert.equal((await f.call("approve",p.confirmation_token)).outcome,"blocked");assert.equal(f.counts().approvals,0);
+});
+
+test("v2 rejects an authoritative actor change and revision hash change before approval",async()=>{
+ for(const change of ["actor","revision_hash"]){const f=fixture(),p=await f.call("prepare_approve");if(change==="actor")f.changeActor();else f.detail.revisions[0]!.payload_hash="b".repeat(64);
+  assert.equal((await f.call("approve",p.confirmation_token)).outcome,"blocked");assert.equal(f.counts().approvals,0);assert.equal(f.counts().mutations,0);
+ }
 });
