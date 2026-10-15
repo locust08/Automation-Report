@@ -114,6 +114,45 @@ test("v2 rotation cannot authorize changed stable bindings or immutable evidence
  const f=fixture(),p=await f.call("prepare_approve");f.detail.revisions[0]!.id=actor;assert.equal((await f.call("approve",p.confirmation_token)).outcome,"blocked");assert.equal(f.counts().approvals,0);
 });
 
+test("v3 pause permits separately authorized ingress rotation and records one execution",async()=>{
+ const f=fixture(),approval=await f.call("prepare_approve");assert.equal((await f.call("approve",approval.confirmation_token)).outcome,"success");
+ const pause=await f.call("prepare_pause"),key=new TextEncoder().encode(String(f.env.M03_PAUSE_MCP_DELEGATION_KEY)),{payload}=await jwtVerify(pause.confirmation_token,key);
+ assert.equal(payload.version,3);assert.equal(pause.display.action,"pause");
+ const moved=await f.call("pause",pause.confirmation_token,{scope:{networkContext:{source:"cloudflare-ingress",ip:"203.0.113.9"}}});
+ assert.equal(moved.outcome,"success");assert.equal(moved.provider_action,true);assert.deepEqual(f.counts(),{approvals:1,mutations:1,reads:0});
+ await f.call("pause",pause.confirmation_token);assert.equal(f.counts().mutations,1);
+ const receipt=await f.call("read");assert.equal(receipt.display.status,"verified");assert.equal(receipt.official_status,"PAUSED");assert.equal(receipt.receipts.length,1);assert(f.ips.includes("203.0.113.8")&&f.ips.includes("203.0.113.9"));
+});
+test("v3 pause rejects untrusted ingress, revoked authority and changed consent bindings before execution",async()=>{
+ for(const options of [{unsigned:true},{scope:{networkContext:{source:"cloudflare-ingress",ip:"203.0.113.10"}}},{scope:{networkContext:undefined}},{scope:{networkContext:{source:"spoofed",ip:"203.0.113.9"}}},{scope:{sessionBinding:"b".repeat(43),networkContext:{source:"cloudflare-ingress",ip:"203.0.113.9"}}},{scope:{grantRevision:2,networkContext:{source:"cloudflare-ingress",ip:"203.0.113.9"}}},{scope:{clientId:actor,networkContext:{source:"cloudflare-ingress",ip:"203.0.113.9"}}},{scope:{campaignIdentity:"999",networkContext:{source:"cloudflare-ingress",ip:"203.0.113.9"}}},{env:{M03_WORKER_ENABLED:"false"}}]){
+  const f=fixture(),approval=await f.call("prepare_approve");await f.call("approve",approval.confirmation_token);const pause=await f.call("prepare_pause");
+  const rejected=await f.call("pause",pause.confirmation_token,options);assert.notEqual(rejected.outcome,"success");assert.notEqual(rejected.provider_action,true);assert.equal(f.counts().mutations,0);
+ }
+ for(const deny of ["denyOperator","denyGrant","revoke"] as const){const f=fixture(),approval=await f.call("prepare_approve");await f.call("approve",approval.confirmation_token);const pause=await f.call("prepare_pause");f[deny]();assert.notEqual((await f.call("pause",pause.confirmation_token)).outcome,"success");assert.equal(f.counts().mutations,0);}
+ const f=fixture(),approval=await f.call("prepare_approve");await f.call("approve",approval.confirmation_token);const pause=await f.call("prepare_pause");f.detail.revisions[0]!.payload_hash="b".repeat(64);assert.notEqual((await f.call("pause",pause.confirmation_token)).outcome,"success");assert.equal(f.counts().mutations,0);
+});
+test("legacy pause capability still requires exact ingress IP",async()=>{
+ const f=fixture(),approval=await f.call("prepare_approve");await f.call("approve",approval.confirmation_token);const pause=await f.call("prepare_pause");
+ const key=new TextEncoder().encode(String(f.env.M03_PAUSE_MCP_DELEGATION_KEY)),{payload}=await jwtVerify(pause.confirmation_token,key),{version,binding_tags,binding_nonce,...legacy}=payload;
+ assert.equal(version,3);
+ legacy.scope_hash=canonicalM03Hash({platform:"google",account_identity:"2315114913",campaign_identity:"123",subject:"fixture",actor_id:actor,grantRevision:1,service_id:service,client_id:service,connectionRevision:"fixture",sessionBinding:"a".repeat(43),networkContext:{source:"cloudflare-ingress",ip:"203.0.113.8"},canonicalOrigin:"https://m03.example"});
+ const token=await new SignJWT({...legacy,binding_tags,binding_nonce}).setProtectedHeader({alg:"HS256"}).sign(key);
+ const moved=await f.call("pause",token,{scope:{networkContext:{source:"cloudflare-ingress",ip:"203.0.113.9"}}});assert.equal(moved.blocker,"stale_confirmation");assert.deepEqual(moved.binding_mismatch,["ingress_ip"]);assert.equal(f.counts().mutations,0);
+ assert.equal((await f.call("pause",token)).outcome,"success");assert.equal(f.counts().mutations,1);
+});
+test("pause v3 and approval v2 cannot cross actions, and expired pause v3 cannot execute",async()=>{
+ const f=fixture(),approval=await f.call("prepare_approve"),key=new TextEncoder().encode(String(f.env.M03_PAUSE_MCP_DELEGATION_KEY));
+ await f.call("approve",approval.confirmation_token);const pause=await f.call("prepare_pause");
+ const {payload:pausePayload}=await jwtVerify(pause.confirmation_token,key);
+ const forgedApproval=await new SignJWT({...pausePayload,action:"approve"}).setProtectedHeader({alg:"HS256"}).sign(key);
+ assert.equal((await f.call("approve",forgedApproval)).blocker,"access_denied");
+ const {payload:approvalPayload}=await jwtVerify(approval.confirmation_token,key);
+ const forgedPause=await new SignJWT({...approvalPayload,action:"pause"}).setProtectedHeader({alg:"HS256"}).sign(key);
+ assert.equal((await f.call("pause",forgedPause)).blocker,"access_denied");
+ const expired=await new SignJWT({...pausePayload,iat:Math.floor(Date.now()/1000)-400,exp:Math.floor(Date.now()/1000)-100}).setProtectedHeader({alg:"HS256"}).sign(key);
+ assert.notEqual((await f.call("pause",expired)).outcome,"success");assert.equal(f.counts().mutations,0);
+});
+
 test("v2 rejects an authoritative actor change and revision hash change before approval",async()=>{
  for(const change of ["actor","revision_hash"]){const f=fixture(),p=await f.call("prepare_approve");if(change==="actor")f.changeActor();else f.detail.revisions[0]!.payload_hash="b".repeat(64);
   assert.equal((await f.call("approve",p.confirmation_token)).outcome,"blocked");assert.equal(f.counts().approvals,0);assert.equal(f.counts().mutations,0);

@@ -25,7 +25,7 @@ const delegation = z.object({ subject: z.string().min(1).max(255), grantRevision
   connectionRevision: z.string().min(1).max(255), action: z.string(), requestHash: z.string(), sessionBinding: z.string().regex(/^[A-Za-z0-9_-]{43}$/),
   networkContext: z.object({ source: z.literal("cloudflare-ingress"), ip: z.union([z.ipv4(), z.ipv6()]) }).strict().optional() });
 const confirmation = z.object({ request_id: id, revision_id: id, revision_hash: z.string().regex(/^[a-f0-9]{64}$/), action: z.enum(["approve", "pause"]), scope_hash: z.string(), operation_key: id,
-  version: z.literal(2).optional(), binding_nonce: id.optional(), binding_tags: confirmationBindingTags.optional(),
+  version: z.union([z.literal(2),z.literal(3)]).optional(), binding_nonce: id.optional(), binding_tags: confirmationBindingTags.optional(),
 }).refine(value => Boolean(value.binding_nonce) === Boolean(value.binding_tags), "Incomplete binding diagnostics");
 const approvalEvidenceSchema = z.object({approval_id:id,revision_id:id,revision_hash:z.string().regex(/^[a-f0-9]{64}$/),created_at:z.string().datetime({offset:true})});
 const real = { operator: getM03McpOperator, assertOperator: assertM03Operator, get: getMockChangeRequest, create: createPostLaunchChangeRequest,
@@ -81,11 +81,13 @@ export async function mcpPauseService(request: Request, deps: McpPauseDependenci
     await reauthorize();
     const bindingActor = context!.actor_id;
     const consentScope = { ...target, subject: scope.subject, actor_id: context!.actor_id, grantRevision: scope.grantRevision, service_id: body.service_id, client_id: scope.clientId, connectionRevision: scope.connectionRevision, sessionBinding: scope.sessionBinding };
-    // Legacy capabilities retain exact-IP equality. Approval V2 is issued only at the private,
-    // signed-ingress boundary; every request still passes reauthorize above/current().
+    // Legacy capabilities retain exact-IP equality. Versioned capabilities are issued only
+    // at the private signed-ingress boundary; every request passes fresh authorization.
     const scopeHash = canonicalM03Hash({ ...consentScope,
       ...(runtime.requireSignedNetwork ? { networkContext: scope.networkContext, canonicalOrigin: runtime.canonicalOrigin } : {}) });
-    const stableScopeHash = canonicalM03Hash({ ...consentScope, confirmation_version: 2,
+    const approvalStableScopeHash = canonicalM03Hash({ ...consentScope, confirmation_version: 2,
+      networkContext: {source: scope.networkContext?.source}, canonicalOrigin: runtime.canonicalOrigin });
+    const pauseStableScopeHash = canonicalM03Hash({ ...consentScope, confirmation_version: 3,
       networkContext: {source: scope.networkContext?.source}, canonicalOrigin: runtime.canonicalOrigin });
     let requestId = body.request_id;
     if (!requestId) {
@@ -143,7 +145,10 @@ export async function mcpPauseService(request: Request, deps: McpPauseDependenci
       await current();
       stage = "confirmation_creation";
       const nonce=crypto.randomUUID();
-      const token = await new SignJWT({ ...confirmation.parse({ request_id: requestId, revision_id: revision.id, revision_hash: revision.payload_hash, action, ...(runtime.requireSignedNetwork&&action==="approve" ? {version:2,scope_hash:stableScopeHash} : {scope_hash:scopeHash}), operation_key: body.idempotency_key,
+      const scopeClaims=runtime.requireSignedNetwork
+        ? action==="approve" ? {version:2 as const,scope_hash:approvalStableScopeHash} : {version:3 as const,scope_hash:pauseStableScopeHash}
+        : {scope_hash:scopeHash};
+      const token = await new SignJWT({ ...confirmation.parse({ request_id: requestId, revision_id: revision.id, revision_hash: revision.payload_hash, action, ...scopeClaims, operation_key: body.idempotency_key,
         binding_nonce:nonce,binding_tags:await tagConfirmationBinding(bindingValues(action),key,nonce) }) })
         .setProtectedHeader({ alg: "HS256" }).setIssuer("m03-pause-confirmation").setAudience("digitalbee-m03-pause").setSubject(scope.subject).setIssuedAt().setExpirationTime("5m").setJti(nonce).sign(key);
       return json({ outcome: "prepared", display: { ...display(detail), action, expires_at: new Date(Date.now() + 300000).toISOString() }, confirmation_token: token });
@@ -166,11 +171,11 @@ export async function mcpPauseService(request: Request, deps: McpPauseDependenci
     stage = "confirmation_validation";
     const signed = await jwtVerify(body.confirmation_token ?? "", key, { algorithms: ["HS256"], issuer: "m03-pause-confirmation", audience: "digitalbee-m03-pause", maxTokenAge: "5m", requiredClaims: ["sub", "iat", "exp", "jti"] });
     const bound = confirmation.parse(signed.payload);
-    if(bound.version===2&&(!runtime.requireSignedNetwork||bound.action!=="approve"))throw Error("access_denied");
-    const expectedScopeHash=bound.version===2?stableScopeHash:scopeHash;
+    if((bound.version===2&&(!runtime.requireSignedNetwork||bound.action!=="approve"))||(bound.version===3&&(!runtime.requireSignedNetwork||bound.action!=="pause")))throw Error("access_denied");
+    const expectedScopeHash=bound.version===2?approvalStableScopeHash:bound.version===3?pauseStableScopeHash:scopeHash;
     if (signed.payload.sub !== scope.subject || bound.scope_hash !== expectedScopeHash || bound.action !== body.action || bound.request_id !== requestId || bound.revision_id !== revision.id || bound.revision_hash !== revision.payload_hash) {
       if(bound.binding_tags&&bound.binding_nonce)bindingMismatch=await compareConfirmationBinding(bound.binding_tags,bindingValues(body.action),key,bound.binding_nonce);
-      if(bound.version===2&&bindingMismatch)bindingMismatch=bindingMismatch.filter(field=>field!=="ingress_ip");
+      if((bound.version===2||bound.version===3)&&bindingMismatch)bindingMismatch=bindingMismatch.filter(field=>field!=="ingress_ip");
       if(!bound.binding_tags||!bound.binding_nonce)bindingMismatch=[...(signed.payload.sub!==scope.subject?["subject"]:[]),...(bound.scope_hash!==expectedScopeHash?["scope_hash"]:[]),...(bound.action!==body.action?["action"]:[]),...(bound.request_id!==requestId?["request"]:[]),...(bound.revision_id!==revision.id?["revision"]:[]),...(bound.revision_hash!==revision.payload_hash?["revision_hash"]:[])];
       if(!bindingMismatch?.length)bindingMismatch=["scope_hash"];
       throw Error("stale_confirmation");
