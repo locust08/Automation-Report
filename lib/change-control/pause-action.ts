@@ -21,11 +21,17 @@ export async function executeScopedPause(input: { requestId: string; revisionId:
     return detail;
   }
   const detail = await current(); const scope = assertScopedPause(detail, input.context, env);
+  const existingReceipts = await getM03ExecutionReceipts(input.requestId, input.revisionId);
+  // A prior request can time out after the official readback was durably verified.
+  // Finalization revalidates that stored receipt and never dispatches a pause.
+  if (existingReceipts.length === 1 && existingReceipts[0]?.state === "verified") {
+    return finalizeM03Pause(input);
+  }
   const transport = await officialPauseTransport(scope, env);
   const recheck = async () => { await current(); };
   const adapter = createScopedPauseAdapter(scope, transport, recheck);
   const plan = adapter.planMutation({ requestId: input.requestId, revisionHash: input.revisionHash, items: detail.items });
-  const receipts = await getM03ExecutionReceipts(input.requestId, input.revisionId);
+  const receipts = existingReceipts;
   if (receipts.length || input.reconcileOnly) {
     if (receipts.length !== plan.operations.length) throw new M03RepositoryError("No complete attempted pause receipt exists; verification cannot publish.", 409);
     for (const operation of plan.operations) {
