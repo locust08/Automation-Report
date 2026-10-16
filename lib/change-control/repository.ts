@@ -179,8 +179,22 @@ export function createM03ExecutionStore(input: { requestId: string; revisionId: 
 function contextBody(context: TrustedRequestContext): JsonObject {
   return { p_actor_id: context.actor_id, p_trusted_ip: context.trusted_ip, p_trusted_user_agent: context.user_agent };
 }
-export async function getM03ExecutionReceipts(requestId: string, revisionId: string): Promise<Array<{ operation_key: string; operation_hash: string; claim_token: string; state: string; updated_at?: string }>> {
-  return request(`m03_ads_execution_operations?select=operation_key,operation_hash,claim_token,state,updated_at&request_id=eq.${encodeURIComponent(requestId)}&revision_id=eq.${encodeURIComponent(revisionId)}`, { method: "GET" });
+export async function getM03ExecutionReceipts(requestId: string, revisionId: string): Promise<Array<{ id: string; operation_key: string; operation_hash: string; claim_token: string; state: string; created_at: string; updated_at?: string; result: unknown; readback: unknown }>> {
+  return request(`m03_ads_execution_operations?select=id,operation_key,operation_hash,claim_token,state,created_at,updated_at,result,readback&request_id=eq.${encodeURIComponent(requestId)}&revision_id=eq.${encodeURIComponent(revisionId)}`, { method: "GET" });
+}
+export async function getM03PauseRecoveryDisposition(requestId: string): Promise<{old_receipt_id:string;old_revision_id:string;old_revision_hash:string;new_request_id:string}|null> {
+  const rows=await request<Array<{old_receipt_id:string;old_revision_id:string;old_revision_hash:string;new_request_id:string}>>(`m03_ads_pause_recovery_dispositions?select=old_receipt_id,old_revision_id,old_revision_hash,new_request_id&old_request_id=eq.${encodeURIComponent(requestId)}&limit=1`,{method:"GET"});
+  return rows[0]??null;
+}
+export async function recoverM03UnobservedPause(input:{requestId:string;revisionId:string;revisionHash:string;receiptId:string;operationKey:string;
+  platform:"google"|"meta";accountId:string;campaignId:string;clientId:string|null;officialObservedAt:string;
+  sourceEvidence:Record<string,unknown>;baselinePayload:Record<string,unknown>;baselineHash:string;items:Record<string,unknown>[];
+  idempotencyKey:string;context:TrustedRequestContext}):Promise<{old_request_id:string;new_request_id:string;already_recovered:boolean}>{
+  return rpc("m03_ads_recover_unobserved_pause_v1",{p_request_id:input.requestId,p_revision_id:input.revisionId,
+    p_revision_hash:input.revisionHash,p_receipt_id:input.receiptId,p_operation_key:input.operationKey,p_platform:input.platform,
+    p_account_identity:input.accountId,p_campaign_identity:input.campaignId,p_client_id:input.clientId,p_official_status:"ENABLED",
+    p_official_observed_at:input.officialObservedAt,p_source_evidence:input.sourceEvidence,p_baseline_payload:input.baselinePayload,
+    p_baseline_hash:input.baselineHash,p_items:input.items,p_idempotency_key:input.idempotencyKey,...contextBody(input.context)}) as Promise<{old_request_id:string;new_request_id:string;already_recovered:boolean}>;
 }
 export async function reconcileM03PauseReceipt(input: { requestId: string; revisionId: string; revisionHash: string; operationKey: string; token: string; readback: M03ProviderReadback; context: TrustedRequestContext }) {
   return rpc("m03_ads_reconcile_pause_receipt_v1", { p_request_id: input.requestId, p_revision_id: input.revisionId, p_revision_hash: input.revisionHash, p_operation_key: input.operationKey, p_claim_token: input.token, p_readback_json: canonicalJson(input.readback), p_payload_json: canonicalJson(input.readback.canonical_payload), ...contextBody(input.context) });
