@@ -29,7 +29,7 @@ function fixture(realPreview=false,failures:{preview?:Error;grant?:Error;reconci
   const proof=await new SignJWT(scope).setProtectedHeader({alg:"HS256"}).setIssuer("digitalbee").setAudience("https://backend.example").setSubject("fixture-actor").setIssuedAt().setExpirationTime("30s").setJti(crypto.randomUUID()).sign(new TextEncoder().encode(env.M03_PAUSE_MCP_DELEGATION_KEY));
   return (await mcpPauseService(new Request("https://backend.example/api/service/digitalbee/m03-pause",{method:"POST",headers:{Authorization:options.badBearer?"Bearer wrong":`Bearer ${env.M03_PAUSE_MCP_SERVICE_TOKEN}`,"X-DigitalBee-Delegation":proof,"X-Connection-Revision":"fixture","x-vercel-id":"fixture","x-forwarded-for":"127.0.0.1",...(options.envPatch?.VERCEL==="1"?{"cf-ray":"fixture-worker-trace"}:{})},body:raw}),dependencies,{...env,...options.envPatch})).json();
  }
- return {call,detail,revoke:()=>{revoked=true;},counts:()=>({approvals,mutations}),recoveryCount:()=>recoveries,transportCounts:()=>({reads:providerReads,pauses:providerPauses}),setProviderStatus:(status:string)=>{providerStatus=status;},setAmbiguous:()=>{receipts=[{id:actor,operation_key:"fixture-operation",state:"ambiguous",created_at:new Date().toISOString()}];detail.request.status="publishing";},setStarted:(age:number)=>{const created_at=new Date(Date.now()-age).toISOString();receipts=[{id:actor,operation_key:"fixture-operation",state:"started",created_at,updated_at:created_at}];detail.request.status="publishing";},setDisposition:()=>{disposition={old_receipt_id:actor,old_revision_id:revisionId,old_revision_hash:hash,new_request_id:service};}};
+ return {call,detail,revoke:()=>{revoked=true;},counts:()=>({approvals,mutations}),recoveryCount:()=>recoveries,transportCounts:()=>({reads:providerReads,pauses:providerPauses}),setProviderStatus:(status:string)=>{providerStatus=status;},setAmbiguous:()=>{receipts=[{id:actor,operation_key:"fixture-operation",state:"ambiguous",created_at:new Date().toISOString()}];detail.request.status="publishing";},setVerifiedUnfinalized:()=>{receipts=[{id:actor,operation_key:"fixture-operation",state:"verified",created_at:new Date().toISOString(),readback:{verified_at:new Date(Date.now()-1200000).toISOString()}}];detail.request.status="approved";},setStarted:(age:number)=>{const created_at=new Date(Date.now()-age).toISOString();receipts=[{id:actor,operation_key:"fixture-operation",state:"started",created_at,updated_at:created_at}];detail.request.status="publishing";},setDisposition:()=>{disposition={old_receipt_id:actor,old_revision_id:revisionId,old_revision_hash:hash,new_request_id:service};}};
 }
 test("approval preparation uses the real scoped provider preview and preserves exact PAUSED-to-PAUSED authority without mutation",async()=>{
  const f=fixture(true),result=await f.call("prepare_approve",undefined,{envPatch:{VERCEL:"1"}});
@@ -106,6 +106,13 @@ test("revoked authorization and stale immutable evidence block confirmation",asy
 });
 test("read reconciles an ambiguous attempted pause without dispatching a provider mutation",async()=>{
  const f=fixture(),prepared=await f.call("prepare_approve");await f.call("approve",prepared.confirmation_token);f.setAmbiguous();const read=await f.call("read");assert.equal(read.outcome,"success");assert.equal(read.display.status,"verified");assert.equal(read.provider_action,false);assert.equal(f.counts().mutations,0);
+});
+test("read finalizes a verified receipt left on an approved request without another provider pause",async()=>{
+ const f=fixture(),prepared=await f.call("prepare_approve");await f.call("approve",prepared.confirmation_token);
+ f.setVerifiedUnfinalized();const read=await f.call("read");
+ assert.equal(read.outcome,"success");assert.equal(read.display.status,"verified");
+ assert.equal(read.official_status,"PAUSED");assert.deepEqual(read.receipts,[{operation_key:"fixture-operation",state:"verified"}]);
+ assert.equal(read.provider_action,false);assert.deepEqual(f.counts(),{approvals:1,mutations:0});assert.deepEqual(f.transportCounts(),{reads:1,pauses:0});
 });
 test("concurrent confirmation waits for its active claim; interrupted claims reconcile by readback only",async()=>{
  const f=fixture(),approval=await f.call("prepare_approve");await f.call("approve",approval.confirmation_token);

@@ -22,11 +22,8 @@ export async function executeScopedPause(input: { requestId: string; revisionId:
   }
   const detail = await current(); const scope = assertScopedPause(detail, input.context, env);
   const existingReceipts = await getM03ExecutionReceipts(input.requestId, input.revisionId);
-  // A prior request can time out after the official readback was durably verified.
-  // Finalization revalidates that stored receipt and never dispatches a pause.
-  if (existingReceipts.length === 1 && existingReceipts[0]?.state === "verified") {
-    return finalizeM03Pause(input);
-  }
+  // A verified receipt can outlive the SQL finalizer's 15-minute official
+  // readback window. Refresh it through the readback-only path before finalizing.
   const transport = await officialPauseTransport(scope, env);
   const recheck = async () => { await current(); };
   const adapter = createScopedPauseAdapter(scope, transport, recheck);
@@ -41,6 +38,10 @@ export async function executeScopedPause(input: { requestId: string; revisionId:
       await recheck();
       await reconcileM03PauseReceipt({ ...input, operationKey: receipt.operation_key, token: receipt.claim_token, readback });
     }
+    // The fresh recheck and reconciliation RPC have already validated scope and
+    // operator. The finalizer repeats its own guarded checks without another
+    // network round trip through the complete request loader.
+    return finalizeM03Pause(input);
   } else {
     const gate = { deployment_enabled: true, platform_allowlisted: true, account_allowlisted: true, exact_revision_selected: true };
     const preview = await buildM03ProviderWorkflowPreview(detail, adapter);
