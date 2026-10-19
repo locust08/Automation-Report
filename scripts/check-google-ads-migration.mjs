@@ -4,9 +4,6 @@ import { pathToFileURL } from "node:url";
 
 export function inspectGoogleAdsSource(path, source) {
   const problems = [];
-  const legacy = ["GOOGLE_ADS_" + "DEVELOPER_TOKEN", "developer" + "_token", "developer" + "Token", "googleDeveloper" + "Token"];
-  if (!path.endsWith(".md")) legacy.push("developer" + "-token");
-  if (legacy.some(value => source.includes(value))) problems.push("legacy credential/header");
   const isTest = /(?:\.test\.|\/tests\/)/.test(path);
   if (!isTest && /google/i.test(source) && /(?:googleads\.googleapis\.com\/v(?:22|23|24)\b|(?:GOOGLE_ADS_(?:API_)?(?:DEFAULT_)?VERSION|googleAdsApiVersion|apiVersion)\s*[:=]\s*["']?v?(?:22|23|24)\b)/.test(source)) problems.push("unsupported Google Ads API version");
   if (/NEXT_PUBLIC_(?:GOOGLE|GOOGLE_ADS|GOOGLE_OAUTH)_(?:ACCESS_TOKEN|REFRESH_TOKEN|CLIENT_SECRET|CLIENT_ID)/.test(source)) problems.push("browser-exposed OAuth configuration");

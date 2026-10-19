@@ -2,13 +2,13 @@ import { jwtVerify, SignJWT } from "jose";
 import { z } from "zod";
 import { resolveTrustedIp } from "./request-context";
 import { assertPauseTarget, assertScopedPause, createScopedPauseAdapter } from "./scoped-pause";
-import { getM03McpOperator, assertM03Operator, getMockChangeRequest, createPostLaunchChangeRequest, validateMockChangeRequest, approveExactM03Pause, getM03ExecutionReceipts, getM03RevisionIntegrityReceipt } from "./repository";
+import { getM03McpOperator, assertM03Operator, getMockChangeRequest, createPostLaunchChangeRequest, validateMockChangeRequest, approveExactM03Pause, getM03ExecutionReceipts, getM03RevisionIntegrityReceipt, getM03PauseRecoveryDisposition, recoverM03UnobservedPause } from "./repository";
 import { assertM03ReviewedItems, assertM03RevisionIntegrity } from "./revision-integrity";
 import { verifyM03SourceBoundary } from "./source-boundary";
 import { officialPauseTransport } from "./pause-transport";
 import { executeScopedPause } from "./pause-action";
 import { buildM03ProviderWorkflowPreview } from "./provider-workflow";
-import { canonicalM03Hash } from "./provider-contract";
+import { canonicalM03Hash, m03BaselineKey } from "./provider-contract";
 import type { M03ChangeRequestDetail, TrustedRequestContext } from "./types";
 import { m03BoundedText } from "./bounded-response";
 import {compareConfirmationBinding, confirmationBindingTags, tagConfirmationBinding, type ConfirmationBindingValues} from "./confirmation-binding";
@@ -16,7 +16,7 @@ import {compareConfirmationBinding, confirmationBindingTags, tagConfirmationBind
 const id = z.string().uuid(), numeric = z.string().regex(/^\d{1,30}$/);
 const refs = z.object({ workflow_id: id, revision_id: id, receipt_id: id }).strict();
 export const pauseBody = z.object({
-  action: z.enum(["prepare_approve", "prepare_pause", "approve", "pause", "read"]),
+  action: z.enum(["prepare_approve", "prepare_pause", "prepare_recover", "approve", "pause", "recover", "read"]),
   service_id: id, campaign_id: numeric, idempotency_key: id,
   request_id: id.optional(), source: refs.optional(), confirmation_token: z.string().min(16).max(8192).optional(),
 }).strict();
@@ -24,13 +24,15 @@ const delegation = z.object({ subject: z.string().min(1).max(255), grantRevision
   platform: z.enum(["Google", "Meta"]), platformAccountId: numeric, campaignIdentity: numeric,
   connectionRevision: z.string().min(1).max(255), action: z.string(), requestHash: z.string(), sessionBinding: z.string().regex(/^[A-Za-z0-9_-]{43}$/),
   networkContext: z.object({ source: z.literal("cloudflare-ingress"), ip: z.union([z.ipv4(), z.ipv6()]) }).strict().optional() });
-const confirmation = z.object({ request_id: id, revision_id: id, revision_hash: z.string().regex(/^[a-f0-9]{64}$/), action: z.enum(["approve", "pause"]), scope_hash: z.string(), operation_key: id,
-  version: z.union([z.literal(2),z.literal(3)]).optional(), binding_nonce: id.optional(), binding_tags: confirmationBindingTags.optional(),
-}).refine(value => Boolean(value.binding_nonce) === Boolean(value.binding_tags), "Incomplete binding diagnostics");
+const confirmation = z.object({ request_id: id, revision_id: id, revision_hash: z.string().regex(/^[a-f0-9]{64}$/), action: z.enum(["approve", "pause", "recover"]), scope_hash: z.string(), operation_key: id,
+  receipt_id:id.optional(), receipt_operation_key:z.string().optional(), source:refs.optional(),
+  version: z.union([z.literal(2),z.literal(3),z.literal(4)]).optional(), binding_nonce: id.optional(), binding_tags: confirmationBindingTags.optional(),
+}).refine(value => Boolean(value.binding_nonce) === Boolean(value.binding_tags), "Incomplete binding diagnostics")
+  .refine(value => value.action!=="recover" || Boolean(value.receipt_id&&value.receipt_operation_key&&value.source), "Incomplete recovery binding");
 const approvalEvidenceSchema = z.object({approval_id:id,revision_id:id,revision_hash:z.string().regex(/^[a-f0-9]{64}$/),created_at:z.string().datetime({offset:true})});
 const real = { operator: getM03McpOperator, assertOperator: assertM03Operator, get: getMockChangeRequest, create: createPostLaunchChangeRequest,
   validate: validateMockChangeRequest, approve: approveExactM03Pause, integrity: getM03RevisionIntegrityReceipt, boundary: verifyM03SourceBoundary, transport: officialPauseTransport,
-  execute: executeScopedPause, receipts: getM03ExecutionReceipts, preview: buildM03ProviderWorkflowPreview, fetch: globalThis.fetch };
+  execute: executeScopedPause, receipts: getM03ExecutionReceipts, disposition:getM03PauseRecoveryDisposition, recover:recoverM03UnobservedPause, preview: buildM03ProviderWorkflowPreview, fetch: globalThis.fetch };
 export type McpPauseDependencies = typeof real;
 const digest = async (text: string) => Buffer.from(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text))).toString("base64url");
 const json = (value: Record<string, unknown>, status = 200) => Response.json({ correlation_id: crypto.randomUUID(), ...value }, { status, headers: { "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff" } });
@@ -89,6 +91,8 @@ export async function mcpPauseService(request: Request, deps: McpPauseDependenci
       networkContext: {source: scope.networkContext?.source}, canonicalOrigin: runtime.canonicalOrigin });
     const pauseStableScopeHash = canonicalM03Hash({ ...consentScope, confirmation_version: 3,
       networkContext: {source: scope.networkContext?.source}, canonicalOrigin: runtime.canonicalOrigin });
+    const recoveryStableScopeHash = canonicalM03Hash({ ...consentScope, confirmation_version: 4,
+      networkContext: {source: scope.networkContext?.source}, canonicalOrigin: runtime.canonicalOrigin });
     let requestId = body.request_id;
     if (!requestId) {
       stage = "source_adoption";
@@ -131,6 +135,79 @@ export async function mcpPauseService(request: Request, deps: McpPauseDependenci
       const parsed=approvalEvidenceSchema.safeParse(row&&{approval_id:row.id,revision_id:row.revision_id,revision_hash:row.revision_hash,created_at:row.created_at});
       return parsed.success ? parsed.data : undefined;
     };
+    async function recoveryState() {
+      stage="receipt_read";
+      const disposition=await deps.disposition(requestId!);
+      const receipts=await deps.receipts(requestId!,revision.id);
+      if(disposition)return {disposition,receipts};
+      if(!["approved","publishing","ready_to_publish","provider_execution_locked"].includes(detail.request.status)
+        || detail.items[0]?.baseline_value!=="ENABLED" || detail.items[0]?.proposed_value!=="PAUSED"
+        || !approvalEvidence(detail) || receipts.length!==1 || receipts[0]!.state!=="started"
+        || receipts[0]!.result!=null || receipts[0]!.readback!=null
+        || !Number.isFinite(Date.parse(receipts[0]!.created_at)) || Date.parse(receipts[0]!.created_at)>Date.now()-600000)
+        throw Error("recovery_not_eligible");
+      return {disposition:null,receipts};
+    }
+    async function recoveryDraft(sourceRefs:z.infer<typeof refs>,operationKey:string){
+      const evidence={m18_workflow_id:sourceRefs.workflow_id,m18_revision_id:sourceRefs.revision_id,m18_receipt_id:sourceRefs.receipt_id};
+      if(Object.entries(evidence).some(([field,value])=>detail.items[0]?.evidence?.[field]!==value))throw Error("source_changed");
+      const input={...target,platform:target.platform as "google"|"meta",workflow_mode:"mock" as const,
+        title:"M03 recovered campaign pause",reason:"Separate pause after unobserved prior claim",client_id:detail.request.client_id,
+        supersedes_request_id:requestId,idempotency_key:operationKey,
+        items:[{entity_type:"campaign",entity_identity:body.campaign_id,field_path:"campaign.status",value_type:"string" as const,
+          baseline_value:"ENABLED",proposed_value:"PAUSED",evidence}]};
+      stage="recovery_source";
+      const source=await deps.boundary(input,env);
+      if(source.source_kind!=="legacy_provider_adoption" || !source.baseline || source.baseline.canonical_payload[m03BaselineKey(input.items[0]!)]!=="ENABLED")throw Error("source_changed");
+      return {input,source,evidence};
+    }
+    if(body.action==="prepare_recover" || body.action==="recover"){
+      if(!body.source)throw Error("source_required");
+      const {disposition,receipts}=await recoveryState();
+      const receipt=receipts[0];
+      if(body.action==="recover"){
+        stage="confirmation_validation";
+        const signed=await jwtVerify(body.confirmation_token??"",key,{algorithms:["HS256"],issuer:"m03-pause-confirmation",audience:"digitalbee-m03-pause",maxTokenAge:"5m",requiredClaims:["sub","iat","exp","jti"]});
+        const bound=confirmation.parse(signed.payload);
+        if(!receipt || bound.version!==4 || signed.payload.sub!==scope.subject || bound.scope_hash!==recoveryStableScopeHash
+          || bound.action!=="recover" || bound.request_id!==requestId || bound.revision_id!==revision.id || bound.revision_hash!==revision.payload_hash
+          || bound.operation_key!==body.idempotency_key || bound.receipt_id!==receipt.id || bound.receipt_operation_key!==receipt.operation_key
+          || canonicalM03Hash(bound.source)!==canonicalM03Hash(body.source))throw Error("stale_confirmation");
+      }
+      if(disposition){
+        if(body.action==="recover")return json({outcome:"success",display:display(detail),new_request_id:disposition.new_request_id,already_recovered:true,reconciliation_state:"superseded",retry_allowed:false,provider_action:false});
+        throw Error("already_recovered");
+      }
+      if(!receipt)throw Error("recovery_not_eligible");
+      stage="official_read";
+      const official=await (await deps.transport(assertPauseTarget(target,context!,env),env)).read();
+      if(official.account_id!==target.account_identity || official.campaign_id!==target.campaign_identity || official.status!=="ENABLED")throw Error("stale_official_status");
+      const observedAt=new Date().toISOString();
+      const draft=await recoveryDraft(body.source,body.idempotency_key);
+      detail=await current();
+      if(body.action==="prepare_recover"){
+        stage="confirmation_creation";
+        const nonce=crypto.randomUUID();
+        const token=await new SignJWT(confirmation.parse({request_id:requestId,revision_id:revision.id,revision_hash:revision.payload_hash,
+          action:"recover",version:4,scope_hash:recoveryStableScopeHash,operation_key:body.idempotency_key,receipt_id:receipt.id,
+          receipt_operation_key:receipt.operation_key,source:body.source,binding_nonce:nonce,
+          binding_tags:await tagConfirmationBinding(bindingValues("recover"),key,nonce)}))
+          .setProtectedHeader({alg:"HS256"}).setIssuer("m03-pause-confirmation").setAudience("digitalbee-m03-pause")
+          .setSubject(scope.subject).setIssuedAt().setExpirationTime("5m").setJti(nonce).sign(key);
+        return json({outcome:"prepared",display:{...display(detail),action:"recover",expires_at:new Date(Date.now()+300000).toISOString(),
+          old_receipt_key:receipt.operation_key,source_workflow_id:body.source.workflow_id,
+          source_revision_id:body.source.revision_id,source_receipt_id:body.source.receipt_id},
+          confirmation_token:token,receipt:{operation_key:receipt.operation_key,state:receipt.state},provider_action:false});
+      }
+      stage="recovery_commit";
+      await reauthorize();stage="recovery_commit";
+      const recovered=await deps.recover({requestId:requestId!,revisionId:revision.id,revisionHash:revision.payload_hash,receiptId:receipt.id,
+        operationKey:receipt.operation_key,platform:target.platform as "google"|"meta",accountId:target.account_identity,campaignId:target.campaign_identity,
+        clientId:detail.request.client_id,officialObservedAt:observedAt,sourceEvidence:draft.source.evidence,
+        baselinePayload:draft.source.baseline.canonical_payload,baselineHash:draft.source.baseline.payload_hash,
+        items:[{...draft.input.items[0],evidence:draft.source.evidence}],idempotencyKey:body.idempotency_key,context:context!});
+      return json({outcome:"success",display:display(detail),new_request_id:recovered.new_request_id,already_recovered:recovered.already_recovered,reconciliation_state:"superseded",retry_allowed:false,provider_action:false});
+    }
     if (body.action.startsWith("prepare_")) {
       stage = "preparation_state";
       const action = body.action === "prepare_approve" ? "approve" : "pause";
@@ -156,17 +233,23 @@ export async function mcpPauseService(request: Request, deps: McpPauseDependenci
     if (body.action === "read") {
       stage = "receipt_read";
       const receipts = await deps.receipts(requestId, revision.id);
-      // A live claim is allowed to finish; an interrupted claim is readback-only after
-      // twice the service's 60-second execution window. Never dispatch a second pause.
-      if (receipts.length && receipts.every(r => r.state !== "started" || Number.isFinite(Date.parse(r.updated_at ?? "")) && Date.parse(r.updated_at!) < Date.now() - 120000) && detail.request.status !== "verified") {
-        await deps.execute({ requestId, revisionId: revision.id, revisionHash: revision.payload_hash, context: context!, reconcileOnly: true, reauthorize, env });
-        detail = await current();
-      }
+      const disposition=await deps.disposition(requestId);
       stage = "official_read";
       const official = await (await deps.transport(assertPauseTarget(target, context!, env), env)).read();
       if (official.account_id !== target.account_identity || official.campaign_id !== body.campaign_id) throw Error("source_changed");
+      // An interrupted claim can only be reconciled after an official PAUSED
+      // observation. ENABLED is evidence that the pause has not been observed,
+      // never permission to replay the mutation or discard its unknown outcome.
+      const agedStarted = receipts.some(r => r.state === "started" && Number.isFinite(Date.parse(r.updated_at ?? "")) && Date.parse(r.updated_at!) < Date.now() - 120000);
+      const reconciliationState = disposition ? "superseded" : agedStarted && official.status !== "PAUSED" ? "pause_not_observed" : undefined;
+      if (!disposition && official.status === "PAUSED" && receipts.length && receipts.every(r => r.state !== "started" || Number.isFinite(Date.parse(r.updated_at ?? "")) && Date.parse(r.updated_at!) < Date.now() - 120000) && detail.request.status !== "verified") {
+        stage = "receipt_reconciliation";
+        await deps.execute({ requestId, revisionId: revision.id, revisionHash: revision.payload_hash, context: context!, reconcileOnly: true,
+          reauthorize: async () => { await reauthorize(); stage = "receipt_reconciliation"; }, env });
+        detail = await current();
+      }
       detail = await current();
-      return json({ outcome: "success", display: display(detail), approval_evidence:approvalEvidence(detail), official_status: official.status, captured_at: new Date().toISOString(), receipts: (await deps.receipts(requestId, revision.id)).map(r => ({ operation_key: r.operation_key, state: r.state })), provider_action: false });
+      return json({ outcome: "success", display: display(detail), approval_evidence:approvalEvidence(detail), official_status: official.status, captured_at: new Date().toISOString(), receipts: (await deps.receipts(requestId, revision.id)).map(r => ({ operation_key: r.operation_key, state: r.state })), ...(reconciliationState ? {reconciliation_state:reconciliationState,retry_allowed:false} : {}), ...(disposition?{new_request_id:disposition.new_request_id}:{}), provider_action: false });
     }
     stage = "confirmation_validation";
     const signed = await jwtVerify(body.confirmation_token ?? "", key, { algorithms: ["HS256"], issuer: "m03-pause-confirmation", audience: "digitalbee-m03-pause", maxTokenAge: "5m", requiredClaims: ["sub", "iat", "exp", "jti"] });
@@ -191,7 +274,7 @@ export async function mcpPauseService(request: Request, deps: McpPauseDependenci
     detail = await current();
     return json({ outcome: "success", display: display(detail), approval_evidence:approvalEvidence(detail), provider_action: body.action === "pause" });
   } catch (error) {
-    const known = error instanceof Error && /^(access_denied|invalid_request|request_id_required|source_changed|scope_changed|validated_revision_required|approval_required|state_changed|baseline_or_capability_changed|receipt_exists_read_only|stale_confirmation)$/.test(error.message) ? error.message : "request_failed";
+    const known = error instanceof Error && /^(access_denied|invalid_request|request_id_required|source_required|source_changed|scope_changed|validated_revision_required|approval_required|state_changed|baseline_or_capability_changed|receipt_exists_read_only|recovery_not_eligible|stale_official_status|already_recovered|stale_confirmation)$/.test(error.message) ? error.message : "request_failed";
     const category = error instanceof z.ZodError ? "invalid_data" : error instanceof Error && ["TimeoutError", "AbortError"].includes(error.name) ? "timeout" : known !== "request_failed" ? "guard" : "unexpected";
     const evidence = { outcome: attempted ? "unknown" : "blocked", blocker: known, correlation_id: crypto.randomUUID(), provider_action: attempted ? "uncertain" : false, diagnostic: { stage, category }, ...(bindingMismatch ? {binding_mismatch:bindingMismatch} : {}) };
     if (category === "unexpected" || category === "timeout") { try { runtime.onUnexpected?.(error, evidence.correlation_id); } catch { /* Monitoring cannot change the result. */ } }
