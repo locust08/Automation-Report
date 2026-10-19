@@ -17,6 +17,10 @@ The shared client requires the OAuth client ID, client secret and refresh token.
 - Isolated application typecheck, lint and production build passed. Lint reported 25 existing warnings and no errors. Worker bundling dry-run passed.
 - Safe local request IDs and results are under ignored `artifacts/m07/`; credentials are not recorded there.
 
+## Contract check correction — 2026-10-16
+
+The repository-wide scanner now checks unsupported Google Ads API versions and browser credential exposure without rejecting developer-token identifiers in server-side code. The [Google Ads REST authorization guide](https://developers.google.com/google-ads/api/rest/auth) requires a developer token header on every API call alongside OAuth credentials. The previous token-name rule caused the `contract` CI job to fail on unchanged live M03/M04 source and documentation. This correction changes the scanner only; it does not change provider requests, credential values, or the M07 production gate.
+
 ## Compatibility changes
 
 The [Google release notes](https://developers.google.com/google-ads/api/docs/release-notes) require campaign date-time fields. Existing public date field keys are retained and mapped to date-time request fields. Removed video-view metrics use TrueView views; keyword conversion rates continue to derive from clicks and conversions. Topic labels use criterion topic paths. The removed Demand Gen `lead_form_only` field is no longer queried or offered as an editable field; pending edits targeting it fail local validation.
