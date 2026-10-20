@@ -3,6 +3,7 @@
 import { useMemo, useState } from "react";
 import { CircleHelpIcon, Music2Icon, TrendingDownIcon, TrendingUpIcon, XIcon } from "lucide-react";
 
+import { ComparisonPercentage } from "./report-display-preferences";
 import { getMetricExplanation } from "@/components/reporting/metric-explanation";
 import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area";
 import { formatDelta, formatMetricValue } from "@/lib/reporting/format";
@@ -222,7 +223,7 @@ function MetricCard({
         >
           {formattedValue}
         </span>
-        <MetricDelta delta={metric.delta} className={deltaClassName} />
+        <ComparisonPercentage><MetricDelta delta={metric.delta} className={deltaClassName} /></ComparisonPercentage>
         <span className="mt-1.5 text-center text-[9px] font-semibold uppercase tracking-wide text-[#6f5f67] opacity-0 transition-opacity duration-200 group-hover:opacity-100 group-focus-visible:opacity-100">
           View calculation
         </span>
@@ -305,14 +306,14 @@ function MetricExplanationDialog({
               <MetricPeriodValue label={currentLabel} value={currentValue} tone="current" />
               <MetricPeriodValue label={previousLabel} value={previousValue} tone="previous" />
             </div>
-            <div className="mt-4 rounded-xl bg-[#38363f] p-4 text-white">
+            <ComparisonPercentage><div className="mt-4 rounded-xl bg-[#38363f] p-4 text-white">
               <p className="text-sm font-semibold">Period comparison</p>
               <p className="mt-1 break-words text-sm leading-6 text-[#e4dce1]">
                 {metric.delta === null
                   ? "No baseline: a percentage cannot be calculated from a zero or unavailable prior value."
                   : `Change = (current - previous) / previous * 100 = ${formatDelta(metric.delta)}`}
               </p>
-            </div>
+            </div></ComparisonPercentage>
           </>
         )}
       </section>

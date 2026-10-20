@@ -1,6 +1,7 @@
-const USER_PAGE_PATHS = ["/dashboard", "/overall", "/preview", "/advanced", "/demand-gen", "/campaign-breakdown"];
+const USER_PAGE_PATHS = ["/dashboard", "/overall", "/preview", "/advanced", "/demand-gen", "/campaign-breakdown", "/settings"];
 export function isUserRoleRequestAllowed(pathname: string, method = "GET") {
   if (USER_PAGE_PATHS.some((path) => pathname === path || pathname.startsWith(`${path}/`))) return true;
+  if (pathname === "/api/user/report-display-preferences" && (method === "GET" || method === "PATCH")) return true;
   if (pathname === "/api/auth/session" && method === "GET") return true;
   if (pathname === "/api/auth/logout" && method === "POST") return true;
   if (pathname === "/api/notion/accounts/search" && method === "GET") return true;

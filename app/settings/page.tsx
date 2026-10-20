@@ -6,6 +6,5 @@ import { getServerAuthSession } from "@/lib/auth/server-session";
 export default async function SettingsPage() {
   const session = await getServerAuthSession();
   if (!session) redirect("/");
-  if (session.role !== "admin") redirect("/dashboard");
   return <WorkflowSettingsPageClient initialRole={session.role} />;
 }

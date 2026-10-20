@@ -1,5 +1,6 @@
 "use client";
 
+import { useReportDisplayPreferences, useShowComparisonPercentages } from "./report-display-preferences";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
@@ -75,6 +76,8 @@ export function ReportShell({
   children,
 }: ReportShellProps) {
   const { screenshotMode } = useScreenshotMode();
+  const { loading: preferencesLoading } = useReportDisplayPreferences();
+  const showComparisons = useShowComparisonPercentages();
   const pathname = usePathname();
   const [currentRole, setCurrentRole] = useState<string | null>(initialRole ?? null);
   useEffect(() => {
@@ -147,12 +150,12 @@ export function ReportShell({
             items: [
               { href: hrefs.changeControl, label: "Change Control Admin", active: pathname === "/change-control", icon: GitCompareArrowsIcon },
               { href: hrefs.userManagement, label: "User Management", active: pathname === "/user-management", icon: UsersRoundIcon },
-              { href: hrefs.settings, label: "Settings", active: pathname === "/settings", icon: SettingsIcon },
             ],
           },
         ]
       : []),
   ];
+  if (currentRole !== null) navigationGroups.push({ label: "Preferences", items: [{ href: hrefs.settings, label: "Settings", active: pathname === "/settings", icon: SettingsIcon }] });
   const navigationIsActive = navigationGroups.some((group) => group.items.some((item) => item.active));
 
   return (
@@ -160,7 +163,8 @@ export function ReportShell({
       className="flex min-h-screen flex-col overflow-x-clip bg-[#f0f0f0] text-[#111]"
       data-report-capture-root="true"
       data-report-typography={screenshotMode ? "capture" : "screen"}
-      data-report-ready={reportReady ? "true" : undefined}
+      data-report-show-comparisons={showComparisons ? "true" : "false"}
+      data-report-ready={reportReady && !preferencesLoading ? "true" : undefined}
     >
       <div className={`${REPORT_PAGE_FRAME_CLASS} ${wideContent && !screenshotMode ? "!max-w-[1920px]" : ""} ${screenshotMode ? "!min-h-0 !flex-none" : ""}`}>
         {screenshotMode && !suppressExportHeader ? (

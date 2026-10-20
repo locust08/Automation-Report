@@ -1,4 +1,5 @@
 "use client";
+import { ComparisonPercentage } from "./report-display-preferences";
 
 import { Fragment, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
@@ -2205,8 +2206,8 @@ function LineChart({ points }: { points: AdvancedMonthlyPoint[] }) {
             <div className="rounded-xl bg-[#111827] p-2 text-xs leading-relaxed text-white shadow-xl">
               <div className="font-semibold">{hovered.month}</div>
               <div>Search volume: {formatNumber(hovered.value)}</div>
-              <div>MoM: {formatPercentChange(chartPoints[hoveredIndex ?? 0]?.value, chartPoints[(hoveredIndex ?? 0) - 1]?.value)}</div>
-              <div>From first: {formatPercentChange(hovered.value, first?.value)}</div>
+              <ComparisonPercentage><div>MoM: {formatPercentChange(chartPoints[hoveredIndex ?? 0]?.value, chartPoints[(hoveredIndex ?? 0) - 1]?.value)}</div>
+              <div>From first: {formatPercentChange(hovered.value, first?.value)}</div></ComparisonPercentage>
             </div>
           </foreignObject>
         ) : null}
@@ -2719,7 +2720,7 @@ function OpportunityList({
             </div>
             <p className="mt-1 text-sm text-[#666]">
               {formatNumber(row.previousVolume)} â†’ {formatNumber(row.currentVolume)}
-              {row.growthPercent === null ? " Â· New growth" : ` Â· ${formatPercentChange(row.currentVolume, row.previousVolume)}`}
+              <ComparisonPercentage>{row.growthPercent === null ? " Â· New growth" : ` Â· ${formatPercentChange(row.currentVolume, row.previousVolume)}`}</ComparisonPercentage>
             </p>
             <CollapsibleReason text={row.reason} />
             {row.history.length > 1 ? (
@@ -2756,9 +2757,9 @@ function RisingKeywordList({
             <p className="text-sm text-[#666]">
               {formatNumber(row.previousVolume)} â†’ {formatNumber(row.currentVolume)}
             </p>
-            <p className="mt-1 font-semibold text-[#009b7a]">
+            <ComparisonPercentage><p className="mt-1 font-semibold text-[#009b7a]">
               {row.growthPercent === null ? "New growth" : formatSignedPercent(row.growthPercent)}
-            </p>
+            </p></ComparisonPercentage>
             <CollapsibleReason text={row.reason} />
             {row.history.length > 1 ? <MiniLineChart points={row.history.slice(-12)} /> : null}
           </div>

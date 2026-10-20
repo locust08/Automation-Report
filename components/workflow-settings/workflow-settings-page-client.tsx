@@ -5,6 +5,7 @@ import { useCallback, useEffect, useState } from "react";
 
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Switch } from "@/components/ui/switch";
+import { ReportDisplayCard } from "./report-display-card";
 import { ExclusionCapCard } from "./exclusion-cap-card";
 import { ReportShell } from "@/components/reporting/report-shell";
 import type { AuthRole } from "@/lib/auth/roles";
@@ -54,7 +55,7 @@ export function WorkflowSettingsPageClient({ initialRole }: { initialRole: AuthR
     }
   }, []);
 
-  useEffect(() => { void load(); }, [load]);
+  useEffect(() => { if (initialRole === "admin") void load(); }, [load, initialRole]);
 
   async function update(policy: WorkflowPolicy, approvalRequired: boolean) {
     setSaving(policy.key);
@@ -82,8 +83,10 @@ export function WorkflowSettingsPageClient({ initialRole }: { initialRole: AuthR
   }
 
   return (
-    <ReportShell title="Settings" dateLabel="Admin controls" initialRole={initialRole} reportReady={!loading}>
+    <ReportShell title="Settings" dateLabel="Settings" initialRole={initialRole} reportReady={initialRole !== "admin" || !loading}>
       <div className="mx-auto max-w-5xl space-y-5">
+        <ReportDisplayCard />
+        {initialRole === "admin" ? <>
         <ExclusionCapCard />
         <div className="flex gap-3 rounded-xl border border-amber-300 bg-amber-50 p-4 text-amber-950"><ShieldCheckIcon className="mt-0.5 size-5 shrink-0" /><div><p className="font-semibold">Provider execution remains locked</p><p className="mt-1 text-sm">These switches only remove or restore local approval steps. They never publish, activate, retry, or verify changes on Google, Meta, or TikTok.</p></div></div>
         {error ? <div role="alert" className="flex gap-3 rounded-xl border border-red-300 bg-red-50 p-4 text-red-900"><AlertTriangleIcon className="mt-0.5 size-5 shrink-0" /><div><p className="font-semibold">Settings unavailable</p><p className="mt-1 text-sm">{error} Approval is required whenever policy data cannot be loaded.</p></div></div> : null}
@@ -112,6 +115,7 @@ export function WorkflowSettingsPageClient({ initialRole }: { initialRole: AuthR
             })}
           </CardContent>
         </Card>
+        </> : null}
       </div>
     </ReportShell>
   );

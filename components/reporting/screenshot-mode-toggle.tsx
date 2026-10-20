@@ -22,6 +22,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { useReportDisplayPreferences } from "./report-display-preferences";
 import { useScreenshotMode } from "@/components/reporting/use-screenshot-mode";
 import { cn } from "@/lib/utils";
 import { createCustomReportPdf } from "@/lib/reporting/custom-pdf-document";
@@ -174,6 +175,7 @@ interface ReportDownloadButtonProps {
 }
 
 export function ReportDownloadButton({ fileNamePrefix, compact = false, disabled = false }: ReportDownloadButtonProps) {
+  const { loading: preferencesLoading } = useReportDisplayPreferences();
   const { screenshotMode, setScreenshotMode } = useScreenshotMode();
   const [queuedFormat, setQueuedFormat] = useState<DownloadFormat | null>(null);
   const [downloadingFormat, setDownloadingFormat] = useState<DownloadFormat | null>(null);
@@ -307,7 +309,7 @@ export function ReportDownloadButton({ fileNamePrefix, compact = false, disabled
   }, [queuedFormat, restoreModeAfterDownload, runDownload, screenshotMode, setScreenshotMode]);
 
   async function handleDownload(format: DownloadFormat) {
-    if (downloadingFormat || queuedFormat) {
+    if (preferencesLoading || downloadingFormat || queuedFormat) {
       return;
     }
 
@@ -346,7 +348,7 @@ export function ReportDownloadButton({ fileNamePrefix, compact = false, disabled
   return (
     <>
       <div className={cn("flex flex-wrap items-center gap-2", compact ? "w-auto" : "w-full")}>
-        {adminPreview ? <Button variant="outline" disabled={isBusy || disabled} onClick={() => { previewRequested.current = true; void handleDownload("pdf"); }}>Preview PDF</Button> : null}
+        {adminPreview ? <Button variant="outline" disabled={preferencesLoading || isBusy || disabled} onClick={() => { previewRequested.current = true; void handleDownload("pdf"); }}>Preview PDF</Button> : null}
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button
@@ -358,7 +360,7 @@ export function ReportDownloadButton({ fileNamePrefix, compact = false, disabled
                   ? "h-8 w-auto px-2 text-[11px] shadow-none"
                   : "h-10 w-full px-4 text-sm shadow-sm sm:min-w-[148px] sm:w-auto"
               )}
-              disabled={isBusy || disabled}
+              disabled={preferencesLoading || isBusy || disabled}
             >
               {isBusy ? (
                 <LoaderCircleIcon
@@ -460,7 +462,7 @@ function canUseServerPrintPdfDownload(): boolean {
     return false;
   }
 
-  return new URLSearchParams(window.location.search).get("serverPdf") === "1";
+  return document.querySelector('[data-report-capture-root="true"]')?.getAttribute("data-report-show-comparisons") !== "false" && new URLSearchParams(window.location.search).get("serverPdf") === "1";
 }
 
 function buildServerPrintPdfEndpoint(fileNamePrefix: string | undefined): string {

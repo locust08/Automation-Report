@@ -1,3 +1,4 @@
+import { ReportDisplayPreferencesProvider } from "@/components/reporting/report-display-preferences";
 import type { Metadata } from "next";
 import { Inter, JetBrains_Mono } from "next/font/google";
 import { Suspense } from "react";
@@ -34,9 +35,11 @@ export default function RootLayout({
   return (
     <html lang="en" className={`${inter.variable} ${jetbrainsMono.variable}`}>
       <body className="antialiased">
-        <Suspense fallback={children}>
-          <SearchTermAnalysisTracker>{children}</SearchTermAnalysisTracker>
-        </Suspense>
+        <ReportDisplayPreferencesProvider>
+          <Suspense fallback={children}>
+            <SearchTermAnalysisTracker>{children}</SearchTermAnalysisTracker>
+          </Suspense>
+        </ReportDisplayPreferencesProvider>
       </body>
     </html>
   );
