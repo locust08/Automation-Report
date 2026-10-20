@@ -267,7 +267,7 @@ export function ReportShell({
                       <div
                         key={group.label}
                         className={
-                          groupIndex === 0
+                          groupIndex === 0 || group.label === "Preferences"
                             ? "min-w-0"
                             : "min-w-0 border-t border-[#eadfe0] pt-2 md:border-l md:border-t-0 md:pl-1 md:pt-0 xl:pl-2"
                         }

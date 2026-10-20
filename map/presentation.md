@@ -55,3 +55,5 @@ The shared client preference state persists through interactive screenshot/downl
 Local evidence: focused API/access/render tests and app-source typecheck pass; scoped ESLint passes. Browser fixtures verify the basic-user card, independent switches, reload persistence, failed-save behavior, hidden KPI comparisons/dialog details, preserved CTR and capture state. See `artifacts/report-display-preferences/` for local screenshots and checks (not committed). This is display verification, not native-provider reconciliation. Repository-wide typecheck remains blocked by three pre-existing errors in generated artifacts/outputs. Repository-wide lint (excluding generated directories) reports existing errors; scoped lint passes. Deployment evidence is separate.
 
 2026-10-20 status-label correction: personal report settings use ASCII `Loading preferences...` and `Saving...` labels to avoid corrupted ellipsis characters. Scoped ESLint and all seven preference tests pass; this changes display text only.
+
+2026-10-20 navigation refinement: the Preferences/Settings group has no separator border; other navigation group separators are unchanged.
