@@ -6,6 +6,22 @@ export interface Revision {revision_id:string;workflow_id:string;revision_number
 export interface ProviderStep {status:'started'|'confirmed';provider_id:string|null;provider_name:string;rejected:number}
 export class Store {
   constructor(private db: D1Database,private recoveryReceipt?:string) {}
+  async recordInterruptedDispatch(w:Workflow,id:string,reason:string){
+    // A fresh dispatch can still be running. This is a later read observation,
+    // never evidence of the original failure or authorization to repeat a write.
+    const now=Date.now(),cutoff=now-180_000,db=this.primary();
+    const value=JSON.stringify({provider_action:'unknown',verification:'pending',reason:/^meta_[a-z0-9_]{1,60}$/.test(reason)?reason:'readback_unavailable',
+      diagnostic:{kind:'aged_dispatch_readback_failed',observation_id:crypto.randomUUID(),observed_at:new Date(now).toISOString(),original_failure:false,no_automatic_retry:true},
+      provider_steps:await this.providerSteps(id)});
+    await db.batch([
+      db.prepare("UPDATE m04_operations SET status='unknown',result_json=?,updated_at=? WHERE id=? AND workflow_id=? AND subject=? AND service_id=? AND status='dispatched' AND result_json IS NULL AND dispatched_at<=?")
+        .bind(value,now,id,w.id,w.subject,w.service_id,cutoff),
+      db.prepare("UPDATE m04_workflows SET status='unknown',version=version+1,updated_at=? WHERE id=? AND subject=? AND service_id=? AND status='creating' AND EXISTS(SELECT 1 FROM m04_operations WHERE id=? AND workflow_id=? AND result_json=?)")
+        .bind(now,w.id,w.subject,w.service_id,id,w.id,value),
+      db.prepare("INSERT INTO m04_audit(id,workflow_id,subject,action,outcome,at) SELECT ?,?,?, 'readback_observation','unknown',? WHERE EXISTS(SELECT 1 FROM m04_operations WHERE id=? AND workflow_id=? AND subject=? AND service_id=? AND result_json=?)")
+        .bind(crypto.randomUUID(),w.id,w.subject,now,id,w.id,w.subject,w.service_id,value),
+    ]);
+  }
   async appendTikTokDiagnostic(operationId:string,value:TikTokDiagnostic){
     const d=tikTokDiagnosticSchema.parse(value),db=this.primary();
     await db.batch([

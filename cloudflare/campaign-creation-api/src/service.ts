@@ -92,8 +92,9 @@ export async function execute(env: Environment, scope: Scope, tool: string, inpu
   if (tool === 'campaign_operation_get') {
     const followup=await new ActionStore(env.DB).get(input.idempotency_key,scope);
     if(followup){const workflow=await store.workflow(followup.workflow_id,scope);if(!workflow||workflow.mapping_hash!==await mappingDigest(scope))throw new Error('access_denied');return actions.read(followup,workflow);}
-    const operation = await store.operation(input.idempotency_key, scope);
-    if (!operation) return result('unavailable', {caveats: ['Creation receipt not found.']});
+    const storedOperation = await store.operation(input.idempotency_key, scope);
+    if (!storedOperation) return result('unavailable', {caveats: ['Creation receipt not found.']});
+    let operation=storedOperation;
     const w = await store.workflow(operation.workflow_id, scope);
     if (!w) throw new Error('access_denied');
     if(w.mapping_hash!==await mappingDigest(scope))throw new Error('access_denied');
@@ -133,7 +134,15 @@ export async function execute(env: Environment, scope: Scope, tool: string, inpu
         await check();
         await store.finish(w, operation.id, 'verified', data);
         return result('success', {...reference(w), receipt_ref: operation.id, data: {status:'verified',readback:data,provider_action:false,...await diagnostics('verified')}});
-      } catch(error) { captureUnexpected(error,'campaign.readback',{receiptId:operation.id}); /* Never repeat an uncertain provider mutation. */ }
+      } catch(error) {
+        captureUnexpected(error,'campaign.readback',{receiptId:operation.id});
+        await check();
+        if(scope.platform==='Meta'&&operation.status==='dispatched'){
+          await store.recordInterruptedDispatch(w,operation.id,error instanceof ProviderError?error.code:'readback_unavailable');
+          operation=await store.operation(operation.id,scope)??operation;
+        }
+        // Never repeat an uncertain provider mutation.
+      }
     }
     await check();
     return result(operation.status === 'verified' ? 'success' : operation.status === 'rejected' ? 'unavailable' : 'unknown',
@@ -281,7 +290,14 @@ export async function processReservedCreation(env:Environment,operationId:string
     ?await meta.readback(metaPlanSchema.parse(plan),w.id,operationId,store)
     :scope.platform==='TikTok'?await tiktok.readback(tiktokPlanSchema.parse(plan),w.id,operationId,store)
     :await google.readback(planSchema.parse(plan),w.id);
-    await store.finish(w,operationId,'verified',{...data,provider_action:true});}catch(error){captureUnexpected(error,'campaign.readback',{receiptId:operationId});/* A dispatched mutation is never repeated. */}};
+    await store.finish(w,operationId,'verified',{...data,provider_action:true});}catch(error){
+      captureUnexpected(error,'campaign.readback',{receiptId:operationId});
+      if(scope.platform==='Meta'&&operation.status==='dispatched'){
+        await deps.authorize(env,scope,'campaign_operation_get');
+        await store.recordInterruptedDispatch(w,operationId,error instanceof ProviderError?error.code:'readback_unavailable');
+      }
+      /* A dispatched mutation is never repeated. */
+    }};
   if(['verified','rejected'].includes(operation.status))return;
   if(['dispatched','unknown'].includes(operation.status)){await readback();return;}
   if(operation.status!=='reserved')return;
