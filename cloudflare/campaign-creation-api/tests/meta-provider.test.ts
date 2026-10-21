@@ -28,13 +28,13 @@ it('selects the newest eligible same-account Meta ad and exposes a bound source 
   expect(request).toHaveBeenCalledTimes(5);
 });
 
-it('validates campaign, ad set and reused creative without creation and carries the verified identities',async()=>{
+it.each(['4.12','4.13','10.00'])('validates campaign, ad set and reused creative at budget %s without creation',async(budget)=>{
   const requests:Array<{url:string;body:URLSearchParams}>=[];
   const request=vi.fn(async(input:RequestInfo|URL,init?:RequestInit)=>{
     const url=new URL(String(input));
     if(init?.method==='POST'){
       const body=new URLSearchParams(String(init.body));requests.push({url:url.pathname,body});
-      if(body.get('daily_budget')==='1')return Response.json({error:{error_subcode:1885272,error_user_msg:'Your ad set budget must be more than MYR4.12 or your ads may not be delivered.'}},{status:400});
+      if(body.get('daily_budget')==='1')return Response.json({error:{error_subcode:1885272,error_user_msg:'Your ad set budget must be more than MYR4.11 or your ads may not be delivered.'}},{status:400});
       return Response.json({success:true});
     }
     if(url.pathname.endsWith('/act_'+scope.platformAccountId))return Response.json({account_id:scope.platformAccountId,currency:'MYR',timezone_name:'Asia/Kuala_Lumpur',account_status:1});
@@ -45,11 +45,11 @@ it('validates campaign, ad set and reused creative without creation and carries 
   });
   const meta=new Meta({META_ACCESS_TOKEN:'synthetic',META_API_VERSION:'v25.0'},scope,request);
   const selected=(await meta.referenceAssets()).sources[0];
-  await meta.validate({campaign_type:'meta_existing_ad',name:'Test',currency:'MYR',timezone:'Asia/Kuala_Lumpur',daily_budget:'4.13',
+  await meta.validate({campaign_type:'meta_existing_ad',name:'Test',currency:'MYR',timezone:'Asia/Kuala_Lumpur',daily_budget:budget,
     source_ad_id:'66',source_campaign_id:'11',source_adset_id:'22',source_fingerprint:selected.source_fingerprint},'workflow');
   expect(requests.filter(value=>value.body.get('name')==='M04 validate only').map(value=>value.url.split('/').at(-1))).toEqual(['campaigns','adsets','ads']);
   expect(requests.every(value=>value.body.get('execution_options')==='["validate_only"]')).toBe(true);
-  expect(requests.at(-2)!.body.get('daily_budget')).toBe('413');
+  expect(requests.at(-2)!.body.get('daily_budget')).toBe(String(Math.round(Number(budget)*100)));
   expect(JSON.parse(requests.at(-2)!.body.get('targeting')!)).toEqual({geo_locations:{countries:['MY']}});
   expect(JSON.parse(requests.at(-2)!.body.get('regional_regulation_identities')!)).toEqual({universal_beneficiary:'77',universal_payer:'77'});
   expect(requests.at(-1)!.body.get('status')).toBe('PAUSED');

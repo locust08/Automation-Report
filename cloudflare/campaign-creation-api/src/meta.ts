@@ -1,5 +1,6 @@
 import {boundedJson,digest,type Scope,type MetaPlan} from './contracts';
 import {ProviderError} from './google';
+import {metaBudgetMeetsMinimum} from './meta-budget';
 import {Store} from './store';
 import {ActionStore} from './action-store';
 
@@ -116,8 +117,9 @@ export class Meta {
     const references=await this.referenceAssets(plan.source_ad_id),source=references.sources[0];
     if(!source||source.source_ad_id!==plan.source_ad_id||source.source_campaign_id!==plan.source_campaign_id||
       source.source_adset_id!==plan.source_adset_id||source.source_fingerprint!==plan.source_fingerprint||
-      plan.currency!==references.account.currency||plan.timezone!==references.account.timezone_name||plan.daily_budget!==source.minimum_daily_budget)
+      plan.currency!==references.account.currency||plan.timezone!==references.account.timezone_name)
       throw new ProviderError('unavailable','meta_source_changed');
+    if(!metaBudgetMeetsMinimum(plan.daily_budget,source.minimum_daily_budget))throw new ProviderError('unavailable','meta_budget');
     const adset=this.snapshot?.adset;
     if(!adset)throw new ProviderError('unavailable','meta_source_changed');
     if(adset.id!==plan.source_adset_id||adset.account_id!==this.scope.platformAccountId||adset.campaign_id!==plan.source_campaign_id||

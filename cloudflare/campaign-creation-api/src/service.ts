@@ -3,6 +3,7 @@ import {authorize, type AuthEnvironment} from './auth';
 import {digest,mappingDigest, planSchema,metaPlanSchema,tiktokPlanSchema, scopeSchema, result, type Result, type Scope} from './contracts';
 import {buildOperations, Google, ProviderError, providerName, type GoogleCredentials} from './google';
 import {Meta,metaProviderName,type MetaCredentials} from './meta';
+import {metaBudgetMeetsMinimum} from './meta-budget';
 import {TikTok,tiktokProviderName,type TikTokCredentials} from './tiktok';
 import {Store, type Workflow} from './store';
 import {z} from 'zod';
@@ -66,8 +67,9 @@ export async function execute(env: Environment, scope: Scope, tool: string, inpu
     else if(scope.platform==='Meta'){
       const plan=metaPlanSchema.parse(parsed.data),references=await meta.referenceAssets(plan.source_ad_id),source=references.sources[0];
       if(!source||source.source_ad_id!==plan.source_ad_id||source.source_campaign_id!==plan.source_campaign_id||
-        source.source_adset_id!==plan.source_adset_id||source.source_fingerprint!==plan.source_fingerprint||plan.currency!==references.account.currency||plan.timezone!==references.account.timezone_name||plan.daily_budget!==source.minimum_daily_budget)
+        source.source_adset_id!==plan.source_adset_id||source.source_fingerprint!==plan.source_fingerprint||plan.currency!==references.account.currency||plan.timezone!==references.account.timezone_name)
         throw new Error('stale_revision');
+      if(!metaBudgetMeetsMinimum(plan.daily_budget,source.minimum_daily_budget))return result('clarification_required',{validation_issues:[campaignBlocker('meta_budget')]});
     }else{
       const plan=tiktokPlanSchema.parse(parsed.data),references=await tiktok.referenceAssets(plan.source_ad_id),source=references.sources[0];
       if(!source||source.resource_status!=='ready'||source.source_ad_id!==plan.source_ad_id||source.source_campaign_id!==plan.source_campaign_id||
