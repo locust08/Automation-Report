@@ -173,8 +173,11 @@ export class Google {
       throw new ProviderError('unknown', 'creation_receipt_incomplete');
     return names;
   }
-  async qa(plan:Plan,workflowId:string){
-    await this.validate(plan,workflowId);
+  async qa(plan:Plan,workflowId:string,options:{readOnly?:boolean}={}){
+    if(options.readOnly){
+      const [account]=await this.query('SELECT customer.id,customer.currency_code,customer.time_zone,customer.manager FROM customer LIMIT 1');
+      if(!account||account.customer.id!==this.scope.platformAccountId||account.customer.currencyCode!==plan.currency||account.customer.timeZone!==plan.timezone||account.customer.manager)throw new ProviderError('rejected','account_configuration');
+    }else await this.validate(plan,workflowId);
     const data=await this.readback(plan,workflowId);
     const policy=await this.query(`SELECT ad_group_ad.resource_name,ad_group_ad.policy_summary.approval_status FROM ad_group_ad WHERE ad_group.id = ${data.ad_group.id} AND ad_group_ad.status != 'REMOVED'`);
     if(policy.length!==1||policy[0].adGroupAd.resourceName!==data.ad.resourceName||policy[0].adGroupAd.policySummary?.approvalStatus!=='APPROVED')throw new ProviderError('unavailable','google_qa_policy');

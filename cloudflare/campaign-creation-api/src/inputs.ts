@@ -13,6 +13,7 @@ export const inputs: Record<string, z.ZodType> = {
     z.object({kind: z.literal('template'), template_id: z.string().min(1).max(200), overrides: fields}).strict(),
     z.object({kind: z.literal('campaign_clone'), source_service_id: z.uuid(), source_campaign_id: z.string().min(1).max(200), overrides: fields}).strict(),
   ])}).strict(),
+  campaign_workflow_qa: z.object({...mutation, ...revision}).strict(),
   campaign_draft_validate: z.object({...mutation, ...revision}).strict(),
   campaign_action_prepare: z.object({...mutation, ...revision, action: z.enum(['approve', 'gate1', 'resume', 'gate2']), schedule: z.object({mode: z.enum(['now', 'scheduled']), scheduled_at: z.string().datetime().optional(), timezone: z.string().optional()}).strict().optional()}).strict(),
   campaign_revision_approve: z.object(bound).strict(),

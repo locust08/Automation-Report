@@ -65,7 +65,7 @@ export class Meta {
     try{const url=new URL(story?.link_data?.link);if(url.protocol==='https:'&&!url.username&&!url.password)return {kind:'website' as const,url:url.href};}catch{}
     return null;
   }
-  async referenceAssets(selectedAdId?:string){
+  async referenceAssets(selectedAdId?:string,readOnly=false){
     this.deadline=Date.now()+25_000;this.snapshot=undefined;
     const id=this.scope.platformAccountId;
     const account=await this.get(`act_${id}`,{fields:'account_id,currency,timezone_name,account_status'});
@@ -103,7 +103,7 @@ export class Meta {
         const form=await this.get(destination.form_id,{fields:'id,page_id,status'});
         if(String(form.id)!==destination.form_id||String(form.page_id)!==destination.page_id||form.status!=='ACTIVE')throw new ProviderError('unavailable','meta_form_unavailable');
       }
-      const minimum_daily_budget=await this.minimumBudget(ad.adset,String(ad.campaign.id));
+      const minimum_daily_budget=readOnly?'not_checked':await this.minimumBudget(ad.adset,String(ad.campaign.id));
       this.snapshot=structuredClone(ad);
       sources.push({source_ad_id:String(ad.id),source_adset_id:String(ad.adset.id),source_campaign_id:String(ad.campaign.id),objective:ad.campaign.objective,
         daily_budget:(Number(ad.adset.daily_budget)/100).toFixed(2),source_fingerprint:await sourceDigest(ad),creative_id:String(ad.creative.id),final_url:destination.kind==='website'?destination.url:null,destination,
@@ -112,14 +112,14 @@ export class Meta {
     }
     return {account:{account_id:id,currency:account.currency,timezone_name:account.timezone_name},sources};
   }
-  async validate(plan:MetaPlan,_workflowId:string){
+  async validate(plan:MetaPlan,_workflowId:string,readOnly=false){
     this.checked=undefined;
-    const references=await this.referenceAssets(plan.source_ad_id),source=references.sources[0];
+    const references=await this.referenceAssets(plan.source_ad_id,readOnly),source=references.sources[0];
     if(!source||source.source_ad_id!==plan.source_ad_id||source.source_campaign_id!==plan.source_campaign_id||
       source.source_adset_id!==plan.source_adset_id||source.source_fingerprint!==plan.source_fingerprint||
       plan.currency!==references.account.currency||plan.timezone!==references.account.timezone_name)
       throw new ProviderError('unavailable','meta_source_changed');
-    if(!metaBudgetMeetsMinimum(plan.daily_budget,source.minimum_daily_budget))throw new ProviderError('unavailable','meta_budget');
+    if(!readOnly&&!metaBudgetMeetsMinimum(plan.daily_budget,source.minimum_daily_budget))throw new ProviderError('unavailable','meta_budget');
     const adset=this.snapshot?.adset;
     if(!adset)throw new ProviderError('unavailable','meta_source_changed');
     if(adset.id!==plan.source_adset_id||adset.account_id!==this.scope.platformAccountId||adset.campaign_id!==plan.source_campaign_id||
@@ -127,13 +127,15 @@ export class Meta {
       throw new ProviderError('unavailable','meta_source_changed');
     const cents=Math.round(Number(plan.daily_budget)*100);
     if(!Number.isSafeInteger(cents)||cents<=0)throw new ProviderError('unavailable','meta_budget');
+    if(!readOnly){
     await this.post(`act_${this.scope.platformAccountId}/campaigns`,{name:'M04 validate only',objective:source.objective,
       special_ad_categories:'[]',is_adset_budget_sharing_enabled:'false',status:'PAUSED'},true);
     await this.post(`act_${this.scope.platformAccountId}/adsets`,this.adsetFields(adset,plan.source_campaign_id,cents,'M04 validate only'),true);
     await this.post(`act_${this.scope.platformAccountId}/ads`,{name:'M04 validate only',adset_id:plan.source_adset_id,
       creative:JSON.stringify({creative_id:source.creative_id}),status:'PAUSED'},true);
+    }
     const payload={source,adset,creative:this.snapshot!.creative};
-    this.checked={key:await digest({plan,workflowId:_workflowId}),at:Date.now(),payload:structuredClone(payload)};
+    if(!readOnly)this.checked={key:await digest({plan,workflowId:_workflowId}),at:Date.now(),payload:structuredClone(payload)};
     return payload;
   }
   private adsetFields(adset:Record<string,any>,campaignId:string,cents:number,name:string){
@@ -251,8 +253,8 @@ export class Meta {
       }
     }
   }
-  async qa(plan:MetaPlan,workflowId:string,operationId:string,store:Store){
-    const payload=await this.validate(plan,workflowId),data=await this.readback(plan,workflowId,operationId,store);
+  async qa(plan:MetaPlan,workflowId:string,operationId:string,store:Store,options:{readOnly?:boolean}={}){
+    const payload=await this.validate(plan,workflowId,options.readOnly===true),data=await this.readback(plan,workflowId,operationId,store);
     const actual=await this.get(data.adset_id,{fields:'id,account_id,campaign_id,daily_budget,status,targeting,billing_event,optimization_goal,bid_strategy,promoted_object,attribution_spec,destination_type,regional_regulation_identities'});
     for(const key of ['targeting','billing_event','optimization_goal','bid_strategy','promoted_object','attribution_spec','destination_type','regional_regulation_identities'])
       if(await digest(ordered(actual[key]??null))!==await digest(ordered(payload.adset[key]??null)))throw new ProviderError('unknown','meta_qa_mismatch');

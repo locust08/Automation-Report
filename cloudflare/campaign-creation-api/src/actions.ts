@@ -4,6 +4,7 @@ import {Meta} from './meta';
 import {Store,type Workflow} from './store';
 import {ActionStore,type Action,type ActionReceipt} from './action-store';
 import type {Environment,Dependencies,Provider} from './service';
+import {WorkflowQA} from './qa';
 import {Sources} from './sources';
 
 export function actionAllowed(env:Environment,scope:Scope,action:Action){
@@ -37,8 +38,9 @@ export class Actions {
   const steps=parent?await this.store.providerSteps(parent.id):[];
   const recoverable=parent&&parent.dispatched_at&&['unknown','rejected'].includes(parent.status)&&!steps.some(s=>s.status==='started'&&!s.rejected)?
    ['campaign','adset','ad'].filter(step=>!steps.some(s=>s.step===step&&s.status==='confirmed')).map(step=>`${parent.id}:${step}`):[];
+  const qaStore=new WorkflowQA(this.env.DB,this.scope),qaRow=await qaStore.latest(w),qa=qaRow?qaStore.detail(qaRow):null;
   const recovered=receipts.some(r=>r.action==='resume'&&r.status==='verified');
-  return {parent,receipts,creation_verified:parent?.status==='verified'||recovered,qa_status:receipts.some(r=>r.action==='gate2'&&r.status==='verified')?'passed':'pending',provider_objects:steps.map(s=>({kind:s.step,id:s.provider_id,status:s.status})),recoverable_step_refs:this.scope.platform==='Meta'?recoverable:[],
+  return {parent,receipts,creation_verified:parent?.status==='verified'||recovered,qa_status:qa?.qa_status??(receipts.some(r=>r.action==='gate2'&&r.status==='verified')?'passed':'pending'),qa,provider_objects:steps.map(s=>({kind:s.step,id:s.provider_id,status:s.status})),recoverable_step_refs:this.scope.platform==='Meta'?recoverable:[],
    gate2_schedule:receipts.find(r=>r.action==='gate2')?.schedule_json??null};
  }
  private async qa(w:Workflow,parent:string){

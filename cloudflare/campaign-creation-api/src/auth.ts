@@ -5,6 +5,7 @@ import {actionAllowed} from './actions';
 import type {Environment} from './service';
 
 export interface AuthEnvironment {
+  M04_QA_ENABLED?:string;
   M04_ENABLED: string;
   M04_CONNECTION_REVISION: string;
   M04_PILOT_ACCOUNT: string;
@@ -52,6 +53,7 @@ export async function authenticate(request: Request, env: AuthEnvironment, tool:
 }
 /** DigitalBee is the current permission authority, checked at every stage and again before dispatch. */
 export async function authorize(env: AuthEnvironment, scope: Scope, tool: string, fetcher?: typeof fetch) {
+  if(tool==='campaign_workflow_qa'&&env.M04_QA_ENABLED!=='true')throw new Error('provider_creation_disabled');
   const action=['campaign_gate2_activate','campaign_action_prepare_gate2'].includes(tool)?'gate2':['campaign_creation_resume','campaign_action_prepare_resume'].includes(tool)?'resume':null;
   if(action&&!actionAllowed(env as Environment,scope,action))throw new Error('provider_creation_disabled');
   if(scope.platform==='Meta'&&['campaign_gate1_create','campaign_action_prepare_gate1'].includes(tool)&&env.M04_META_CREATION_ENABLED!=='true')throw new Error('provider_creation_disabled');

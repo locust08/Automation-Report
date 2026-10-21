@@ -7,7 +7,7 @@ export interface SourceFlags {M04_TEMPLATE_PLANNING_ENABLED?:string;M04_CLONE_PL
 interface Template {template_id:string;version:number;platform:string;campaign_type:string;defaults_json:string;required_overrides_json:string;content_hash:string;enabled:number}
 export class Sources {
  constructor(private db:D1Database,private flags:SourceFlags){}
- async assertCurrent(w:Workflow,scope:Scope,google:Google,meta:Meta){
+ async assertCurrent(w:Workflow,scope:Scope,google:Google,meta:Meta,pausedQA=false){
   const row=await this.db.withSession('first-primary').prepare('SELECT source_json FROM m04_workflow_sources WHERE revision_id=?').bind(w.revision_id).first<{source_json:string}>();
   if(!row)return; // Legacy revisions remain readable and use their original provider checks.
   const source=JSON.parse(row.source_json);
@@ -17,6 +17,8 @@ export class Sources {
   }
   if(source.kind==='campaign_clone'){
    if(this.flags.M04_CLONE_PLANNING_ENABLED!=='true'||source.source_service_id!==scope.accountPageId)throw new Error('clone_changed');
+   // Meta paused QA verifies the exact saved source fingerprint itself without minimum-budget probes.
+   if(pausedQA&&scope.platform==='Meta')return;
    const snapshot=scope.platform==='Google'?(await google.clonePlan(source.source_campaign_id)).snapshot:(await meta.referenceAssets(JSON.parse(w.plan_json).source_ad_id)).sources[0];
    if(await digest(sourceSnapshot(snapshot))!==source.source_hash)throw new Error('clone_changed');
   }

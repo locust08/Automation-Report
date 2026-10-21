@@ -11,11 +11,12 @@ import {campaignBlocker} from './blockers';
 import {preflightObservation,type PreflightStage} from './preflight';
 import {Sources} from './sources';
 import {Actions,actionAllowed} from './actions';
+import {WorkflowQA} from './qa';
 import {ActionStore} from './action-store';
 export type Environment = AuthEnvironment & GoogleCredentials & MetaCredentials & TikTokCredentials & ObservabilityEnv & {DB:D1Database;CREATION_QUEUE?:Queue<{operationId:string}>};
 export type Provider = Pick<Google, 'validate' | 'create'> & {
  readback(plan:Parameters<Google['readback']>[0],workflowId:string,options?:Parameters<Google['readback']>[2]):Promise<Record<string,any>>;
- qa?(plan:Parameters<Google['qa']>[0],workflowId:string):Promise<Record<string,any>>;
+ qa?(plan:Parameters<Google['qa']>[0],workflowId:string,options?:{readOnly?:boolean}):Promise<Record<string,any>>;
  schedule?:Google['schedule'];
 };
 export interface Dependencies {authorize: typeof authorize; provider: (env: Environment, scope: Scope) => Provider}
@@ -40,6 +41,7 @@ export async function execute(env: Environment, scope: Scope, tool: string, inpu
   const store = new Store(env.DB), google = deps.provider(env, scope), meta=new Meta(env,scope),tiktok=new TikTok(env,scope);
   const actions=new Actions(env,scope,google,meta,action=>deps.authorize(env,scope,action));
   const followupAction=tool==='campaign_gate2_activate'?'gate2':tool==='campaign_creation_resume'?'resume':tool==='campaign_action_prepare'&&['resume','gate2'].includes(input.action)?input.action:null;
+  if(tool==='campaign_workflow_qa'&&env.M04_QA_ENABLED!=='true')return result('locked');
   if(followupAction&&!actionAllowed(env,scope,followupAction))return result('locked');
   if (tool === 'campaign_templates_list') {
     if(scope.platform!=='TikTok'&&input.cursor||scope.platform==='Google'&&input.source_ad_id)throw new Error('invalid_request');
@@ -90,6 +92,8 @@ export async function execute(env: Environment, scope: Scope, tool: string, inpu
     return result('success', {...reference(w), allowed_next_actions: ['campaign_draft_validate'], data: {status: w.status, plan: JSON.parse(w.plan_json), revision_hash:w.plan_hash,source_provenance:normalized.provenance, provider_action: false}});
   }
   if (tool === 'campaign_operation_get') {
+    const qaStore=new WorkflowQA(env.DB,scope),qaReceipt=await qaStore.get(input.idempotency_key);
+    if(qaReceipt){const workflow=await store.workflow(qaReceipt.workflow_id,scope);if(!workflow||workflow.mapping_hash!==await mappingDigest(scope)||qaReceipt.scope_hash!==await digest(scope))throw new Error('access_denied');await check();return qaStore.response(qaReceipt);}
     const followup=await new ActionStore(env.DB).get(input.idempotency_key,scope);
     if(followup){const workflow=await store.workflow(followup.workflow_id,scope);if(!workflow||workflow.mapping_hash!==await mappingDigest(scope))throw new Error('access_denied');return actions.read(followup,workflow);}
     const storedOperation = await store.operation(input.idempotency_key, scope);
@@ -162,6 +166,7 @@ export async function execute(env: Environment, scope: Scope, tool: string, inpu
   }
   await sameScope(w, scope,backendRev);
   if (input.revision_id && input.revision_id !== w.revision_id) throw new Error('stale_revision');
+  if(tool==='campaign_workflow_qa')return new WorkflowQA(env.DB,scope).run(w,input,requestHash,store,google,meta,async()=>{await sameScope(w,scope,await backendRevision(env,scope));await check();},()=>new Sources(env.DB,env).assertCurrent(w,scope,new Google(env,scope),meta,true));
   await new Sources(env.DB,env).assertCurrent(w,scope,new Google(env,scope),meta);
   const plan = scope.platform==='Meta'?metaPlanSchema.parse(JSON.parse(w.plan_json)):scope.platform==='TikTok'?tiktokPlanSchema.parse(JSON.parse(w.plan_json)):planSchema.parse(JSON.parse(w.plan_json));
   if(tool==='campaign_action_prepare'&&['resume','gate2'].includes(input.action))return actions.prepare(w,input.action,input,requestHash);
