@@ -85,7 +85,7 @@ it('requires 72 hours and exact account timezone; Google supports only account-l
  const now=Date.parse('2026-10-09T00:00:00Z');
  expect(scheduleFor(scope,plan,{mode:'scheduled',scheduled_at:'2026-10-12T16:00:00Z',timezone:plan.timezone},now).date).toBe('2026-10-13');
  for(const schedule of [{mode:'now'},{mode:'scheduled',scheduled_at:'2026-10-10T16:00:00Z',timezone:plan.timezone},{mode:'scheduled',scheduled_at:'2026-10-12T16:01:00Z',timezone:plan.timezone},{mode:'scheduled',scheduled_at:'2026-10-12T16:00:00Z',timezone:'UTC'}])expect(()=>scheduleFor(scope,plan,schedule,now)).toThrow();
- expect(actionAllowed(env,scope,'gate2')).toBe(true);
+ expect(actionAllowed(env,scope,'gate2')).toBe(false); // Account-only Gate2 pilots are no longer valid.
  expect(actionAllowed(env,{...scope,subject:'other'},'gate2')).toBe(false);
  expect(actionAllowed(env,{...scope,platform:'TikTok'},'gate2')).toBe(false);
  expect(actionAllowed(env,scope,'resume')).toBe(false);
@@ -96,12 +96,14 @@ async function paused(){
  const approved=(await store.workflow(w.id,scope))!,gate=await store.prepare(approved,'gate1','confirm','hash'),id=crypto.randomUUID();
  await store.reserve(approved,{idempotency_key:id,challenge:gate.token,confirmation_hash:'confirm'},'hash',scope);await store.dispatched(id);
  const snapshot={campaign:{id:'1',resourceName:'customers/2315114913/campaigns/1',status:'PAUSED'},ad_group:{id:'2',resourceName:'customers/2315114913/adGroups/2',status:'PAUSED'},ad:{resourceName:'customers/2315114913/adGroupAds/2~3',status:'PAUSED'},targeting:[],verified_at:'old'};
- await store.finish(approved,id,'verified',snapshot);return {w:(await store.workflow(w.id,scope))!,id,snapshot};
+ await store.finish(approved,id,'verified',snapshot);
+ env.M04_GATE2_ALLOWLIST=JSON.stringify([{subject:scope.subject,platform:scope.platform,account_id:scope.platformAccountId,service_id:scope.accountPageId,workflow_id:w.id,revision_id:w.revision_id,campaign_id:'1'}]);
+ return {w:(await store.workflow(w.id,scope))!,id,snapshot};
 }
 it('rejects Gate 2 before creation QA and binds a distinct consumed confirmation to exact schedule and revision',async()=>{
  const ledger=new ActionStore(f.db),w=await store.save(scope,plan,crypto.randomUUID(),'backend');
  const p:Provider={validate:async()=>{},create:async()=>[],readback:async()=>({})};const actions=new Actions(env,scope,p,meta(),async()=>{});
- await expect(actions.prepare(w,'gate2',{schedule:{}},'hash')).rejects.toThrow('conflict');
+ expect((await actions.prepare(w,'gate2',{schedule:{}},'hash')).outcome).toBe('locked');
  const pausedData=await paused(),schedule={mode:'scheduled',scheduled_at:'2099-10-12T16:00:00.000Z',timezone:plan.timezone};
  const prepared=await ledger.prepare(pausedData.w,scope,'gate2',pausedData.id,schedule,[],pausedData.snapshot,{display:true},'hash');
  const input={idempotency_key:crypto.randomUUID(),challenge:prepared.token,confirmation_hash:prepared.confirmation_hash,schedule};
@@ -148,9 +150,35 @@ it('processes a valid queued action with the exact scope property order serializ
  await store.reserve(approved,{idempotency_key:parent,challenge:g.token,confirmation_hash:'hash'},'request',raw);await store.dispatched(parent);
  const snapshot={campaign:{id:'1',resourceName:'customers/2315114913/campaigns/1',status:'PAUSED'},ad_group:{id:'2',resourceName:'customers/2315114913/adGroups/2',status:'PAUSED'},ad:{resourceName:'customers/2315114913/adGroupAds/2~3',status:'PAUSED'},targeting:[]};
  await store.finish(approved,parent,'verified',snapshot);const current=(await store.workflow(w.id,raw))!,ledger=new ActionStore(f.db),schedule={mode:'scheduled',scheduled_at:'2099-10-12T16:00:00.000Z',timezone:plan.timezone};
+ env.M04_GATE2_ALLOWLIST=JSON.stringify([{subject:scope.subject,platform:scope.platform,account_id:scope.platformAccountId,service_id:scope.accountPageId,workflow_id:w.id,revision_id:w.revision_id,campaign_id:'1'}]);
  const challenge=await ledger.prepare(current,raw,'gate2',parent,schedule,[],stable(snapshot),{},'request'),id=crypto.randomUUID();
  await ledger.reserve(current,raw,'gate2',{idempotency_key:id,challenge:challenge.token,confirmation_hash:challenge.confirmation_hash,schedule},'request');
  const scheduleWrite=vi.fn(async()=>{}),p:Provider={validate:async()=>{},create:async()=>[],qa:async()=>snapshot,schedule:scheduleWrite,readback:async()=>({...snapshot,campaign:{...snapshot.campaign,status:'ENABLED',startDateTime:'2099-10-13 00:00:00'},ad_group:{...snapshot.ad_group,status:'ENABLED'},ad:{...snapshot.ad,status:'ENABLED'}})};
  await processReservedCreation(env,id,{authorize:async()=>{},provider:()=>p});
  expect(scheduleWrite).toHaveBeenCalledTimes(1);expect((await ledger.get(id,raw))?.status).toBe('verified');
+});
+
+it('denies another workflow, revision or campaign before QA or card preparation',async()=>{
+ const {w}=await paused(),qa=vi.fn(async()=>({})),actions=new Actions(env,scope,{validate:async()=>{},create:async()=>[],readback:async()=>({}),qa},meta(),async()=>{});
+ const row=JSON.parse(env.M04_GATE2_ALLOWLIST!)[0];
+ for(const denied of [{...row,workflow_id:crypto.randomUUID()},{...row,revision_id:crypto.randomUUID()},{...row,campaign_id:'999'}]){
+  env.M04_GATE2_ALLOWLIST=JSON.stringify([denied]);
+  expect((await actions.prepare(w,'gate2',{},'hash')).outcome).toBe('locked');
+ }
+ expect(qa).not.toHaveBeenCalled();
+});
+it('rejects a different live campaign even when the durable parent is allowed',async()=>{
+ const {w,snapshot}=await paused(),qa=vi.fn(async()=>({...snapshot,campaign:{...snapshot.campaign,resourceName:'customers/2315114913/campaigns/999'}}));
+ const actions=new Actions(env,scope,{validate:async()=>{},create:async()=>[],readback:async()=>({}),qa},meta(),async()=>{});
+ await expect(actions.prepare(w,'gate2',{schedule:{mode:'scheduled',scheduled_at:'2099-10-12T16:00:00.000Z',timezone:plan.timezone}},'hash')).rejects.toThrow('provider_creation_disabled');
+ expect((await new ActionStore(f.db).list(w))).toHaveLength(0);
+});
+it('revoking the exact campaign scope rejects a queued action before any provider write',async()=>{
+ const {w,id,snapshot}=await paused(),ledger=new ActionStore(f.db),schedule={mode:'scheduled',scheduled_at:'2099-10-12T16:00:00.000Z',timezone:plan.timezone};
+ const challenge=await ledger.prepare(w,scope,'gate2',id,schedule,[],snapshot,{},'hash'),key=crypto.randomUUID();
+ await ledger.reserve(w,scope,'gate2',{idempotency_key:key,challenge:challenge.token,confirmation_hash:challenge.confirmation_hash,schedule},'hash');
+ env.M04_GATE2_ALLOWLIST='[]';
+ const qa=vi.fn(),write=vi.fn(),actions=new Actions(env,scope,{validate:async()=>{},create:async()=>[],readback:async()=>({}),qa,schedule:write},meta(),async()=>{});
+ await actions.process((await ledger.get(key,scope))!,w);
+ expect(qa).not.toHaveBeenCalled();expect(write).not.toHaveBeenCalled();expect((await ledger.get(key,scope))?.status).toBe('rejected');
 });

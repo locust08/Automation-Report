@@ -7,12 +7,21 @@ import type {Environment,Dependencies,Provider} from './service';
 import {WorkflowQA} from './qa';
 import {Sources} from './sources';
 
-export function actionAllowed(env:Environment,scope:Scope,action:Action){
+export function actionAllowed(env:Environment,scope:Scope,action:Action,target?:{workflow_id:string;revision_id:string;campaign_id?:string}){
  if(env.M04_ENABLED!=='true'||scope.platform==='TikTok'||action==='resume'&&scope.platform!=='Meta')return false;
  if((action==='gate2'?env.M04_GATE2_ENABLED:env.M04_RECOVERY_ENABLED)!=='true')return false;
  try{const list:unknown=JSON.parse((action==='gate2'?env.M04_GATE2_ALLOWLIST:env.M04_RECOVERY_ALLOWLIST)??'[]');
-  return Array.isArray(list)&&list.some(row=>row&&Object.keys(row).sort().join(',')==='account_id,platform,service_id,subject'&&row.platform===scope.platform&&row.account_id===scope.platformAccountId&&row.service_id===scope.accountPageId&&row.subject===scope.subject);
+  return Array.isArray(list)&&list.some(row=>row&&Object.keys(row).sort().join(',')===(action==='gate2'?'account_id,campaign_id,platform,revision_id,service_id,subject,workflow_id':'account_id,platform,service_id,subject')&&row.platform===scope.platform&&row.account_id===scope.platformAccountId&&row.service_id===scope.accountPageId&&row.subject===scope.subject&&
+    (action!=='gate2'||typeof row.campaign_id==='string'&&/^\d{1,30}$/.test(row.campaign_id)&&
+      typeof row.workflow_id==='string'&&uuid.test(row.workflow_id)&&typeof row.revision_id==='string'&&uuid.test(row.revision_id)&&
+      (!target||row.workflow_id===target.workflow_id&&row.revision_id===target.revision_id&&(!target.campaign_id||row.campaign_id===target.campaign_id))));
  }catch{return false;}
+}
+const uuid=/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+function campaignId(value:string,scope:Scope){
+ if(scope.platform!=='Google')return value.match(/^(\d{1,30})$/)?.[1];
+ const match=value.match(/^customers\/(\d+)\/campaigns\/(\d{1,30})$/);
+ return match?.[1]===scope.platformAccountId?match[2]:undefined;
 }
 export function scheduleFor(scope:Scope,plan:{timezone:string},input:any,now=Date.now()){
  if(!input||input.mode!=='scheduled'||input.timezone!==plan.timezone||!Number.isFinite(Date.parse(input.scheduled_at))||Date.parse(input.scheduled_at)<now+72*3600000)throw new Error('invalid_schedule');
@@ -32,6 +41,27 @@ export function stable(value:any):any{
 export class Actions {
  private store:Store;private ledger:ActionStore;
  constructor(private env:Environment,private scope:Scope,private google:Provider,private meta:Meta,private check:(tool:string)=>Promise<unknown>){this.store=new Store(env.DB);this.ledger=new ActionStore(env.DB);}
+ private async allowed(w:Workflow,action:Action){
+  if(action!=='gate2')return actionAllowed(this.env,this.scope,action);
+  const target={workflow_id:w.id,revision_id:w.revision_id};
+  if(!actionAllowed(this.env,this.scope,action,target))return false;
+  const parent=await this.store.operationForWorkflow(w.id,this.scope);
+  if(!parent)return false;
+  if(this.scope.platform==='Google'){
+   if(parent.status!=='verified'||!parent.result_json)return false;
+   const recorded=JSON.parse(parent.result_json).campaign;
+   const id=typeof recorded?.resourceName==='string'?campaignId(recorded.resourceName,this.scope):undefined;
+   return !!id&&actionAllowed(this.env,this.scope,action,{...target,campaign_id:id});
+  }
+  const campaigns=(await this.store.providerSteps(parent.id)).filter(s=>s.step==='campaign'&&s.status==='confirmed'&&s.provider_id);
+  const id=campaigns.length===1?campaignId(campaigns[0]!.provider_id!,this.scope):undefined;
+  return !!id&&actionAllowed(this.env,this.scope,action,{...target,campaign_id:id});
+ }
+ private snapshotAllowed(w:Workflow,snapshot:Record<string,any>){
+  const raw=this.scope.platform==='Meta'?snapshot.campaign_id:snapshot.campaign?.resourceName;
+  const id=typeof raw==='string'?campaignId(raw,this.scope):undefined;
+  return !!id&&actionAllowed(this.env,this.scope,'gate2',{workflow_id:w.id,revision_id:w.revision_id,campaign_id:id});
+ }
  async state(w:Workflow){
   const parent=await this.store.operationForWorkflow(w.id,this.scope),receipts=await this.ledger.list(w);
   if(this.scope.platform==='Meta'&&parent?.dispatched_at&&parent.status==='unknown')await this.meta.reconcileSteps(metaPlanSchema.parse(JSON.parse(w.plan_json)),w.id,parent.id,this.store);
@@ -49,7 +79,7 @@ export class Actions {
   return this.google.qa(planSchema.parse(JSON.parse(w.plan_json)),w.id);
  }
  async prepare(w:Workflow,action:Action,input:Record<string,any>,requestHash:string):Promise<Result>{
-  if(!actionAllowed(this.env,this.scope,action))return result('locked');
+  if(!await this.allowed(w,action))return result('locked');
   const state=await this.state(w),parent=state.parent;
   if(!parent||state.receipts.some(r=>['reserved','dispatched','unknown'].includes(r.status)||r.action==='gate2'&&r.status==='verified'))throw new Error('conflict');
   const plan=JSON.parse(w.plan_json),refs=action==='resume'?state.recoverable_step_refs:[];
@@ -57,6 +87,7 @@ export class Actions {
   if(action==='gate2'&&!state.creation_verified)throw new Error('qa_required');
   const schedule=action==='gate2'?scheduleFor(this.scope,plan,input.schedule):null;
   const snapshot=action==='gate2'?await this.qa(w,parent.id):{steps:await this.store.providerSteps(parent.id)};
+  if(action==='gate2'&&!this.snapshotAllowed(w,snapshot))throw new Error('provider_creation_disabled');
   await this.check(`campaign_action_prepare_${action}`);
   const data=snapshot as Record<string,any>;
   const objects=action==='gate2'?(this.scope.platform==='Meta'?[{kind:'campaign',id:data.campaign_id,status:'PAUSED'},{kind:'adset',id:data.adset_id,status:'PAUSED'},{kind:'ad',id:data.ad_id,status:'PAUSED'}]:[{kind:'campaign',id:data.campaign.resourceName,status:'PAUSED'},{kind:'ad_group',id:data.ad_group.resourceName,status:'PAUSED'},{kind:'ad',id:data.ad.resourceName,status:'PAUSED'}]):state.provider_objects.filter(o=>o.id).map(o=>({...o,id:o.id!}));
@@ -71,7 +102,7 @@ export class Actions {
   return result('success',{workflow_ref:w.id,revision_ref:w.revision_id,receipt_ref:parent.id,challenge,confirmation:{...display,confirmation_hash:challenge.confirmation_hash,expires_at:challenge.expires_at},data:{recoverable_step_refs:refs,official_readback:snapshot,schedule:publicSchedule}});
  }
  async reserve(w:Workflow,action:Action,input:Record<string,any>,requestHash:string){
-  if(!actionAllowed(this.env,this.scope,action))return result('locked');
+  if(!await this.allowed(w,action))return result('locked');
   const previous=await this.ledger.get(input.idempotency_key,this.scope);
   if(previous){if(previous.workflow_id!==w.id||previous.action!==action||previous.request_hash!==requestHash)throw new Error('idempotency_conflict');return this.read(previous,w);}
   if(await this.store.operation(input.idempotency_key,this.scope))throw new Error('idempotency_conflict');
@@ -118,12 +149,13 @@ export class Actions {
   if(['dispatched','unknown'].includes(r.status)){await this.read(r,w);return;}
   const tool=r.action==='gate2'?'campaign_gate2_activate':'campaign_creation_resume';
   try{
-   if(!actionAllowed(this.env,this.scope,r.action)||w.revision_id!==r.revision_id)throw new Error('stale_revision');
+   if(!await this.allowed(w,r.action)||w.revision_id!==r.revision_id)throw new Error('stale_revision');
    await this.check(tool);
    await new Sources(this.env.DB,this.env).assertCurrent(w,this.scope,new Google(this.env,this.scope),this.meta);
    if(r.action==='gate2'){
     scheduleFor(this.scope,JSON.parse(w.plan_json),JSON.parse(r.schedule_json!));
     const qa=await this.qa(w,r.parent_receipt);
+    if(!this.snapshotAllowed(w,qa))throw new Error('provider_creation_disabled');
     if(await digest(stable(qa))!==await digest(JSON.parse(r.confirmation_json).snapshot))throw new Error('qa_readback_mismatch');
    }else{
     const state=await this.state(w);
