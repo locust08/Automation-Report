@@ -38,6 +38,10 @@ export function stable(value:any):any{
  if(value&&typeof value==='object')return Object.fromEntries(Object.keys(value).filter(key=>!['verified_at','provider_action','provider_resources'].includes(key)).sort().map(key=>[key,stable(value[key])]));
  return value;
 }
+export async function publicActionReadback(snapshot:Record<string,any>){
+ const conversion=snapshot.conversion_configuration;
+ return conversion?{...snapshot,conversion_configuration:{verified:true,actions_count:conversion.actions.length,goals_count:conversion.goals.length,snapshot_hash:await digest(stable(conversion))}}:snapshot;
+}
 export class Actions {
  private store:Store;private ledger:ActionStore;
  constructor(private env:Environment,private scope:Scope,private google:Provider,private meta:Meta,private check:(tool:string)=>Promise<unknown>){this.store=new Store(env.DB);this.ledger=new ActionStore(env.DB);}
@@ -99,7 +103,10 @@ export class Actions {
    provider_objects:providerObjects,qa_status:action==='gate2'?'passed':'pending',consequences:action==='gate2'?['Enable the exact hierarchy with this future schedule. No immediate delivery is authorized. Pause separately through M03 before the scheduled start.']:['Create only the displayed missing or explicitly rejected Meta steps. Confirmed objects are preserved.']};
   const publicSchedule=schedule?{mode:schedule.mode,scheduled_at:schedule.scheduled_at,timezone:schedule.timezone}:null;
   const challenge=await this.ledger.prepare(w,this.scope,action,parent.id,publicSchedule,refs,stable(snapshot),display,requestHash);
-  return result('success',{workflow_ref:w.id,revision_ref:w.revision_id,receipt_ref:parent.id,challenge,confirmation:{...display,confirmation_hash:challenge.confirmation_hash,expires_at:challenge.expires_at},data:{recoverable_step_refs:refs,official_readback:snapshot,schedule:publicSchedule}});
+  // Keep every conversion action in the immutable confirmation snapshot, while
+  // the public response stays within the gateway's bounded JSON contract.
+  const readback=await publicActionReadback(data);
+  return result('success',{workflow_ref:w.id,revision_ref:w.revision_id,receipt_ref:parent.id,challenge,confirmation:{...display,confirmation_hash:challenge.confirmation_hash,expires_at:challenge.expires_at},data:{recoverable_step_refs:refs,official_readback:readback,schedule:publicSchedule}});
  }
  async reserve(w:Workflow,action:Action,input:Record<string,any>,requestHash:string){
   if(!await this.allowed(w,action))return result('locked');

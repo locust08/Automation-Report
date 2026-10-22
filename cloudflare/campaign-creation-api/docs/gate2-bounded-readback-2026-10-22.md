@@ -1,0 +1,7 @@
+# Bounded Google Gate2 preparation evidence
+
+The first post-fix connected preparation successfully created one unused private challenge but the main gateway returned invalid_response. A redacted SELECT of field paths/types/lengths found128 conversion actions in the immutable snapshot; the gateway JSON response contract allows at most100 elements per array. No full confirmation, token, token hash or confirmation hash was read. No action receipt or provider write exists for this attempt.
+
+Keep the entire conversion configuration in the private immutable challenge/receipt snapshot and in subsequent fresh QA comparisons. Return only verified/counts/digest metadata for that configuration in the public preparation readback. The display still identifies the exact campaign/hierarchy/budget/future schedule. Do not raise the shared generic response bound or truncate verification inputs. No Gate1/Meta/M03 changes or migration.
+
+Focused regressions exercise128 real Google QA conversion actions through preparation, reservation, queued preflight and verified scheduled readback; public arrays stay bounded while the private snapshot retainsall128. A change to action128 rejects the queued action before any schedule call. Disapproved policy remains blocked. The consumer boundary is additionally checked locally against the actual main campaignResultSchema. This correction is not yet deployed; exact-artifact production approval remains separate.

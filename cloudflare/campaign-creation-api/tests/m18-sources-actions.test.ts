@@ -188,13 +188,18 @@ it('checks existing Google Gate2 objects without revalidating duplicate creation
  const validate=vi.spyOn(google,'validate').mockRejectedValue(new Error('google_DUPLICATE_CAMPAIGN_NAME_RESOURCE_NOT_FOUND'));
  const readback=vi.spyOn(google,'readback').mockResolvedValue(snapshot as any);
  const query=vi.spyOn(google as any,'query').mockImplementation(async(sql:unknown)=>String(sql).includes('FROM customer LIMIT')?[{customer:{id:scope.platformAccountId,currencyCode:plan.currency,timeZone:plan.timezone,manager:false}}]:[{adGroupAd:{resourceName:snapshot.ad.resourceName,policySummary:{approvalStatus:'APPROVED'}}}]);
- vi.spyOn(google,'conversionConfiguration').mockResolvedValue({config:{},goals:[],actions:[]});
+ const conversion={config:{},goals:[],actions:Array.from({length:128},(_,i)=>({conversionAction:{resourceName:`customers/2315114913/conversionActions/${i+1}`}}))};
+ vi.spyOn(google,'conversionConfiguration').mockResolvedValue(conversion);
  const actions=new Actions(env,scope,google,meta(),async()=>{}),schedule={mode:'scheduled',scheduled_at:'2099-10-12T16:00:00.000Z',timezone:plan.timezone};
  const prepared=await actions.prepare(w,'gate2',{schedule},'prepare');
  expect(prepared.outcome).toBe('success');expect(prepared.confirmation!.qa_status).toBe('passed');
+ expect((prepared.data!.official_readback as any).conversion_configuration).toEqual({verified:true,actions_count:128,goals_count:0,snapshot_hash:await digest(stable(conversion))});
+ const bounded=(value:any):void=>{if(Array.isArray(value)){expect(value.length).toBeLessThanOrEqual(100);value.forEach(bounded);}else if(value&&typeof value==='object')Object.values(value).forEach(bounded);};
+ bounded(prepared);
  const input={idempotency_key:crypto.randomUUID(),challenge:prepared.challenge!.token,confirmation_hash:prepared.challenge!.confirmation_hash,schedule};
  await actions.reserve(w,'gate2',input,'reserve');
  const ledger=new ActionStore(f.db),receipt=(await ledger.get(input.idempotency_key,scope))!;
+ expect(JSON.parse(receipt.confirmation_json).snapshot.conversion_configuration.actions).toHaveLength(128);
  const scheduleWrite=vi.spyOn(google,'schedule').mockImplementation(async()=>{readback.mockResolvedValue({...snapshot,campaign:{...snapshot.campaign,status:'ENABLED',startDateTime:'2099-10-13 00:00:00'},ad_group:{...snapshot.ad_group,status:'ENABLED'},ad:{...snapshot.ad,status:'ENABLED'}} as any);});
  await actions.process(receipt,w);
  expect(validate).not.toHaveBeenCalled();expect(readback).toHaveBeenCalledTimes(3);expect(query).toHaveBeenCalledTimes(4);
@@ -210,4 +215,17 @@ it('still blocks Gate2 confirmation when live Google policy QA fails',async()=>{
  await expect(actions.prepare(w,'gate2',{schedule:{mode:'scheduled',scheduled_at:'2099-10-12T16:00:00.000Z',timezone:plan.timezone}},'prepare')).rejects.toMatchObject({code:'google_qa_policy'});
  expect(validate).not.toHaveBeenCalled();expect((await new ActionStore(f.db).list(w))).toHaveLength(0);
  expect((await f.db.prepare('SELECT COUNT(*) n FROM m04_action_challenges').first<{n:number}>())!.n).toBe(0);
+});
+
+it('rejects conversion drift beyond the public response array bound before scheduling',async()=>{
+ const {w,snapshot}=await paused(),actionsList=Array.from({length:128},(_,i)=>({conversionAction:{resourceName:`customers/2315114913/conversionActions/${i+1}`,status:'ENABLED'}}));
+ let configuration={config:{},goals:[],actions:actionsList};
+ const qa=vi.fn(async()=>({...snapshot,conversion_configuration:configuration})),scheduleWrite=vi.fn(async()=>{});
+ const actions=new Actions(env,scope,{validate:async()=>{},create:async()=>[],readback:async()=>snapshot,qa,schedule:scheduleWrite},meta(),async()=>{}),schedule={mode:'scheduled',scheduled_at:'2099-10-12T16:00:00.000Z',timezone:plan.timezone};
+ const prepared=await actions.prepare(w,'gate2',{schedule},'prepare'),key=crypto.randomUUID();
+ await actions.reserve(w,'gate2',{idempotency_key:key,challenge:prepared.challenge!.token,confirmation_hash:prepared.challenge!.confirmation_hash,schedule},'reserve');
+ configuration=structuredClone(configuration);configuration.actions[127]!.conversionAction.status='PAUSED';
+ const ledger=new ActionStore(f.db);await actions.process((await ledger.get(key,scope))!,w);
+ expect(scheduleWrite).not.toHaveBeenCalled();expect((await ledger.get(key,scope))!.status).toBe('rejected');
+ expect(JSON.parse((await ledger.get(key,scope))!.result_json!).reason).toBe('qa_readback_mismatch');
 });
