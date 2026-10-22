@@ -182,3 +182,32 @@ it('revoking the exact campaign scope rejects a queued action before any provide
  await actions.process((await ledger.get(key,scope))!,w);
  expect(qa).not.toHaveBeenCalled();expect(write).not.toHaveBeenCalled();expect((await ledger.get(key,scope))?.status).toBe('rejected');
 });
+
+it('checks existing Google Gate2 objects without revalidating duplicate creation',async()=>{
+ const {w,snapshot}=await paused(),google=provider();
+ const validate=vi.spyOn(google,'validate').mockRejectedValue(new Error('google_DUPLICATE_CAMPAIGN_NAME_RESOURCE_NOT_FOUND'));
+ const readback=vi.spyOn(google,'readback').mockResolvedValue(snapshot as any);
+ const query=vi.spyOn(google as any,'query').mockImplementation(async(sql:unknown)=>String(sql).includes('FROM customer LIMIT')?[{customer:{id:scope.platformAccountId,currencyCode:plan.currency,timeZone:plan.timezone,manager:false}}]:[{adGroupAd:{resourceName:snapshot.ad.resourceName,policySummary:{approvalStatus:'APPROVED'}}}]);
+ vi.spyOn(google,'conversionConfiguration').mockResolvedValue({config:{},goals:[],actions:[]});
+ const actions=new Actions(env,scope,google,meta(),async()=>{}),schedule={mode:'scheduled',scheduled_at:'2099-10-12T16:00:00.000Z',timezone:plan.timezone};
+ const prepared=await actions.prepare(w,'gate2',{schedule},'prepare');
+ expect(prepared.outcome).toBe('success');expect(prepared.confirmation!.qa_status).toBe('passed');
+ const input={idempotency_key:crypto.randomUUID(),challenge:prepared.challenge!.token,confirmation_hash:prepared.challenge!.confirmation_hash,schedule};
+ await actions.reserve(w,'gate2',input,'reserve');
+ const ledger=new ActionStore(f.db),receipt=(await ledger.get(input.idempotency_key,scope))!;
+ const scheduleWrite=vi.spyOn(google,'schedule').mockImplementation(async()=>{readback.mockResolvedValue({...snapshot,campaign:{...snapshot.campaign,status:'ENABLED',startDateTime:'2099-10-13 00:00:00'},ad_group:{...snapshot.ad_group,status:'ENABLED'},ad:{...snapshot.ad,status:'ENABLED'}} as any);});
+ await actions.process(receipt,w);
+ expect(validate).not.toHaveBeenCalled();expect(readback).toHaveBeenCalledTimes(3);expect(query).toHaveBeenCalledTimes(4);
+ expect(scheduleWrite).toHaveBeenCalledExactlyOnceWith(expect.any(Object),'2099-10-13');
+ expect((await ledger.get(input.idempotency_key,scope))!.status).toBe('verified');
+});
+it('still blocks Gate2 confirmation when live Google policy QA fails',async()=>{
+ const {w,snapshot}=await paused(),google=provider();
+ const validate=vi.spyOn(google,'validate').mockRejectedValue(new Error('duplicate creation'));
+ vi.spyOn(google,'readback').mockResolvedValue(snapshot as any);
+ vi.spyOn(google as any,'query').mockImplementation(async(sql:unknown)=>String(sql).includes('FROM customer LIMIT')?[{customer:{id:scope.platformAccountId,currencyCode:plan.currency,timeZone:plan.timezone,manager:false}}]:[{adGroupAd:{resourceName:snapshot.ad.resourceName,policySummary:{approvalStatus:'DISAPPROVED'}}}]);
+ const actions=new Actions(env,scope,google,meta(),async()=>{});
+ await expect(actions.prepare(w,'gate2',{schedule:{mode:'scheduled',scheduled_at:'2099-10-12T16:00:00.000Z',timezone:plan.timezone}},'prepare')).rejects.toMatchObject({code:'google_qa_policy'});
+ expect(validate).not.toHaveBeenCalled();expect((await new ActionStore(f.db).list(w))).toHaveLength(0);
+ expect((await f.db.prepare('SELECT COUNT(*) n FROM m04_action_challenges').first<{n:number}>())!.n).toBe(0);
+});

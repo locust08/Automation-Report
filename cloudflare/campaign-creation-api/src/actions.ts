@@ -76,7 +76,7 @@ export class Actions {
  private async qa(w:Workflow,parent:string){
   if(this.scope.platform==='Meta')return this.meta.qa(metaPlanSchema.parse(JSON.parse(w.plan_json)),w.id,parent,this.store);
   if(!this.google.qa)throw new Error('qa_unavailable');
-  return this.google.qa(planSchema.parse(JSON.parse(w.plan_json)),w.id);
+  return this.google.qa(planSchema.parse(JSON.parse(w.plan_json)),w.id,{readOnly:true});
  }
  async prepare(w:Workflow,action:Action,input:Record<string,any>,requestHash:string):Promise<Result>{
   if(!await this.allowed(w,action))return result('locked');
