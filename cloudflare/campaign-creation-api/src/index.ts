@@ -5,7 +5,7 @@ import {boundedJson, endpoints, result} from './contracts';
 import {inputs} from './inputs';
 import {execute,processReservedCreation,sweepCreationOutbox,type Environment} from './service';
 import {ProviderError} from './google';
-import {campaignBlocker} from './blockers';
+import {campaignBlocker,campaignValidationBlocker} from './blockers';
 
 export default observeWorker('m04',{
   async fetch(request: Request, env: Environment): Promise<Response> {
@@ -23,11 +23,12 @@ export default observeWorker('m04',{
       let output;
       try { output = await execute(env, scope, endpoint.tool, input, body.request_hash); }
       catch (error) {captureUnexpected(error,'campaign.operation',{receiptId:input.idempotency_key});
+        const validationBlocker=endpoint.tool==='campaign_draft_validate'?campaignValidationBlocker(error instanceof ProviderError?error.code:error instanceof Error?error.message:'request_failed'):null;
         const diagnostic=error instanceof ProviderError?error.code:error instanceof Error&&['TimeoutError','AbortError','TypeError','RangeError'].includes(error.name)?error.name:error instanceof Error&&['invalid_request','response_limit','access_denied'].includes(error.message)?error.message:'request_failed';
-        console.warn(JSON.stringify({event:'m04_backend_failure',tool:endpoint.tool,category:diagnostic}));
+        console.warn(JSON.stringify({event:'m04_backend_failure',tool:endpoint.tool,category:validationBlocker&&validationBlocker.code!=='request_failed'?validationBlocker.code:diagnostic}));
         if (error instanceof Error && error.message === 'access_denied') throw error;
         output = result(error instanceof Error && ['conflict', 'stale_revision', 'idempotency_conflict'].includes(error.message) ? 'conflict' : 'unavailable',
-          {validation_issues:[campaignBlocker(error instanceof ProviderError?error.code:error instanceof Error?error.message:'request_failed')],caveats: ['Refresh the draft or reconcile its creation receipt before retrying.'],data:{service_error:error instanceof ProviderError?error.code:error instanceof Error&&error.message==='provider_creation_disabled'?error.message:'request_failed'}});
+          {validation_issues:[validationBlocker??campaignBlocker(error instanceof ProviderError?error.code:error instanceof Error?error.message:'request_failed')],caveats: ['Refresh the draft or reconcile its creation receipt before retrying.'],data:{service_error:validationBlocker?.code??(error instanceof ProviderError?error.code:error instanceof Error&&error.message==='provider_creation_disabled'?error.message:'request_failed')}});
       }
       return Response.json({version: 'm18-m04-v1', scope: {...scope, allowed: true}, request_hash: body.request_hash, result: output},
         {headers: {'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff'}});

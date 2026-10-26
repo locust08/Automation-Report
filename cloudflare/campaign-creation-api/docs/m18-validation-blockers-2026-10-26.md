@@ -1,0 +1,13 @@
+# M18 validation blocker visibility — 26 October 2026
+
+User-returned validation key `c192ecce-2535-4c46-b641-592c665b551f` reached M04 and returned a valid HTTP 200 envelope in 5,919 ms at 09:04:48.117 UTC. Outcome was `unavailable`, readiness code and service error `request_failed`, correlation `ca041c32-3cda-4652-94d6-63eb2d81ed7d`, failure reference `b573a135-a637-4e2d-97e9-02911a11d15f`. No validation pass or provider mutation is established. The separately approved single validation is consumed and is not repeated.
+
+Exact deployed M04 source is `e3f06de1c4fc6e0ab223c22a8d6442df62d13786`, Worker `4981d5f5-b777-488a-8b80-f85a33d8110b`. Its outer exception handler converts non-provider errors such as `clone_changed` and `template_disabled` into `request_failed`. Those errors can occur before provider validate-only logic. This is a confirmed information-loss mechanism; it does not identify which exception caused the actual returned failure. Scope drift, source drift, malformed stored data and other failures must not be inferred from timing alone.
+
+The local candidate adds a finite, curated blocker mapping only for `campaign_draft_validate`. It preserves specific clone/template/planning/conflict categories in validation issues, service_error and the existing safe backend log. Arbitrary exception messages remain hidden. Outcomes, source-currentness checks, approval checks, native calls and retry behavior remain unchanged. There is no automatic source refresh, new revision, provider creation, bypass or weakening of a blocker.
+
+A matching one-line DigitalBee MCP projection update permits these same six codes in its safe diagnostic text. Both candidates are local until separately approved and verified; the existing M04 service is distinct from the previously approved MCP diagnostic deployment. No M04 deployment, database read, migration, provider action or further validation occurred.
+
+Verification: M04 TypeScript, scoped esbuild bundle and whitespace checks pass. The scoped repository lint result is recorded in the handoff. No regression or behavioral tests run under the user's restriction. Static checks do not prove the original Meta cause or connected acceptance.
+
+Ownership: chat `01a175ba-4c34-7700-bf2d-579abe1d2639`; Automation-Report branch `codex/m18-backend-diagnostics-01a175ba`; base exact fetched deployed source above. Integration coordinator `01a12ed0-ee4b-749e-a39a-430f2eb60030`; feature handoff only, no shared/main merge. Existing feature worktrees and dirty files remain untouched. M17 stays paused, Google QA remains dated evidence, and Meta draft approval/creation remains unverified.

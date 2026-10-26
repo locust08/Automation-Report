@@ -1,4 +1,15 @@
 /** Safe categories only: never return credentials or raw provider error messages. */
+export function campaignValidationBlocker(code:string){
+ const messages:Record<string,string>={
+  clone_changed:'The saved clone source changed or clone planning is disabled. Review current source evidence before saving a new revision.',
+  template_disabled:'The saved template is unavailable, disabled or changed. Review the current template before saving a new revision.',
+  template_corrupt:'The saved template failed its integrity check. An administrator must review it before validation.',
+  planning_disabled:'Planning from this source is disabled. No provider objects were created.',
+  conflict:'This workflow is not in a valid state for draft validation. Read its current revision and status.',
+  idempotency_conflict:'This request key conflicts with an existing operation. Inspect the existing result before another action.',
+ };
+ return Object.hasOwn(messages,code)?{field:'readiness',code,message:messages[code]!}:campaignBlocker(code);
+}
 export function campaignBlocker(code:string){
  const messages:Record<string,string>={
   stale_revision:'The source or saved revision changed. Refresh readiness and save a new immutable draft.',
