@@ -11,6 +11,12 @@ function stableStory(story:Record<string,any>){
   if(value?.video_data?.image_hash&&value.video_data.video_id)delete value.video_data.image_url;
   return value;
 }
+/** Match existing story validation: signed preview URLs do not identify assets. */
+export function stableMetaQaSnapshot(snapshot:Record<string,any>){
+  const value=structuredClone(snapshot),creative=value.ad_configuration?.creative;
+  if(creative?.object_story_spec)creative.object_story_spec=stableStory(creative.object_story_spec);
+  return value;
+}
 function ordered(value:any):any{return Array.isArray(value)?value.map(ordered):value&&typeof value==='object'?Object.fromEntries(Object.keys(value).sort().map(key=>[key,ordered(value[key])])):value;}
 const storyDigest=(story:Record<string,any>)=>digest(ordered(stableStory(story)));
 const sourceDigest=(ad:Record<string,any>)=>digest(ordered({...ad,creative:{...ad.creative,object_story_spec:stableStory(ad.creative.object_story_spec)}}));

@@ -1,6 +1,6 @@
 import {digest,result,planSchema,metaPlanSchema,scopeSchema,type Scope,type Result} from './contracts';
 import {Google,ProviderError} from './google';
-import {Meta} from './meta';
+import {Meta,stableMetaQaSnapshot} from './meta';
 import {Store,type Workflow} from './store';
 import {ActionStore,type Action,type ActionReceipt} from './action-store';
 import type {Environment,Dependencies,Provider} from './service';
@@ -38,6 +38,7 @@ export function stable(value:any):any{
  if(value&&typeof value==='object')return Object.fromEntries(Object.keys(value).filter(key=>!['verified_at','provider_action','provider_resources'].includes(key)).sort().map(key=>[key,stable(value[key])]));
  return value;
 }
+function actionSnapshot(value:Record<string,any>){return stable(value.platform==='Meta'?stableMetaQaSnapshot(value):value);}
 /** Bounded field paths only: never disclose creative values or signed URLs. */
 function snapshotDifferencePaths(before:unknown,after:unknown){
  const paths:string[]=[];let visited=0,truncated=false;
@@ -118,7 +119,7 @@ export class Actions {
     targeting_summary:JSON.stringify(plan.locations??{source_ad_id:plan.source_ad_id}),creative_summary:JSON.stringify(plan.headlines??{source_ad_id:plan.source_ad_id}),validation_status:'ready',warnings:[]},
    provider_objects:providerObjects,qa_status:action==='gate2'?'passed':'pending',consequences:action==='gate2'?['Enable the exact hierarchy with this future schedule. No immediate delivery is authorized. Pause separately through M03 before the scheduled start.']:['Create only the displayed missing or explicitly rejected Meta steps. Confirmed objects are preserved.']};
   const publicSchedule=schedule?{mode:schedule.mode,scheduled_at:schedule.scheduled_at,timezone:schedule.timezone}:null;
-  const challenge=await this.ledger.prepare(w,this.scope,action,parent.id,publicSchedule,refs,stable(snapshot),display,requestHash);
+  const challenge=await this.ledger.prepare(w,this.scope,action,parent.id,publicSchedule,refs,actionSnapshot(snapshot),display,requestHash);
   // Keep every conversion action in the immutable confirmation snapshot, while
   // the public response stays within the gateway's bounded JSON contract.
   const readback=await publicActionReadback(data);
@@ -143,16 +144,11 @@ export class Actions {
   const saved=stable(JSON.parse(r.confirmation_json).snapshot);
   // Read-only QA skips validate-only POSTs and never changes the stored receipt.
   const current=stable(await this.meta.qa(metaPlanSchema.parse(JSON.parse(w.plan_json)),w.id,r.parent_receipt,this.store,{readOnly:true}));
-  const thumbnailNormalized=(value:Record<string,any>)=>{
-   const copy=structuredClone(value),video=copy.ad_configuration?.creative?.object_story_spec?.video_data;
-   if(video?.image_hash&&video.video_id)delete video.image_url;
-   return copy;
-  };
   const confirmedHash=await digest(saved),currentHash=await digest(current);
   await this.check('campaign_operation_get');
   return result('success',{workflow_ref:w.id,revision_ref:r.revision_id,receipt_ref:r.id,data:{status:r.status,provider_action:false,
    snapshot_comparison:{...snapshotDifferencePaths(saved,current),confirmed_snapshot_hash:confirmedHash,current_snapshot_hash:currentHash,
-    matches:confirmedHash===currentHash,thumbnail_normalized_match:await digest(thumbnailNormalized(saved))===await digest(thumbnailNormalized(current)),
+    matches:confirmedHash===currentHash,thumbnail_normalized_match:await digest(stableMetaQaSnapshot(saved))===await digest(stableMetaQaSnapshot(current)),
     historical_execution_snapshot_available:false,comparison:'confirmed_snapshot_vs_current_read_only_qa'}}});
  }
  async read(r:ActionReceipt,w:Workflow){
@@ -199,7 +195,7 @@ export class Actions {
     scheduleFor(this.scope,JSON.parse(w.plan_json),JSON.parse(r.schedule_json!));
     const qa=await this.qa(w,r.parent_receipt);
     if(!this.snapshotAllowed(w,qa))throw new Error('provider_creation_disabled');
-    if(await digest(stable(qa))!==await digest(JSON.parse(r.confirmation_json).snapshot))throw new Error('qa_readback_mismatch');
+    if(await digest(actionSnapshot(qa))!==await digest(actionSnapshot(JSON.parse(r.confirmation_json).snapshot)))throw new Error('qa_readback_mismatch');
    }else{
     const state=await this.state(w);
     if(JSON.stringify(state.recoverable_step_refs)!==r.refs_json)throw new Error('recovery_changed');
