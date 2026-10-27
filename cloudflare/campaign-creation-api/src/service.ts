@@ -95,7 +95,7 @@ export async function execute(env: Environment, scope: Scope, tool: string, inpu
     const qaStore=new WorkflowQA(env.DB,scope),qaReceipt=await qaStore.get(input.idempotency_key);
     if(qaReceipt){const workflow=await store.workflow(qaReceipt.workflow_id,scope);if(!workflow||workflow.mapping_hash!==await mappingDigest(scope)||qaReceipt.scope_hash!==await digest(scope))throw new Error('access_denied');await check();return qaStore.response(qaReceipt);}
     const followup=await new ActionStore(env.DB).get(input.idempotency_key,scope);
-    if(followup){const workflow=await store.workflow(followup.workflow_id,scope);if(!workflow||workflow.mapping_hash!==await mappingDigest(scope))throw new Error('access_denied');return actions.read(followup,workflow);}
+    if(followup){const workflow=await store.workflow(followup.workflow_id,scope);if(!workflow||workflow.mapping_hash!==await mappingDigest(scope))throw new Error('access_denied');return input.diagnose_preflight===true?actions.diagnoseSnapshot(followup,workflow):actions.read(followup,workflow);}
     const storedOperation = await store.operation(input.idempotency_key, scope);
     if (!storedOperation) return result('unavailable', {caveats: ['Creation receipt not found.']});
     let operation=storedOperation;

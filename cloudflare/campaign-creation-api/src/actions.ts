@@ -38,6 +38,22 @@ export function stable(value:any):any{
  if(value&&typeof value==='object')return Object.fromEntries(Object.keys(value).filter(key=>!['verified_at','provider_action','provider_resources'].includes(key)).sort().map(key=>[key,stable(value[key])]));
  return value;
 }
+/** Bounded field paths only: never disclose creative values or signed URLs. */
+function snapshotDifferencePaths(before:unknown,after:unknown){
+ const paths:string[]=[];let visited=0,truncated=false;
+ const walk=(a:unknown,b:unknown,path:string,depth:number)=>{
+  if(JSON.stringify(a)===JSON.stringify(b))return;
+  if(++visited>1024||paths.length>=24||depth>12){truncated=true;return;}
+  if(a&&b&&typeof a==='object'&&typeof b==='object'&&Array.isArray(a)===Array.isArray(b)){
+   const left=a as Record<string,unknown>,right=b as Record<string,unknown>;
+   for(const key of [...new Set([...Object.keys(left),...Object.keys(right)])].sort()){
+    const label=/^[a-zA-Z0-9_]{1,64}$/.test(key)?key:'[field]';
+    walk(left[key],right[key],path?`${path}.${label}`:label,depth+1);
+   }
+  }else paths.push(path||'[root]');
+ };
+ walk(before,after,'',0);return {paths,truncated};
+}
 export async function publicActionReadback(snapshot:Record<string,any>){
  const conversion=snapshot.conversion_configuration;
  return conversion?{...snapshot,conversion_configuration:{verified:true,actions_count:conversion.actions.length,goals_count:conversion.goals.length,snapshot_hash:await digest(stable(conversion))}}:snapshot;
@@ -118,6 +134,26 @@ export class Actions {
   await this.ledger.reserve(w,this.scope,action,input,requestHash);
   try{await this.env.CREATION_QUEUE.send({operationId:input.idempotency_key});}catch{/* The scheduled sweep publishes reserved action receipts. */}
   return result('success',{workflow_ref:w.id,revision_ref:w.revision_id,receipt_ref:input.idempotency_key,allowed_next_actions:['campaign_operation_get'],data:{status:'reserved',action,provider_action:false}});
+ }
+ async diagnoseSnapshot(r:ActionReceipt,w:Workflow){
+  const detail=r.result_json?JSON.parse(r.result_json):null;
+  if(this.scope.platform!=='Meta'||r.action!=='gate2'||r.status!=='rejected'||detail?.reason!=='qa_readback_mismatch'||r.revision_id!==w.revision_id)
+   return result('unavailable',{workflow_ref:w.id,revision_ref:r.revision_id,receipt_ref:r.id,data:{status:r.status,provider_action:false},caveats:['Snapshot diagnosis requires a rejected Meta Gate 2 mismatch on the unchanged revision.']});
+  await this.check('campaign_operation_get');
+  const saved=stable(JSON.parse(r.confirmation_json).snapshot);
+  // Read-only QA skips validate-only POSTs and never changes the stored receipt.
+  const current=stable(await this.meta.qa(metaPlanSchema.parse(JSON.parse(w.plan_json)),w.id,r.parent_receipt,this.store,{readOnly:true}));
+  const thumbnailNormalized=(value:Record<string,any>)=>{
+   const copy=structuredClone(value),video=copy.ad_configuration?.creative?.object_story_spec?.video_data;
+   if(video?.image_hash&&video.video_id)delete video.image_url;
+   return copy;
+  };
+  const confirmedHash=await digest(saved),currentHash=await digest(current);
+  await this.check('campaign_operation_get');
+  return result('success',{workflow_ref:w.id,revision_ref:r.revision_id,receipt_ref:r.id,data:{status:r.status,provider_action:false,
+   snapshot_comparison:{...snapshotDifferencePaths(saved,current),confirmed_snapshot_hash:confirmedHash,current_snapshot_hash:currentHash,
+    matches:confirmedHash===currentHash,thumbnail_normalized_match:await digest(thumbnailNormalized(saved))===await digest(thumbnailNormalized(current)),
+    historical_execution_snapshot_available:false,comparison:'confirmed_snapshot_vs_current_read_only_qa'}}});
  }
  async read(r:ActionReceipt,w:Workflow){
   if(['dispatched','unknown'].includes(r.status)){
