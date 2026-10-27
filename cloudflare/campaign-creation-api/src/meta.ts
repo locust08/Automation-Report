@@ -287,6 +287,7 @@ export class Meta {
   }
   async schedule(snapshot:Record<string,any>,scheduledAt:string,receipt:string,actions:ActionStore,check:()=>Promise<unknown>){
     this.deadline=Date.now()+90000;
+    await this.assertSchedulingStart(snapshot);
     // Parent remains paused until every child and the future time have official readback.
     const campaign=await this.get(snapshot.campaign_id,{fields:'id,account_id,status'});
     if(campaign.id!==snapshot.campaign_id||campaign.account_id!==this.scope.platformAccountId||campaign.status!=='PAUSED')throw new ProviderError('unknown','meta_parent_not_paused');
@@ -311,6 +312,14 @@ export class Meta {
       await actions.confirmStep(receipt,step);
     }
     return this.readScheduled(snapshot,scheduledAt);
+  }
+  async assertSchedulingStart(snapshot:Record<string,any>){
+    const adset=await this.get(snapshot.adset_id,{fields:'id,account_id,campaign_id,status,start_time'});
+    if(adset.id!==snapshot.adset_id||adset.account_id!==this.scope.platformAccountId||adset.campaign_id!==snapshot.campaign_id||adset.status!=='PAUSED'||typeof adset.start_time!=='string'||!Number.isFinite(Date.parse(adset.start_time)))
+      throw new ProviderError('unavailable','meta_schedule_readback');
+    // Gate 1 may create a paused ad set whose original start has already passed.
+    // Do not offer or dispatch a Gate 2 change to that locked start time.
+    if(Date.parse(adset.start_time)<=Date.now())throw new ProviderError('unavailable','meta_schedule_start_locked');
   }
   async readSchedulingState(snapshot:Record<string,any>){
     this.deadline=Date.now()+30000;

@@ -109,6 +109,15 @@ export class Actions {
   const schedule=action==='gate2'?scheduleFor(this.scope,plan,input.schedule):null;
   const snapshot=action==='gate2'?await this.qa(w,parent.id):{steps:await this.store.providerSteps(parent.id)};
   if(action==='gate2'&&!this.snapshotAllowed(w,snapshot))throw new Error('provider_creation_disabled');
+  if(action==='gate2'&&this.scope.platform==='Meta'){
+   try{await this.meta.assertSchedulingStart(snapshot);}
+   catch(error){
+    if(error instanceof ProviderError&&error.code==='meta_schedule_start_locked')return result('unavailable',{workflow_ref:w.id,revision_ref:w.revision_id,
+     validation_issues:[{field:'schedule',code:error.code,message:'This paused Meta ad set has an elapsed, locked start time. Future scheduling needs a separately approved hierarchy created with a future start; no schedule or provider change was made.'}],
+     data:{provider_action:false}});
+    throw error;
+   }
+  }
   await this.check(`campaign_action_prepare_${action}`);
   const data=snapshot as Record<string,any>;
   const objects=action==='gate2'?(this.scope.platform==='Meta'?[{kind:'campaign',id:data.campaign_id,status:'PAUSED'},{kind:'adset',id:data.adset_id,status:'PAUSED'},{kind:'ad',id:data.ad_id,status:'PAUSED'}]:[{kind:'campaign',id:data.campaign.resourceName,status:'PAUSED'},{kind:'ad_group',id:data.ad_group.resourceName,status:'PAUSED'},{kind:'ad',id:data.ad.resourceName,status:'PAUSED'}]):state.provider_objects.filter(o=>o.id).map(o=>({...o,id:o.id!}));
@@ -204,6 +213,7 @@ export class Actions {
     const qa=await this.qa(w,r.parent_receipt);
     if(!this.snapshotAllowed(w,qa))throw new Error('provider_creation_disabled');
     if(await digest(actionSnapshot(qa))!==await digest(actionSnapshot(JSON.parse(r.confirmation_json).snapshot)))throw new Error('qa_readback_mismatch');
+    if(this.scope.platform==='Meta')await this.meta.assertSchedulingStart(qa);
    }else{
     const state=await this.state(w);
     if(JSON.stringify(state.recoverable_step_refs)!==r.refs_json)throw new Error('recovery_changed');
