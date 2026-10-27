@@ -2,6 +2,7 @@ import {digest,metaPlanSchema,planSchema,type Scope} from './contracts';
 import type {Google} from './google';
 import type {Meta} from './meta';
 import type {Workflow} from './store';
+import {metaBudgetMeetsMinimum} from './meta-budget';
 
 export interface SourceFlags {M04_TEMPLATE_PLANNING_ENABLED?:string;M04_CLONE_PLANNING_ENABLED?:string}
 interface Template {template_id:string;version:number;platform:string;campaign_type:string;defaults_json:string;required_overrides_json:string;content_hash:string;enabled:number}
@@ -20,7 +21,19 @@ export class Sources {
    // Meta paused QA verifies the exact saved source fingerprint itself without minimum-budget probes.
    if(pausedQA&&scope.platform==='Meta')return;
    const snapshot=scope.platform==='Google'?(await google.clonePlan(source.source_campaign_id)).snapshot:(await meta.referenceAssets(JSON.parse(w.plan_json).source_ad_id)).sources[0];
-   if(await digest(sourceSnapshot(snapshot))!==source.source_hash)throw new Error('clone_changed');
+   if(await digest(sourceSnapshot(snapshot))!==source.source_hash){
+    if(scope.platform==='Meta'&&snapshot&&'minimum_daily_budget' in snapshot){
+     const plan=metaPlanSchema.parse(JSON.parse(w.plan_json));
+     // Legacy clones were saved at their then-current minimum. A new floor is
+     // readiness evidence, not a source edit. Prove that this is the ONLY changed
+     // snapshot field, and independently require today's floor to be affordable.
+     // Every source/configuration field, including source_fingerprint, stays in
+     // the full hash. Unexplained legacy snapshots still fail closed.
+     if(metaBudgetMeetsMinimum(plan.daily_budget,snapshot.minimum_daily_budget)&&
+       await digest(sourceSnapshot({...snapshot,minimum_daily_budget:plan.daily_budget}))===source.source_hash)return;
+    }
+    throw new Error('clone_changed');
+   }
   }
  }
  async catalog(scope:Scope){
