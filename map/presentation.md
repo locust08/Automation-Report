@@ -57,3 +57,14 @@ Local evidence: focused API/access/render tests and app-source typecheck pass; s
 2026-10-20 status-label correction: personal report settings use ASCII `Loading preferences...` and `Saving...` labels to avoid corrupted ellipsis characters. Scoped ESLint and all seven preference tests pass; this changes display text only.
 
 2026-10-20 navigation refinement: the Preferences/Settings group has no separator border; other navigation group separators are unchanged.
+
+
+## Date picker improvement - 2026-10-27
+
+The shared report date picker shows one month below 768px and two on larger screens. Its portalled popover fits the viewport, repositions around the trigger, and scrolls vertically when space is limited. Mobile calendar columns shrink within the available width while day buttons retain 44px height.
+
+DayPicker now uses controlled onSelect state: selecting a new start clears the previous range highlight immediately, and the next valid end completes the same draft shown in the footer. An earlier second click restarts selection; selecting the same day twice permits a single-day report. Apply commits the draft; Cancel, Escape and outside dismissal discard it. Calendar dates use UTC consistently across browser timezones.
+
+Local evidence: scripts/datepicker-improvement-browser-test.mjs passes at 320, 390, 767, 782 and 1440px in Malaysia and Los Angeles timezones, covering replacement highlights, earlier-date restart, same-day Apply, presets, Escape and horizontal bounds. Screenshots are in ignored artifacts/datepicker-improvement/; the 320px render was visually reviewed. Four date-selection unit tests and scoped ESLint pass. Repository typecheck has existing generated-artifact errors; repository lint excluding generated directories has existing campaign-creation no-explicit-any errors. The existing Overall layout source test fails its unrelated report-title assertion. No provider reconciliation is needed for this client-only change. No Cloudflare service is affected; deployment is skipped because this workspace contains unrelated changes. Rollback: revert the scoped datepicker commit.
+
+Source-only TypeScript validation passes using the repository compiler settings with generated artifacts, outputs, temporary files and nested worktrees excluded.

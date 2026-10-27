@@ -1,11 +1,12 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { CalendarDaysIcon, ChevronDownIcon } from "lucide-react";
 import type { DateRange } from "react-day-picker";
 
 import { Calendar02 } from "@/components/shadcn-studio/calendar/calendar-02";
 import { Button } from "@/components/ui/button";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { selectDateRangeDay } from "@/lib/reporting/date-range-selection";
 import { cn } from "@/lib/utils";
@@ -36,8 +37,8 @@ export function ReportHeaderMonthPicker({
   densePopover?: boolean;
   className?: string;
 }) {
-  const containerRef = useRef<HTMLDivElement | null>(null);
   const [open, setOpen] = useState(false);
+  const [smallScreen, setSmallScreen] = useState(true);
   const [draftStartDate, setDraftStartDate] = useState(normalizeIsoDate(startDate));
   const [draftEndDate, setDraftEndDate] = useState<string | null>(normalizeIsoDate(endDate));
   const [draftRange, setDraftRange] = useState<DateRange>(() => ({
@@ -62,33 +63,12 @@ export function ReportHeaderMonthPicker({
   );
 
   useEffect(() => {
-    function handlePointerDown(event: MouseEvent) {
-      if (!open) {
-        return;
-      }
-      const target = event.target as Node | null;
-      if (target instanceof Element && target.closest('[data-slot="select-content"]')) {
-        return;
-      }
-      if (containerRef.current && target && !containerRef.current.contains(target)) {
-        setOpen(false);
-      }
-    }
-
-    function handleEscape(event: KeyboardEvent) {
-      if (event.key === "Escape") {
-        setOpen(false);
-      }
-    }
-
-    document.addEventListener("mousedown", handlePointerDown);
-    document.addEventListener("keydown", handleEscape);
-
-    return () => {
-      document.removeEventListener("mousedown", handlePointerDown);
-      document.removeEventListener("keydown", handleEscape);
-    };
-  }, [open]);
+    const media = window.matchMedia("(max-width: 767px)");
+    const updateScreen = () => setSmallScreen(media.matches);
+    updateScreen();
+    media.addEventListener("change", updateScreen);
+    return () => media.removeEventListener("change", updateScreen);
+  }, []);
 
   function applyRange(nextStartDate: string, nextEndDate: string) {
     onChange(normalizeDateRange(nextStartDate, nextEndDate));
@@ -124,9 +104,9 @@ export function ReportHeaderMonthPicker({
       {
         startDate: draftStartDate,
         endDate: draftEndDate,
-        selectionStart: rangeSelectionStart ? toCalendarIsoDate(rangeSelectionStart) : null,
+        selectionStart: rangeSelectionStart ? toIsoDate(rangeSelectionStart) : null,
       },
-      toCalendarIsoDate(day),
+      toIsoDate(day),
     );
     setDraftStartDate(next.startDate);
     setDraftEndDate(next.endDate);
@@ -137,8 +117,8 @@ export function ReportHeaderMonthPicker({
     });
   }
 
-  function togglePicker() {
-    if (open) {
+  function handleOpenChange(nextOpen: boolean) {
+    if (!nextOpen) {
       setOpen(false);
       return;
     }
@@ -155,133 +135,141 @@ export function ReportHeaderMonthPicker({
   }
 
   return (
-    <div
-      ref={containerRef}
-      className={cn(
-        "relative flex max-w-full items-center text-[#5f5f5f]",
-        compact
-          ? "h-9 w-auto min-w-[280px] gap-0.5 rounded-lg border border-slate-200 bg-white p-0.5 shadow-none"
-          : "h-auto w-full gap-1 rounded-2xl bg-[#d9d9d9] p-1.5 shadow-sm sm:h-12 sm:min-w-[340px] sm:w-auto",
-        className,
-      )}
-    >
-      <button
-        type="button"
+    <Popover open={open} onOpenChange={handleOpenChange}>
+      <div
         className={cn(
-          "flex min-w-0 flex-1 items-center text-left",
-          compact ? "gap-1.5 rounded-md px-1.5 py-0.5" : "gap-2 rounded-xl px-2 py-1",
-          open && (compact ? "bg-slate-50" : "bg-white/70")
+          "relative flex max-w-full items-center text-[#5f5f5f]",
+          compact
+            ? "h-9 w-auto min-w-0 gap-0.5 rounded-lg border border-slate-200 bg-white p-0.5 shadow-none"
+            : "h-auto w-full gap-1 rounded-2xl bg-[#d9d9d9] p-1.5 shadow-sm sm:h-12 sm:min-w-[340px] sm:w-auto",
+          className,
         )}
-        onClick={togglePicker}
-        aria-label="Open date range picker"
-        aria-expanded={open}
       >
-        <CalendarDaysIcon className={cn("text-[#7a7a7a]", compact ? "size-3.5" : "size-4")} />
-        <span className={cn("truncate font-semibold leading-none text-[#5f5f5f]", compact ? "text-xs" : "text-sm sm:text-base")}>
-          {compact ? compactDateLabel : dateLabel}
-        </span>
-        <ChevronDownIcon
-          className={cn("ml-auto text-[#7a7a7a]", compact ? "size-3.5" : "size-4")}
-          data-report-export-exclude="true"
-        />
-      </button>
-
-      {open ? (
-        <div
-          className={cn(
-            "absolute top-[calc(100%+8px)] z-50 max-h-[min(680px,calc(100vh-6rem))] max-w-[calc(100vw-2rem)] overflow-auto rounded-2xl border bg-white shadow-[0_12px_32px_rgba(0,0,0,0.18)]",
-            densePopover ? "w-[min(clamp(360px,80vw,560px),calc(100vw-2rem))] rounded-xl" : compact ? "w-[520px]" : "w-[600px]",
-            densePopover ? "right-0" : compact ? "-left-[18px]" : "left-0 sm:left-auto sm:right-0"
-          )}
-        >
-          <div className={cn("flex items-center justify-between border-b", densePopover ? "gap-2 p-2.5 max-[399px]:flex-col max-[399px]:items-stretch" : "gap-3 p-3")}>
-            <div>
-              <p className={cn("font-semibold text-foreground", densePopover ? "text-xs" : "text-sm")}>Select date range</p>
-              <p className={cn("text-muted-foreground", densePopover ? "max-w-48 text-[10px] leading-3.5" : "text-xs")}>
-                Choose a preset or select dates from the calendar.
-              </p>
-            </div>
-            <label className="flex shrink-0 items-center justify-end">
-              <span className="sr-only">Quick date range</span>
-              <Select
-                value={preset}
-                onValueChange={(value) => handlePresetChange(value as DatePreset)}
-              >
-                <SelectTrigger
-                  aria-label="Quick date range"
-                  className={cn("bg-white", densePopover ? "h-8 w-28 text-xs max-[399px]:w-full" : "w-36")}
-                >
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent position="popper" align="end">
-                  <SelectItem value="custom">Custom</SelectItem>
-                  <SelectItem value="today">Today</SelectItem>
-                  <SelectItem value="yesterday">Yesterday</SelectItem>
-                  <SelectItem value="last7Days">Last 7 days</SelectItem>
-                  <SelectItem value="last30Days">Last 30 days</SelectItem>
-                  <SelectItem value="thisMonth">This month</SelectItem>
-                  <SelectItem value="lastMonth">Last month</SelectItem>
-                </SelectContent>
-              </Select>
-            </label>
-          </div>
-
-          <div className={cn(densePopover ? "space-y-2 p-2" : "space-y-3 p-3")}>
-            <Calendar02
-              mode="range"
-              defaultMonth={parseIsoDate(draftStartDate)}
-              numberOfMonths={2}
-              pagedNavigation
-              selected={draftRange}
-              onDayClick={handleCalendarDayClick}
-              classNames={densePopover ? { caption_label: "whitespace-nowrap text-[10px] font-medium select-none" } : undefined}
-              className={cn(
-                "mx-auto w-fit",
-                compact && "border-0 shadow-none [&_.rdp-months]:gap-1",
-                densePopover && "p-1 text-[clamp(9px,2vw,11px)] [--cell-size:clamp(1.25rem,4.5vw,1.75rem)] [&_.rdp-months]:flex-row [&_.rdp-months]:gap-2 [&_.rdp-month]:gap-2 [&_.rdp-week]:mt-1"
-              )}
+        <PopoverTrigger asChild>
+          <button
+            type="button"
+            className={cn(
+              "flex min-w-0 flex-1 items-center text-left",
+              compact ? "gap-1.5 rounded-md px-1.5 py-0.5" : "gap-2 rounded-xl px-2 py-1",
+              open && (compact ? "bg-slate-50" : "bg-white/70")
+            )}
+            aria-label="Open date range picker"
+            aria-expanded={open}
+          >
+            <CalendarDaysIcon className={cn("text-[#7a7a7a]", compact ? "size-3.5" : "size-4")} />
+            <span className={cn("truncate font-semibold leading-none text-[#5f5f5f]", compact ? "text-xs" : "text-sm sm:text-base")}>
+              {compact ? compactDateLabel : dateLabel}
+            </span>
+            <ChevronDownIcon
+              className={cn("ml-auto text-[#7a7a7a]", compact ? "size-3.5" : "size-4")}
+              data-report-export-exclude="true"
             />
+          </button>
+        </PopoverTrigger>
 
-            <div className={cn(densePopover ? "flex flex-wrap items-center justify-between gap-2" : "gap-3", !densePopover && (compact ? "flex items-center justify-between" : "space-y-3"))}>
-              <div className={cn("flex items-center text-muted-foreground", densePopover ? "gap-1 text-[10px]" : "gap-2 text-sm", !compact && "justify-center")}>
-                <span>{formatLabelDate(draftStartDate)}</span>
-                <span aria-hidden="true">→</span>
-                <span>{draftEndDate ? formatLabelDate(draftEndDate) : "Select end date"}</span>
+        {open ? (
+          <PopoverContent
+            align="end"
+            sideOffset={8}
+            collisionPadding={12}
+            data-report-date-picker="true"
+            aria-label="Select date range"
+            className={cn(
+              "z-50 max-h-[var(--radix-popover-content-available-height)] w-[min(22rem,calc(100vw-1.5rem))] max-w-[calc(100vw-1.5rem)] overflow-auto rounded-2xl border bg-white p-0 shadow-[0_12px_32px_rgba(0,0,0,0.18)]",
+              densePopover ? "rounded-xl md:w-[480px]" : "md:w-[560px]"
+            )}
+          >
+            <div className={cn("flex items-center justify-between border-b max-[399px]:flex-col max-[399px]:items-stretch", densePopover ? "gap-2 p-2.5" : "gap-3 p-3")}>
+              <div>
+                <p className={cn("font-semibold text-foreground", densePopover ? "text-xs" : "text-sm")}>Select date range</p>
+                <p className={cn("text-muted-foreground", densePopover ? "max-w-48 text-[10px] leading-3.5" : "text-xs")}>
+                  Choose a preset or select dates from the calendar.
+                </p>
               </div>
+              <label className="flex shrink-0 items-center justify-end">
+                <span className="sr-only">Quick date range</span>
+                <Select
+                  value={preset}
+                  onValueChange={(value) => handlePresetChange(value as DatePreset)}
+                >
+                  <SelectTrigger
+                    aria-label="Quick date range"
+                    className={cn("bg-white max-[399px]:w-full", densePopover ? "h-8 w-28 text-xs" : "w-36")}
+                  >
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent position="popper" align="end">
+                    <SelectItem value="custom">Custom</SelectItem>
+                    <SelectItem value="today">Today</SelectItem>
+                    <SelectItem value="yesterday">Yesterday</SelectItem>
+                    <SelectItem value="last7Days">Last 7 days</SelectItem>
+                    <SelectItem value="last30Days">Last 30 days</SelectItem>
+                    <SelectItem value="thisMonth">This month</SelectItem>
+                    <SelectItem value="lastMonth">Last month</SelectItem>
+                  </SelectContent>
+                </Select>
+              </label>
+            </div>
 
-              <div className={cn("gap-2", compact ? "flex shrink-0 items-center" : "flex flex-col-reverse sm:flex-row sm:items-center sm:justify-end")}>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  className={cn(densePopover ? "h-8 px-2.5 text-xs" : "h-9 px-4", "text-[#6f6f6f]", !compact && "w-full sm:w-auto")}
-                  onClick={() => {
-                    setDraftStartDate(normalizedCurrent.startDate);
-                    setDraftEndDate(normalizedCurrent.endDate);
-                    setDraftRange({
-                      from: parseIsoDate(normalizedCurrent.startDate),
-                      to: parseIsoDate(normalizedCurrent.endDate),
-                    });
-                    setRangeSelectionStart(null);
-                    setPreset("custom");
-                    setOpen(false);
-                  }}
-                >
-                  Cancel
-                </Button>
-                <Button
-                  type="button"
-                  className={cn(densePopover ? "h-8 px-2.5 text-xs" : "h-9 px-4", !compact && "w-full sm:w-auto")}
-                  onClick={applyDraftRange}
-                  disabled={!draftRange.from || !draftRange.to || !draftEndDate}
-                >
-                  Apply
-                </Button>
+            <div className={cn(densePopover ? "space-y-2 p-2" : "space-y-3 p-3")}>
+              <Calendar02
+                mode="range"
+                timeZone="UTC"
+                defaultMonth={parseIsoDate(draftStartDate)}
+                numberOfMonths={smallScreen ? 1 : 2}
+                pagedNavigation
+                selected={draftRange}
+                // onSelect keeps DayPicker controlled so its highlights match the draft.
+              onSelect={(_range, day) => handleCalendarDayClick(day)}
+                classNames={densePopover ? { caption_label: "whitespace-nowrap text-[10px] font-medium select-none" } : undefined}
+                className={cn(
+                  "mx-auto w-fit",
+                  compact && "border-0 shadow-none [&_.rdp-months]:gap-1",
+                  densePopover && "p-1 text-xs [--cell-size:1.75rem] [&_.rdp-months]:gap-2 [&_.rdp-month]:gap-2 [&_.rdp-week]:mt-1"
+                )}
+              />
+
+              <div className={cn(densePopover ? "flex flex-wrap items-center justify-between gap-2" : "gap-3", !densePopover && (compact ? "flex items-center justify-between" : "space-y-3"))}>
+                <div className={cn("flex items-center text-muted-foreground", densePopover ? "gap-1 text-[10px]" : "gap-2 text-sm", !compact && "justify-center")}>
+                  <span>{formatLabelDate(draftStartDate)}</span>
+                  <span aria-hidden="true">→</span>
+                  <span>{draftEndDate ? formatLabelDate(draftEndDate) : "Select end date"}</span>
+                </div>
+
+                <div className={cn("gap-2", compact ? "flex shrink-0 items-center" : "flex flex-col-reverse sm:flex-row sm:items-center sm:justify-end")}>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    className={cn(densePopover ? "h-8 px-2.5 text-xs" : "h-9 px-4", "text-[#6f6f6f]", !compact && "w-full sm:w-auto")}
+                    onClick={() => {
+                      setDraftStartDate(normalizedCurrent.startDate);
+                      setDraftEndDate(normalizedCurrent.endDate);
+                      setDraftRange({
+                        from: parseIsoDate(normalizedCurrent.startDate),
+                        to: parseIsoDate(normalizedCurrent.endDate),
+                      });
+                      setRangeSelectionStart(null);
+                      setPreset("custom");
+                      setOpen(false);
+                    }}
+                  >
+                    Cancel
+                  </Button>
+                  <Button
+                    type="button"
+                    className={cn(densePopover ? "h-8 px-2.5 text-xs" : "h-9 px-4", !compact && "w-full sm:w-auto")}
+                    onClick={applyDraftRange}
+                    disabled={!draftRange.from || !draftRange.to || !draftEndDate}
+                  >
+                    Apply
+                  </Button>
+                </div>
               </div>
             </div>
-          </div>
-        </div>
-      ) : null}
-    </div>
+          </PopoverContent>
+        ) : null}
+      </div>
+    </Popover>
   );
 }
 
@@ -395,11 +383,4 @@ function addDays(date: Date, days: number): Date {
 function toIsoDate(date: Date): string {
   const utcDate = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
   return utcDate.toISOString().slice(0, 10);
-}
-
-function toCalendarIsoDate(date: Date): string {
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, "0");
-  const day = String(date.getDate()).padStart(2, "0");
-  return `${year}-${month}-${day}`;
 }

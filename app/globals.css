@@ -625,4 +625,14 @@ body:not(:has([data-report-typography="capture"])) {
   body:not(:has([data-report-typography="capture"])) [data-slot="calendar"] .rdp-months {
     flex-direction: column !important;
   }
+  body:not(:has([data-report-typography="capture"])) [data-report-date-picker] [data-slot="calendar"] {
+    --cell-size: clamp(2rem, calc((100vw - 5rem) / 7), 2.75rem) !important;
+    width: fit-content;
+    max-width: 100%;
+  }
+  body:not(:has([data-report-typography="capture"])) [data-report-date-picker] .rdp-day_button {
+    aspect-ratio: auto;
+    width: var(--cell-size);
+    height: 44px;
+  }
 }

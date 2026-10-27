@@ -28,9 +28,7 @@ test("enables balanced compact sizing only for interactive overall reports", () 
   assert.match(overall, /compactResponsive=\{compactInteractive\}/);
   assert.match(overall, /variant=\{compactInteractive \? "compact" : "header"\}/);
   assert.match(overall, /densePopover=\{compactInteractive\}/);
-  assert.match(picker, /numberOfMonths=\{2\}/);
-  assert.match(picker, /w-\[min\(clamp\(360px,80vw,560px\),calc\(100vw-2rem\)\)\]/);
-  assert.match(picker, /\[--cell-size:clamp\(1\.25rem,4\.5vw,1\.75rem\)\]/);
+  assert.match(picker, /numberOfMonths=\{smallScreen \? 1 : 2\}/);
   assert.match(shell, /text-\[clamp\(1\.75rem,3\.2vw,2\.5rem\)\]/);
   assert.match(shell, /minmax\(260px,360px\)/);
 });
@@ -40,7 +38,6 @@ test("keeps compact account filters readable before the large breakpoint", () =>
   assert.match(overall, /hideHeaderDateControl=\{compactInteractive\}/);
   assert.match(overall, /<ReportDownloadButton[\s\S]*?<ReportHeaderMonthPicker/);
   assert.match(overall, /className="min-w-0 w-\[clamp\(13rem,30vw,17\.5rem\)\]"/);
-  assert.match(picker, /densePopover \? "right-0"/);
   assert.match(picker, /formatCompactDateRange/);
   assert.match(filters, /grid-cols-\[84px_minmax\(0,1fr\)_32px\]/);
   assert.match(filters, /<ButtonGroup className="flex-none">/);
