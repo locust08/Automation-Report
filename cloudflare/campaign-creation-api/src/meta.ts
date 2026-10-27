@@ -17,6 +17,9 @@ export function stableMetaQaSnapshot(snapshot:Record<string,any>){
   if(creative?.object_story_spec)creative.object_story_spec=stableStory(creative.object_story_spec);
   return value;
 }
+export class MetaScheduleFailure extends ProviderError {
+  constructor(readonly step:'adset'|'ad'|'campaign'|null,readonly stage:'update'|'readback',code:string,readonly diagnostic:Record<string,string|number|boolean>={}){super('unknown',code);}
+}
 function ordered(value:any):any{return Array.isArray(value)?value.map(ordered):value&&typeof value==='object'?Object.fromEntries(Object.keys(value).sort().map(key=>[key,ordered(value[key])])):value;}
 const storyDigest=(story:Record<string,any>)=>digest(ordered(stableStory(story)));
 const sourceDigest=(ad:Record<string,any>)=>digest(ordered({...ad,creative:{...ad.creative,object_story_spec:stableStory(ad.creative.object_story_spec)}}));
@@ -272,9 +275,15 @@ export class Meta {
   private async update(id:string,values:Record<string,string>){
     let response:Response;
     try{response=await this.fetcher(`https://graph.facebook.com/${this.env.META_API_VERSION}/${id}`,{method:'POST',headers:{Authorization:`Bearer ${this.env.META_ACCESS_TOKEN}`,'Content-Type':'application/x-www-form-urlencoded'},body:new URLSearchParams(values),redirect:'manual',signal:this.signal()});}
-    catch{throw new ProviderError('unknown','meta_schedule_response');}
-    let body:Record<string,any>;try{body=await boundedJson(response,262144);}catch{throw new ProviderError('unknown','meta_schedule_response');}
-    if(!response.ok||body.success!==true)throw new ProviderError('unknown','meta_schedule_response');
+    catch{throw new MetaScheduleFailure(null,'update','meta_schedule_response');}
+    let body:Record<string,any>;try{body=await boundedJson(response,262144);}catch{throw new MetaScheduleFailure(null,'update','meta_schedule_response',{http_status:response.status});}
+    if(!response.ok||body.success!==true){
+      const diagnostic:Record<string,string|number|boolean>={http_status:response.status};
+      for(const key of ['code','error_subcode'])if(Number.isSafeInteger(body.error?.[key]))diagnostic[key]=body.error[key];
+      if(typeof body.error?.is_transient==='boolean')diagnostic.is_transient=body.error.is_transient;
+      if(typeof body.error?.fbtrace_id==='string'&&/^[a-zA-Z0-9_-]{1,100}$/.test(body.error.fbtrace_id))diagnostic.trace_id=body.error.fbtrace_id;
+      throw new MetaScheduleFailure(null,'update','meta_schedule_response',diagnostic);
+    }
   }
   async schedule(snapshot:Record<string,any>,scheduledAt:string,receipt:string,actions:ActionStore,check:()=>Promise<unknown>){
     this.deadline=Date.now()+90000;
@@ -291,12 +300,26 @@ export class Meta {
       const parent=await this.get(snapshot.campaign_id,{fields:'id,account_id,status'});
       if(parent.id!==snapshot.campaign_id||parent.account_id!==this.scope.platformAccountId||parent.status!=='PAUSED')throw new ProviderError('unknown','meta_parent_not_paused');
       if(!await actions.claimStep(receipt,step,id))throw new ProviderError('unknown','meta_schedule_dispatched');
-      try{await this.update(id,values);}catch{/* Resolve this one attempt by official readback only. */}
-      const row=await this.get(id,{fields:'id,account_id,status'+(step==='adset'?',start_time':'')});
-      if(row.id!==id||row.account_id!==this.scope.platformAccountId||row.status!=='ACTIVE'||step==='adset'&&Date.parse(row.start_time)!==Date.parse(scheduledAt))throw new ProviderError('unknown','meta_schedule_readback');
+      let updateFailure:MetaScheduleFailure|undefined;
+      try{await this.update(id,values);}catch(error){updateFailure=error instanceof MetaScheduleFailure?error:new MetaScheduleFailure(null,'update','meta_schedule_response');}
+      // An uncertain POST may have committed. Read once, never replay it.
+      let row:Record<string,any>;
+      try{row=await this.get(id,{fields:'id,account_id,status'+(step==='adset'?',start_time':'')});}
+      catch(error){throw new MetaScheduleFailure(step,updateFailure?'update':'readback',updateFailure?.code??(error instanceof ProviderError?error.code:'meta_schedule_readback'),updateFailure?.diagnostic);}
+      if(row.id!==id||row.account_id!==this.scope.platformAccountId||row.status!=='ACTIVE'||step==='adset'&&Date.parse(row.start_time)!==Date.parse(scheduledAt))
+        throw new MetaScheduleFailure(step,updateFailure?'update':'readback',updateFailure?.code??'meta_schedule_readback',updateFailure?.diagnostic);
       await actions.confirmStep(receipt,step);
     }
     return this.readScheduled(snapshot,scheduledAt);
+  }
+  async readSchedulingState(snapshot:Record<string,any>){
+    this.deadline=Date.now()+30000;
+    const campaign=await this.get(snapshot.campaign_id,{fields:'id,account_id,status,effective_status'}),
+      adset=await this.get(snapshot.adset_id,{fields:'id,account_id,campaign_id,status,effective_status,start_time'}),
+      ad=await this.get(snapshot.ad_id,{fields:'id,account_id,campaign_id,adset_id,status,effective_status'});
+    if(campaign.id!==snapshot.campaign_id||adset.id!==snapshot.adset_id||ad.id!==snapshot.ad_id||
+      [campaign,adset,ad].some(row=>row.account_id!==this.scope.platformAccountId)||adset.campaign_id!==campaign.id||ad.adset_id!==adset.id||ad.campaign_id!==campaign.id)throw new ProviderError('unknown','meta_schedule_readback');
+    return {campaign,adset,ad,all_configured_paused:[campaign,adset,ad].every(row=>row.status==='PAUSED')};
   }
   async readScheduled(snapshot:Record<string,any>,scheduledAt:string){
     this.deadline=Date.now()+30000;

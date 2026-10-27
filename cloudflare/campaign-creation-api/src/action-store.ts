@@ -51,4 +51,5 @@ export class ActionStore {
   return row.meta.changes===1;
  }
  async confirmStep(receipt:string,step:string){await this.primary().prepare("UPDATE m04_gate2_steps SET status='confirmed' WHERE receipt_id=? AND step=?").bind(receipt,step).run();}
+ async gate2Steps(receipt:string){return (await this.primary().prepare('SELECT step,provider_id,status FROM m04_gate2_steps WHERE receipt_id=? ORDER BY step LIMIT 4').bind(receipt).all<{step:string;provider_id:string;status:string}>()).results;}
 }

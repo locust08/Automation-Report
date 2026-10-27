@@ -1,6 +1,6 @@
 import {digest,result,planSchema,metaPlanSchema,scopeSchema,type Scope,type Result} from './contracts';
 import {Google,ProviderError} from './google';
-import {Meta,stableMetaQaSnapshot} from './meta';
+import {Meta,MetaScheduleFailure,stableMetaQaSnapshot} from './meta';
 import {Store,type Workflow} from './store';
 import {ActionStore,type Action,type ActionReceipt} from './action-store';
 import type {Environment,Dependencies,Provider} from './service';
@@ -138,6 +138,14 @@ export class Actions {
  }
  async diagnoseSnapshot(r:ActionReceipt,w:Workflow){
   const detail=r.result_json?JSON.parse(r.result_json):null;
+  if(this.scope.platform==='Meta'&&r.action==='gate2'&&r.status==='unknown'&&r.revision_id===w.revision_id){
+   await this.check('campaign_operation_get');
+   const steps=await this.ledger.gate2Steps(r.id),snapshot=JSON.parse(r.confirmation_json).snapshot;
+   const current=await this.meta.readSchedulingState(snapshot);
+   await this.check('campaign_operation_get');
+   return result('success',{workflow_ref:w.id,revision_ref:r.revision_id,receipt_ref:r.id,data:{status:r.status,provider_action:false,
+    schedule_diagnostic:{steps,current_provider_state:current,recorded_failure:detail,original_provider_error_recorded:typeof detail?.reason==='string',retry_authorized:false,historical_execution_response_available:false}}});
+  }
   if(this.scope.platform!=='Meta'||r.action!=='gate2'||r.status!=='rejected'||detail?.reason!=='qa_readback_mismatch'||r.revision_id!==w.revision_id)
    return result('unavailable',{workflow_ref:w.id,revision_ref:r.revision_id,receipt_ref:r.id,data:{status:r.status,provider_action:false},caveats:['Snapshot diagnosis requires a rejected Meta Gate 2 mismatch on the unchanged revision.']});
   await this.check('campaign_operation_get');
@@ -215,7 +223,10 @@ export class Actions {
   }catch(error){
    const steps=r.action==='resume'?await this.store.providerSteps(r.parent_receipt):[];
    const rejected=r.action==='resume'&&error instanceof ProviderError&&error.outcome==='rejected'&&!steps.some(s=>s.status==='started'&&!s.rejected);
-   await this.ledger.finish(r,rejected?'rejected':'unknown',{provider_action:rejected?'rejected':'unknown'});
+   const metaGate2=this.scope.platform==='Meta'&&r.action==='gate2';
+   const failure=metaGate2?{reason:error instanceof ProviderError&&/^[a-zA-Z0-9_]{1,100}$/.test(error.code)?error.code:'meta_schedule_unknown',
+    ...(error instanceof MetaScheduleFailure?{failed_step:error.step,failure_stage:error.stage,provider_diagnostic:error.diagnostic}:{})}:{};
+   await this.ledger.finish(r,rejected?'rejected':'unknown',{provider_action:rejected?'rejected':'unknown',...failure});
    if(!rejected)await this.read({...r,status:'unknown'},w);
   }
  }
