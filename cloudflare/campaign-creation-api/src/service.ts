@@ -177,7 +177,8 @@ export async function execute(env: Environment, scope: Scope, tool: string, inpu
     try { if(scope.platform==='Meta')await meta.validate(metaPlanSchema.parse(plan),w.id);else if(scope.platform==='TikTok')await tiktok.validate(tiktokPlanSchema.parse(plan),w.id);else await google.validate(planSchema.parse(plan), w.id); }
     catch (error) {captureUnexpected(error,'campaign.operation');
       const budget=error instanceof ProviderError&&(error.code.includes('BUDGET_')||error.code==='meta_1885272');
-      return result('clarification_required', {...reference(w), validation_issues: [{field:budget?'daily_budget':'configuration', code: error instanceof ProviderError ? error.code.slice(0,100) : 'validation_unavailable', message:budget?'The provider rejected this daily budget. Revise and validate before approval.':'Provider validation has not passed. Check assets and targeting before approval.'}]});
+      const futureStart=error instanceof ProviderError&&error.code==='meta_start_lead_time';
+      return result('clarification_required', {...reference(w), validation_issues: [{field:budget?'daily_budget':futureStart?'start_at':'configuration', code: error instanceof ProviderError ? error.code.slice(0,100) : 'validation_unavailable', message:budget?'The provider rejected this daily budget. Revise and validate before approval.':futureStart?'The approved Meta start must remain at least 72 hours ahead. Save and approve a new revision for a later start.':'Provider validation has not passed. Check assets and targeting before approval.'}]});
     }
     await check();
     if (w.status !== 'validated') await store.status(w, 'validated');
@@ -187,9 +188,10 @@ export async function execute(env: Environment, scope: Scope, tool: string, inpu
     if (w.status !== (input.action === 'approve' ? 'validated' : 'approved')) throw new Error('conflict');
     // The saved immutable revision already passed validateOnly. The creation worker validates again before dispatch.
     const metaPreview=scope.platform==='Meta'?await meta.validate(metaPlanSchema.parse(plan),w.id):null;
+    const metaStartAt=scope.platform==='Meta'?metaPlanSchema.parse(plan).start_at:undefined;
     const tiktokPreview=scope.platform==='TikTok'?await tiktok.validate(tiktokPlanSchema.parse(plan),w.id):null;
     const resourcePlan=scope.platform==='Meta'?[{kind:'campaign',status:'PAUSED',objective:metaPreview!.source.objective},
-      {kind:'adset',status:'PAUSED',daily_budget:plan.daily_budget,currency:plan.currency,targeting:metaPreview!.adset.targeting,
+      {kind:'adset',status:'PAUSED',daily_budget:plan.daily_budget,currency:plan.currency,...(metaStartAt?{start_time:metaStartAt}:{}),targeting:metaPreview!.adset.targeting,
         optimization_goal:metaPreview!.adset.optimization_goal,regional_regulation_identities:metaPreview!.adset.regional_regulation_identities},
       {kind:'ad',status:'PAUSED',creative_id:metaPreview!.source.creative_id,final_url:metaPreview!.source.final_url,destination:metaPreview!.source.destination}]
       :scope.platform==='TikTok'?[{kind:'campaign',status:'DISABLE',objective:tiktokPreview!.source.objective},
@@ -204,7 +206,7 @@ export async function execute(env: Environment, scope: Scope, tool: string, inpu
       action:input.action,stage:input.action==='approve'?'approve_revision':'create_paused',revision_hash:w.plan_hash,
       draft:{name:metaProviderName(metaPlanSchema.parse(plan),w.id),platform:'Meta',account:{service_id:scope.accountPageId,label:scope.platformAccountId},
         objective:metaPreview!.source.objective,budget:{amount:Number(plan.daily_budget),currency:plan.currency,period:'daily'},
-        schedule:{mode:'draft',start_at:null,end_at:null,timezone:plan.timezone},
+        schedule:{mode:'draft',start_at:metaStartAt??null,end_at:null,timezone:plan.timezone},
         targeting_summary:JSON.stringify({geo_locations:metaPreview!.adset.targeting.geo_locations,
           age_min:metaPreview!.adset.targeting.age_min,age_max:metaPreview!.adset.targeting.age_max,
           optimization_goal:metaPreview!.adset.optimization_goal}),
@@ -212,7 +214,7 @@ export async function execute(env: Environment, scope: Scope, tool: string, inpu
           page_id:metaPreview!.adset.promoted_object?.page_id??null,final_url:metaPreview!.source.final_url,destination:metaPreview!.source.destination}),
         validation_status:'ready',warnings:[]},provider_objects:[],qa_status:'not_applicable',
       consequences:input.action==='approve'?['Confirm this immutable revision. No Meta resource is created.']:
-        ['Create one Meta campaign, ad set and ad with PAUSED status. Activation and scheduling remain unavailable.'],
+        [metaStartAt?`Create one Meta campaign, ad set and ad with PAUSED status and an ad set start of ${metaStartAt} (${plan.timezone}). This creates no active delivery; future enabling requires separate Gate 2 confirmation.`:'Create one Meta campaign, ad set and ad with PAUSED status. Activation and scheduling remain unavailable.'],
     }:scope.platform==='TikTok'?{
       action:input.action,stage:input.action==='approve'?'approve_revision':'create_paused',revision_hash:w.plan_hash,
       draft:{name:tiktokProviderName(tiktokPlanSchema.parse(plan),w.id),platform:'TikTok',account:{service_id:scope.accountPageId,label:scope.platformAccountId},

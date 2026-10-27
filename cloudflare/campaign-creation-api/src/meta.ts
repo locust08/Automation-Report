@@ -23,6 +23,9 @@ export class MetaScheduleFailure extends ProviderError {
 function ordered(value:any):any{return Array.isArray(value)?value.map(ordered):value&&typeof value==='object'?Object.fromEntries(Object.keys(value).sort().map(key=>[key,ordered(value[key])])):value;}
 const storyDigest=(story:Record<string,any>)=>digest(ordered(stableStory(story)));
 const sourceDigest=(ad:Record<string,any>)=>digest(ordered({...ad,creative:{...ad.creative,object_story_spec:stableStory(ad.creative.object_story_spec)}}));
+function assertCreationStart(plan:MetaPlan){
+  if(plan.start_at&&Date.parse(plan.start_at)<Date.now()+72*3600000)throw new ProviderError('unavailable','meta_start_lead_time');
+}
 
 export interface MetaCredentials {META_ACCESS_TOKEN?:string;META_API_VERSION?:string}
 export const metaProviderName=(plan:MetaPlan,workflowId:string)=>`${plan.name.slice(0,100)} [${workflowId}]`;
@@ -123,6 +126,7 @@ export class Meta {
   }
   async validate(plan:MetaPlan,_workflowId:string,readOnly=false){
     this.checked=undefined;
+    if(!readOnly)assertCreationStart(plan);
     const references=await this.referenceAssets(plan.source_ad_id,readOnly),source=references.sources[0];
     if(!source||source.source_ad_id!==plan.source_ad_id||source.source_campaign_id!==plan.source_campaign_id||
       source.source_adset_id!==plan.source_adset_id||source.source_fingerprint!==plan.source_fingerprint||
@@ -139,7 +143,7 @@ export class Meta {
     if(!readOnly){
     await this.post(`act_${this.scope.platformAccountId}/campaigns`,{name:'M04 validate only',objective:source.objective,
       special_ad_categories:'[]',is_adset_budget_sharing_enabled:'false',status:'PAUSED'},true);
-    await this.post(`act_${this.scope.platformAccountId}/adsets`,this.adsetFields(adset,plan.source_campaign_id,cents,'M04 validate only'),true);
+    await this.post(`act_${this.scope.platformAccountId}/adsets`,this.adsetFields(adset,plan.source_campaign_id,cents,'M04 validate only',plan.start_at),true);
     await this.post(`act_${this.scope.platformAccountId}/ads`,{name:'M04 validate only',adset_id:plan.source_adset_id,
       creative:JSON.stringify({creative_id:source.creative_id}),status:'PAUSED'},true);
     }
@@ -147,10 +151,11 @@ export class Meta {
     if(!readOnly)this.checked={key:await digest({plan,workflowId:_workflowId}),at:Date.now(),payload:structuredClone(payload)};
     return payload;
   }
-  private adsetFields(adset:Record<string,any>,campaignId:string,cents:number,name:string){
+  private adsetFields(adset:Record<string,any>,campaignId:string,cents:number,name:string,startAt?:string){
     const fields:Record<string,string>={name,campaign_id:campaignId,daily_budget:String(cents),status:'PAUSED',
       billing_event:adset.billing_event,optimization_goal:adset.optimization_goal,bid_strategy:adset.bid_strategy,
       targeting:JSON.stringify(adset.targeting),regional_regulation_identities:JSON.stringify(adset.regional_regulation_identities)};
+    if(startAt)fields.start_time=startAt;
     for(const key of ['destination_type','promoted_object','attribution_spec'] as const)if(adset[key]!=null)
       fields[key]=typeof adset[key]==='string'?adset[key]:JSON.stringify(adset[key]);
     return fields;
@@ -203,6 +208,7 @@ export class Meta {
     return id;
   }
   async create(plan:MetaPlan,workflowId:string,operationId:string,store:Store){
+    assertCreationStart(plan);
     const key=await digest({plan,workflowId});
     if(!this.checked||this.checked.key!==key||Date.now()-this.checked.at>25_000)await this.validate(plan,workflowId);
     const payload=this.checked!.payload;this.checked=undefined;
@@ -211,32 +217,34 @@ export class Meta {
     const {source,adset,creative}=payload,names=this.names(plan,workflowId),cents=Math.round(Number(plan.daily_budget)*100);
     const campaignId=await this.createStep(store,operationId,'campaign',names.campaign,{name:names.campaign,objective:source.objective,
       special_ad_categories:'[]',is_adset_budget_sharing_enabled:'false',status:'PAUSED'});
-    await this.checkCampaign(campaignId,names.campaign,source.objective);
-    const adsetId=await this.createStep(store,operationId,'adset',names.adset,this.adsetFields(adset,campaignId,cents,names.adset));
-    await this.checkAdset(adsetId,names.adset,campaignId,cents,adset.regional_regulation_identities);
+    await this.checkCampaign(campaignId,names.campaign,source.objective,!!plan.start_at);
+    assertCreationStart(plan);
+    const adsetId=await this.createStep(store,operationId,'adset',names.adset,this.adsetFields(adset,campaignId,cents,names.adset,plan.start_at));
+    await this.checkAdset(adsetId,names.adset,campaignId,cents,adset.regional_regulation_identities,plan.start_at);
     const adId=await this.createStep(store,operationId,'ad',names.ad,{name:names.ad,adset_id:adsetId,
       creative:JSON.stringify({creative_id:source.creative_id}),status:'PAUSED'});
-    await this.checkAd(adId,names.ad,adsetId,source.creative_id,creative.object_story_spec);
+    await this.checkAd(adId,names.ad,adsetId,source.creative_id,creative.object_story_spec,!!plan.start_at);
     return [campaignId,adsetId,adId];
   }
-  private async checkCampaign(id:string,name:string,objective:string){
-    const row=await this.get(id,{fields:'id,name,account_id,objective,status,special_ad_categories'});
+  private async checkCampaign(id:string,name:string,objective:string,futureStart=false){
+    const row=await this.get(id,{fields:'id,name,account_id,objective,status,special_ad_categories'+(futureStart?',effective_status':'')});
     if(row.id!==id||row.name!==name||row.account_id!==this.scope.platformAccountId||row.objective!==objective||
-      row.status!=='PAUSED'||!Array.isArray(row.special_ad_categories)||row.special_ad_categories.length)
+      row.status!=='PAUSED'||(futureStart&&row.effective_status!=='PAUSED')||!Array.isArray(row.special_ad_categories)||row.special_ad_categories.length)
       throw new ProviderError('unknown','meta_campaign_readback');
   }
-  private async checkAdset(id:string,name:string,campaignId:string,cents:number,identities:Record<string,any>){
-    const row=await this.get(id,{fields:'id,name,account_id,campaign_id,daily_budget,status,regional_regulation_identities'});
+  private async checkAdset(id:string,name:string,campaignId:string,cents:number,identities:Record<string,any>,startAt?:string){
+    const row=await this.get(id,{fields:'id,name,account_id,campaign_id,daily_budget,status,regional_regulation_identities'+(startAt?',start_time,effective_status':'')});
     if(row.id!==id||row.name!==name||row.account_id!==this.scope.platformAccountId||row.campaign_id!==campaignId||
-      Number(row.daily_budget)!==cents||row.status!=='PAUSED'||
+      Number(row.daily_budget)!==cents||row.status!=='PAUSED'||(startAt&&(Date.parse(row.start_time)!==Date.parse(startAt)||row.effective_status!=='PAUSED'))||
       row.regional_regulation_identities?.universal_beneficiary!==identities.universal_beneficiary||
       row.regional_regulation_identities?.universal_payer!==identities.universal_payer)
       throw new ProviderError('unknown','meta_adset_readback');
+    return row;
   }
-  private async checkAd(id:string,name:string,adsetId:string,creativeId:string,story:Record<string,any>){
-    const row=await this.get(id,{fields:'id,name,account_id,adset_id,status,creative{id,object_story_spec}'});
+  private async checkAd(id:string,name:string,adsetId:string,creativeId:string,story:Record<string,any>,futureStart=false){
+    const row=await this.get(id,{fields:'id,name,account_id,adset_id,status,creative{id,object_story_spec}'+(futureStart?',effective_status':'')});
     if(row.id!==id||row.name!==name||row.account_id!==this.scope.platformAccountId||row.adset_id!==adsetId||
-      row.status!=='PAUSED'||row.creative?.id!==creativeId||!row.creative?.object_story_spec?.page_id||
+      row.status!=='PAUSED'||(futureStart&&row.effective_status!=='PAUSED')||row.creative?.id!==creativeId||!row.creative?.object_story_spec?.page_id||
       await storyDigest(row.creative.object_story_spec)!==await storyDigest(story))
       throw new ProviderError('unknown','meta_ad_readback');
   }
@@ -247,11 +255,11 @@ export class Meta {
     const source=await this.get(plan.source_ad_id,{fields:'id,account_id,creative{id,account_id,object_story_spec},campaign{id,objective},adset{id,regional_regulation_identities}'});
     if(source.account_id!==this.scope.platformAccountId||source.campaign?.id!==plan.source_campaign_id||source.adset?.id!==plan.source_adset_id||
       source.creative?.account_id!==this.scope.platformAccountId)throw new ProviderError('unknown','meta_source_changed');
-    await this.checkCampaign(campaign.provider_id,names.campaign,source.campaign.objective);
-    await this.checkAdset(adset.provider_id,names.adset,campaign.provider_id,Math.round(Number(plan.daily_budget)*100),source.adset.regional_regulation_identities);
-    await this.checkAd(ad.provider_id,names.ad,adset.provider_id,source.creative.id,source.creative.object_story_spec);
+    await this.checkCampaign(campaign.provider_id,names.campaign,source.campaign.objective,!!plan.start_at);
+    const createdAdset=await this.checkAdset(adset.provider_id,names.adset,campaign.provider_id,Math.round(Number(plan.daily_budget)*100),source.adset.regional_regulation_identities,plan.start_at);
+    await this.checkAd(ad.provider_id,names.ad,adset.provider_id,source.creative.id,source.creative.object_story_spec,!!plan.start_at);
     return {platform:'Meta',account_id:this.scope.platformAccountId,campaign_id:campaign.provider_id,adset_id:adset.provider_id,ad_id:ad.provider_id,
-      status:'PAUSED',daily_budget:plan.daily_budget,currency:plan.currency,source_ad_id:plan.source_ad_id,creative_id:source.creative.id};
+      status:'PAUSED',daily_budget:plan.daily_budget,currency:plan.currency,source_ad_id:plan.source_ad_id,creative_id:source.creative.id,...(plan.start_at?{start_time:createdAdset.start_time}:{})};
   }
   async reconcileSteps(plan:MetaPlan,workflowId:string,operationId:string,store:Store){
     this.deadline=Date.now()+25000;
@@ -264,7 +272,8 @@ export class Meta {
   }
   async qa(plan:MetaPlan,workflowId:string,operationId:string,store:Store,options:{readOnly?:boolean}={}){
     const payload=await this.validate(plan,workflowId,options.readOnly===true),data=await this.readback(plan,workflowId,operationId,store);
-    const actual=await this.get(data.adset_id,{fields:'id,account_id,campaign_id,daily_budget,status,targeting,billing_event,optimization_goal,bid_strategy,promoted_object,attribution_spec,destination_type,regional_regulation_identities'});
+    const actual=await this.get(data.adset_id,{fields:'id,account_id,campaign_id,daily_budget,status,targeting,billing_event,optimization_goal,bid_strategy,promoted_object,attribution_spec,destination_type,regional_regulation_identities'+(plan.start_at?',start_time,effective_status':'')});
+    if(plan.start_at&&(Date.parse(plan.start_at)<=Date.now()||Date.parse(actual.start_time)!==Date.parse(plan.start_at)||actual.effective_status!=='PAUSED'))throw new ProviderError('unknown','meta_qa_mismatch');
     for(const key of ['targeting','billing_event','optimization_goal','bid_strategy','promoted_object','attribution_spec','destination_type','regional_regulation_identities'])
       if(await digest(ordered(actual[key]??null))!==await digest(ordered(payload.adset[key]??null)))throw new ProviderError('unknown','meta_qa_mismatch');
     const ad=await this.get(data.ad_id,{fields:'id,name,account_id,adset_id,status,issues_info,creative{id,account_id,object_story_spec}'});
@@ -287,12 +296,14 @@ export class Meta {
   }
   async schedule(snapshot:Record<string,any>,scheduledAt:string,receipt:string,actions:ActionStore,check:()=>Promise<unknown>){
     this.deadline=Date.now()+90000;
-    await this.assertSchedulingStart(snapshot);
+    const initialAdset=await this.assertSchedulingStart(snapshot);
+    if(snapshot.start_time!==undefined&&Date.parse(initialAdset.start_time)!==Date.parse(scheduledAt))throw new ProviderError('unknown','meta_schedule_start_mismatch');
     // Parent remains paused until every child and the future time have official readback.
     const campaign=await this.get(snapshot.campaign_id,{fields:'id,account_id,status'});
     if(campaign.id!==snapshot.campaign_id||campaign.account_id!==this.scope.platformAccountId||campaign.status!=='PAUSED')throw new ProviderError('unknown','meta_parent_not_paused');
+    const adsetUpdate:Record<string,string>=Date.parse(initialAdset.start_time)===Date.parse(scheduledAt)?{status:'ACTIVE'}:{start_time:scheduledAt,status:'ACTIVE'};
     for(const [step,id,values] of [
-      ['adset',snapshot.adset_id,{start_time:scheduledAt,status:'ACTIVE'}],
+      ['adset',snapshot.adset_id,adsetUpdate],
       ['ad',snapshot.ad_id,{status:'ACTIVE'}],
       ['campaign',snapshot.campaign_id,{status:'ACTIVE'}],
     ] as const){
@@ -320,6 +331,8 @@ export class Meta {
     // Gate 1 may create a paused ad set whose original start has already passed.
     // Do not offer or dispatch a Gate 2 change to that locked start time.
     if(Date.parse(adset.start_time)<=Date.now())throw new ProviderError('unavailable','meta_schedule_start_locked');
+    if(snapshot.start_time!==undefined&&Date.parse(adset.start_time)!==Date.parse(snapshot.start_time))throw new ProviderError('unavailable','meta_schedule_start_mismatch');
+    return adset;
   }
   async readSchedulingState(snapshot:Record<string,any>){
     this.deadline=Date.now()+30000;

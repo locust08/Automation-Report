@@ -45,7 +45,8 @@ export class WorkflowQA {
     :google.qa?await google.qa(planSchema.parse(JSON.parse(w.plan_json)),w.id,{readOnly:true}):null;
    if(!snapshot)throw new Error('qa_unavailable');
    // Retain bounded evidence, not raw targeting, creative or provider responses.
-   evidence={checks:['paused_hierarchy','account_and_parent_relationships','daily_budget','plan_configuration','source_configuration','provider_issues'],
+   evidence={checks:['paused_hierarchy','account_and_parent_relationships','daily_budget','plan_configuration','source_configuration','provider_issues',...(this.scope.platform==='Meta'&&JSON.parse(w.plan_json).start_at?['approved_future_start']:[])],
+    ...(this.scope.platform==='Meta'&&JSON.parse(w.plan_json).start_at?{start_at:JSON.parse(w.plan_json).start_at,observed_start_time:snapshot.start_time}:{}),
     provider_objects:this.scope.platform==='Meta'?[{kind:'campaign',id:snapshot.campaign_id,status:'PAUSED'},{kind:'adset',id:snapshot.adset_id,status:'PAUSED'},{kind:'ad',id:snapshot.ad_id,status:'PAUSED'}]
      :[{kind:'campaign',id:snapshot.campaign.resourceName,status:'PAUSED'},{kind:'ad_group',id:snapshot.ad_group.resourceName,status:'PAUSED'},{kind:'ad',id:snapshot.ad.resourceName,status:'PAUSED'}],
     daily_budget:JSON.parse(w.plan_json).daily_budget,currency:JSON.parse(w.plan_json).currency,snapshot_hash:await digest(snapshot)};

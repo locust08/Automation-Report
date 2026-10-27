@@ -23,8 +23,9 @@ function campaignId(value:string,scope:Scope){
  const match=value.match(/^customers\/(\d+)\/campaigns\/(\d{1,30})$/);
  return match?.[1]===scope.platformAccountId?match[2]:undefined;
 }
-export function scheduleFor(scope:Scope,plan:{timezone:string},input:any,now=Date.now()){
+export function scheduleFor(scope:Scope,plan:{timezone:string;start_at?:string},input:any,now=Date.now()){
  if(!input||input.mode!=='scheduled'||input.timezone!==plan.timezone||!Number.isFinite(Date.parse(input.scheduled_at))||Date.parse(input.scheduled_at)<now+72*3600000)throw new Error('invalid_schedule');
+ if(scope.platform==='Meta'&&plan.start_at&&Date.parse(input.scheduled_at)!==Date.parse(plan.start_at))throw new Error('meta_schedule_plan_mismatch');
  const date=new Intl.DateTimeFormat('en-CA',{timeZone:input.timezone,year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date(input.scheduled_at));
  if(scope.platform==='Google'){
   // Google schedules at account-local midnight. Reject a time it cannot represent.
