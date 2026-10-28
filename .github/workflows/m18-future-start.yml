@@ -1,0 +1,40 @@
+name: M18 M04 build checks
+on:
+  push:
+    branches: ["codex/m18-future-start-ci-*", "main", "master", "staging"]
+    paths:
+      - "cloudflare/campaign-creation-api/**"
+      - ".github/workflows/m18-future-start.yml"
+  pull_request:
+    paths:
+      - "cloudflare/campaign-creation-api/**"
+      - ".github/workflows/m18-future-start.yml"
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: m18-build-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: cloudflare/campaign-creation-api
+    env:
+      CI: "true"
+      WRANGLER_SEND_METRICS: "false"
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: cloudflare/campaign-creation-api/package-lock.json
+      - name: Install locked Worker dependencies
+        run: npm ci --no-audit --no-fund
+      - name: Typecheck and build Worker without production configuration
+        run: node scripts/m18-ci.mjs
