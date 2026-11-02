@@ -2,7 +2,7 @@
 
 ## Outcome and verified production baseline
 
-M03 startup is repaired, and separately approved Meta credential placement is verified. Current backend version is `b6ffd161-7f8a-4fc0-879e-e47806ab43a4`, with identical injected JS, existing settings and peer Workers. Native retained-card display recovered during the later 2 November continuation without a source or deployment change. The human personally approved the exact Meta revision; Google remains awaiting approval. Separate pause confirmations and formal pause acceptance remain incomplete. Official hierarchies are PAUSED at capture; empty delivery reports remain inconclusive. Expiry/revocation history of the rejected Doppler token and historical Meta consent remain unproven; the new M03 approval does not authorize historical Gate 2.
+M03 startup is repaired and **both formal PAUSED-baseline acceptance chains are verified**. The user personally approved each immutable revision and separately confirmed each pause; both existing requests have one verified execution receipt and execution-linked official PAUSED readback. Current backend remains `b6ffd161-7f8a-4fc0-879e-e47806ab43a4`; no further code/configuration change was needed. Google Gate 2, future compensation, complete zero-spend evidence and historical Meta consent remain separate open gates. M18 stays In Review / Stage 3.2 / 7/9.
 
 Initial baseline before repair: read-only Cloudflare inspection on 2 November 2026 confirmed backend `digitalbee-m03-pause-api` version `95d18abd-0a16-4192-9805-33d9cefa6a46`, 100%, deployment `9140fd96-0dcd-4f7c-b2fb-32b74a474896`. Its release was `m03@8b9ba5196b52f2dfbefea75d9da1ddde603326c8`. Independently downloaded `index.js` was 1,243,796 bytes, SHA-256 `3f8addc5aa67c22a6b9dffb62d1a3481301ca6bd8bf3c62b74f2184aecf0e8f4`. Its credential loader and outer handler matched the inspected source. The repair starts at that exact source commit and preserves later receipt-recovery/disposition behavior; no older confirmation worktree was used as the release base. The following baseline observations are historical; completed corrections are recorded below.
 
@@ -143,6 +143,33 @@ While the assistant was inspecting the restored Meta card, its UI began submitti
 
 Final SELECT at `2026-11-02T02:47:03.046164Z`: Google awaiting_approval, zero approvals; Meta approved, one approval. Each retains exactly one original revision and zero execution operations. No card read/confirmation or pause button was clicked by the assistant. Screenshot evidence: `google-review-restored.png`, `meta-review-restored.png`, `meta-human-approved.png`. The operational workaround is to reload only the failed host display and present one pilot per response; a durable fix for the host's initial loading failure remains outside the proven evidence. Existing scoped and bundled tests are retained; no runtime code changed or tests repeated.
 
+### Both formal M03 pause chains verified — 2 November, 10:54 MYT
+
+The user confirmed personally approving Google as well as Meta. SELECT at `2026-11-02T02:49:31.193025Z` verified both exact immutable approvals and zero execution operations before separate pause preparation. Google approval `ec00d33e-7f54-4dbc-b069-648a1c99e6c1` was created `2026-11-02T02:47:28.506265Z`; its native success correlation is `0afaf20b-e4f7-467e-8210-9afd4fc01321`. Meta approval is recorded above.
+
+The assistant clicked **Prepare separate pause** exactly once in each existing approved card. The inspected button invokes preparation only, with the same request selection and a new stage-specific capability operation key; it cannot confirm or execute a pause. Both cards rendered directly with their existing revision hashes and enabled **Pause this campaign** controls. Expiries were Google 10:55:26 MYT and Meta 10:55:39 MYT. Protected backend evidence recorded two HTTP 200 preparation invocations (14,603 ms Google and 11,556 ms Meta). The assistant stopped before confirmation.
+
+While evidence was being recorded, both requests acquired execution receipts. The assistant stopped UI actions and asked whether the user confirmed them. The user explicitly answered **Yes, I confirmed both**. This establishes separate deliberate human pause confirmations after the earlier exact-revision approvals. The assistant clicked neither confirmation, issued no provider operation directly and performed no reconciling workflow read.
+
+| Terminal evidence | Google | Meta |
+| --- | --- | --- |
+| Request | `6cf8e971-a7d5-48f3-8150-bf0ee9c1b0c9` | `ce6149f1-1f08-46fc-b2c8-bc7841fa2127` |
+| Immutable revision | `836b6c37-d367-4b2b-b552-01d4eee9f796` | `062c87b9-9466-4a59-9419-22506ce5b85a` |
+| Execution receipt | `a3c7194b-f5ed-466d-b75b-5beea525bf48` | `bd225981-9226-43fa-a577-074d4c735396` |
+| Receipt created UTC | 02:51:38.951746 | 02:51:34.873276 |
+| Terminal state / result | verified / succeeded | verified / succeeded |
+| Execution-linked official readback UTC | 02:51:51.924 | 02:51:48.336 |
+| Official identity/status | account 2315114913 / campaign 24349407517 / PAUSED | account 321606578570386 / campaign 120250129492860590 / PAUSED |
+| Readback hash | `4253a4d7b57066083a4389d4bb947c134266f599f0b21002c9712eb61c267ac3` | `d8040670e3138a4e99df672d9573af2ad3f2f37e61664fab25ae9eefcd30104c` |
+| Native success correlation | `e43cf4a5-4811-4297-9a67-02e6bd70c60f` | `3c2a2218-2a88-4279-a22f-0e51490f6a82` |
+
+Final SELECT at `2026-11-02T02:54:03.551203Z` verifies **both requests are verified**, each retaining exactly one original revision, one matching approved revision/hash and one verified execution operation. Native completion reports `provider_action:true` and disables the consumed pause button. Durable operation keys bind each unchanged request, revision hash, original change item and `:pause`; no replacement request or duplicate execution claim was created. The execution-linked provider readbacks above establish PAUSED→PAUSED acceptance for these exact pilots.
+
+This completes both formal M03 pause evidence chains, including retained source provenance, exact immutable human approval, separately rendered pause review, explicit human confirmation, terminal receipt and official readback. It does **not** authorize or complete Google Gate 2, a future changed-baseline compensation, zero-spend evidence, or historical Meta consent. The expired Meta schedule and all historical unknown receipts remain preserved. M18 remains In Review / Stage 3.2 / 7/9; M17 untouched. No activation, schedule, recreation, migration, code change, deployment or repeated regression test occurred in this continuation.
+
+Private evidence: `approvals-before-pause-cards.json`, `separate-pause-cards-and-observed-receipts.json`, `both-m03-chains-final.json`, Google/Meta unconfirmed-card screenshots, and `google-pause-verified-card.png`. The raw capability values were never read or persisted. The prior zero-provider-operation statements are historical checkpoints superseded only by these separately human-confirmed PAUSED operations.
+
+
 ## Outstanding dependencies and acceptance ledger
 
 ### Historical operator-access checkpoint — superseded by verified releases above
@@ -158,8 +185,8 @@ The existing Ava Chrome sign-in reaches only the unrelated Putri Doppler workspa
 | Gate | Evidence required / current disposition |
 | --- | --- |
 | Startup repair | Complete for the diagnosed authentication failure: scoped secret replacement verified; post-repair native Google request reached HTTP 200 and persisted/validated. |
-| Google M03 | Exact request/revision retained; fresh separate native card rendered with enabled approval and left awaiting the human. No approval/pause/execution-linked readback chain. |
-| Meta M03 | Credential placement verified; fresh card rendered and the human approved its exact immutable revision. Separate pause preparation/confirmation and execution-linked readback remain outstanding. |
+| Google M03 | Complete for exact PAUSED baseline: source, immutable human approval, separate human pause confirmation, terminal verified receipt and official PAUSED readback. |
+| Meta M03 | Complete for exact PAUSED baseline: source, immutable human approval, separate human pause confirmation, terminal verified receipt and official PAUSED readback. Historical Gate 2 consent remains unknown. |
 | Continuation safety | After verified correction, SELECT-only lookup of requests, sources and claims for attempted keys. Preserve the prior unknown outcomes. Do not use `pause_campaign_read` as a passive lookup: it can reconcile. |
 | Google Gate 2 | Separate phase after M03 readiness; fresh QA where expired, exact approved account-local midnight at least 72 hours ahead, human confirmation, official schedule evidence, then separately reviewed M03 compensation against the changed baseline. |
 | Official non-serving / spend | Both exact hierarchies are PAUSED at the captures above. Date-bounded reports returned empty rows; freshness/current-day completion and future Gate 2/compensation remain unresolved. Zero spend is inconclusive. |
@@ -168,4 +195,4 @@ The existing Ava Chrome sign-in reaches only the unrelated Putri Doppler workspa
 
 Keep the original keys: Google `c7d48106-34cc-449e-afff-6b0d02511fca`, Meta `2a4a6436-3ff0-4b25-87d4-76b6c3cdcb32`. Historical failed attempts and the bounded successful continuations are recorded above. Both now have exact saved requests; continue those requests only under separately bounded authority, never allocate replacement keys to evade uncertainty. New-request preparation uses action `approve`, exact source references and no request_id only when absence is established; it is no longer appropriate to create either pilot again. Human revision approval and human pause confirmation remain distinct.
 
-M18 remains In Review, Stage 3.2, 7/9 with both remaining criteria unchecked. Campaign status was not mutated; M17 untouched. This work deployed backend diagnostics, replaced the specifically approved Doppler credential, added the separately approved existing Meta credential, performed SELECT-only checks and bounded native preparations/refreshes. Google remains awaiting approval; the human personally approved the exact Meta revision after display restoration. No assistant approval, separate pause confirmation, execution, reconciliation, scheduling, recreation or migration occurred. PAUSED baselines and separate status captures are not execution-linked readback or proof of zero spend.
+M18 remains In Review, Stage 3.2, 7/9 with both remaining criteria unchecked. Both exact M03 pause chains now pass after separate human approvals and pause confirmations; official execution-linked readbacks preserve PAUSED. No assistant confirmation, blind retry, workflow reconciliation, activation, scheduling, recreation or migration occurred. M17 remains untouched. These receipts do not establish zero spend or retrospective Meta authorization and do not authorize future Google Gate 2.
