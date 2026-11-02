@@ -2,7 +2,7 @@
 
 ## Outcome and verified production baseline
 
-The diagnostics-only repair is deployed and independently verified as backend version `4ae44f83-4e7b-4951-9a29-79578412144a`. The shared startup cause remains unresolved. Private credential/bootstrap classifications preserve the public HTTP 503 contract and confer no confirmation/execution authority. Deployment is not a completed credential repair or connected acceptance result.
+The diagnostics-only repair is deployed and independently verified as backend version `4ae44f83-4e7b-4951-9a29-79578412144a`. One separately authorized Google preparation establishes the current startup cause: Doppler rejects the deployed Worker credential with HTTP 401. Expiry/revocation history remains unproven. Private credential/bootstrap classifications preserve the public HTTP 503 contract and confer no confirmation/execution authority. Deployment is not a completed credential repair or connected acceptance result.
 
 Read-only Cloudflare inspection on 2 November 2026 confirms backend `digitalbee-m03-pause-api` version `95d18abd-0a16-4192-9805-33d9cefa6a46`, 100%, deployment `9140fd96-0dcd-4f7c-b2fb-32b74a474896`. The deployed release is `m03@8b9ba5196b52f2dfbefea75d9da1ddde603326c8`. Independently downloaded `index.js` is 1,243,796 bytes, SHA-256 `3f8addc5aa67c22a6b9dffb62d1a3481301ca6bd8bf3c62b74f2184aecf0e8f4`. Its credential loader and outer handler match the inspected source. The isolated candidate starts at that exact source commit and preserves later receipt-recovery/disposition behavior; no older confirmation worktree is used as the release base.
 
@@ -55,7 +55,15 @@ The initial retained packaging flag was unsupported by Wrangler 4.135.0; the fre
 
 At `2026-11-02T01:51:13.339542Z`, fresh direct SELECTs in the existing Supabase project found **zero requests, zero source records, zero idempotency claims and zero execution-operation records for each pilot**. Searches covered exact campaign identities, retained workflow references, original keys and suffixed keys, plus linked request IDs. No workflow read endpoint, reconciliation function or mutation was called.
 
-Read-only inspection of the deployed creation functions confirms `create_v2` returns a prior claim for the same key, source verification uses the same key with `:source`, and creation/source recording occurs within the existing database function. The current absence supports proposing one bounded continuation with the original key; it does not rewrite either historical unknown outcome or prove the deployed Doppler token valid. A Google-only native approval preparation has been proposed as a specifically authorized diagnostic exception; it remains unsubmitted pending that answer. Meta preparation remains blocked by the separate credential-placement gap.
+Read-only inspection of the deployed creation functions confirms `create_v2` returns a prior claim for the same key, source verification uses the same key with `:source`, and creation/source recording occurs within the existing database function. The current absence supported one bounded continuation with the original key; it does not rewrite either historical unknown outcome. The user explicitly authorized that Google-only diagnostic exception; its result is recorded below. Meta preparation remains blocked by the separate credential-placement gap.
+
+### One authorized Google preparation — authentication failure established
+
+Verified Ava's retained Chrome profile and submitted the exact original Google key/source once. The native `pause_campaign_prepare`, action `approve`, returned `unknown/service_http_503`, request ID null, no revision hash and `provider_action:false`. Facade correlation: `d5a2341a-b312-4110-b9c7-236d7951449b`. No approval capability was prepared; the failed interface was not retried. No human approval, pause confirmation, reconciliation or Meta call occurred.
+
+The protected log window contains one bootstrap-failure event on the new backend at `2026-11-02T01:56:00.621Z`: stage `credential_fetch`, reason `authentication`, upstream HTTP 401, duration 273 ms, backend correlation `32b46ad3-178d-40c6-91b1-89b9a2c03722`. This establishes rejection of the deployed Worker credential by Doppler before domain workflow dispatch. The facade's separate correlation is recorded independently. Do not infer token expiry versus revocation, or rewrite older unknown outcomes.
+
+Evidence-supported next correction is only the scoped Worker Doppler binding. A concrete helper is prepared to create a dedicated read-only, non-expiring `m03-pause-worker-20261102` token for the existing `m03-pause-credentials/prd`, validate the same bounded request/three required shapes privately, install only `M03_PAUSE_MCP_DOPPLER_TOKEN` with identical JS and other bindings inherited, then verify all peers/configuration. Secret values remain in process memory and the intended Worker binding only. This helper has not run; specific credential approval and authorization for one subsequent Google preparation are requested. Current diagnostic preparation authority is exhausted. Credential rollback target is the current diagnostic version `4ae44f83-4e7b-4951-9a29-79578412144a`; its old credential is known to fail authentication.
 
 ## Outstanding dependencies and acceptance ledger
 
@@ -71,7 +79,7 @@ The existing Ava Chrome sign-in reaches only the unrelated Putri Doppler workspa
 
 | Gate | Evidence required / current disposition |
 | --- | --- |
-| Startup repair | Diagnostics deployed and verified; exact startup cause and any evidence-supported credential/configuration correction remain open. |
+| Startup repair | Diagnostics deployed and verified; current failure is Doppler HTTP 401. Scoped Worker credential correction awaits specific approval. |
 | Google M03 | Account `2315114913`, campaign `24349407517`; no completed request/approval/pause/readback chain. |
 | Meta M03 | Account `321606578570386`, campaign `120250129492860590`; same missing chain plus absent backend Meta credential placement. |
 | Continuation safety | After verified correction, SELECT-only lookup of requests, sources and claims for attempted keys. Preserve the prior unknown outcomes. Do not use `pause_campaign_read` as a passive lookup: it can reconcile. |
@@ -82,4 +90,4 @@ The existing Ava Chrome sign-in reaches only the unrelated Putri Doppler workspa
 
 Keep the original keys: Google `c7d48106-34cc-449e-afff-6b0d02511fca`, Meta `2a4a6436-3ff0-4b25-87d4-76b6c3cdcb32`. Each was already attempted once. Reuse only after evidence-supported safety determination and a separately bounded continuation; never allocate replacement keys to evade uncertainty. Approval preparation uses action `approve`, exact source references and no request_id only when a new request is established as appropriate. Human revision approval and human pause confirmation remain distinct.
 
-M18 remains In Review, Stage 3.2, 7/9 with both remaining criteria unchecked. Campaigns were left unchanged at their retained paused baseline; M17 untouched. This follow-up deployed only backend diagnostics and read database metadata/state. No live preparation, provider read/mutation, reconciliation, scheduling, recreation, migration or runtime credential change occurred. No fresh official paused-state or spend claim is made.
+M18 remains In Review, Stage 3.2, 7/9 with both remaining criteria unchecked. Campaigns were left unchanged at their retained paused baseline; M17 untouched. This follow-up deployed only backend diagnostics, read database metadata/state and performed the one specifically authorized Google preparation that failed before workflow dispatch. No provider read/mutation, reconciliation, scheduling, recreation, migration or runtime credential change occurred. No fresh official paused-state or spend claim is made.
