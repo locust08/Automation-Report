@@ -34,3 +34,12 @@ Private evidence: outputs/google-future-start/ contains official sanitized repor
 
 References: [Google campaign start-date fields](https://developers.google.com/google-ads/api/reference/rpc/v25/Campaign), [Cloudflare preserve-assets upload](https://developers.cloudflare.com/workers/static-assets/direct-upload/).
 
+
+## Concrete release checkpoint
+
+Proposal SHA256: 62fd9321f2666f6ff4902f7c0603297d0877f9066d7a809e8b0ce81fc8581f80. Both local packages and the exact rebuilt M04 bundled Worker check pass. No source-map instrumentation/upload or production deployment yet.
+
+- digitalbee-m04-campaign-api: source c32ea5f738c12527d9597f144c6f0f39e6b671fd; JS SHA256 c2c0f8f53624eb37be1f79a46aa81957b0ed15050234d8d5a1a51a15259bffc4; map SHA256 b87764a8e47035fa5c716700b46795641cb8d6b78fbb0f0b5357c77f8da7557b; rollback 5d210b22-4112-4530-a01f-105c3c8fef27.
+- digitalbee-mcp: source a60d81c82398770741703a3893cd32e4444c9e81; JS SHA256 e2d1029dde37876089e086af5095e7f094f0dd32559f7368b2f070fded47c379; map SHA256 d04e2633a67ab7b462693dd7cdd624d178d3d1581ab2411b845c57e5eb4c8c2f; rollback bca9d588-aa1b-4a03-a7eb-e83daaf0c6c6.
+
+Automation-Report is public. Main origin metadata is unavailable to gh, but existing Git authentication successfully reads its HEAD; retain the exact DigitalBee-MCP destination. No repository was created or substituted. The release workflow must recheck all five services for drift and capture final post-instrumentation hashes before deployment.
