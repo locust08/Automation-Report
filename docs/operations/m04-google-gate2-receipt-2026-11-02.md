@@ -34,7 +34,7 @@ No new endpoint, public tool, migration, credential, permission expansion or sch
 
 Earlier M03 verification and both human-approved M03 PAUSED→PAUSED chains remain retained, separate evidence.
 
-## Release boundary
+## Pre-release review boundary (historical checkpoint)
 
 Production release is **not yet applied**. The reviewed target is only `digitalbee-m04-campaign-api`; preserve all 45 bindings except the `POSTHOG_RELEASE` value, exact four-entry Gate 2 allowlist, settings, routes, exposure, schedules, annotations and four peer Workers. Inherit existing secrets; do not deploy stale source-config defaults. Use existing release instrumentation/source-map workflow with US PostHog project 503297 after specific approval.
 
@@ -45,3 +45,27 @@ Public branch publication, new M04 source/map upload and production deployment r
 ## Remaining acceptance
 
 M18 remains **In Review / Stage 3.2 / 7/9**. Google Gate 2 is blocked for this existing pilot by its immutable elapsed start; this repair cannot make the requested future reschedule valid. Any prospective acceptance replacement needs separately reviewed scope and cannot authorize historical execution. No replacement is created here. No changed baseline was observed requiring a new compensation mutation. Date-bounded official non-serving/zero-spend freshness remains incomplete, Meta historical human consent remains unknown, and its expired schedule is preserved. M17 is untouched.
+
+## Approved deployment — 2 November 2026, 05:03 UTC
+
+The user explicitly approved publication, M04 source/map upload to US PostHog project 503297, M04-only deployment and one existing-receipt diagnostic. Repair `482b7a2882b78f705242189871be54b155aafd4c` and evidence `123d14772e4980b5e92ca75225d580ea39eed100` were published and remote branch heads verified. The existing release workflow instrumented and uploaded the bundle/map; the actual instrumented bundle passed the local workerd signed-diagnostic test again.
+
+- Production Worker/version: `digitalbee-m04-campaign-api` / `5d210b22-4112-4530-a01f-105c3c8fef27`, active at 100% from `2026-11-02T05:03:14.432184Z`.
+- Exact deployed JS SHA256: `63d09e4c50e933dcb3feded916a643652ff0ca780729c1babd9776e4d047f643`.
+- Uploaded source-map SHA256: `04c116091e2b6af60cd894d574d969ce87e817c65c5f2de537c80d4a3b4d7991`.
+- Release: `m04@482b7a2882b78f705242189871be54b155aafd4c`; rollback remains `e5811668-b063-4a84-8b77-69d0eefa22c7`.
+- Five-Worker before/after verification confirms only M04 code and POSTHOG_RELEASE changed. All 45 bindings otherwise, four-entry allowlist, settings/annotations, routes, schedules and exposure are preserved; M03, main MCP, gateway and M05 are unchanged. No migration or credential change.
+- The first release invocation stopped on a read-only Cloudflare 401 before uploading any Worker. `wrangler whoami` refreshed the existing operator OAuth session without permission expansion. A fresh complete drift check preceded the one successful deployment; there was no blind upload retry.
+- SELECT immediately before the connected diagnostic verifies the original receipt still unknown with unchanged timestamps, 10 workflow audit rows and one existing challenge. Connected result is recorded separately below.
+
+Private release evidence: `release-baseline.json`, `release-proposal.json`, `prepared.json`, `bundle/posthog-manifest.json`, `deployment-attempt.json`, `deployment-response.json`, `release-verified.json`, and `receipt-before-native.json` under `outputs/gate2-repair/`. Public configuration contains no secret values; the private deployment inherits existing credentials.
+
+## Connected diagnostic verified — 2 November 2026, 13:05 MYT
+
+One `campaign_operation_get` with `diagnose_preflight:true` was requested through Ava's retained Chrome conversation for the existing service and receipt. The native response reports success, correlation `62f6c6ae-53c0-48d7-acc5-fec3fddad653`, with official capture at `2026-11-02T05:05:29Z` (display precision: seconds). It returns all three exact Google objects PAUSED, the unchanged October 12 start and Asia/Kuala_Lumpur timezone. Current validation is rejected with `google_CANNOT_MODIFY_START_DATE_IF_ALREADY_STARTED`; historical receipt stays unknown, `receipt_unchanged:true`, `retry_authorized:false`, and no historical provider response is available.
+
+Protected backend telemetry independently shows exactly one GET `/v1/mcp/campaign-creation/operations/status` in the diagnostic window, HTTP 200 / outcome ok / 13,002 ms. The other two events are the unchanged existing scheduled sweep. Query parameters are omitted by this telemetry; the explicit diagnostic input is retained in the visible conversation, not inferred from the log.
+
+SELECT at `2026-11-02T05:06:08.934Z` matches the pre-diagnostic receipt and timestamps exactly. The workflow still has 10 audit records, one original confirmation and one follow-up receipt. No new request/key, revision, capability, provider execution, reconciliation or confirmation occurred. The earlier retained card's reserved display is stale historical UI; it was not clicked or used to reconcile the receipt.
+
+Private evidence: `native-diagnostic-verified.jpg`, `native-backend-log.json`, `receipt-after-native.json`, `connected-diagnostic-verified.json`. The technical repair is deployed and its existing-receipt diagnostic is accepted. The Google scheduling acceptance criterion remains blocked by the existing campaign's immutable elapsed start. Campaigns remain paused; no replacement campaign or new confirmation was prepared. M18 stays In Review / Stage 3.2 / 7/9; M17 and Meta remain untouched.
