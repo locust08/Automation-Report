@@ -28,6 +28,12 @@ An additional downstream Meta blocker is established from the deployed source an
 
 ## Release boundary and rollback
 
+Implementation commit: `dccadfdcd946b8d3ac3dcabcb0a26dd2c0211c63`, local branch `codex/m03-bootstrap-diagnostics-20261102`. Automatic approval review rejected its push because publication authorization/trust was not established. Subsequent read-only verification confirms `locust08/Automation-Report` is public and the currently authenticated GitHub CLI identity has READ permission only. No push was retried and no publication is claimed. Explicit approval to publish to that public repository and an existing authorized Git identity are needed.
+
+Ignored release preparation is in `outputs/m03-bootstrap-release/`: live backend descriptors (23 bindings, no secret values), a production-derived candidate configuration, and sanitized result JSON. All current binding identities and plain-text values are preserved except the proposed truthful POSTHOG_RELEASE. Public/preview exposure remains off and schedules remain empty. The profile is a review candidate; do not deploy the uninstrumented bundle before the approved PostHog exact-artifact workflow and fresh production comparison.
+
+The production-derived configuration passes a local no-bundle Wrangler dry run with the existing reverse-authority binding and exact pilot variables. It is not a deployment. The original handoff received an append-only checkpoint and the M18 Notion record received the same scoped evidence without checkbox, stage or status changes.
+
 Deploy only `digitalbee-m03-pause-api` after the specific production approval. Main MCP, M04, M05, gateway and dashboard need no source deployment for this diagnostics candidate. Preserve all existing backend binding descriptors, values, allowlists, runtime/exposure settings and schedules. Change only backend source and its truthful release identifier; preserve the existing US PostHog project 503297 and complete its approved exact-artifact source-map release workflow before deployment. Record final instrumented hashes separately from the local packaging hash above.
 
 Rollback target is backend version `95d18abd-0a16-4192-9805-33d9cefa6a46`, with its existing configuration and credentials. No schema change needs rollback. Rollback never deletes receipts or replays an operation. A diagnosed credential correction is a separate exact diff and needs specific approval; no credential value may be copied into Git or evidence.
