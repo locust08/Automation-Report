@@ -40,6 +40,14 @@ Rollback target is backend version `95d18abd-0a16-4192-9805-33d9cefa6a46`, with 
 
 ## Outstanding dependencies and acceptance ledger
 
+### Operator access restored — 2 November follow-up
+
+The user completed the manual scoped Doppler login. Authorized CLI inspection now identifies the existing `Locus-T CRM08` workplace and successfully reads `m03-pause-credentials/prd`. All three required records are present and pass the existing string/minimum-32-character check; values were processed only in local memory and never printed or persisted. This validates the operator-accessible records, not the separately deployed Worker token or its exact effective response.
+
+The service-token metadata command succeeds but returns JSON `null`, with no token entries available to inspect. One bounded 100-entry activity request returned three entries and no M03-project matches. Neither result establishes the deployed token's validity, expiry or revocation history. The exact production startup cause remains unproven; do not rotate credentials on this evidence alone. The earlier Putri/browser-access blocker below is historical and superseded for CLI diagnosis. Publication and production-release approvals remain outstanding; the user's `done` refers only to completing login.
+
+No tests were repeated and no credential, provider, database or production runtime mutation occurred in this follow-up. Next: approve the concrete diagnostics-only backend release (source `dccadfdcd946b8d3ac3dcabcb0a26dd2c0211c63`, existing US503297 source-map workflow, same 23 binding descriptors), then use only a separately authorized bounded diagnostic/continuation. No campaign preparation may be used as an unapproved probe.
+
 The existing Ava Chrome sign-in reaches only the unrelated Putri Doppler workspace. The operator who can access `m03-pause-credentials/prd` must restore the existing authorized session. No CLI login was replaced, no service token rotated and no permissions expanded. Inspect service-token validity/access and required-record presence there, not in Putri. Value shape can only be checked privately inside the authorized runtime. No claim is made that operator login alone validates the Worker's token.
 
 | Gate | Evidence required / current disposition |
