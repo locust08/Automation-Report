@@ -99,7 +99,7 @@ export class Google {
           .filter((code:unknown):code is string=>typeof code==='string'&&/^[A-Z][A-Z0-9_]{1,80}$/.test(code)).slice(0,2);
         const code=codes.length?`google_${codes.join('_')}`:'google_response';
         // Only a complete structured 4xx rejection proves that the atomic request was rejected.
-        if (writing && response.status >= 400 && response.status < 500 && response.status !== 408 && response.status !== 429 && value.error)
+        if (writing && response.status >= 400 && response.status < 500 && response.status !== 408 && response.status !== 429 && value.error?.code===response.status && codes.length>0)
           throw new ProviderError('rejected',code);
         throw new ProviderError(writing ? 'unknown' : 'unavailable',code);
       }
@@ -183,7 +183,7 @@ export class Google {
     if(policy.length!==1||policy[0].adGroupAd.resourceName!==data.ad.resourceName||policy[0].adGroupAd.policySummary?.approvalStatus!=='APPROVED')throw new ProviderError('unavailable','google_qa_policy');
     return {...data,conversion_configuration:await this.conversionConfiguration(String(data.campaign.id))};
   }
-  async schedule(snapshot:Json,date:string){
+  private scheduleOperations(snapshot:Json,date:string){
     const operations:Json[]=[
       {campaignOperation:{update:{resourceName:snapshot.campaign.resourceName,status:'ENABLED',startDateTime:date+' 00:00:00'},updateMask:'status,start_date_time'}},
       {adGroupOperation:{update:{resourceName:snapshot.ad_group.resourceName,status:'ENABLED'},updateMask:'status'}},
@@ -191,7 +191,28 @@ export class Google {
       ...snapshot.targeting.filter((row:Json)=>['KEYWORD','LOCATION','LANGUAGE','AUDIENCE'].includes(row.adGroupCriterion.type)).map((row:Json)=>({adGroupCriterionOperation:{update:{resourceName:row.adGroupCriterion.resourceName,status:'ENABLED'},updateMask:'status'}})),
     ];
     if(operations.some(op=>{const value=Object.values(op)[0] as Json;return typeof value.update.resourceName!=='string'||!value.update.resourceName.startsWith(`customers/${this.scope.platformAccountId}/`);}))throw new ProviderError('rejected','schedule_ownership');
-    await this.request('googleAds:mutate',{mutateOperations:operations,partialFailure:false,validateOnly:false},true);
+    return operations;
+  }
+  async validateSchedule(snapshot:Json,date:string){
+    // Validate the exact atomic scheduling request; never execute it here.
+    await this.request('googleAds:mutate',{mutateOperations:this.scheduleOperations(snapshot,date),partialFailure:false,validateOnly:true},true);
+  }
+  async schedule(snapshot:Json,date:string){
+    await this.request('googleAds:mutate',{mutateOperations:this.scheduleOperations(snapshot,date),partialFailure:false,validateOnly:false},true);
+  }
+  async readSchedulingState(snapshot:Json){
+    const prefix=`customers/${this.scope.platformAccountId}`;
+    const campaign=String(snapshot.campaign?.resourceName??''),group=String(snapshot.ad_group?.resourceName??''),ad=String(snapshot.ad?.resourceName??'');
+    const campaignId=campaign.slice(`${prefix}/campaigns/`.length),groupId=group.slice(`${prefix}/adGroups/`.length),adId=ad.slice(`${prefix}/adGroupAds/`.length);
+    if(campaign!==`${prefix}/campaigns/${campaignId}`||group!==`${prefix}/adGroups/${groupId}`||ad!==`${prefix}/adGroupAds/${adId}`||!/^\d+$/.test(campaignId)||!/^\d+$/.test(groupId)||!new RegExp(`^${groupId}~\\d+$`).test(adId))throw new ProviderError('unavailable','schedule_ownership');
+    const campaigns=await this.query(`SELECT campaign.resource_name,campaign.status,campaign.start_date_time,customer.time_zone FROM campaign WHERE campaign.id = ${campaignId}`);
+    const groups=await this.query(`SELECT ad_group.resource_name,ad_group.status FROM ad_group WHERE campaign.id = ${campaignId} AND ad_group.id = ${groupId}`);
+    const ads=await this.query(`SELECT ad_group_ad.resource_name,ad_group_ad.status FROM ad_group_ad WHERE campaign.id = ${campaignId} AND ad_group.id = ${groupId} AND ad_group_ad.ad.id = ${adId.split('~')[1]}`);
+    if(campaigns.length!==1||groups.length!==1||ads.length!==1||campaigns[0].campaign?.resourceName!==campaign||groups[0].adGroup?.resourceName!==group||ads[0].adGroupAd?.resourceName!==ad)throw new ProviderError('unavailable','schedule_readback');
+    const statuses=[campaigns[0].campaign.status,groups[0].adGroup.status,ads[0].adGroupAd.status],start=campaigns[0].campaign.startDateTime??null,timezone=campaigns[0].customer?.timeZone??null;
+    if(statuses.some(status=>!['PAUSED','ENABLED','REMOVED','UNKNOWN','UNSPECIFIED'].includes(status))||start!==null&&(typeof start!=='string'||!/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(start))||typeof timezone!=='string'||timezone.length>64)throw new ProviderError('unavailable','schedule_readback');
+    try{new Intl.DateTimeFormat('en',{timeZone:timezone});}catch{throw new ProviderError('unavailable','schedule_readback');}
+    return {campaign:{id:campaign,status:statuses[0],start_at:start},ad_group:{id:group,status:statuses[1]},ad:{id:ad,status:statuses[2]},timezone,captured_at:new Date().toISOString()};
   }
   async clonePlan(campaignId:string){
     if(!/^\d{1,20}$/.test(campaignId))throw new ProviderError('rejected','unsupported_structure');

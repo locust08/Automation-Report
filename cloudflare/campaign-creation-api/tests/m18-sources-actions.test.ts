@@ -15,7 +15,7 @@ const plan:Plan={campaign_type:'search',name:'M18',currency:'MYR',timezone:'Asia
 let f:Awaited<ReturnType<typeof database>>,env:Environment,store:Store;
 beforeEach(async()=>{f=await database();store=new Store(f.db);env={DB:f.db,M04_ENABLED:'true',M04_TEMPLATE_PLANNING_ENABLED:'true',M04_CLONE_PLANNING_ENABLED:'true',M04_GATE2_ENABLED:'true',M04_RECOVERY_ENABLED:'true',M04_GATE2_ALLOWLIST:JSON.stringify([{subject:scope.subject,platform:scope.platform,account_id:scope.platformAccountId,service_id:scope.accountPageId}]),GOOGLE_ADS_CLIENT_ID:'synthetic',GOOGLE_ADS_CLIENT_SECRET:'synthetic',GOOGLE_ADS_REFRESH_TOKEN:'synthetic',CREATION_QUEUE:{send:async()=>{}}} as unknown as Environment;});
 afterEach(()=>{vi.restoreAllMocks();f.dispose();});
-const provider=()=>new Google(env,scope),meta=()=>new Meta(env,scope);
+const provider=()=>{const google=new Google(env,scope);vi.spyOn(google,'validateSchedule').mockResolvedValue();return google;},meta=()=>new Meta(env,scope);
 it('refreshes the exact Meta source through readiness while rejecting unsupported selectors',async()=>{
  const selected='120249693396710590',metaScope:Scope={...scope,platform:'Meta',platformAccountId:'321606578570386'};
  const references={sources:[{source_ad_id:selected,source_campaign_id:'120249693396070590'}]};
@@ -116,7 +116,7 @@ it('rejects Gate 2 before creation QA and binds a distinct consumed confirmation
 it('resolves a lost Google schedule response through official readback and never sends a second mutation',async()=>{
  const {w,id,snapshot}=await paused(),ledger=new ActionStore(f.db),schedule={mode:'scheduled',scheduled_at:'2099-10-12T16:00:00.000Z',timezone:plan.timezone};
  let writes=0;const scheduled={...snapshot,campaign:{...snapshot.campaign,status:'ENABLED',startDate:'2099-10-13'},ad_group:{...snapshot.ad_group,status:'ENABLED'},ad:{...snapshot.ad,status:'ENABLED'}};
- const p:Provider={validate:async()=>{},create:async()=>[],qa:async()=>snapshot,readback:async()=>scheduled,schedule:async()=>{writes++;throw new Error('lost');}};
+ const p:Provider={validate:async()=>{},create:async()=>[],qa:async()=>snapshot,readback:async()=>scheduled,validateSchedule:async()=>{},schedule:async()=>{writes++;throw new Error('lost');}};
  const actions=new Actions(env,scope,p,meta(),async()=>{}),prepared=await actions.prepare(w,'gate2',{schedule},'prepare');
  const input={idempotency_key:crypto.randomUUID(),challenge:prepared.challenge!.token,confirmation_hash:prepared.challenge!.confirmation_hash,schedule};
  await actions.reserve(w,'gate2',input,'hash');const receipt=(await ledger.get(input.idempotency_key,scope))!;
@@ -153,7 +153,7 @@ it('processes a valid queued action with the exact scope property order serializ
  env.M04_GATE2_ALLOWLIST=JSON.stringify([{subject:scope.subject,platform:scope.platform,account_id:scope.platformAccountId,service_id:scope.accountPageId,workflow_id:w.id,revision_id:w.revision_id,campaign_id:'1'}]);
  const challenge=await ledger.prepare(current,raw,'gate2',parent,schedule,[],stable(snapshot),{},'request'),id=crypto.randomUUID();
  await ledger.reserve(current,raw,'gate2',{idempotency_key:id,challenge:challenge.token,confirmation_hash:challenge.confirmation_hash,schedule},'request');
- const scheduleWrite=vi.fn(async()=>{}),p:Provider={validate:async()=>{},create:async()=>[],qa:async()=>snapshot,schedule:scheduleWrite,readback:async()=>({...snapshot,campaign:{...snapshot.campaign,status:'ENABLED',startDateTime:'2099-10-13 00:00:00'},ad_group:{...snapshot.ad_group,status:'ENABLED'},ad:{...snapshot.ad,status:'ENABLED'}})};
+ const scheduleWrite=vi.fn(async()=>{}),p:Provider={validate:async()=>{},create:async()=>[],qa:async()=>snapshot,validateSchedule:async()=>{},schedule:scheduleWrite,readback:async()=>({...snapshot,campaign:{...snapshot.campaign,status:'ENABLED',startDateTime:'2099-10-13 00:00:00'},ad_group:{...snapshot.ad_group,status:'ENABLED'},ad:{...snapshot.ad,status:'ENABLED'}})};
  await processReservedCreation(env,id,{authorize:async()=>{},provider:()=>p});
  expect(scheduleWrite).toHaveBeenCalledTimes(1);expect((await ledger.get(id,raw))?.status).toBe('verified');
 });
@@ -221,7 +221,7 @@ it('rejects conversion drift beyond the public response array bound before sched
  const {w,snapshot}=await paused(),actionsList=Array.from({length:128},(_,i)=>({conversionAction:{resourceName:`customers/2315114913/conversionActions/${i+1}`,status:'ENABLED'}}));
  let configuration={config:{},goals:[],actions:actionsList};
  const qa=vi.fn(async()=>({...snapshot,conversion_configuration:configuration})),scheduleWrite=vi.fn(async()=>{});
- const actions=new Actions(env,scope,{validate:async()=>{},create:async()=>[],readback:async()=>snapshot,qa,schedule:scheduleWrite},meta(),async()=>{}),schedule={mode:'scheduled',scheduled_at:'2099-10-12T16:00:00.000Z',timezone:plan.timezone};
+ const actions=new Actions(env,scope,{validate:async()=>{},create:async()=>[],readback:async()=>snapshot,qa,validateSchedule:async()=>{},schedule:scheduleWrite},meta(),async()=>{}),schedule={mode:'scheduled',scheduled_at:'2099-10-12T16:00:00.000Z',timezone:plan.timezone};
  const prepared=await actions.prepare(w,'gate2',{schedule},'prepare'),key=crypto.randomUUID();
  await actions.reserve(w,'gate2',{idempotency_key:key,challenge:prepared.challenge!.token,confirmation_hash:prepared.challenge!.confirmation_hash,schedule},'reserve');
  configuration=structuredClone(configuration);configuration.actions[127]!.conversionAction.status='PAUSED';

@@ -18,6 +18,8 @@ export type Provider = Pick<Google, 'validate' | 'create'> & {
  readback(plan:Parameters<Google['readback']>[0],workflowId:string,options?:Parameters<Google['readback']>[2]):Promise<Record<string,any>>;
  qa?(plan:Parameters<Google['qa']>[0],workflowId:string,options?:{readOnly?:boolean}):Promise<Record<string,any>>;
  schedule?:Google['schedule'];
+ validateSchedule?:Google['validateSchedule'];
+ readSchedulingState?:Google['readSchedulingState'];
 };
 export interface Dependencies {authorize: typeof authorize; provider: (env: Environment, scope: Scope) => Provider}
 const defaults: Dependencies = {authorize, provider: (env, scope) => new Google(env, scope)};

@@ -40,6 +40,9 @@ export function stable(value:any):any{
  return value;
 }
 function actionSnapshot(value:Record<string,any>){return stable(value.platform==='Meta'?stableMetaQaSnapshot(value):value);}
+function googleScheduleReason(error:unknown){
+ return error instanceof ProviderError&&/^google_[A-Z][A-Z0-9_]{1,160}$/.test(error.code)?error.code.slice(0,100):'google_schedule_unavailable';
+}
 /** Bounded field paths only: never disclose creative values or signed URLs. */
 function snapshotDifferencePaths(before:unknown,after:unknown){
  const paths:string[]=[];let visited=0,truncated=false;
@@ -110,6 +113,16 @@ export class Actions {
   const schedule=action==='gate2'?scheduleFor(this.scope,plan,input.schedule):null;
   const snapshot=action==='gate2'?await this.qa(w,parent.id):{steps:await this.store.providerSteps(parent.id)};
   if(action==='gate2'&&!this.snapshotAllowed(w,snapshot))throw new Error('provider_creation_disabled');
+  if(action==='gate2'&&this.scope.platform==='Google'){
+   if(!this.google.validateSchedule)throw new Error('unavailable');
+   try{await this.google.validateSchedule(snapshot,schedule!.date);}
+   catch(error){
+    await this.check('campaign_action_prepare_gate2');
+    const code=googleScheduleReason(error);
+    return result('unavailable',{workflow_ref:w.id,revision_ref:w.revision_id,data:{provider_action:false},validation_issues:[{field:'schedule',code,
+     message:code.includes('CANNOT_MODIFY_START_DATE_IF_ALREADY_STARTED')?'Google cannot move this campaign’s elapsed start date. Keep this existing hierarchy paused; no schedule confirmation was created.':'Google could not validate the exact future schedule. No confirmation or provider change was made.'}]});
+   }
+  }
   if(action==='gate2'&&this.scope.platform==='Meta'){
    try{await this.meta.assertSchedulingStart(snapshot);}
    catch(error){
@@ -148,6 +161,19 @@ export class Actions {
  }
  async diagnoseSnapshot(r:ActionReceipt,w:Workflow){
   const detail=r.result_json?JSON.parse(r.result_json):null;
+  if(this.scope.platform==='Google'&&r.action==='gate2'&&['unknown','rejected'].includes(r.status)&&r.revision_id===w.revision_id){
+   await this.check('campaign_operation_get');
+   if(!await this.allowed(w,'gate2')||!this.google.readSchedulingState||!this.google.validateSchedule)return result('unavailable',{workflow_ref:w.id,revision_ref:r.revision_id,receipt_ref:r.id,data:{status:r.status,provider_action:false}});
+   const snapshot=JSON.parse(r.confirmation_json).snapshot,schedule=scheduleFor(this.scope,JSON.parse(w.plan_json),JSON.parse(r.schedule_json!),0);
+   if(!this.snapshotAllowed(w,snapshot))throw new Error('provider_creation_disabled');
+   const current=await this.google.readSchedulingState(snapshot);
+   let validation:{status:string;reason?:string}={status:'passed'};
+   try{await this.google.validateSchedule(snapshot,schedule.date);}catch(error){validation={status:error instanceof ProviderError&&error.outcome==='rejected'?'rejected':'unavailable',reason:googleScheduleReason(error)};}
+   await this.check('campaign_operation_get');
+   return result('success',{workflow_ref:w.id,revision_ref:r.revision_id,receipt_ref:r.id,data:{status:r.status,provider_action:false,
+    schedule_diagnostic:{current_provider_state:current,current_validate_only:validation,recorded_failure:detail,original_provider_error_recorded:typeof detail?.reason==='string',historical_execution_response_available:false,retry_authorized:false,receipt_unchanged:true}},
+    caveats:['Current validation does not reconstruct the historical dispatch response. Preserve this receipt; no retry or new confirmation is authorized.']});
+  }
   if(this.scope.platform==='Meta'&&r.action==='gate2'&&r.status==='unknown'&&r.revision_id===w.revision_id){
    await this.check('campaign_operation_get');
    const steps=await this.ledger.gate2Steps(r.id),snapshot=JSON.parse(r.confirmation_json).snapshot;
@@ -214,6 +240,10 @@ export class Actions {
     const qa=await this.qa(w,r.parent_receipt);
     if(!this.snapshotAllowed(w,qa))throw new Error('provider_creation_disabled');
     if(await digest(actionSnapshot(qa))!==await digest(actionSnapshot(JSON.parse(r.confirmation_json).snapshot)))throw new Error('qa_readback_mismatch');
+    if(this.scope.platform==='Google'){
+     if(!this.google.validateSchedule)throw new Error('unavailable');
+     await this.google.validateSchedule(qa,scheduleFor(this.scope,JSON.parse(w.plan_json),JSON.parse(r.schedule_json!)).date);
+    }
     if(this.scope.platform==='Meta')await this.meta.assertSchedulingStart(qa);
    }else{
     const state=await this.state(w);
@@ -221,22 +251,27 @@ export class Actions {
     await this.meta.validate(metaPlanSchema.parse(JSON.parse(w.plan_json)),w.id);
    }
    await this.check(tool);
-  }catch(error){await this.ledger.finish(r,'rejected',{reason:error instanceof Error?error.message:'preflight_failed',provider_action:false});return;}
+  }catch(error){
+   const known=['stale_revision','qa_readback_mismatch','provider_creation_disabled','invalid_schedule','google_schedule_midnight_required','template_disabled','template_corrupt','clone_changed','unavailable','access_denied'];
+   const reason=this.scope.platform==='Google'&&r.action==='gate2'?(error instanceof ProviderError?googleScheduleReason(error):error instanceof Error&&known.includes(error.message)?error.message:'preflight_failed'):error instanceof Error?error.message:'preflight_failed';
+   await this.ledger.finish(r,'rejected',{reason,provider_action:false});return;
+  }
   try{await this.ledger.dispatch(r);}catch{return;}
+  let googleMutationPending=false;
   try{
    if(r.action==='resume')await this.meta.create(metaPlanSchema.parse(JSON.parse(w.plan_json)),w.id,r.parent_receipt,new Store(this.env.DB,r.id));
    else{
     const snapshot=JSON.parse(r.confirmation_json).snapshot,schedule=scheduleFor(this.scope,JSON.parse(w.plan_json),JSON.parse(r.schedule_json!));
     if(this.scope.platform==='Meta')await this.meta.schedule(snapshot,schedule.scheduled_at,r.id,this.ledger,()=>this.check(tool));
-    else{if(!this.google.schedule)throw new Error('unavailable');await this.google.schedule(snapshot,schedule.date);}
+    else{if(!this.google.schedule)throw new Error('unavailable');googleMutationPending=true;await this.google.schedule(snapshot,schedule.date);googleMutationPending=false;}
    }
    const readback=await this.reconcile(r,w);await this.check(tool);await this.ledger.finish(r,'verified',readback);
   }catch(error){
    const steps=r.action==='resume'?await this.store.providerSteps(r.parent_receipt):[];
-   const rejected=r.action==='resume'&&error instanceof ProviderError&&error.outcome==='rejected'&&!steps.some(s=>s.status==='started'&&!s.rejected);
+   const rejected=error instanceof ProviderError&&error.outcome==='rejected'&&(r.action==='resume'&&!steps.some(s=>s.status==='started'&&!s.rejected)||this.scope.platform==='Google'&&r.action==='gate2'&&googleMutationPending);
    const metaGate2=this.scope.platform==='Meta'&&r.action==='gate2';
    const failure=metaGate2?{reason:error instanceof ProviderError&&/^[a-zA-Z0-9_]{1,100}$/.test(error.code)?error.code:'meta_schedule_unknown',
-    ...(error instanceof MetaScheduleFailure?{failed_step:error.step,failure_stage:error.stage,provider_diagnostic:error.diagnostic}:{})}:{};
+    ...(error instanceof MetaScheduleFailure?{failed_step:error.step,failure_stage:error.stage,provider_diagnostic:error.diagnostic}:{})}:this.scope.platform==='Google'&&r.action==='gate2'?{reason:googleScheduleReason(error),failure_stage:googleMutationPending?'schedule':'readback'}:{};
    await this.ledger.finish(r,rejected?'rejected':'unknown',{provider_action:rejected?'rejected':'unknown',...failure});
    if(!rejected)await this.read({...r,status:'unknown'},w);
   }
