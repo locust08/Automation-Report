@@ -2,9 +2,9 @@
 
 ## Outcome and verified production baseline
 
-The diagnostics-only repair is deployed and independently verified as backend version `4ae44f83-4e7b-4951-9a29-79578412144a`. One separately authorized Google preparation establishes the current startup cause: Doppler rejects the deployed Worker credential with HTTP 401. Expiry/revocation history remains unproven. Private credential/bootstrap classifications preserve the public HTTP 503 contract and confer no confirmation/execution authority. Deployment is not a completed credential repair or connected acceptance result.
+M03 startup is repaired, and separately approved Meta credential placement is verified. Current backend version is `b6ffd161-7f8a-4fc0-879e-e47806ab43a4`, with identical injected JS, existing settings and peer Workers. One bounded preparation per pilot succeeded after its correction; both validated immutable requests await approval. ChatGPT cannot display either native approval card, so human approval and formal pause acceptance remain incomplete. Official hierarchies are PAUSED at capture; empty delivery reports remain inconclusive. Expiry/revocation history of the rejected Doppler token and historical Meta human consent remain unproven.
 
-Read-only Cloudflare inspection on 2 November 2026 confirms backend `digitalbee-m03-pause-api` version `95d18abd-0a16-4192-9805-33d9cefa6a46`, 100%, deployment `9140fd96-0dcd-4f7c-b2fb-32b74a474896`. The deployed release is `m03@8b9ba5196b52f2dfbefea75d9da1ddde603326c8`. Independently downloaded `index.js` is 1,243,796 bytes, SHA-256 `3f8addc5aa67c22a6b9dffb62d1a3481301ca6bd8bf3c62b74f2184aecf0e8f4`. Its credential loader and outer handler match the inspected source. The isolated candidate starts at that exact source commit and preserves later receipt-recovery/disposition behavior; no older confirmation worktree is used as the release base.
+Initial baseline before repair: read-only Cloudflare inspection on 2 November 2026 confirmed backend `digitalbee-m03-pause-api` version `95d18abd-0a16-4192-9805-33d9cefa6a46`, 100%, deployment `9140fd96-0dcd-4f7c-b2fb-32b74a474896`. Its release was `m03@8b9ba5196b52f2dfbefea75d9da1ddde603326c8`. Independently downloaded `index.js` was 1,243,796 bytes, SHA-256 `3f8addc5aa67c22a6b9dffb62d1a3481301ca6bd8bf3c62b74f2184aecf0e8f4`. Its credential loader and outer handler matched the inspected source. The repair starts at that exact source commit and preserves later receipt-recovery/disposition behavior; no older confirmation worktree was used as the release base. The following baseline observations are historical; completed corrections are recorded below.
 
 The backend is enabled, its canonical HTTPS origin and reverse authority binding are configured, and its exact allowlist contains the historical Google campaign plus both required pilots. The Doppler binding name is present; its validity is still unproven. The local CLI's previously rejected auth token is a different credential.
 
@@ -63,11 +63,75 @@ Verified Ava's retained Chrome profile and submitted the exact original Google k
 
 The protected log window contains one bootstrap-failure event on the new backend at `2026-11-02T01:56:00.621Z`: stage `credential_fetch`, reason `authentication`, upstream HTTP 401, duration 273 ms, backend correlation `32b46ad3-178d-40c6-91b1-89b9a2c03722`. This establishes rejection of the deployed Worker credential by Doppler before domain workflow dispatch. The facade's separate correlation is recorded independently. Do not infer token expiry versus revocation, or rewrite older unknown outcomes.
 
-Evidence-supported next correction is only the scoped Worker Doppler binding. A concrete helper is prepared to create a dedicated read-only, non-expiring `m03-pause-worker-20261102` token for the existing `m03-pause-credentials/prd`, validate the same bounded request/three required shapes privately, install only `M03_PAUSE_MCP_DOPPLER_TOKEN` with identical JS and other bindings inherited, then verify all peers/configuration. Secret values remain in process memory and the intended Worker binding only. This helper has not run; specific credential approval and authorization for one subsequent Google preparation are requested. Current diagnostic preparation authority is exhausted. Credential rollback target is the current diagnostic version `4ae44f83-4e7b-4951-9a29-79578412144a`; its old credential is known to fail authentication.
+The failure supported correcting only the scoped Worker Doppler binding. The user then explicitly approved the concrete credential change and one subsequent Google preparation. That earlier diagnostic preparation authorization is exhausted; the separately approved correction and continuation are recorded next.
+
+### Scoped credential repair and post-repair Google preparation
+
+Created dedicated read-only, non-expiring service token `m03-pause-worker-20261102` for existing `m03-pause-credentials/prd`. The identical bounded Doppler request returned HTTP 200 and all three required-record shape checks passed. Only `M03_PAUSE_MCP_DOPPLER_TOKEN` was replaced; values stayed in memory and the intended Worker binding, never printed or persisted locally. No existing token was revoked, no loader scope was expanded and no new provider credential was transferred.
+
+Independent readback verifies backend version `9c85bc5c-0528-4c4d-9fa8-aed2145899c6`, unchanged JS SHA-256 `a26cd6a59329f405901edf4614253f368c39c705deaf4c99a9add2082ea6c25f`, unchanged visible configuration/binding descriptors/annotations/routes/schedules and unchanged four peer Workers. Credential rollback target is `4ae44f83-4e7b-4951-9a29-79578412144a`; that version restores the known-rejected old credential. Private `credential-*.json` evidence contains no secret values.
+
+Fresh SELECT-only checks at `2026-11-02T02:03:49.207970Z` again found no matching requests, sources, idempotency claims or execution operations for either original key. The authorized post-repair Google native preparation then ran exactly once with the original key/source. The backend recorded one HTTP 200 invocation on the credential-repaired version, outcome `ok`, wall time 21,018 ms; no bootstrap failure was reported in that request window.
+
+| Google review evidence | Verified value |
+| --- | --- |
+| Account / campaign | `2315114913` / `24349407517` |
+| Saved request | `6cf8e971-a7d5-48f3-8150-bf0ee9c1b0c9`, created `2026-11-02T02:05:19.439940Z` |
+| Immutable revision | `836b6c37-d367-4b2b-b552-01d4eee9f796`, revision 1 |
+| Revision hash | `e760f91c14cba640b9462d57d5a5f149e4876a8b05271cce50e1d8ae882aaae7` |
+| Database state | `awaiting_approval`; validation `passed`; zero approvals; zero execution operations |
+| Change | `campaign.status`: `PAUSED` → `PAUSED` |
+| Saved source | `8a3dcbf6-c132-4fb6-9116-cc0f449c9593`, `legacy_provider_adoption`, original key plus `:source` |
+| Provenance | Exact retained M18 workflow `8711a86d-8b57-403e-8918-b20f1ff1b527`, revision `a454a142-865f-48a1-ba55-9181ae9f2205`, receipt `34f3dcb7-0855-471e-a85c-603cf9c2c483` |
+| Baseline capture | `2026-11-02T02:05:16.854Z`; hash `4df29f677ab31b0297680939449411ca0facfe9feafad0d93b65a5cdae360728` |
+
+The transcript says `prepared`, but its claim that the card displayed is contradicted by the observed UI: **Couldn't display DigitalBee MCP**. Opening the existing app result and one conversation reload did not restore it; after reload ChatGPT also reports **This response couldn't load**. The resource's initialization code does not invoke workflow tools, and no Try again/Confirm/Check receipt control was clicked. The exact saved request/revision/source above were independently verified by SELECT, not a reconciling workflow read. Screenshot: `outputs/m03-bootstrap-release/google-review-display-blocked.png`; sanitized result: `google-post-repair-result.json`.
+
+Do not ask for blind human approval or recreate the request. Restore the native display first; any expired review refresh must bind this exact saved request/revision and needs its own bounded continuation authority. Human revision approval and a subsequent separate pause preparation/confirmation remain outstanding. No provider status mutation occurred. The latest Google one-preparation authorization is exhausted. At this Google checkpoint Meta had not been prepared and its source was requested. Names-only inspection of existing `locus-t-mcp-cloudflare-v0/prd` found only Doppler metadata keys. The later verified source, approved placement and Meta result follow.
+
+### Meta placement, preparation and official status evidence — 2 November follow-up
+
+The operator explicitly authorized inspection of the logged-in Doppler scope. Names-only discovery located the existing `META_ACCESS_TOKEN` in `locus-t-ai-backend/dev` and `dev_m18_pause`; private comparison confirmed the same value. The production config has no access-token record. Private, read-only Graph v24.0 checks verified access to exact account `321606578570386` and the PAUSED pilot. No global token value was printed or copied to local files.
+
+After specific placement/preparation approval, only `META_ACCESS_TOKEN` was added to `digitalbee-m03-pause-api` from the existing dev record. Independently verified version: `b6ffd161-7f8a-4fc0-879e-e47806ab43a4`; rollback: `9c85bc5c-0528-4c4d-9fa8-aed2145899c6` (removes Meta access, retains repaired Doppler access). The deployed JS hash remains `a26cd6a59329f405901edf4614253f368c39c705deaf4c99a9add2082ea6c25f`. All previous 23 bindings, settings, annotations, exact allowlists, routes and schedules are preserved; the Meta secret is the sole 24th binding. All four peer Workers remain unchanged. No new source-map upload or runtime code change was needed.
+
+Fresh SELECTs at `2026-11-02T02:26:21.406595Z` found zero Meta requests, sources, claims and operations for the original key; Google retained its exact awaiting-approval request. One native Meta preparation with the original key and exact verified recovery source then completed. Protected backend evidence contains one invocation at `2026-11-02T02:27:44.386Z`, HTTP 200, outcome `ok`, 17,872 ms on the verified version.
+
+| Meta review evidence | Verified value |
+| --- | --- |
+| Account / campaign | `321606578570386` / `120250129492860590` |
+| Saved request | `ce6149f1-1f08-46fc-b2c8-bc7841fa2127`, created `2026-11-02T02:27:32.746298Z` |
+| Immutable revision | `062c87b9-9466-4a59-9419-22506ce5b85a`, revision 1 |
+| Revision hash | `d66e5b28e8c15f4e0ed0d22f8bcc0e770d2ff6a98fe841fd107ff25320b4e968` |
+| Database state | `awaiting_approval`; validation `passed`; zero approvals; zero execution operations |
+| Change | `campaign.status`: `PAUSED` → `PAUSED` |
+| Saved source | `cfa94381-0a3e-4f16-9859-bb87639daeb0`; original key plus `:source` |
+| Provenance | Workflow `3f777789-3e0e-44eb-b604-5a8e4bb97851`, revision `62687d49-94f6-409c-9b7f-f676bcde5d92`, verified recovery `5e9a8992-c1fa-4454-a905-24e36fa12475` |
+| Baseline capture | `2026-11-02T02:27:29.795Z`; hash `37ec7c0c3008336959e64e1bc391ea02e8b9fde1d4797f8dfea67921636616d9` |
+
+A SELECT at `2026-11-02T02:28:33.980291Z` independently verifies both saved revisions, passed validation, exact PAUSED→PAUSED changes, zero approvals and zero execution operations. The original unknown results remain historical unknowns. Both one-call continuation authorizations are exhausted.
+
+Meta's assistant prose claims a displayed card, but the actual UI again says **Couldn't display DigitalBee MCP**. No application iframe mounted; observed console warnings did not identify a CSP or network error. The inspected resource route, `_meta.ui.resourceUri`, compatibility alias, MIME type and inline bundle match the [official UI troubleshooting contract](https://developers.openai.com/plugins/deploy/troubleshooting). This source inspection does not prove the host fetched the resource successfully. Main-worker observability returned no events for the Meta window, so it does not establish a resource-fetch cause. No speculative UI deployment, cache-version bump, reconnect, retry or confirmation occurred. Screenshot: `meta-review-display-blocked.png`. A reviewable native card remains the immediate external blocker; preserve both saved requests and diagnose the host/resource-fetch failure before a separately authorized exact-request refresh.
+
+The browser text-entry API interpreted paragraph breaks as separate sends: a context message followed by the exact Meta tool-argument message. Only the latter triggered one preparation; the unsent remainder was cleared. The retained conversation's preparation-only boundary remained in force. No second preparation or confirmation was sent. For any later authorized prompt, paste/fill and inspect the complete composer before one explicit submission.
+
+Official, read-only status and reporting captures:
+
+| Pilot | Capture UTC | Account timezone / currency | Status | Inclusive delivery window | Result |
+| --- | --- | --- | --- | --- | --- |
+| Google | 2026-11-02 02:25:43.852 | Asia/Kuala_Lumpur / MYR | Exact campaign, ad group and ad all PAUSED | 2026-01-01–2026-11-02 | No rows; no next page; inconclusive |
+| Meta | 2026-11-02 02:17:44.057 | Asia/Kuala_Lumpur / MYR | Exact campaign, ad set and ad configured/effectively PAUSED | 2026-10-29–2026-11-02 | No rows; no next page; inconclusive |
+
+Google's evidence-only query initially used removed date fields and returned `UNRECOGNIZED_FIELD`; it was corrected to the documented `start_date_time/end_date_time` fields ([official reference](https://developers.google.com/google-ads/api/fields/v25/campaign)). No production code changed. Google returns start `2026-10-12 11:39:00`; Meta retains start `2026-11-01T10:00:00+0800` and creation `2026-10-29T09:18:42+0800`. Neither schedule was changed.
+
+Empty metrics are not proof of zero spend/impressions. Provider reporting freshness was not independently established, the current account-local day is incomplete, and future Google Gate 2/compensation are outside these captures. Non-serving status is established only at capture time. Historical Meta consent remains unknown and the expired schedule remains preserved.
+
+Private evidence under `outputs/m03-bootstrap-release/`: `meta-placement-*.json`, `meta-preparation-safety.json`, `meta-post-placement-result.json`, `both-saved-review-requests.json`, `meta-official-evidence.json`, `google-official-evidence.json`, and both native-display screenshots. Values and confirmation capabilities are excluded. Existing 94 tests and packaged-worker results are retained; no unrelated tests were repeated.
+
 
 ## Outstanding dependencies and acceptance ledger
 
-### Operator access restored — 2 November follow-up
+### Historical operator-access checkpoint — superseded by verified releases above
 
 The user completed the manual scoped Doppler login. Authorized CLI inspection now identifies the existing `Locus-T CRM08` workplace and successfully reads `m03-pause-credentials/prd`. All three required records are present and pass the existing string/minimum-32-character check; values were processed only in local memory and never printed or persisted. This validates the operator-accessible records, not the separately deployed Worker token or its exact effective response.
 
@@ -79,15 +143,15 @@ The existing Ava Chrome sign-in reaches only the unrelated Putri Doppler workspa
 
 | Gate | Evidence required / current disposition |
 | --- | --- |
-| Startup repair | Diagnostics deployed and verified; current failure is Doppler HTTP 401. Scoped Worker credential correction awaits specific approval. |
-| Google M03 | Account `2315114913`, campaign `24349407517`; no completed request/approval/pause/readback chain. |
-| Meta M03 | Account `321606578570386`, campaign `120250129492860590`; same missing chain plus absent backend Meta credential placement. |
+| Startup repair | Complete for the diagnosed authentication failure: scoped secret replacement verified; post-repair native Google request reached HTTP 200 and persisted/validated. |
+| Google M03 | Exact request/revision saved above, awaiting human approval; native card display is blocked. No approval/pause/execution-linked readback chain. |
+| Meta M03 | Credential placement verified; exact request/revision saved above, awaiting approval. Native card display is blocked; no formal pause chain. |
 | Continuation safety | After verified correction, SELECT-only lookup of requests, sources and claims for attempted keys. Preserve the prior unknown outcomes. Do not use `pause_campaign_read` as a passive lookup: it can reconcile. |
 | Google Gate 2 | Separate phase after M03 readiness; fresh QA where expired, exact approved account-local midnight at least 72 hours ahead, human confirmation, official schedule evidence, then separately reviewed M03 compensation against the changed baseline. |
-| Official non-serving / spend | Read exact hierarchy status and complete date-bounded impressions/spend covering creation/recovery/schedule/compensation, with account timezone and freshness. Status alone is insufficient. No fresh provider evidence collected in this repair. |
+| Official non-serving / spend | Both exact hierarchies are PAUSED at the captures above. Date-bounded reports returned empty rows; freshness/current-day completion and future Gate 2/compensation remain unresolved. Zero spend is inconclusive. |
 | Meta historical authorization | User cannot attest. Existing account attribution does not establish deliberate human intent; history remains unresolved. |
 | Meta expired schedule | Preserve; no retiming, reactivation, recreation or retroactive approval. A prospective replacement requires separate review. |
 
-Keep the original keys: Google `c7d48106-34cc-449e-afff-6b0d02511fca`, Meta `2a4a6436-3ff0-4b25-87d4-76b6c3cdcb32`. Each was already attempted once. Reuse only after evidence-supported safety determination and a separately bounded continuation; never allocate replacement keys to evade uncertainty. Approval preparation uses action `approve`, exact source references and no request_id only when a new request is established as appropriate. Human revision approval and human pause confirmation remain distinct.
+Keep the original keys: Google `c7d48106-34cc-449e-afff-6b0d02511fca`, Meta `2a4a6436-3ff0-4b25-87d4-76b6c3cdcb32`. Historical failed attempts and the bounded successful continuations are recorded above. Both now have exact saved requests; continue those requests only under separately bounded authority, never allocate replacement keys to evade uncertainty. New-request preparation uses action `approve`, exact source references and no request_id only when absence is established; it is no longer appropriate to create either pilot again. Human revision approval and human pause confirmation remain distinct.
 
-M18 remains In Review, Stage 3.2, 7/9 with both remaining criteria unchecked. Campaigns were left unchanged at their retained paused baseline; M17 untouched. This follow-up deployed only backend diagnostics, read database metadata/state and performed the one specifically authorized Google preparation that failed before workflow dispatch. No provider read/mutation, reconciliation, scheduling, recreation, migration or runtime credential change occurred. No fresh official paused-state or spend claim is made.
+M18 remains In Review, Stage 3.2, 7/9 with both remaining criteria unchecked. Campaign status was not mutated; M17 untouched. This work deployed backend diagnostics, replaced the specifically approved Doppler credential, added the separately approved existing Meta credential, performed SELECT-only safety/evidence checks and bounded native preparations. Google first failed before dispatch, then succeeded after repair; Meta succeeded after placement. Both saved requests/revisions remain awaiting approval. No human approval, pause confirmation, execution, reconciliation, scheduling, recreation or migration occurred. PAUSED baselines and separate status captures are not execution-linked readback or proof of zero spend.
