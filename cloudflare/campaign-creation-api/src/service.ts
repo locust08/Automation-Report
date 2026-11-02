@@ -1,7 +1,7 @@
 import {captureUnexpected,type ObservabilityEnv} from './observability';
 import {authorize, type AuthEnvironment} from './auth';
 import {digest,mappingDigest, planSchema,metaPlanSchema,tiktokPlanSchema, scopeSchema, result, type Result, type Scope} from './contracts';
-import {buildOperations, Google, ProviderError, providerName, type GoogleCredentials} from './google';
+import {buildOperations, googleStartDate, Google, ProviderError, providerName, type GoogleCredentials} from './google';
 import {Meta,metaProviderName,type MetaCredentials} from './meta';
 import {metaBudgetMeetsMinimum} from './meta-budget';
 import {TikTok,tiktokProviderName,type TikTokCredentials} from './tiktok';
@@ -179,8 +179,8 @@ export async function execute(env: Environment, scope: Scope, tool: string, inpu
     try { if(scope.platform==='Meta')await meta.validate(metaPlanSchema.parse(plan),w.id);else if(scope.platform==='TikTok')await tiktok.validate(tiktokPlanSchema.parse(plan),w.id);else await google.validate(planSchema.parse(plan), w.id); }
     catch (error) {captureUnexpected(error,'campaign.operation');
       const budget=error instanceof ProviderError&&(error.code.includes('BUDGET_')||error.code==='meta_1885272');
-      const futureStart=error instanceof ProviderError&&error.code==='meta_start_lead_time';
-      return result('clarification_required', {...reference(w), validation_issues: [{field:budget?'daily_budget':futureStart?'start_at':'configuration', code: error instanceof ProviderError ? error.code.slice(0,100) : 'validation_unavailable', message:budget?'The provider rejected this daily budget. Revise and validate before approval.':futureStart?'The approved Meta start must remain at least 72 hours ahead. Save and approve a new revision for a later start.':'Provider validation has not passed. Check assets and targeting before approval.'}]});
+      const futureStart=error instanceof ProviderError&&['meta_start_lead_time','google_start_lead_time','google_start_midnight_required','google_start_invalid'].includes(error.code);
+      return result('clarification_required', {...reference(w), validation_issues: [{field:budget?'daily_budget':futureStart?'start_at':'configuration', code: error instanceof ProviderError ? error.code.slice(0,100) : 'validation_unavailable', message:budget?'The provider rejected this daily budget. Revise and validate before approval.':futureStart?'The approved start must be valid, at least 72 hours ahead, and at account-local midnight for Google. Save and approve a new revision for a later start.':'Provider validation has not passed. Check assets and targeting before approval.'}]});
     }
     await check();
     if (w.status !== 'validated') await store.status(w, 'validated');
@@ -191,6 +191,8 @@ export async function execute(env: Environment, scope: Scope, tool: string, inpu
     // The saved immutable revision already passed validateOnly. The creation worker validates again before dispatch.
     const metaPreview=scope.platform==='Meta'?await meta.validate(metaPlanSchema.parse(plan),w.id):null;
     const metaStartAt=scope.platform==='Meta'?metaPlanSchema.parse(plan).start_at:undefined;
+    if(scope.platform==='Google')googleStartDate(planSchema.parse(plan),Date.now());
+    const googleStartAt=plan.campaign_type==='search'?plan.start_at:undefined;
     const tiktokPreview=scope.platform==='TikTok'?await tiktok.validate(tiktokPlanSchema.parse(plan),w.id):null;
     const resourcePlan=scope.platform==='Meta'?[{kind:'campaign',status:'PAUSED',objective:metaPreview!.source.objective},
       {kind:'adset',status:'PAUSED',daily_budget:plan.daily_budget,currency:plan.currency,...(metaStartAt?{start_time:metaStartAt}:{}),targeting:metaPreview!.adset.targeting,
@@ -236,20 +238,21 @@ export async function execute(env: Environment, scope: Scope, tool: string, inpu
       draft: {name: providerName(planSchema.parse(plan), w.id), platform: 'Google', account: {service_id: scope.accountPageId, label: scope.platformAccountId},
         objective: plan.campaign_type === 'search' ? 'Search — maximize clicks' : 'Demand Gen — maximize conversions',
         budget: {amount: Number(plan.daily_budget), currency: plan.currency, period: 'daily'},
-        schedule: {mode: 'draft', start_at: null, end_at: null, timezone: plan.timezone},
+        schedule: {mode: 'draft', start_at: googleStartAt??null, end_at: null, timezone: plan.timezone},
         targeting_summary: JSON.stringify({location_count: planSchema.parse(plan).locations.length, language_count: planSchema.parse(plan).languages.length,
           ...(plan.campaign_type === 'search' ? {keyword_count: plan.keywords.length, match_type: 'EXACT'} : {audience:plan.campaign_type==='demand_gen'?plan.audience:null}),full_targeting:'See complete provider resource plan.'}),
         creative_summary: JSON.stringify({final_url: planSchema.parse(plan).final_url, headlines: planSchema.parse(plan).headlines, descriptions:planSchema.parse(plan).descriptions,
           ...(plan.campaign_type === 'demand_gen' ? {business_name: plan.business_name, asset_count:plan.landscape_images.length+plan.square_images.length+plan.logos.length, full_assets:'See complete provider resource plan.'} : {})}),
         validation_status: 'ready', warnings: []}, provider_objects: [], qa_status: 'not_applicable',
       consequences: input.action === 'approve' ? ['Approve this exact immutable revision. No provider resources are created.']
-        : ['Create one dedicated daily budget, one paused campaign, one paused ad group, one paused ad and the displayed targeting.', 'Existing campaigns are untouched. Activation and scheduling remain unavailable.'],
+        : ['Create one dedicated daily budget, one paused campaign, one paused ad group, one paused ad and the displayed targeting.', googleStartAt?`Create with the approved future start ${googleStartAt} (${plan.timezone}); delivery remains paused. Enabling requires separate Gate 2 confirmation.`:'Existing campaigns are untouched. Activation and scheduling remain unavailable.'],
     };
     const confirmationHash = await digest({scope, workflow: w.id, revision: w.revision_id, resource_plan: resourcePlan, display});
     const challenge = await store.prepare(w, input.action, confirmationHash, requestHash);
     return result('success', {...reference(w), challenge, confirmation: {...display, confirmation_hash: confirmationHash, expires_at: challenge.expires_at}, data: {resource_plan: resourcePlan}});
   }
   if (tool === 'campaign_revision_approve') {
+    if(scope.platform==='Google')googleStartDate(planSchema.parse(plan),Date.now());
     await store.approve(w, input);
     await check();
     return result('success', {...reference(w), allowed_next_actions: ['campaign_action_prepare'], data: {status: 'approved', provider_action: false}});

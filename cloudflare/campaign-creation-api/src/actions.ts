@@ -25,7 +25,7 @@ function campaignId(value:string,scope:Scope){
 }
 export function scheduleFor(scope:Scope,plan:{timezone:string;start_at?:string},input:any,now=Date.now()){
  if(!input||input.mode!=='scheduled'||input.timezone!==plan.timezone||!Number.isFinite(Date.parse(input.scheduled_at))||Date.parse(input.scheduled_at)<now+72*3600000)throw new Error('invalid_schedule');
- if(scope.platform==='Meta'&&plan.start_at&&Date.parse(input.scheduled_at)!==Date.parse(plan.start_at))throw new Error('meta_schedule_plan_mismatch');
+ if(plan.start_at&&Date.parse(input.scheduled_at)!==Date.parse(plan.start_at))throw new Error(scope.platform==='Google'?'google_schedule_plan_mismatch':'meta_schedule_plan_mismatch');
  const date=new Intl.DateTimeFormat('en-CA',{timeZone:input.timezone,year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date(input.scheduled_at));
  if(scope.platform==='Google'){
   // Google schedules at account-local midnight. Reject a time it cannot represent.
@@ -221,7 +221,7 @@ export class Actions {
   if(this.scope.platform==='Google'){
    const normalized=structuredClone(data) as Record<string,any>;
    if(snapshot.conversion_configuration)normalized.conversion_configuration=await (this.google as Google).conversionConfiguration(String(normalized.campaign.id));
-   delete normalized.campaign.startDateTime;delete normalized.campaign.startDate;normalized.campaign.status='PAUSED';normalized.ad_group.status='PAUSED';normalized.ad.status='PAUSED';
+   if(!JSON.parse(w.plan_json).start_at){delete normalized.campaign.startDateTime;delete normalized.campaign.startDate;}normalized.campaign.status='PAUSED';normalized.ad_group.status='PAUSED';normalized.ad.status='PAUSED';
    for(const row of normalized.targeting)if(['KEYWORD','LOCATION','LANGUAGE','AUDIENCE'].includes(row.adGroupCriterion.type))row.adGroupCriterion.status='PAUSED';
    if(await digest(stable(normalized))!==await digest(stable(snapshot)))throw new Error('qa_readback_mismatch');
   }
@@ -252,7 +252,7 @@ export class Actions {
    }
    await this.check(tool);
   }catch(error){
-   const known=['stale_revision','qa_readback_mismatch','provider_creation_disabled','invalid_schedule','google_schedule_midnight_required','template_disabled','template_corrupt','clone_changed','unavailable','access_denied'];
+   const known=['stale_revision','qa_readback_mismatch','provider_creation_disabled','invalid_schedule','google_schedule_midnight_required','google_schedule_plan_mismatch','template_disabled','template_corrupt','clone_changed','unavailable','access_denied'];
    const reason=this.scope.platform==='Google'&&r.action==='gate2'?(error instanceof ProviderError?googleScheduleReason(error):error instanceof Error&&known.includes(error.message)?error.message:'preflight_failed'):error instanceof Error?error.message:'preflight_failed';
    await this.ledger.finish(r,'rejected',{reason,provider_action:false});return;
   }

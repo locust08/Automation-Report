@@ -17,8 +17,8 @@ const locked='google_CANNOT_MODIFY_START_DATE_IF_ALREADY_STARTED';
 let f:Awaited<ReturnType<typeof database>>,env:Environment,store:Store,ledger:ActionStore;
 beforeEach(async()=>{f=await database();store=new Store(f.db);ledger=new ActionStore(f.db);env={DB:f.db,M04_ENABLED:'true',M04_GATE2_ENABLED:'true',GOOGLE_ADS_CLIENT_ID:'synthetic',GOOGLE_ADS_CLIENT_SECRET:'synthetic',GOOGLE_ADS_REFRESH_TOKEN:'synthetic',CREATION_QUEUE:{send:vi.fn(async()=>{})}} as unknown as Environment;});
 afterEach(()=>{vi.restoreAllMocks();f.dispose();});
-async function paused(){
- const w=await store.save(scope,plan,crypto.randomUUID(),'backend');await store.status(w,'validated');
+async function paused(savedPlan:Plan=plan){
+ const w=await store.save(scope,savedPlan,crypto.randomUUID(),'backend');await store.status(w,'validated');
  const a=await store.prepare(w,'approve','hash','request');await store.approve(w,{challenge:a.token,confirmation_hash:'hash'});
  const approved=(await store.workflow(w.id,scope))!,g=await store.prepare(approved,'gate1','hash','request'),parent=crypto.randomUUID();
  await store.reserve(approved,{idempotency_key:parent,challenge:g.token,confirmation_hash:'hash'},'request',scope);await store.dispatched(parent);await store.finish(approved,parent,'verified',snapshot);
@@ -90,4 +90,15 @@ it('reads only exact same-account hierarchy identities and rejects foreign or mi
 it('does not expose malformed provider status fields in diagnostics',async()=>{
  const g=new Google(env,scope);vi.spyOn(g,'query').mockResolvedValueOnce([{campaign:{resourceName:prefix+'/campaigns/1',status:'SENTINEL_RAW_STATUS'},customer:{timeZone:plan.timezone}}]).mockResolvedValueOnce([{adGroup:{resourceName:prefix+'/adGroups/2',status:'PAUSED'}}]).mockResolvedValueOnce([{adGroupAd:{resourceName:prefix+'/adGroupAds/2~3',status:'PAUSED'}}]);
  await expect(g.readSchedulingState(snapshot)).rejects.toMatchObject({code:'schedule_readback'});
+});
+
+it.each([false,true])('reconciles scheduled Google readback for legacy/future-start plans (%s) without second mutation',async future=>{
+ const savedPlan=future?{...plan,start_at:schedule.scheduled_at}:plan,{w}=await paused(savedPlan),p=provider();
+ const pausedSnapshot={...snapshot,campaign:{...snapshot.campaign,...(future?{startDateTime:'2099-11-06 00:00:00'}:{})}};
+ p.qa.mockResolvedValue(pausedSnapshot);
+ p.readback.mockResolvedValue({...pausedSnapshot,campaign:{...pausedSnapshot.campaign,status:'ENABLED',startDateTime:'2099-11-06 00:00:00'},ad_group:{...snapshot.ad_group,status:'ENABLED'},ad:{...snapshot.ad,status:'ENABLED'},targeting:snapshot.targeting.map(row=>({adGroupCriterion:{...row.adGroupCriterion,status:'ENABLED'}}))});
+ const a=new Actions(env,scope,p as Provider,new Meta(env,scope),async()=>{}),prep=await a.prepare(w,'gate2',{schedule},'prepare');
+ const input={schedule,idempotency_key:crypto.randomUUID(),challenge:prep.challenge!.token,confirmation_hash:prep.challenge!.confirmation_hash};
+ await a.reserve(w,'gate2',input,'reserve');let r=(await ledger.get(input.idempotency_key,scope))!;await a.process(r,w);
+ r=(await ledger.get(r.id,scope))!;expect(r.status).toBe('verified');await a.process(r,w);expect(p.schedule).toHaveBeenCalledOnce();
 });

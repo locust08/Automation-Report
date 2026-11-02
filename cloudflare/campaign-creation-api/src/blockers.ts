@@ -12,6 +12,10 @@ export function campaignValidationBlocker(code:string){
 }
 export function campaignBlocker(code:string){
  const messages:Record<string,string>={
+  google_start_lead_time:'The approved Google start must remain at least 72 hours ahead. Save and approve a new revision before creation.',
+  google_start_midnight_required:'Google future starts must be at account-local midnight.',
+  google_start_invalid:'Supply a valid future start in the immutable Google plan.',
+  google_schedule_plan_mismatch:'The schedule must match the exact approved Google start.',
   stale_revision:'The source or saved revision changed. Refresh readiness and save a new immutable draft.',
   provider_creation_disabled:'Provider creation is disabled. Readiness and draft planning remain available.',
   meta_rate_limited:'Meta rate limit reached. Wait before checking readiness again; no automatic retry was sent.',
@@ -36,6 +40,6 @@ export function campaignBlocker(code:string){
   meta_deadline:'Meta readiness reached its request deadline. Select a source ad or retry later.',
   tiktok_deadline:'TikTok readiness reached its request deadline. Completed source checks are retained, but the unresolved source must be verified before continuing. Do not automatically repeat a continuation that made no progress.',
  };
- const safe=/^(meta|tiktok)_[a-z0-9_]+$/.test(code)||['provider_creation_disabled','stale_revision'].includes(code);
+ const safe=/^(meta|tiktok)_[a-z0-9_]+$/.test(code)||['provider_creation_disabled','stale_revision','google_start_lead_time','google_start_midnight_required','google_start_invalid','google_schedule_plan_mismatch'].includes(code);
  return {field:'readiness',code:safe?code:'request_failed',message:messages[code]??'Provider readiness could not be verified. Review the reported issue before creating a campaign.'};
 }

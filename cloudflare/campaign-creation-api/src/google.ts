@@ -14,12 +14,26 @@ export class ProviderError extends Error {
   }
 }
 export const providerName = (plan: Plan, workflowId: string) => `${plan.name} [${workflowId}]`;
+/** Clock checks apply to new authorizations/dispatch, never historical readback. */
+export function googleStartDate(plan: Plan, now?: number): string | undefined {
+  if (plan.campaign_type !== 'search' || !plan.start_at) return;
+  const at = Date.parse(plan.start_at);
+  if (!Number.isFinite(at)) throw new ProviderError('rejected', 'google_start_invalid');
+  const time = new Intl.DateTimeFormat('en-GB', {timeZone: plan.timezone,
+    hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23'}).format(new Date(at));
+  if (time !== '00:00:00' || at % 1000 !== 0) throw new ProviderError('rejected', 'google_start_midnight_required');
+  if (now !== undefined && at < now + 72 * 3600000) throw new ProviderError('rejected', 'google_start_lead_time');
+  return new Intl.DateTimeFormat('en-CA', {timeZone: plan.timezone,
+    year: 'numeric', month: '2-digit', day: '2-digit'}).format(new Date(at));
+}
 export function buildOperations(scope: Scope, plan: Plan, workflowId: string): Json[] {
+  const startDate = googleStartDate(plan);
   const prefix = `customers/${scope.platformAccountId}`, budget = `${prefix}/campaignBudgets/-1`;
   const campaign = `${prefix}/campaigns/-2`, adGroup = `${prefix}/adGroups/-3`;
   const name = providerName(plan, workflowId);
   const campaignValue: Json = {
     resourceName: campaign, name, status: 'PAUSED', campaignBudget: budget,
+    ...(startDate ? {startDateTime: `${startDate} 00:00:00`} : {}),
     advertisingChannelType: plan.campaign_type === 'search' ? 'SEARCH' : 'DEMAND_GEN',
     containsEuPoliticalAdvertising: 'DOES_NOT_CONTAIN_EU_POLITICAL_ADVERTISING',
     ...(plan.campaign_type === 'search' ? {
@@ -139,6 +153,7 @@ export class Google {
     return reference;
   }
   async validate(plan: Plan, workflowId: string) {
+    googleStartDate(plan, Date.now());
     const [account] = await this.query('SELECT customer.id,customer.currency_code,customer.time_zone,customer.manager FROM customer LIMIT 1');
     if (!account || account.customer.id !== this.scope.platformAccountId || account.customer.currencyCode !== plan.currency ||
       account.customer.timeZone !== plan.timezone || account.customer.manager) throw new ProviderError('rejected', 'account_configuration');
@@ -161,6 +176,7 @@ export class Google {
       validateOnly: true, partialFailure: false});
   }
   async create(plan: Plan, workflowId: string): Promise<string[]> {
+    googleStartDate(plan, Date.now());
     const operations = buildOperations(this.scope, plan, workflowId);
     const response = await this.request('googleAds:mutate', {mutateOperations: operations, validateOnly: false,
       partialFailure: false, responseContentType: 'RESOURCE_NAME_ONLY'}, true);
@@ -248,13 +264,17 @@ export class Google {
     return {config,goals:goals.sort((a,b)=>JSON.stringify(a).localeCompare(JSON.stringify(b))),actions:actions.sort((a,b)=>JSON.stringify(a).localeCompare(JSON.stringify(b)))};
   }
   async readback(plan: Plan, workflowId: string,options:{campaignId?:string;scheduledDate?:string}={}) {
+    const approvedStart = googleStartDate(plan), expectedStart = approvedStart ?? options.scheduledDate;
+    if (approvedStart && options.scheduledDate && approvedStart !== options.scheduledDate)
+      throw new ProviderError('unknown', 'google_schedule_plan_mismatch');
     // A generated immutable UUID marker permits read-only reconciliation after a lost response.
     const name = providerName(plan, workflowId).replaceAll('\\', '\\\\').replaceAll("'", "\\'");
-    const campaigns = await this.query(`SELECT campaign.resource_name,campaign.id,campaign.name,campaign.status,${options.scheduledDate?'campaign.start_date_time,':''}campaign.advertising_channel_type,campaign.bidding_strategy_type,campaign.geo_target_type_setting.positive_geo_target_type,campaign.geo_target_type_setting.negative_geo_target_type,campaign.contains_eu_political_advertising,campaign.network_settings.target_google_search,campaign.network_settings.target_search_network,campaign.network_settings.target_content_network,campaign.network_settings.target_partner_search_network,campaign.campaign_budget,campaign_budget.resource_name,campaign_budget.amount_micros,campaign_budget.explicitly_shared,campaign_budget.reference_count,campaign_budget.period FROM campaign WHERE ${options.campaignId?`campaign.id = ${options.campaignId}`:`campaign.name = '${name}'`} AND campaign.status != 'REMOVED'`);
+    const campaigns = await this.query(`SELECT campaign.resource_name,campaign.id,campaign.name,campaign.status,${expectedStart?'campaign.start_date_time,':''}campaign.advertising_channel_type,campaign.bidding_strategy_type,campaign.geo_target_type_setting.positive_geo_target_type,campaign.geo_target_type_setting.negative_geo_target_type,campaign.contains_eu_political_advertising,campaign.network_settings.target_google_search,campaign.network_settings.target_search_network,campaign.network_settings.target_content_network,campaign.network_settings.target_partner_search_network,campaign.campaign_budget,campaign_budget.resource_name,campaign_budget.amount_micros,campaign_budget.explicitly_shared,campaign_budget.reference_count,campaign_budget.period FROM campaign WHERE ${options.campaignId?`campaign.id = ${options.campaignId}`:`campaign.name = '${name}'`} AND campaign.status != 'REMOVED'`);
     if (campaigns.length !== 1) throw new ProviderError('unknown', 'creation_readback');
     const row = campaigns[0], campaign = row.campaign, budget = row.campaignBudget;
     const expectedStatus=options.scheduledDate?'ENABLED':'PAUSED';
-    if (options.scheduledDate&&campaign.startDateTime!==options.scheduledDate+' 00:00:00')throw new ProviderError('unknown','schedule_readback');
+    if (expectedStart && campaign.startDateTime !== expectedStart + ' 00:00:00')
+      throw new ProviderError('unknown', approvedStart ? 'google_start_readback' : 'schedule_readback');
     if (!/^\d+$/.test(String(campaign.id)) || campaign.status !== expectedStatus || campaign.advertisingChannelType !== (plan.campaign_type === 'search' ? 'SEARCH' : 'DEMAND_GEN') ||
       campaign.biddingStrategyType !== (plan.campaign_type === 'search' ? 'TARGET_SPEND' : 'MAXIMIZE_CONVERSIONS') ||
       campaign.containsEuPoliticalAdvertising !== 'DOES_NOT_CONTAIN_EU_POLITICAL_ADVERTISING' ||

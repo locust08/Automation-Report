@@ -287,3 +287,21 @@ describe('provider and signed delegation', () => {
     expect(await authenticate(request, {...env, M04_PILOT_ACCOUNT: '9999999999'}, tool, input, requestHash)).toEqual(scope);
   });
 });
+
+it('shows Google future start in separate approval and Gate 1 confirmations, then dispatches once',async()=>{
+ const plan={...search,start_at:'2099-11-09T16:00:00.000Z'},revision=await draft(plan);
+ await call('campaign_draft_validate',{...revision,idempotency_key:crypto.randomUUID()});
+ const approval=await call('campaign_action_prepare',{...revision,idempotency_key:crypto.randomUUID(),action:'approve'});
+ expect(approval.confirmation).toMatchObject({action:'approve',draft:{schedule:{start_at:plan.start_at}}});
+ await call('campaign_revision_approve',{...revision,idempotency_key:crypto.randomUUID(),challenge:approval.challenge!.token,confirmation_hash:approval.challenge!.confirmation_hash});
+ const gate1=await call('campaign_action_prepare',{...revision,idempotency_key:crypto.randomUUID(),action:'gate1'});
+ expect(gate1.confirmation).toMatchObject({action:'gate1',draft:{schedule:{start_at:plan.start_at}}});
+ expect(gate1.challenge!.token).not.toBe(approval.challenge!.token);
+ expect((gate1.data!.resource_plan as Array<any>)[1].campaignOperation.create).toMatchObject({status:'PAUSED',startDateTime:'2099-11-10 00:00:00'});
+ const input={...revision,idempotency_key:crypto.randomUUID(),challenge:gate1.challenge!.token,confirmation_hash:gate1.challenge!.confirmation_hash};
+ await call('campaign_gate1_create',input);await process(input.idempotency_key);await call('campaign_gate1_create',input);await process(input.idempotency_key);expect(deps.provider(env,scope).create).toHaveBeenCalledTimes(1);
+});
+it('does not issue an approval card when a previously validated Google start expires',async()=>{
+ const revision=await draft({...search,start_at:'2020-11-09T16:00:00.000Z'});await call('campaign_draft_validate',{...revision,idempotency_key:crypto.randomUUID()});
+ await expect(call('campaign_action_prepare',{...revision,idempotency_key:crypto.randomUUID(),action:'approve'})).rejects.toThrow('google_start_lead_time');expect(deps.provider(env,scope).create).not.toHaveBeenCalled();
+});

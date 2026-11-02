@@ -68,3 +68,15 @@ it('rejects Search geolocation semantics drift before cloning or Gate 2',async()
  const {google}=fixture('TARGET_SPEND','PRESENCE_OR_INTEREST');
  await expect(google.readback(plan,crypto.randomUUID())).rejects.toThrow('targeting_readback');
 });
+
+it.each([undefined,'2099-11-09 00:00:00','2099-11-10 00:00:00'])('verifies approved Google creation start against %s',async observed=>{
+ const {google}=fixture(),original=vi.mocked(google.query).getMockImplementation()!;
+ vi.mocked(google.query).mockImplementation(async query=>{const rows=await original(query);if(query.includes('FROM campaign WHERE')){expect(query).toContain('campaign.start_date_time');rows[0].campaign.startDateTime=observed;}return rows;});
+ const future={...plan,start_at:'2099-11-09T16:00:00.000Z'};
+ if(observed==='2099-11-10 00:00:00')expect((await google.readback(future,'test')).campaign.status).toBe('PAUSED');else await expect(google.readback(future,'test')).rejects.toThrow('google_start_readback');
+});
+it('keeps historical future-start readback readable after the start elapses',async()=>{
+ const {google}=fixture(),original=vi.mocked(google.query).getMockImplementation()!;
+ vi.mocked(google.query).mockImplementation(async query=>{const rows=await original(query);if(query.includes('FROM campaign WHERE'))rows[0].campaign.startDateTime='2020-11-10 00:00:00';return rows;});
+ expect((await google.readback({...plan,start_at:'2020-11-09T16:00:00.000Z'},'test')).campaign.status).toBe('PAUSED');
+});

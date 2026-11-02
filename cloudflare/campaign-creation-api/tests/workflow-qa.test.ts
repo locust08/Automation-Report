@@ -126,3 +126,9 @@ it('runs Google paused QA through queries without mutation validation',async()=>
  vi.spyOn(google,'readback').mockResolvedValue({...snapshot,budget:{amountMicros:'1000000'},targeting:[],verified_at:new Date().toISOString()});vi.spyOn(google,'conversionConfiguration').mockResolvedValue({} as any);
  await expect(google.qa(plan,'workflow',{readOnly:true})).resolves.toMatchObject(snapshot);expect(validate).not.toHaveBeenCalled();
 });
+
+it('retains approved Google future start and official observed date in bounded QA evidence',async()=>{
+ const start_at='2099-11-09T16:00:00.000Z',{input}=await paused(scope,{...plan,start_at});
+ vi.mocked(provider.qa!).mockResolvedValue({...snapshot,campaign:{...snapshot.campaign,startDateTime:'2099-11-10 00:00:00'}});
+ const out=await call(input);expect(out.data).toMatchObject({qa_status:'passed',start_at,observed_start_time:'2099-11-10 00:00:00',checks:expect.arrayContaining(['approved_future_start'])});expect(provider.schedule).not.toHaveBeenCalled();
+});
