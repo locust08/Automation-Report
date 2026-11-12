@@ -2,6 +2,8 @@
 
 Source reviewed 2026-10-02. Implementation present; acceptance partial.
 
+2026-11-12 documentation review: the broader route/authentication/automation inventory is in the [application map](application.md). The dated verification paragraphs below retain their original scope; production status and native reconciliation were not renewed by the documentation audit.
+
 ## Ownership and flow
 
 The dashboard's top Reports section includes Monthly Performance, Campaign Preview, Advanced Report, Demand Gen Analysis (`/demand-gen`) and Campaign Breakdown (`/campaign-breakdown`) for both user and admin roles. Accounts are selected inside each report. These links reuse existing report pages and access permissions.
@@ -10,7 +12,7 @@ The dashboard's top Reports section includes Monthly Performance, Campaign Previ
 
 Page wrapper → reporting page client → `use-report-data.ts` → `/api/reporting/*` → `lib/reporting/service.ts` → Google/Meta adapter → normalized payload → tables/charts. Query state carries explicit provider/account IDs and inclusive dates. Google manager routing uses existing Notion resolution and `google-access-path.ts`; never infer authorization from a supplied account ID.
 
-`types.ts` owns shared report contracts; `demand-gen.ts` owns Demand Gen normalization/contracts. HTTP report responses remain no-store. Server caches are separate from HTTP caching. Preserve existing provider access resolution before retrieving a cached result.
+`types.ts` owns shared report contracts; `demand-gen.ts` owns Demand Gen normalization/contracts. Client report requests use `cache: "no-store"` and report routes remain dynamic; this does not mean every JSON handler explicitly emits a `Cache-Control: no-store` response header. Server report caches are separate. Preserve provider access resolution in the relevant collection/cache path.
 
 ## Meta hierarchy
 

@@ -1,12 +1,13 @@
 # Ads Reporting Dashboard map
 
-Reviewed 2026-10-02. This map describes the current source, ownership, behavior and acceptance gaps. It does not authorize advertising writes, email sends, migrations or deployment.
+Application inventory reviewed 2026-11-12; individual cards retain their dated implementation and verification receipts. This map describes source, ownership, behavior and acceptance gaps. It does not authorize advertising writes, email sends, migrations or deployment. See the [documentation index](../docs/README.md) and [documentation audit](../docs/documentation-audit-2026-11-12.md) for setup, service guides and review limits.
 
 | Area | Entry | Status |
 | --- | --- | --- |
+| Routes, authentication, workflows and automation | [Application](application.md) | Source inventory reviewed; live deployment not revalidated |
 | Reporting and provider collection | [Reporting](reporting.md) | Implemented; native and connected acceptance partial |
 | Global fonts and export layouts | [Presentation](presentation.md) | Implemented; audience-heading export fix verified locally |
-| Today's verification work | [Acceptance](acceptance.md) | Open gates tracked separately from implementation |
+| Dated verification and remaining gates | [Acceptance](acceptance.md) | Open gates tracked separately from implementation |
 
 Read the repository [AGENTS.md](../AGENTS.md) before implementation. Routes are thin wrappers; provider queries and orchestration belong in `lib/reporting`. Credentials come from existing environment/Doppler configuration and must never appear in evidence.
 

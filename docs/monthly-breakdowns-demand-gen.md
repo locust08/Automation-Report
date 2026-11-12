@@ -1,5 +1,7 @@
 # Monthly breakdowns and Google Demand Gen — 2026-10-01
 
+Historical implementation receipt. Current contracts are in the [reporting map](../map/reporting.md); in particular, the Demand Gen memory cache now uses seven days rather than the 15 minutes recorded below. Local paths and verification results describe the original run.
+
 Implemented on `codex/monthly-breakdowns-demand-gen`.
 
 - Monthly Performance expands Meta campaigns into historical ad sets and ads with their own period metrics. The campaign result-action definition is passed to descendants; unavailable results display as unavailable. Period-level retrieval preserves unique Reach semantics. Partial continuation failures retain rows and expose retry; retries retain same-scope data.
