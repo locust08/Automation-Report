@@ -1,27 +1,29 @@
 # Automation Report Codebase Guide
 
-This repository is a Next.js reporting application for Meta Ads and Google Ads data. It renders interactive report pages, exposes API routes that fetch and normalize ad platform data, and includes a monthly automation path that captures the Overall report as a PDF and emails it through Resend.
+Start with [docs/README.md](docs/README.md) for documentation and [map/README.md](map/README.md) for current source ownership, reporting behavior, typography/export contracts and acceptance gates. Application inventory reviewed 2026-11-12. Update the affected card when changing these behaviors; keep local fixture verification, native reconciliation and deployment evidence separate.
+
+This repository is a Next.js reporting and advertising workflow application for Meta Ads, Google Ads and TikTok. It includes authentication, report pages, optimization, campaign planning, change control, billing and monthly PDF/email automation. See [map/application.md](map/application.md) for the broader service map.
 
 ## Tech Stack
 
 - Next.js 16 App Router with React 19 and TypeScript.
 - Tailwind CSS 4 and local shadcn-style UI components in `components/ui`.
-- Meta Graph API and Google Ads API integrations in `lib/reporting`.
+- Meta Graph API, Google Ads API and TikTok reporting integrations in `lib/reporting`.
 - Notion is used for account metadata and Google Ads access-path resolution.
-- Playwright and `jspdf` are used by monthly report automation to capture `/overall` and convert a screenshot to PDF.
+- Playwright prints Vercel monthly/Advanced report PDFs; browser downloads also use client capture and `jspdf`. Cloudflare automation uses its Browser binding to print screenshot-mode report pages.
 - Resend sends monthly report emails.
 - Vercel hosts the Next.js app. Cloudflare owns the newer monthly PDF automation layer with Worker, Queue, D1, R2, a Browser binding, and Resend delivery.
 
 ## Main Directory Map
 
 - `app/`: Next.js route tree.
-  - `app/page.tsx`: home page where a user enters an ad account ID.
+  - `app/page.tsx`: login page; `app/dashboard/page.tsx` owns the account-selection launcher.
   - `app/overall/page.tsx`: overall monthly performance report.
   - `app/preview/page.tsx`: read-only campaign/ad preview page.
   - `app/campaign/[campaignType]/page.tsx`: campaign type comparison page.
-  - `app/keywords/page.tsx`: Google top keyword report page.
+  - `app/advanced/page.tsx`, `app/demand-gen/page.tsx`: advanced and standalone analysis views. `/campaign-breakdown` is documented in feature-branch receipts but is absent from this `master` baseline.
   - `app/auction/page.tsx`: Google auction insights page.
-  - `app/insights/page.tsx`: recommendations/insights page.
+  - Keyword and insights JSON endpoints exist, but `/keywords` and `/insights` have no page files in this checkout.
   - `app/api/reporting/*`: thin API route wrappers for report payloads.
   - `app/api/cron/monthly-report/route.ts`: endpoint that runs the monthly report job.
   - `app/globals.css`: global Tailwind and theme styling.
@@ -38,7 +40,7 @@ This repository is a Next.js reporting application for Meta Ads and Google Ads d
 
 ## Request And Data Flow
 
-1. Users land on `/` and enter an account ID, or open a report URL with query params.
+1. Users sign in at `/`, select an account at `/dashboard`, or open a report URL with query params. Authentication is route-specific; see [docs/auth-setup.md](docs/auth-setup.md).
 2. Report client components use `useReportFilters` to read and write query params.
 3. Client hooks in `components/reporting/use-report-data.ts` fetch the matching API route with `cache: "no-store"`.
 4. API routes parse params with `lib/reporting/request.ts`, call one function from `lib/reporting/service.ts`, and return JSON.
@@ -46,6 +48,7 @@ This repository is a Next.js reporting application for Meta Ads and Google Ads d
 6. Platform modules fetch raw data:
    - `lib/reporting/meta.ts` talks to Meta Graph API.
    - `lib/reporting/google.ts` talks to Google Ads API.
+   - `lib/reporting/tiktok.ts` collects TikTok reporting data.
 7. Shared helpers in `metrics.ts`, `audience-breakdown.ts`, `insights.ts`, and `format.ts` normalize rows into display payloads.
 8. UI components render payload sections, tables, warning panels, loading screens, and page-level shells.
 
@@ -57,8 +60,11 @@ This repository is a Next.js reporting application for Meta Ads and Google Ads d
 - `GET /api/reporting/keywords`: top keyword payload from `getTopKeywordsReport`.
 - `GET /api/reporting/auction`: auction insights payload from `getAuctionInsightsReport`.
 - `GET /api/reporting/insights`: recommendations payload from `getInsightsReport`.
+- `GET`/`POST /api/reporting/advanced`: Advanced report retrieval/generation.
+- `GET /api/reporting/demand-gen`: Demand Gen report payload.
+- Staged `/api/reports/*`, `/api/advanced/*` and hierarchy endpoints load individual report sections; see the application map.
 - `POST /api/cron/monthly-report`: runs `runMonthlyReportJob`.
-- `POST /api/report-pdf/targets`: protected endpoint used by Cloudflare automation to resolve target accounts and previous-month dates.
+- `POST /api/report-pdf/targets`: protected endpoint used by Cloudflare automation to resolve Notion-approved accounts and report-type date ranges.
 
 The reporting API routes are intentionally thin. Add report behavior in `lib/reporting/service.ts` or lower-level helpers, not in route handlers.
 
@@ -69,9 +75,12 @@ Supported report query params:
 - `accountId`: fallback generic account ID.
 - `metaAccountId`: explicit Meta account ID.
 - `googleAccountId`: explicit Google Ads customer ID.
+- `tiktokAccountId`: explicit TikTok advertiser ID.
 - `startDate`: `YYYY-MM-DD`.
 - `endDate`: `YYYY-MM-DD`.
-- `platform`: `meta`, `google`, or `googleYoutube`.
+- `platform`: `meta`, `google`, `googleYoutube`, or `tiktok`.
+- `campaignScope`: `all` or `lt`; the LT name scope is limited to the configured single Meta-only account.
+- `source`: `api` (default) or `meta_csv`.
 - `screenshot`: used by automation/download flows to prepare report capture mode.
 
 The filter UI can serialize multiple account rows by combining Meta and Google IDs into comma-separated values. Server-side normalization happens in `lib/reporting/env.ts` and service helpers.
@@ -114,23 +123,23 @@ When adding a new report view, follow the existing pattern: App Router page wrap
 The older Vercel monthly report flow is separate from normal user browsing:
 
 1. `POST /api/cron/monthly-report` calls `runMonthlyReportJob`.
-2. `src/lib/cron/monthly-report-targets.ts` resolves configured targets from `MONTHLY_REPORT_TARGETS_JSON` or test targets.
-3. `capture-overall-report-pdf.ts` opens `/overall` in Playwright for the previous month, waits for `/api/reporting`, screenshots the report capture root, and converts the PNG to a PDF.
+2. `src/lib/cron/run-monthly-report-job.ts` resolves explicit/configured targets through Notion or reads eligible Notion accounts when no configured targets resolve. `monthly-report-targets.ts` provides target parsing helpers.
+3. `src/lib/cron/generate-monthly-report-pdf.ts` opens `/reports/print/monthly/[accountId]` or `/advanced` in Playwright and prints a PDF. Date ranges depend on the requested report type.
 4. `send-monthly-report-email.ts` sends the PDF through Resend.
 5. Artifacts are written under `artifacts/monthly-report-tests`.
 
-`src/lib/notion/get-monthly-report-accounts.ts` can read eligible monthly report accounts from Notion, but the current cron target path is environment-target based unless it is changed to call that reader.
+`src/lib/notion/get-monthly-report-accounts.ts` is part of the current cron target path. It enforces the report-type confirmation checkbox (`Monthly Email`, `Advanced Report` or `Bi-Weekly`); do not describe it as an unused reader.
 
 The newer Cloudflare automation flow is preferred for bulk sends:
 
-1. `POST /api/report-pdf/targets` on Vercel returns normalized monthly report targets and previous-month dates. It is protected by `WORKER_API_SECRET` or `CRON_SECRET`.
+1. `POST /api/report-pdf/targets` on Vercel returns Notion-approved targets and report-type date ranges (previous month for monthly reports; current-month 1st–14th for bi-weekly Overall). It is protected by `WORKER_API_SECRET` or `CRON_SECRET`.
 2. `cloudflare/monthly-report-cron` creates a D1 job row and one D1 item row per account.
 3. The Worker sends one Queue message per account.
-4. The Queue consumer renders the Vercel `/overall?...&screenshot=1` page through a Cloudflare Browser binding.
+4. The Queue consumer renders Vercel `/overall?...&screenshot=1` or Advanced capture through a Cloudflare Browser binding.
 5. The resulting PDF is stored in R2 and optionally emailed through Resend.
 6. Job and item status can be inspected through the Worker API.
 
-Cloudflare cron runs in UTC. The intended production schedule is `0 4 5 * *`, which is 12:00 PM Malaysia time on the 5th day of every month. The current Cloudflare account may need one cron slot freed before that trigger can be attached.
+Cloudflare cron runs in UTC. The checked-in schedule is `0 4 7,10,15 * *`: noon Malaysia time on day 7 (monthly Overall), day 10 (monthly Advanced) and day 15 (bi-weekly Overall). The separate `5,15,25,35,45,55 * * * *` trigger syncs the Notion account directory every ten minutes. Source configuration does not prove which version is currently deployed. See the [Worker guide](cloudflare/monthly-report-cron/README.md).
 
 ## Environment Variables
 
@@ -139,6 +148,8 @@ Most commands that hit real integrations should run through Doppler.
 Important variables include:
 
 - Meta: `META_ACCESS_TOKEN`.
+- Authentication: application JWT, Supabase profile mode and Google login configuration are documented in [docs/auth-setup.md](docs/auth-setup.md).
+- TikTok: server-side `TIKTOK_BUSINESS_*` authorization; see the README's TikTok setup section.
 - Google Ads: `GOOGLE_ADS_CLIENT_ID`, `GOOGLE_ADS_CLIENT_SECRET`, `GOOGLE_ADS_REFRESH_TOKEN`; optional routing `GOOGLE_ADS_LOGIN_CUSTOMER_ID`; `GOOGLE_ADS_API_VERSION` defaults to v25 (minimum v25). Cloud-project identity/access metadata uses `GOOGLE_ADS_CLOUD_PROJECT_ID`, `GOOGLE_ADS_CLOUD_PROJECT_NUMBER`, `GOOGLE_ADS_CLOUD_PROJECT_NAME`, `GOOGLE_ADS_PROJECT_ACCESS_LEVEL`.
 - Notion: `NOTION_TOKEN`, `NOTION_DATABASE_ID`, `NOTION_AD_ACCOUNTS_DATABASE_ID`, `NOTION_MONTHLY_REPORT_LOGS_DATABASE_ID`.
 - Cron/email: `CRON_SECRET`, `RESEND_API_KEY`, `RESEND_FROM_MONTHLY_REPORT`, `MONTHLY_REPORT_TEST_MODE`, `MONTHLY_REPORT_TEST_RECIPIENT`, `MONTHLY_REPORT_TARGETS_JSON`, `MONTHLY_REPORT_TEST_TARGETS_JSON`, `MONTHLY_REPORT_APP_BASE_URL`.

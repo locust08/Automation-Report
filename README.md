@@ -1,26 +1,38 @@
 # Automated Report Website
 
-Multi-page reporting website for Meta Ads Manager + Google Ads Manager with a shared account/date filter flow.
+Reporting and advertising workflow application for Meta Ads, Google Ads and TikTok, built with Next.js 16, React 19 and TypeScript.
+
+## Documentation
+
+Start with the [documentation index](docs/README.md) for setup, architecture, operations and dated verification records. The [implementation map](map/README.md) describes current source behavior and remaining acceptance gates; the [2026-11-12 documentation audit](docs/documentation-audit-2026-11-12.md) records the source review and GitHub coverage.
+
+- [Application routes and service ownership](map/application.md)
+- [Authentication setup and access boundaries](docs/auth-setup.md)
+- [Reporting behavior](map/reporting.md) and [typography, date picker and exports](map/presentation.md)
+- [Monthly report Worker setup and schedules](cloudflare/monthly-report-cron/README.md)
+- [Search-term automatic approval](docs/search-term-auto-approval.md)
+- [Contributor instructions](AGENTS.md)
+
+Plans and dated verification receipts describe their recorded scope. They do not establish the current production deployment status. Reporting/presentation records imported from `datepicker-improvement` are labeled as branch snapshots; that branch's application changes are not included in this documentation merge.
 
 ## Pages
 
-- `/` Input Ad Account ID and jump to reports.
+- `/` Email/password or Google sign-in.
+- `/dashboard` Account selection and role-aware report/workflow launcher.
 - `/overall` Overall performance page:
   - Meta metrics
   - Google Ads metrics
   - Google Ads YouTube overview metrics
+  - TikTok reporting when an advertiser ID is selected
   - Collapsible campaign-type grouped table
-- `/preview` Read-only platform preview page:
+- `/preview` Platform preview page:
   - Same shell/theme as Overall
-  - Live campaign hierarchy from Google Ads + Meta Ads APIs
+  - Live campaign hierarchy from Google Ads, Meta Ads and TikTok reporting
   - Expand campaign names to inspect Campaign -> Ad Group / Ad Set -> Ad -> Details
-  - No edit or management actions
+  - Google/Meta hierarchy views can link to `/preview/edit` to prepare an edit draft; preview retrieval itself does not publish provider changes
 - `/campaign/[campaignType]` Campaign type page:
   - Selected month vs previous month comparison
   - Collapsible sections and totals
-- `/keywords` Top 10 keyword page (Google Ads Manager extraction):
-  - Keyword-level performance table
-  - Grand total summary row
 - `/auction` Auction page (Google Ads Manager extraction):
   - Auction insights domain metrics
   - Average benchmark row
@@ -30,6 +42,14 @@ Multi-page reporting website for Meta Ads Manager + Google Ads Manager with a sh
   - Generated JSON renders as editable campaign, ad group, keyword, RSA, sitelink, and planning-note sections
   - Final approval stores one detailed Notion row per ad group, then creates the Google Ads campaign as `PAUSED`
   - Success state shows the Notion batch details, campaign ID, and Google Ads review link
+- `/advanced` Advanced analysis with AI-assisted sections.
+- `/demand-gen` Google Demand Gen audience, format/device and creative analysis.
+- `/settings` Admin-only workflow settings on `master`.
+- `/manage`, `/campaigns`, `/change-control`, `/search-term-optimization`, `/placement-optimization`, `/optimization-scheduling`, `/search-term-pm-reports`, `/team-lead-monitoring`, `/billing`, `/user-management` provide role-restricted workflow areas. See the [application map](map/application.md).
+
+There is no `/keywords` or `/insights` page in this checkout. Their JSON endpoints remain at `/api/reporting/keywords` and `/api/reporting/insights`.
+
+The standalone `/campaign-breakdown` page, personal comparison-display preferences, seven-day Demand Gen cache and responsive date-picker follow-up described in the branch receipts are not implemented on this `master` baseline. Demand Gen currently uses a 15-minute process cache. See the [branch scope notes](map/application.md) before applying a dated reporting receipt to `master`.
 
 ## URL Parameters
 
@@ -38,9 +58,13 @@ These can be passed directly in the URL and auto-fill the filter form:
 - `accountId` Generic account ID applied as fallback for both Meta and Google
 - `metaAccountId` Explicit Meta account ID (overrides fallback)
 - `googleAccountId` Explicit Google Ads customer ID (overrides fallback)
+- `tiktokAccountId` Explicit TikTok advertiser ID
 - `startDate` Format: `YYYY-MM-DD`
 - `endDate` Format: `YYYY-MM-DD`
-- `platform` `meta | google | googleYoutube` (used on campaign page)
+- `platform` `meta | google | googleYoutube | tiktok`
+- `campaignScope` `all | lt` (`lt` name scope is limited to the configured single Meta account; see `lib/reporting/campaign-name-filter.ts`)
+- `source` `api | meta_csv` (API data by default; imported Meta CSV when selected)
+- `screenshot` `1` prepares report capture mode
 
 Example:
 
@@ -61,8 +85,8 @@ Credentials are expected from environment variables (Doppler injects these at ru
 - `CRON_SECRET` (required by `/api/cron/monthly-report`)
 - `RESEND_API_KEY` (required for monthly report email delivery)
 - `RESEND_FROM_MONTHLY_REPORT` (optional; defaults to `Locus-T <no-reply@locus-t.com.my>`)
-- `MONTHLY_REPORT_TEST_MODE` (optional; when `true`, only the first eligible account is processed)
-- `MONTHLY_REPORT_TEST_RECIPIENT` (optional; defaults to `ava@locus-t.com.my`)
+- `MONTHLY_REPORT_TEST_MODE` (optional; enables test-mode target/recipient handling)
+- `MONTHLY_REPORT_TEST_RECIPIENT` (test recipient; the current `src/lib/cron`/email flow falls back to `amirulshahrul1775@gmail.com`, while the legacy `lib/automation` helper uses `ava@locus-t.com.my`; the pre-scheduler email script enforces its own fixed test address)
 - `GOOGLE_ADS_LOGIN_CUSTOMER_ID` (optional override; defaults to fixed MCC `366-613-7525`)
 - `GOOGLE_ADS_API_VERSION` (optional, defaults to `v25`)
 - `REPORT_COMPANY_NAME` (optional display label)
@@ -76,9 +100,9 @@ Credentials are expected from environment variables (Doppler injects these at ru
 - `OPENROUTER_API_KEY`, `ADVANCED_REPORT_VIDEO_OPENROUTER_MODEL` (optional Advanced Report video creative analysis)
 - `DATAFORSEO_LOGIN`, `DATAFORSEO_PASSWORD` (Advanced Report keyword volume and People Also Ask data)
 
-Company name resolution order:
+Company name resolution for the shared Google/Meta report paths:
 1. `REPORT_COMPANY_NAME_MAP` (if matched)
-2. Meta account registered name from Graph API (when a Meta account ID is available)
+2. Live Google account name for Google-only reports; otherwise Meta account name, falling back to Google when available
 3. `Account <ID>`
 4. `REPORT_COMPANY_NAME`
 
@@ -100,7 +124,7 @@ Google Ads manager account behavior:
 
 The report warnings panel also confirms which manager ID was resolved from Notion for each Google account.
 
-If credentials are missing or the provided account ID is not accessible, the API returns clear warnings/errors without requiring user login.
+Missing credentials or inaccessible provider accounts produce report warnings/errors. Application login and role checks are separate; see [authentication setup](docs/auth-setup.md) for the exact route boundaries.
 
 Run commands through Doppler so all API secrets are available:
 

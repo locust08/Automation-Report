@@ -1,5 +1,7 @@
 # Monthly breakdowns and Google Demand Gen — 2026-10-01
 
+Historical implementation receipt. The [application map](../map/application.md) distinguishes master from the feature-branch [reporting record](../map/reporting.md). Demand Gen uses 15 minutes on the master baseline and seven days on the reviewed feature branch. Local paths and verification results describe the original run.
+
 Implemented on `codex/monthly-breakdowns-demand-gen`.
 
 - Monthly Performance expands Meta campaigns into historical ad sets and ads with their own period metrics. The campaign result-action definition is passed to descendants; unavailable results display as unavailable. Period-level retrieval preserves unique Reach semantics. Partial continuation failures retain rows and expose retry; retries retain same-scope data.

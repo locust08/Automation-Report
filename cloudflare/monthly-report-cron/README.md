@@ -4,7 +4,7 @@ This Worker owns monthly report automation outside the Vercel app:
 
 - Creates monthly report jobs.
 - Queues one account per message.
-- Renders the Vercel `/overall` report page to PDF through a Cloudflare Browser binding.
+- Renders Vercel `/overall` or `/advanced` in screenshot mode and prints a PDF through a Cloudflare Browser binding.
 - Stores PDFs in R2.
 - Sends each report through Resend.
 - Tracks progress and failures in D1.
@@ -14,7 +14,7 @@ The Vercel app remains the report UI and data source.
 
 ## Schedule
 
-Cloudflare cron uses UTC.
+Cloudflare cron uses UTC. The following schedules match the checked-in `wrangler.toml` and source dispatch logic, reviewed 2026-11-12; this documentation review did not revalidate live triggers.
 
 - Production cron: `0 4 7,10,15 * *`
   - Uses one Cloudflare cron trigger slot.

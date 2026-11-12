@@ -1,5 +1,7 @@
 # Authentication Implementation Plan
 
+Historical proposal. This is not the current setup guide: the implementation now includes Google OAuth, application JWT cookies, role-based access and a legacy table-backed login mode. Use [Authentication setup](auth-setup.md) for source-backed behavior. Preserve the original constraints and checklist below as design history, not instructions to recreate a production table.
+
 ## Objective
 
 Add internal email-and-password authentication to the Ads Reporting Dashboard using Supabase Auth, while keeping the existing reporting data and unrelated Supabase objects unchanged.
