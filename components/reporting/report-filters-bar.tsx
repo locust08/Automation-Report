@@ -924,7 +924,7 @@ function getDefaultMonthValue(): string {
   return `${lastMonth.getUTCFullYear()}-${String(lastMonth.getUTCMonth() + 1).padStart(2, "0")}`;
 }
 
-function parseSearchEntries(filters: Pick<ReportFilters, "accountId" | "metaAccountId" | "googleAccountId" | "tiktokAccountId">): Array<{
+function parseSearchEntries(filters: Pick<ReportFilters, "accountId" | "metaAccountId" | "googleAccountId" | "tiktokAccountId" | "platform">): Array<{
   platform: SearchPlatform;
   accountId: string;
 }> {
@@ -948,7 +948,8 @@ function parseSearchEntries(filters: Pick<ReportFilters, "accountId" | "metaAcco
   });
 
   const deduped = dedupeSearchEntries(entries);
-  return deduped.length > 0 ? deduped : [{ platform: "meta", accountId: "" }];
+  const defaultPlatform = filters.platform === "googleYoutube" ? "google" : filters.platform;
+  return deduped.length > 0 ? deduped : [{ platform: defaultPlatform, accountId: "" }];
 }
 
 function serializeSearchEntries(entries: SearchEntry[]): {
