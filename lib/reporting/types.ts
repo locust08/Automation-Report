@@ -29,6 +29,7 @@ export interface SummarySection {
 }
 
 export interface CampaignRow {
+  videoViews?: number | null;
   id: string;
   platform: Platform;
   campaignType: string;
@@ -369,6 +370,7 @@ export interface PreviewTextAsset {
 }
 
 export interface PreviewPerformanceSummary {
+  videoViews?: number | null;
   resultsAvailable?: boolean;
   unavailableMetrics?: string[];
   resultLabel: string;
@@ -436,6 +438,8 @@ export interface TikTokSelectedAdDetail {
 }
 
 export interface PreviewCreativeAsset {
+  assetSpend?: number | null;
+  assetCurrency?: string | null;
   id: string;
   name?: string | null;
   title?: string | null;

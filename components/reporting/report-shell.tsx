@@ -110,7 +110,8 @@ export function ReportShell({
         { href: hrefs.overall, label: "Monthly Performance", active: pathname === "/overall", icon: BarChart3Icon },
         { href: hrefs.preview, label: "Campaign Preview", active: pathname === "/preview", icon: EyeIcon },
         { href: hrefs.advanced, label: "Advanced Report", active: pathname === "/advanced", icon: SparklesIcon },
-        ...((new URLSearchParams(reportContextQuery).has("googleAccountId") || pathname === "/demand-gen") ? [{ href: withQuery("/demand-gen", reportContextQuery), label: "Demand Gen Analysis", active: pathname === "/demand-gen", icon: BarChart3Icon }] : []),
+        { href: withQuery("/demand-gen", reportContextQuery), label: "Demand Gen Analysis", active: pathname === "/demand-gen", icon: BarChart3Icon },
+        { href: withQuery("/campaign-breakdown", reportContextQuery), label: "Campaign Breakdown", active: pathname === "/campaign-breakdown", icon: BarChart3Icon },
       ],
     },
     {
@@ -261,14 +262,10 @@ export function ReportShell({
                   className="w-[min(68rem,calc(100vw-4rem))] rounded-xl border border-[#e6d7d9] bg-white p-2 text-[#211114] shadow-2xl xl:p-3"
                 >
                   <div className="grid gap-2 md:grid-cols-2 lg:grid-cols-4 xl:gap-4">
-                    {navigationGroups.map((group, groupIndex) => (
+                    {navigationGroups.map((group) => (
                       <div
                         key={group.label}
-                        className={
-                          groupIndex === 0
-                            ? "min-w-0"
-                            : "min-w-0 border-t border-[#eadfe0] pt-2 md:border-l md:border-t-0 md:pl-1 md:pt-0 xl:pl-2"
-                        }
+                        className="min-w-0"
                       >
                         <DropdownMenuLabel className="px-2 pb-1 pt-2 text-[11px] font-bold uppercase tracking-[0.12em] text-[#8a6268] xl:px-3 xl:text-xs xl:tracking-[0.14em]">
                           {group.label}
