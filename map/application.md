@@ -32,7 +32,7 @@ Provider collection supports Google, Meta and TikTok. `request.ts` parses explic
 | Dashboard campaign planning | `/campaigns`; `lib/campaign-planning`, `/api/campaign-planning/*`; isolated M04 tables and mock workflow described in [database ownership](../README_campaign_creation.md) |
 | Media plan | `/dashboard/media-plan`; `lib/media-plan`, `lib/openai/generateMediaPlan.ts`, `lib/google-ads/createSearchCampaignFromMediaPlan.ts`; Notion approval and paused Google Search creation are a separate flow |
 | Search-term analysis | `/search-term-optimization`; `lib/search-term-optimization`, Python review pipeline, durable batch rows and [automatic-action policy](../docs/search-term-auto-approval.md) |
-| Placement optimization | `/placement-optimization`; `lib/placement-optimization` and the [placement cache Worker](../cloudflare/placement-analysis/README.md) |
+| Placement optimization | `/placement-optimization`; `lib/placement-optimization` and the [placement cache Worker](../cloudflare/placement-analysis/README.md). Production v25 transport recovered 2026-11-13; Magnet October retrieval completed with the first 250 placements. Deployment, verification limits and rollback are recorded in the Worker guide. |
 | Scheduling and reporting | `/optimization-scheduling`, `/search-term-pm-reports`; `lib/optimization-scheduling`, `lib/search-term-pm-reports` |
 | Traffic-quality review | `/api/traffic-quality/*`; `lib/traffic-quality`; narrow live pilot documented [separately](../docs/runbooks/m01-live-pilot.md) |
 | Team oversight | `/team-lead-monitoring`; `lib/team-lead-monitoring` |
